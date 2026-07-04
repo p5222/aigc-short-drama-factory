@@ -13,6 +13,7 @@
   Image,
   Layers3,
   Loader2,
+  Plus,
   Trash2,
   PlayCircle,
   RefreshCw,
@@ -25,7 +26,8 @@
   MessageSquareText,
   UserRound,
   Video,
-  WalletCards
+  WalletCards,
+  X
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
@@ -920,48 +922,134 @@ function UsersSection({
   onCreditAdjust
 }: {
   users: AdminUserRow[];
-  onCreateUser: (input: { name: string; email?: string; phone?: string; password: string; role?: string; status?: string; initialCredits?: number }) => void;
-  onUserSave: (userId: string, input: Partial<Pick<AdminUserRow, "name" | "role" | "status">>) => void;
-  onPasswordReset: (userId: string, password: string) => void;
-  onCreditAdjust: (input: { userId: string; amount: number; description: string }) => void;
+  onCreateUser: (input: { name: string; email?: string; phone?: string; password: string; role?: string; status?: string; initialCredits?: number }) => AdminActionResult;
+  onUserSave: (userId: string, input: Partial<Pick<AdminUserRow, "name" | "role" | "status">>) => AdminActionResult;
+  onPasswordReset: (userId: string, password: string) => AdminActionResult;
+  onCreditAdjust: (input: { userId: string; amount: number; description: string }) => AdminActionResult;
 }) {
   const [keyword, setKeyword] = useState("");
   const [role, setRole] = useState("all");
   const [status, setStatus] = useState("all");
+  const [segment, setSegment] = useState("all");
+  const [createOpen, setCreateOpen] = useState(false);
+  const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
+  function matchesSegment(user: AdminUserRow) {
+    if (segment === "all") return true;
+    if (segment === "admin") return user.role !== "creator";
+    if (segment === "creator") return user.role === "creator";
+    if (segment === "paid") return user.totalRecharge > 0;
+    if (segment === "active") return user.status === "active";
+    if (segment === "disabled") return user.status === "disabled";
+    if (segment === "no_password") return !user.hasPassword;
+    return true;
+  }
   const rows = users.filter((user) => {
     const matchedKeyword = [user.name, user.email, user.phone, user.id].filter(Boolean).join(" ").toLowerCase().includes(keyword.toLowerCase());
     const matchedRole = role === "all" || user.role === role;
     const matchedStatus = status === "all" || user.status === status;
-    return matchedKeyword && matchedRole && matchedStatus;
+    return matchedKeyword && matchedRole && matchedStatus && matchesSegment(user);
   });
+  const activeUsers = users.filter((user) => user.status === "active").length;
+  const paidUsers = users.filter((user) => user.totalRecharge > 0).length;
+  const totalCredits = users.reduce((sum, user) => sum + user.credits, 0);
+  const allVisibleSelected = rows.length > 0 && rows.every((user) => selectedUserIds.includes(user.id));
+  const selectedVisibleCount = rows.filter((user) => selectedUserIds.includes(user.id)).length;
+  const railItems: AdminRailItem[] = [
+    { id: "all", label: "全部用户", count: users.length, meta: "完整账号池", tone: "blue" },
+    { id: "creator", label: "创作者", count: users.filter((user) => user.role === "creator").length, meta: "前台真实用户" },
+    { id: "admin", label: "后台成员", count: users.filter((user) => user.role !== "creator").length, meta: "运营/财务/客服", tone: "violet" },
+    { id: "paid", label: "已付费", count: paidUsers, meta: "有充值记录", tone: "green" },
+    { id: "active", label: "正常", count: activeUsers, meta: "可登录账号", tone: "green" },
+    { id: "disabled", label: "停用", count: users.filter((user) => user.status === "disabled").length, meta: "不可登录", tone: "danger" },
+    { id: "no_password", label: "未设密码", count: users.filter((user) => !user.hasPassword).length, meta: "需引导重置", tone: "amber" }
+  ];
+
+  function toggleVisibleUsers() {
+    setSelectedUserIds((current) => {
+      if (allVisibleSelected) return current.filter((id) => !rows.some((user) => user.id === id));
+      return [...new Set([...current, ...rows.map((user) => user.id)])];
+    });
+  }
+
+  async function batchSetStatus(nextStatus: "active" | "disabled") {
+    const targetIds = selectedUserIds.filter((id) => users.some((user) => user.id === id));
+    if (!targetIds.length) return;
+    if (!window.confirm(`确认将 ${targetIds.length} 个用户批量改为「${adminStatusLabels[nextStatus]}」？`)) return;
+    for (const id of targetIds) {
+      await onUserSave(id, { status: nextStatus });
+    }
+    setSelectedUserIds([]);
+  }
 
   return (
     <section className="admin-v2-section">
-      <AdminUserCreator onCreate={onCreateUser} />
-      <AdminToolbar>
-        <SearchField value={keyword} onChange={setKeyword} placeholder="搜索用户、邮箱、手机号..." />
-        <SelectFilter value={role} onChange={setRole} options={["all", "creator", "admin", "operator", "finance", "support"]} labels={{ all: "全部角色" }} />
-        <SelectFilter value={status} onChange={setStatus} options={["all", "active", "disabled"]} labels={{ all: "全部状态" }} />
-      </AdminToolbar>
-      <div className="admin-user-management-table">
-        <div className="admin-user-management-head">
-          <span>用户</span>
-          <span>手机号</span>
-          <span>身份</span>
-          <span>状态</span>
-          <span>积分余额</span>
-          <span>累计充值</span>
-          <span>累计消耗</span>
-          <span>项目</span>
-          <span>密码</span>
-          <span>操作</span>
+      <AdminModuleWorkbench
+        railTitle="用户分层"
+        railDescription="先选运营视角，再用搜索和筛选精确定位账号。"
+        railItems={railItems}
+        activeRail={segment}
+        onRailChange={setSegment}
+        railFooter={<span>当前结果 {rows.length} 条，已选 {selectedVisibleCount} 条。</span>}
+      >
+        <div className="admin-v2-metrics small">
+          <AdminMetric icon={<UserRound size={20} />} label="用户总数" value={users.length} hint={`${activeUsers} 个正常账号`} tone="blue" />
+          <AdminMetric icon={<WalletCards size={20} />} label="积分余额" value={totalCredits.toLocaleString()} hint="所有用户可用积分" tone="green" />
+          <AdminMetric icon={<CircleDollarSign size={20} />} label="付费用户" value={paidUsers} hint="有真实充值记录" tone="amber" />
+          <AdminMetric icon={<ShieldCheck size={20} />} label="后台成员" value={users.filter((user) => user.role !== "creator").length} hint="管理员与运营角色" tone="violet" />
         </div>
-        {rows.map((user) => (
-          <UserRow key={user.id} user={user} onUserSave={onUserSave} onPasswordReset={onPasswordReset} onCreditAdjust={onCreditAdjust} />
-        ))}
-        {!rows.length ? <EmptyHint text="没有匹配的用户。" /> : null}
-      </div>
-      <TableFooter total={rows.length} />
+        <AdminToolbar
+          right={
+            <AdminActionBar>
+              <button className="admin-secondary-btn compact" disabled={!selectedUserIds.length} type="button" onClick={() => void batchSetStatus("active")}>批量启用</button>
+              <button className="admin-secondary-btn compact" disabled={!selectedUserIds.length} type="button" onClick={() => void batchSetStatus("disabled")}>批量停用</button>
+              <button className="admin-primary-btn" type="button" onClick={() => setCreateOpen(true)}><Plus size={18} />创建用户</button>
+            </AdminActionBar>
+          }
+        >
+          <SearchField value={keyword} onChange={setKeyword} placeholder="搜索用户、邮箱、手机号、ID..." />
+          <SelectFilter value={role} onChange={setRole} options={["all", "creator", "admin", "operator", "finance", "support"]} labels={{ all: "全部角色", creator: "创作者", admin: "超级管理员", operator: "运营", finance: "财务", support: "客服" }} />
+          <SelectFilter value={status} onChange={setStatus} options={["all", "active", "disabled"]} labels={{ all: "全部状态", active: "正常", disabled: "停用" }} />
+        </AdminToolbar>
+        <div className="admin-data-card">
+          <div className="admin-v2-card-head">
+            <div>
+              <h2>账号列表</h2>
+              <p>保留真实账号数据，支持角色、状态、积分、密码和运营补偿在同一行完成。</p>
+            </div>
+          </div>
+          <div className="admin-user-management-table v2">
+            <div className="admin-user-management-head">
+              <label className="admin-row-checkbox"><input type="checkbox" checked={allVisibleSelected} onChange={toggleVisibleUsers} /></label>
+              <span>用户</span>
+              <span>手机号</span>
+              <span>身份</span>
+              <span>状态</span>
+              <span>积分余额</span>
+              <span>累计充值</span>
+              <span>累计消耗</span>
+              <span>项目</span>
+              <span>密码</span>
+              <span>操作</span>
+            </div>
+            {rows.map((user) => (
+              <UserRow
+                key={user.id}
+                user={user}
+                selected={selectedUserIds.includes(user.id)}
+                onToggleSelected={() => setSelectedUserIds((current) => current.includes(user.id) ? current.filter((id) => id !== user.id) : [...current, user.id])}
+                onUserSave={onUserSave}
+                onPasswordReset={onPasswordReset}
+                onCreditAdjust={onCreditAdjust}
+              />
+            ))}
+            {!rows.length ? <EmptyHint text="没有匹配的用户。可以切换左侧分层，或清空搜索/筛选条件。" /> : null}
+          </div>
+        </div>
+        <TableFooter total={rows.length} />
+      </AdminModuleWorkbench>
+      <AdminModal open={createOpen} title="创建用户" description="创建后可立即登录；初始积分会写入流水，密码不在后台明文保存。" onClose={() => setCreateOpen(false)} wide>
+        <AdminUserCreator onCreate={(input) => { void onCreateUser(input); setCreateOpen(false); }} />
+      </AdminModal>
     </section>
   );
 }
@@ -1234,12 +1322,14 @@ function RedeemSection({
   onDelete
 }: {
   redeemCodes: RedeemCode[];
-  onBatchCreate: (input: { name: string; prefix: string; credits: number; count: number; enabled?: boolean }) => void;
-  onSave: (id: string, input: Partial<Pick<RedeemCode, "name" | "code" | "credits" | "maxRedemptions" | "enabled">> & { startsAt?: string | null; endsAt?: string | null }) => void;
-  onDelete: (id: string) => void;
+  onBatchCreate: (input: { name: string; prefix: string; credits: number; count: number; enabled?: boolean }) => AdminActionResult;
+  onSave: (id: string, input: Partial<Pick<RedeemCode, "name" | "code" | "credits" | "maxRedemptions" | "enabled">> & { startsAt?: string | null; endsAt?: string | null }) => AdminActionResult;
+  onDelete: (id: string) => AdminActionResult;
 }) {
   const [keyword, setKeyword] = useState("");
   const [status, setStatus] = useState("unused");
+  const [viewMode, setViewMode] = useState("codes");
+  const [createOpen, setCreateOpen] = useState(false);
   const [expandedBatch, setExpandedBatch] = useState<string | null>(null);
   const rows = redeemCodes.filter((code) => {
     const matchedKeyword = `${code.code} ${code.name} ${code.batchId ?? ""}`.toLowerCase().includes(keyword.toLowerCase());
@@ -1253,6 +1343,17 @@ function RedeemSection({
   });
   const batches = groupRedeemCodes(rows);
   const used = redeemCodes.reduce((sum, code) => sum + code.usedCount, 0);
+  const railItems: AdminRailItem[] = [
+    { id: "unused", label: "未使用", count: redeemCodes.filter((code) => code.usedCount === 0 && redeemStatus(code) === "active").length, meta: "默认运营视图", tone: "green" },
+    { id: "all", label: "全部兑换码", count: redeemCodes.length, meta: "所有批次" },
+    { id: "used", label: "已使用", count: redeemCodes.filter((code) => code.usedCount > 0).length, meta: "已产生权益", tone: "blue" },
+    { id: "active", label: "可用", count: redeemCodes.filter((code) => redeemStatus(code) === "active").length, meta: "前台可兑换", tone: "green" },
+    { id: "scheduled", label: "未开始", count: redeemCodes.filter((code) => redeemStatus(code) === "scheduled").length, meta: "定时活动", tone: "amber" },
+    { id: "expired", label: "已过期", count: redeemCodes.filter((code) => redeemStatus(code) === "expired").length, meta: "需复盘活动", tone: "danger" },
+    { id: "disabled", label: "已停用", count: redeemCodes.filter((code) => redeemStatus(code) === "disabled").length, meta: "不可兑换", tone: "danger" },
+    { id: "used_up", label: "已用完", count: redeemCodes.filter((code) => redeemStatus(code) === "used_up").length, meta: "达到上限", tone: "violet" }
+  ];
+  const visibleCodes = rows.slice(0, 50);
   async function batchToggle(codes: RedeemCode[], enabled: boolean) {
     const target = codes.filter((code) => code.enabled !== enabled);
     for (const code of target) {
@@ -1271,33 +1372,78 @@ function RedeemSection({
 
   return (
     <section className="admin-v2-section">
-      <div className="admin-v2-metrics small">
-        <AdminMetric icon={<Gift size={20} />} label="兑换码总数" value={redeemCodes.length} hint="后台记录" tone="blue" />
-        <AdminMetric icon={<ShieldCheck size={20} />} label="启用中" value={redeemCodes.filter((item) => item.enabled).length} hint="前台可用" tone="green" />
-        <AdminMetric icon={<WalletCards size={20} />} label="已兑换次数" value={used} hint="累计使用" tone="amber" />
-        <AdminMetric icon={<CircleDollarSign size={20} />} label="平均额度" value={averageCredits(redeemCodes)} hint="积分/码" tone="violet" />
-      </div>
-      <RedeemBatchCreator onCreate={onBatchCreate} />
-      <AdminToolbar>
-        <SearchField value={keyword} onChange={setKeyword} placeholder="搜索兑换码、活动名、批次..." />
-        <SelectFilter value={status} onChange={setStatus} options={["unused", "all", "used", "active", "used_up", "scheduled", "expired", "disabled"]} labels={{ unused: "默认：未使用", all: "全部状态", used: "已使用", active: "可用", used_up: "已用完", scheduled: "未开始", expired: "已过期", disabled: "停用" }} />
-      </AdminToolbar>
-      <div className="admin-redeem-batch-list">
-        {batches.map((batch) => (
-          <RedeemBatchCard
-            key={batch.id}
-            batch={batch}
-            expanded={expandedBatch === batch.id}
-            onToggleExpand={() => setExpandedBatch(expandedBatch === batch.id ? null : batch.id)}
-            onSave={onSave}
-            onDelete={onDelete}
-            onBatchEnable={() => void batchToggle(batch.codes, true)}
-            onBatchDisable={() => void batchToggle(batch.codes, false)}
-            onBatchDeleteUnused={() => void batchDeleteUnused(batch.codes)}
-          />
-        ))}
-      </div>
-      <TableFooter total={rows.length} />
+      <AdminModuleWorkbench
+        railTitle="兑换码状态"
+        railDescription="按活动生命周期管理发放、兑换和停用。"
+        railItems={railItems}
+        activeRail={status}
+        onRailChange={setStatus}
+        railFooter={<span>{batches.length} 个批次，{rows.length} 个明细。</span>}
+      >
+        <div className="admin-v2-metrics small">
+          <AdminMetric icon={<Gift size={20} />} label="兑换码总数" value={redeemCodes.length} hint="后台记录" tone="blue" />
+          <AdminMetric icon={<ShieldCheck size={20} />} label="启用中" value={redeemCodes.filter((item) => item.enabled).length} hint="前台可用" tone="green" />
+          <AdminMetric icon={<WalletCards size={20} />} label="已兑换次数" value={used} hint="累计使用" tone="amber" />
+          <AdminMetric icon={<CircleDollarSign size={20} />} label="平均额度" value={averageCredits(redeemCodes)} hint="积分/码" tone="violet" />
+        </div>
+        <AdminToolbar
+          right={
+            <AdminActionBar>
+              <SelectFilter value={viewMode} onChange={setViewMode} options={["codes", "batches"]} labels={{ codes: "明细视图", batches: "批次视图" }} />
+              <button className="admin-primary-btn" type="button" onClick={() => setCreateOpen(true)}><Plus size={18} />生成兑换码</button>
+            </AdminActionBar>
+          }
+        >
+          <SearchField value={keyword} onChange={setKeyword} placeholder="搜索兑换码、活动名、批次..." />
+        </AdminToolbar>
+        {viewMode === "codes" ? (
+          <div className="admin-data-card">
+            <div className="admin-v2-card-head">
+              <div>
+                <h2>兑换码明细</h2>
+                <p>适合客服定位单个兑换码，也适合运营逐条调整额度、次数、期限和启停状态。</p>
+              </div>
+            </div>
+            <div className="admin-redeem-code-list admin-redeem-code-list-standalone">
+              <div className="admin-redeem-code-head">
+                <span />
+                <span>兑换码</span>
+                <span>活动</span>
+                <span>类型</span>
+                <span>额度</span>
+                <span>使用</span>
+                <span>状态</span>
+                <span>创建</span>
+                <span>操作</span>
+              </div>
+              {visibleCodes.map((code) => <RedeemCodeRow key={code.id} code={code} onSave={onSave} onDelete={onDelete} />)}
+              {rows.length > visibleCodes.length ? <p className="admin-list-note">当前筛选命中 {rows.length} 条，先显示前 {visibleCodes.length} 条；请使用搜索框定位具体兑换码。</p> : null}
+              {!rows.length ? <EmptyHint text="没有匹配的兑换码。可以切换左侧状态，或重新搜索批次/活动名。" /> : null}
+            </div>
+          </div>
+        ) : (
+          <div className="admin-redeem-batch-list">
+            {batches.map((batch) => (
+              <RedeemBatchCard
+                key={batch.id}
+                batch={batch}
+                expanded={expandedBatch === batch.id}
+                onToggleExpand={() => setExpandedBatch(expandedBatch === batch.id ? null : batch.id)}
+                onSave={onSave}
+                onDelete={onDelete}
+                onBatchEnable={() => void batchToggle(batch.codes, true)}
+                onBatchDisable={() => void batchToggle(batch.codes, false)}
+                onBatchDeleteUnused={() => void batchDeleteUnused(batch.codes)}
+              />
+            ))}
+            {!batches.length ? <EmptyHint text="没有匹配的兑换码批次。" /> : null}
+          </div>
+        )}
+        <TableFooter total={rows.length} />
+      </AdminModuleWorkbench>
+      <AdminModal open={createOpen} title="生成兑换码" description="批量生成唯一 code，默认每个 code 只可兑换一次。" onClose={() => setCreateOpen(false)} wide>
+        <RedeemBatchCreator onCreate={(input) => { void onBatchCreate(input); setCreateOpen(false); }} />
+      </AdminModal>
     </section>
   );
 }
@@ -1309,36 +1455,79 @@ function PlansSection({
   onDelete
 }: {
   plans: Plan[];
-  onCreate: (input: Pick<Plan, "name" | "price" | "credits" | "bonusCredits" | "badge" | "features" | "shopUrl" | "enabled">) => void;
-  onSave: (id: string, input: Partial<Pick<Plan, "name" | "price" | "credits" | "bonusCredits" | "badge" | "features" | "shopUrl" | "enabled">>) => void;
-  onDelete: (id: string) => void;
+  onCreate: (input: Pick<Plan, "name" | "price" | "credits" | "bonusCredits" | "badge" | "features" | "shopUrl" | "enabled">) => AdminActionResult;
+  onSave: (id: string, input: Partial<Pick<Plan, "name" | "price" | "credits" | "bonusCredits" | "badge" | "features" | "shopUrl" | "enabled">>) => AdminActionResult;
+  onDelete: (id: string) => AdminActionResult;
 }) {
+  const [keyword, setKeyword] = useState("");
+  const [segment, setSegment] = useState("all");
+  const [createOpen, setCreateOpen] = useState(false);
+  const rows = plans.filter((plan) => {
+    const matchedKeyword = `${plan.name} ${plan.badge ?? ""} ${plan.features.join(" ")}`.toLowerCase().includes(keyword.toLowerCase());
+    const matchedSegment =
+      segment === "all" ||
+      (segment === "enabled" && plan.enabled) ||
+      (segment === "disabled" && !plan.enabled) ||
+      (segment === "entry" && plan.price <= 20) ||
+      (segment === "growth" && plan.price > 20);
+    return matchedKeyword && matchedSegment;
+  });
+  const enabledRows = plans.filter((plan) => plan.enabled);
+  const avgPrice = plans.length ? Math.round(plans.reduce((sum, plan) => sum + plan.price, 0) / plans.length) : 0;
+  const railItems: AdminRailItem[] = [
+    { id: "all", label: "全部套餐", count: plans.length, meta: "充值包配置", tone: "blue" },
+    { id: "enabled", label: "前台展示", count: enabledRows.length, meta: "用户可购买", tone: "green" },
+    { id: "disabled", label: "已停用", count: plans.length - enabledRows.length, meta: "后台保留", tone: "danger" },
+    { id: "entry", label: "低价体验", count: plans.filter((plan) => plan.price <= 20).length, meta: "拉新入口", tone: "amber" },
+    { id: "growth", label: "高额套餐", count: plans.filter((plan) => plan.price > 20).length, meta: "进阶付费", tone: "violet" }
+  ];
   return (
     <section className="admin-v2-section">
-      <PlanCreator onCreate={onCreate} />
-      <div className="admin-table-wrap">
-        <table className="admin-v2-table admin-plans-table">
-          <thead>
-            <tr>
-              <th>套餐</th>
-              <th>售价</th>
-              <th>到账积分</th>
-              <th>赠送</th>
-              <th>标签</th>
-              <th>卖点</th>
-              <th>店铺链接</th>
-              <th>状态</th>
-              <th>操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            {plans.map((plan) => (
-              <PlanRow key={plan.id} plan={plan} onSave={onSave} onDelete={onDelete} />
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <TableFooter total={plans.length} />
+      <AdminModuleWorkbench
+        railTitle="套餐运营"
+        railDescription="按售卖状态和价格带管理一次性充值包。"
+        railItems={railItems}
+        activeRail={segment}
+        onRailChange={setSegment}
+        railFooter={<span>启用套餐会自动出现在前台价格区。</span>}
+      >
+        <div className="admin-v2-metrics small">
+          <AdminMetric icon={<ReceiptText size={20} />} label="套餐数量" value={plans.length} hint={`${enabledRows.length} 个启用`} tone="blue" />
+          <AdminMetric icon={<CircleDollarSign size={20} />} label="平均售价" value={`¥${avgPrice}`} hint="一次性充值包" tone="green" />
+          <AdminMetric icon={<WalletCards size={20} />} label="积分总额" value={plans.reduce((sum, plan) => sum + plan.credits + plan.bonusCredits, 0).toLocaleString()} hint="全部套餐到账额度" tone="amber" />
+          <AdminMetric icon={<Gift size={20} />} label="有赠送" value={plans.filter((plan) => plan.bonusCredits > 0).length} hint="带营销权益" tone="violet" />
+        </div>
+        <AdminToolbar right={<button className="admin-primary-btn" type="button" onClick={() => setCreateOpen(true)}><Plus size={18} />新增套餐</button>}>
+          <SearchField value={keyword} onChange={setKeyword} placeholder="搜索套餐、标签、卖点..." />
+        </AdminToolbar>
+        <div className="admin-table-wrap admin-data-card">
+          <table className="admin-v2-table admin-plans-table">
+            <thead>
+              <tr>
+                <th>套餐</th>
+                <th>售价</th>
+                <th>到账积分</th>
+                <th>赠送</th>
+                <th>标签</th>
+                <th>卖点</th>
+                <th>店铺链接</th>
+                <th>状态</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((plan) => (
+                <PlanRow key={plan.id} plan={plan} onSave={onSave} onDelete={onDelete} />
+              ))}
+            </tbody>
+          </table>
+          {!rows.length ? <EmptyHint text="没有匹配的充值套餐。可以切换左侧价格带，或新增一个前台套餐。" /> : null}
+        </div>
+        <TableFooter total={rows.length} />
+      </AdminModuleWorkbench>
+      <AdminModal open={createOpen} title="新增充值套餐" description="套餐启用后会按价格排序展示在前台购买区。" onClose={() => setCreateOpen(false)} wide>
+        <PlanCreator onCreate={(input) => { void onCreate(input); setCreateOpen(false); }} />
+      </AdminModal>
     </section>
   );
 }
@@ -1350,36 +1539,78 @@ function MembershipSection({
   onDelete
 }: {
   plans: MembershipPlan[];
-  onCreate: (input: Pick<MembershipPlan, "name" | "monthlyPrice" | "monthlyCredits" | "discountPercent" | "priorityLevel" | "badge" | "features" | "shopUrl" | "enabled">) => void;
-  onSave: (id: string, input: Partial<Pick<MembershipPlan, "name" | "monthlyPrice" | "monthlyCredits" | "discountPercent" | "priorityLevel" | "badge" | "features" | "shopUrl" | "enabled">>) => void;
-  onDelete: (id: string) => void;
+  onCreate: (input: Pick<MembershipPlan, "name" | "monthlyPrice" | "monthlyCredits" | "discountPercent" | "priorityLevel" | "badge" | "features" | "shopUrl" | "enabled">) => AdminActionResult;
+  onSave: (id: string, input: Partial<Pick<MembershipPlan, "name" | "monthlyPrice" | "monthlyCredits" | "discountPercent" | "priorityLevel" | "badge" | "features" | "shopUrl" | "enabled">>) => AdminActionResult;
+  onDelete: (id: string) => AdminActionResult;
 }) {
+  const [keyword, setKeyword] = useState("");
+  const [segment, setSegment] = useState("all");
+  const [createOpen, setCreateOpen] = useState(false);
+  const rows = plans.filter((plan) => {
+    const matchedKeyword = `${plan.name} ${plan.badge ?? ""} ${plan.features.join(" ")}`.toLowerCase().includes(keyword.toLowerCase());
+    const matchedSegment =
+      segment === "all" ||
+      (segment === "enabled" && plan.enabled) ||
+      (segment === "disabled" && !plan.enabled) ||
+      (segment === "discount" && plan.discountPercent > 0) ||
+      (segment === "priority" && plan.priorityLevel > 0);
+    return matchedKeyword && matchedSegment;
+  });
+  const enabledRows = plans.filter((plan) => plan.enabled);
+  const railItems: AdminRailItem[] = [
+    { id: "all", label: "全部会员", count: plans.length, meta: "订阅方案", tone: "blue" },
+    { id: "enabled", label: "前台展示", count: enabledRows.length, meta: "可购买", tone: "green" },
+    { id: "disabled", label: "已停用", count: plans.length - enabledRows.length, meta: "后台保留", tone: "danger" },
+    { id: "discount", label: "模型折扣", count: plans.filter((plan) => plan.discountPercent > 0).length, meta: "长期权益", tone: "amber" },
+    { id: "priority", label: "优先队列", count: plans.filter((plan) => plan.priorityLevel > 0).length, meta: "生产提速", tone: "violet" }
+  ];
   return (
     <section className="admin-v2-section">
-      <MembershipCreator onCreate={onCreate} />
-      <div className="admin-table-wrap">
-        <table className="admin-v2-table admin-membership-table">
-          <thead>
-            <tr>
-              <th>会员</th>
-              <th>月费</th>
-              <th>月额度</th>
-              <th>折扣</th>
-              <th>队列</th>
-              <th>权益</th>
-              <th>店铺链接</th>
-              <th>状态</th>
-              <th>操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            {plans.map((plan) => (
-              <MembershipRow key={plan.id} plan={plan} onSave={onSave} onDelete={onDelete} />
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <TableFooter total={plans.length} />
+      <AdminModuleWorkbench
+        railTitle="会员权益"
+        railDescription="订阅会员用于月度额度、折扣和优先队列管理。"
+        railItems={railItems}
+        activeRail={segment}
+        onRailChange={setSegment}
+        railFooter={<span>会员策略影响长期留存和生产成本。</span>}
+      >
+        <div className="admin-v2-metrics small">
+          <AdminMetric icon={<ReceiptText size={20} />} label="会员方案" value={plans.length} hint={`${enabledRows.length} 个启用`} tone="blue" />
+          <AdminMetric icon={<CircleDollarSign size={20} />} label="月费合计" value={`¥${plans.reduce((sum, plan) => sum + plan.monthlyPrice, 0)}`} hint="所有方案标价" tone="green" />
+          <AdminMetric icon={<WalletCards size={20} />} label="月额度" value={plans.reduce((sum, plan) => sum + plan.monthlyCredits, 0).toLocaleString()} hint="全部方案积分池" tone="amber" />
+          <AdminMetric icon={<ShieldCheck size={20} />} label="最高队列" value={Math.max(0, ...plans.map((plan) => plan.priorityLevel))} hint="优先级越高越靠前" tone="violet" />
+        </div>
+        <AdminToolbar right={<button className="admin-primary-btn" type="button" onClick={() => setCreateOpen(true)}><Plus size={18} />新增会员</button>}>
+          <SearchField value={keyword} onChange={setKeyword} placeholder="搜索会员、权益、标签..." />
+        </AdminToolbar>
+        <div className="admin-table-wrap admin-data-card">
+          <table className="admin-v2-table admin-membership-table">
+            <thead>
+              <tr>
+                <th>会员</th>
+                <th>月费</th>
+                <th>月额度</th>
+                <th>折扣</th>
+                <th>队列</th>
+                <th>权益</th>
+                <th>店铺链接</th>
+                <th>状态</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((plan) => (
+                <MembershipRow key={plan.id} plan={plan} onSave={onSave} onDelete={onDelete} />
+              ))}
+            </tbody>
+          </table>
+          {!rows.length ? <EmptyHint text="没有匹配的订阅会员方案。可以切换左侧权益分类，或新增一个会员方案。" /> : null}
+        </div>
+        <TableFooter total={rows.length} />
+      </AdminModuleWorkbench>
+      <AdminModal open={createOpen} title="新增订阅会员" description="用于管理月度积分、模型折扣、队列优先级和前台展示权益。" onClose={() => setCreateOpen(false)} wide>
+        <MembershipCreator onCreate={(input) => { void onCreate(input); setCreateOpen(false); }} />
+      </AdminModal>
     </section>
   );
 }
@@ -1422,35 +1653,86 @@ function ProvidersSection({
   const [keyword, setKeyword] = useState("");
   const [modality, setModality] = useState("all");
   const [status, setStatus] = useState("all");
+  const [segment, setSegment] = useState("all");
+  const [createOpen, setCreateOpen] = useState(false);
   const rows = providers.filter((provider) => {
     const matchedKeyword = `${provider.name} ${provider.id} ${provider.models.join(" ")}`.toLowerCase().includes(keyword.toLowerCase());
     const matchedModality = modality === "all" || provider.modality === modality;
     const matchedStatus = status === "all" || (status === "enabled" ? provider.enabled : !provider.enabled);
-    return matchedKeyword && matchedModality && matchedStatus;
+    const matchedSegment =
+      segment === "all" ||
+      (segment === "enabled" && provider.enabled) ||
+      (segment === "disabled" && !provider.enabled) ||
+      (segment === "missing_key" && !provider.apiKeyConfigured) ||
+      (segment === "manual" && provider.routing?.mode === "manual") ||
+      (segment === "auto" && provider.routing?.mode !== "manual") ||
+      provider.modality === segment;
+    return matchedKeyword && matchedModality && matchedStatus && matchedSegment;
   });
+  const enabledRows = providers.filter((provider) => provider.enabled);
+  const missingKeyRows = providers.filter((provider) => !provider.apiKeyConfigured);
+  const railItems: AdminRailItem[] = [
+    { id: "all", label: "全部渠道", count: providers.length, meta: "模型供应商池", tone: "blue" },
+    { id: "text", label: "文本", count: providers.filter((provider) => provider.modality === "text").length, meta: "剧本/评分/提示词", tone: "blue" },
+    { id: "image", label: "生图", count: providers.filter((provider) => provider.modality === "image").length, meta: "角色/分镜图", tone: "green" },
+    { id: "video", label: "视频", count: providers.filter((provider) => provider.modality === "video").length, meta: "图生视频/片段", tone: "violet" },
+    { id: "tts", label: "配音", count: providers.filter((provider) => provider.modality === "tts").length, meta: "语音合成", tone: "amber" },
+    { id: "embedding", label: "向量", count: providers.filter((provider) => provider.modality === "embedding").length, meta: "检索与记忆" },
+    { id: "missing_key", label: "缺 Key", count: missingKeyRows.length, meta: "需要配置", tone: "danger" },
+    { id: "enabled", label: "启用中", count: enabledRows.length, meta: "可参与生产", tone: "green" },
+    { id: "disabled", label: "停用", count: providers.length - enabledRows.length, meta: "不会调用", tone: "danger" },
+    { id: "auto", label: "自动路由", count: providers.filter((provider) => provider.routing?.mode !== "manual").length, meta: "额度池轮换", tone: "green" },
+    { id: "manual", label: "手动固定", count: providers.filter((provider) => provider.routing?.mode === "manual").length, meta: "固定模型", tone: "amber" }
+  ];
 
   return (
     <section className="admin-v2-section">
-      <ProviderCreator onCreate={onCreate} />
-      <OpenSourcePipelinePanel
-        adapters={openSourceAdapters}
-        pipelines={visualPipelines}
-        tests={pipelineTests}
-        onRefresh={onLoadPluginStatus}
-        onTest={onTestPipeline}
-      />
-      <AdminToolbar right={<button className="admin-primary-btn" onClick={onLoadRelayPolicy}><SlidersHorizontal size={18} />网关策略</button>}>
-        <SearchField value={keyword} onChange={setKeyword} placeholder="搜索供应商、模型..." />
-        <SelectFilter value={modality} onChange={setModality} options={["all", "text", "image", "video", "tts", "embedding"]} labels={{ all: "全部类型" }} />
-        <SelectFilter value={status} onChange={setStatus} options={["all", "enabled", "disabled"]} labels={{ all: "全部状态", enabled: "启用", disabled: "停用" }} />
-      </AdminToolbar>
-      {relayPolicy ? <RelayGatewayPreview policy={relayPolicy} /> : null}
-      <div className="admin-provider-card-list">
-        {rows.map((provider) => (
-          <ProviderRow key={provider.id} provider={provider} testStates={providerTests} onSave={onSave} onDelete={onDelete} onTest={onTest} />
-        ))}
-      </div>
-      <TableFooter total={rows.length} />
+      <AdminModuleWorkbench
+        railTitle="模型能力"
+        railDescription="按能力、密钥和路由模式管理生产渠道。"
+        railItems={railItems}
+        activeRail={segment}
+        onRailChange={setSegment}
+        railFooter={<span>{enabledRows.length} 个渠道可参与线上生产。</span>}
+      >
+        <div className="admin-v2-metrics small">
+          <AdminMetric icon={<Layers3 size={20} />} label="渠道总数" value={providers.length} hint={`${enabledRows.length} 个启用`} tone="blue" />
+          <AdminMetric icon={<Image size={20} />} label="视觉渠道" value={providers.filter((provider) => provider.modality === "image" || provider.modality === "video").length} hint="图片与视频生产" tone="green" />
+          <AdminMetric icon={<ShieldCheck size={20} />} label="已配置 Key" value={providers.length - missingKeyRows.length} hint={`${missingKeyRows.length} 个缺 Key`} tone="amber" />
+          <AdminMetric icon={<SlidersHorizontal size={20} />} label="自动路由" value={providers.filter((provider) => provider.routing?.mode !== "manual").length} hint="额度池/默认轮换" tone="violet" />
+        </div>
+        <OpenSourcePipelinePanel
+          adapters={openSourceAdapters}
+          pipelines={visualPipelines}
+          tests={pipelineTests}
+          onRefresh={onLoadPluginStatus}
+          onTest={onTestPipeline}
+        />
+        <AdminToolbar
+          right={
+            <AdminActionBar>
+              <button className="admin-secondary-btn compact" type="button" onClick={onLoadRelayPolicy}><SlidersHorizontal size={18} />网关策略</button>
+              <button className="admin-primary-btn" type="button" onClick={() => setCreateOpen(true)}><Plus size={18} />新增渠道</button>
+            </AdminActionBar>
+          }
+        >
+          <SearchField value={keyword} onChange={setKeyword} placeholder="搜索供应商、模型..." />
+          <SelectFilter value={modality} onChange={setModality} options={["all", "text", "image", "video", "tts", "embedding"]} labels={{ all: "全部类型", text: "文本", image: "生图", video: "视频", tts: "配音", embedding: "向量" }} />
+          <SelectFilter value={status} onChange={setStatus} options={["all", "enabled", "disabled"]} labels={{ all: "全部状态", enabled: "启用", disabled: "停用" }} />
+        </AdminToolbar>
+        <ModelTestPanel text={testResult} image={imageTestResult} video={videoTestResult} />
+        {relayPolicy ? <RelayGatewayPreview policy={relayPolicy} /> : null}
+        <div className="admin-provider-card-list">
+          {rows.map((provider) => (
+            <ProviderRow key={provider.id} provider={provider} testStates={providerTests} onSave={onSave} onDelete={onDelete} onTest={onTest} />
+          ))}
+          {!rows.length ? <EmptyHint text="没有匹配的模型渠道。可以切换左侧能力分类，或新增一个渠道。" /> : null}
+        </div>
+        <TableFooter total={rows.length} />
+      </AdminModuleWorkbench>
+      <AdminModal open={createOpen} title="新增模型渠道" description="密钥只写入服务端，后台列表只展示是否已配置和 Key 预览。" onClose={() => setCreateOpen(false)} wide>
+        <ProviderCreator onCreate={(input) => { void onCreate(input); setCreateOpen(false); }} />
+      </AdminModal>
     </section>
   );
 }
@@ -1644,47 +1926,89 @@ function PricesSection({
   const [keyword, setKeyword] = useState("");
   const [modality, setModality] = useState("all");
   const [status, setStatus] = useState("all");
+  const [segment, setSegment] = useState("all");
+  const [createOpen, setCreateOpen] = useState(false);
   const [expandedProvider, setExpandedProvider] = useState<string | null>(null);
   const rows = prices.filter((price) => {
     const matchedKeyword = `${price.providerName} ${price.model}`.toLowerCase().includes(keyword.toLowerCase());
     const matchedModality = modality === "all" || price.modality === modality;
     const matchedStatus = status === "all" || (status === "enabled" ? price.enabled : !price.enabled);
-    return matchedKeyword && matchedModality && matchedStatus;
+    const matchedSegment =
+      segment === "all" ||
+      (segment === "enabled" && price.enabled) ||
+      (segment === "disabled" && !price.enabled) ||
+      (segment === "high_cost" && price.vendorCostCny >= 0.1) ||
+      (segment === "high_credits" && price.unitCredits >= 50) ||
+      (segment === "orphan" && !providers.some((provider) => provider.id === price.providerId || provider.name === price.providerName)) ||
+      price.modality === segment;
+    return matchedKeyword && matchedModality && matchedStatus && matchedSegment;
   });
   const grouped = groupPricesByProvider(rows);
   const enabledRows = rows.filter((price) => price.enabled);
   const avgCredits = enabledRows.length ? Math.round(enabledRows.reduce((sum, price) => sum + price.unitCredits, 0) / enabledRows.length) : 0;
   const costTotal = rows.reduce((sum, price) => sum + price.vendorCostCny, 0);
   const modalityCount = new Set(rows.map((price) => price.modality)).size;
+  const orphanCount = prices.filter((price) => !providers.some((provider) => provider.id === price.providerId || provider.name === price.providerName)).length;
+  const railItems: AdminRailItem[] = [
+    { id: "all", label: "全部价格", count: prices.length, meta: "计费策略池", tone: "blue" },
+    { id: "text", label: "文本", count: prices.filter((price) => price.modality === "text").length, meta: "剧本/提示词", tone: "blue" },
+    { id: "image", label: "生图", count: prices.filter((price) => price.modality === "image").length, meta: "角色/分镜图", tone: "green" },
+    { id: "video", label: "视频", count: prices.filter((price) => price.modality === "video").length, meta: "秒级计费", tone: "violet" },
+    { id: "tts", label: "配音", count: prices.filter((price) => price.modality === "tts").length, meta: "字符计费", tone: "amber" },
+    { id: "embedding", label: "向量", count: prices.filter((price) => price.modality === "embedding").length, meta: "检索能力" },
+    { id: "enabled", label: "前台生效", count: prices.filter((price) => price.enabled).length, meta: "可参与计费", tone: "green" },
+    { id: "disabled", label: "停用", count: prices.filter((price) => !price.enabled).length, meta: "不会计费", tone: "danger" },
+    { id: "high_cost", label: "高成本", count: prices.filter((price) => price.vendorCostCny >= 0.1).length, meta: "需关注毛利", tone: "danger" },
+    { id: "high_credits", label: "高积分", count: prices.filter((price) => price.unitCredits >= 50).length, meta: "用户感知强", tone: "amber" },
+    { id: "orphan", label: "无渠道关联", count: orphanCount, meta: "需清理/补渠道", tone: "danger" }
+  ];
 
   return (
     <section className="admin-v2-section admin-price-section">
-      <div className="admin-v2-metrics small">
-        <AdminMetric icon={<Layers3 size={20} />} label="价格策略" value={rows.length} hint={`全部记录 ${prices.length} 条`} tone="blue" />
-        <AdminMetric icon={<CheckCircle2 size={20} />} label="启用策略" value={enabledRows.length} hint="前台计费可见" tone="green" />
-        <AdminMetric icon={<WalletCards size={20} />} label="平均积分" value={avgCredits || "-"} hint="启用策略均价" tone="amber" />
-        <AdminMetric icon={<CircleDollarSign size={20} />} label="成本合计" value={`¥${costTotal.toFixed(3)}`} hint={`${modalityCount} 类模型能力`} tone="violet" />
-      </div>
-      <PriceCreator providers={providers} onCreate={onCreate} />
-      <AdminToolbar right={<button className="admin-secondary-btn compact" type="button" onClick={() => setExpandedProvider(null)}>收起全部</button>}>
-        <SearchField value={keyword} onChange={setKeyword} placeholder="搜索供应商或模型..." />
-        <SelectFilter value={modality} onChange={setModality} options={["all", "text", "image", "video", "tts", "embedding"]} labels={{ all: "全部类型" }} />
-        <SelectFilter value={status} onChange={setStatus} options={["all", "enabled", "disabled"]} labels={{ all: "全部状态", enabled: "启用", disabled: "停用" }} />
-      </AdminToolbar>
-      <div className="admin-price-provider-list">
-        {grouped.map((group) => (
-          <PriceProviderCard
-            key={group.provider}
-            group={group}
-            expanded={expandedProvider === group.provider}
-            onToggleExpand={() => setExpandedProvider(expandedProvider === group.provider ? null : group.provider)}
-            onSave={onSave}
-            onDelete={onDelete}
-          />
-        ))}
-      </div>
-      {!grouped.length ? <EmptyHint text="没有匹配的价格策略。可以调整筛选条件，或先在模型路由里新增渠道。" /> : null}
-      <TableFooter total={rows.length} />
+      <AdminModuleWorkbench
+        railTitle="价格分层"
+        railDescription="把模型计费、成本和前台展示放在同一个运营视角里。"
+        railItems={railItems}
+        activeRail={segment}
+        onRailChange={setSegment}
+        railFooter={<span>当前命中 {rows.length} 条，覆盖 {modalityCount || 0} 类能力。</span>}
+      >
+        <div className="admin-v2-metrics small">
+          <AdminMetric icon={<Layers3 size={20} />} label="价格策略" value={rows.length} hint={`全部记录 ${prices.length} 条`} tone="blue" />
+          <AdminMetric icon={<CheckCircle2 size={20} />} label="启用策略" value={enabledRows.length} hint="前台计费可见" tone="green" />
+          <AdminMetric icon={<WalletCards size={20} />} label="平均积分" value={avgCredits || "-"} hint="启用策略均价" tone="amber" />
+          <AdminMetric icon={<CircleDollarSign size={20} />} label="成本合计" value={`¥${costTotal.toFixed(3)}`} hint={`${modalityCount} 类模型能力`} tone="violet" />
+        </div>
+        <AdminToolbar
+          right={
+            <AdminActionBar>
+              <button className="admin-secondary-btn compact" type="button" onClick={() => setExpandedProvider(null)}>收起全部</button>
+              <button className="admin-primary-btn" type="button" onClick={() => setCreateOpen(true)}><Plus size={18} />新增价格</button>
+            </AdminActionBar>
+          }
+        >
+          <SearchField value={keyword} onChange={setKeyword} placeholder="搜索供应商或模型..." />
+          <SelectFilter value={modality} onChange={setModality} options={["all", "text", "image", "video", "tts", "embedding"]} labels={{ all: "全部类型", text: "文本", image: "生图", video: "视频", tts: "配音", embedding: "向量" }} />
+          <SelectFilter value={status} onChange={setStatus} options={["all", "enabled", "disabled"]} labels={{ all: "全部状态", enabled: "启用", disabled: "停用" }} />
+        </AdminToolbar>
+        <div className="admin-price-provider-list">
+          {grouped.map((group) => (
+            <PriceProviderCard
+              key={group.provider}
+              group={group}
+              expanded={expandedProvider === group.provider}
+              onToggleExpand={() => setExpandedProvider(expandedProvider === group.provider ? null : group.provider)}
+              onSave={onSave}
+              onDelete={onDelete}
+            />
+          ))}
+        </div>
+        {!grouped.length ? <EmptyHint text="没有匹配的价格策略。可以调整左侧分层和筛选条件，或先在模型路由里新增渠道。" /> : null}
+        <TableFooter total={rows.length} />
+      </AdminModuleWorkbench>
+      <AdminModal open={createOpen} title="新增价格策略" description="用于补充特殊模型单价；常规渠道新增后会自动生成基础价格。" onClose={() => setCreateOpen(false)} wide>
+        <PriceCreator providers={providers} onCreate={(input) => { void onCreate(input); setCreateOpen(false); }} />
+      </AdminModal>
     </section>
   );
 }
@@ -1767,6 +2091,99 @@ function PolicyItem({ title, body }: { title: string; body: string }) {
   );
 }
 
+type AdminRailItem = {
+  id: string;
+  label: string;
+  count?: ReactNode;
+  meta?: string;
+  tone?: "default" | "blue" | "green" | "amber" | "violet" | "danger";
+};
+
+function AdminModuleWorkbench({
+  railTitle,
+  railDescription,
+  railItems,
+  activeRail,
+  onRailChange,
+  railFooter,
+  children
+}: {
+  railTitle: string;
+  railDescription?: string;
+  railItems: AdminRailItem[];
+  activeRail: string;
+  onRailChange: (id: string) => void;
+  railFooter?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <div className="admin-module-workbench">
+      <aside className="admin-module-rail">
+        <div className="admin-module-rail-head">
+          <strong>{railTitle}</strong>
+          {railDescription ? <span>{railDescription}</span> : null}
+        </div>
+        <div className="admin-module-rail-list">
+          {railItems.map((item) => (
+            <button
+              key={item.id}
+              className={activeRail === item.id ? `active ${item.tone ?? "default"}` : item.tone ?? "default"}
+              type="button"
+              onClick={() => onRailChange(item.id)}
+            >
+              <span>{item.label}</span>
+              {item.count !== undefined ? <b>{item.count}</b> : null}
+              {item.meta ? <small>{item.meta}</small> : null}
+            </button>
+          ))}
+        </div>
+        {railFooter ? <div className="admin-module-rail-footer">{railFooter}</div> : null}
+      </aside>
+      <div className="admin-module-main">{children}</div>
+    </div>
+  );
+}
+
+function AdminModal({
+  open,
+  title,
+  description,
+  onClose,
+  children,
+  wide = false
+}: {
+  open: boolean;
+  title: string;
+  description?: string;
+  onClose: () => void;
+  children: ReactNode;
+  wide?: boolean;
+}) {
+  if (!open) return null;
+  return (
+    <div className="admin-modal-backdrop" role="presentation" onMouseDown={(event) => {
+      if (event.target === event.currentTarget) onClose();
+    }}>
+      <section className={wide ? "admin-modal wide" : "admin-modal"} role="dialog" aria-modal="true" aria-label={title}>
+        <header className="admin-modal-head">
+          <div>
+            <h2>{title}</h2>
+            {description ? <p>{description}</p> : null}
+          </div>
+          <button className="admin-icon-btn" type="button" onClick={onClose} title="关闭">
+            <X size={18} />
+          </button>
+        </header>
+        {children}
+      </section>
+    </div>
+  );
+}
+
+function AdminActionBar({ children }: { children: ReactNode }) {
+  return <div className="admin-action-bar">{children}</div>;
+}
+
 function AdminToolbar({ children, right }: { children: ReactNode; right?: ReactNode }) {
   return (
     <div className="admin-v2-toolbar">
@@ -1846,7 +2263,7 @@ function userIdentityLabel(user: AdminUserRow) {
 function AdminUserCreator({
   onCreate
 }: {
-  onCreate: (input: { name: string; email?: string; phone?: string; password: string; role?: string; status?: string; initialCredits?: number }) => void;
+  onCreate: (input: { name: string; email?: string; phone?: string; password: string; role?: string; status?: string; initialCredits?: number }) => AdminActionResult;
 }) {
   const [draft, setDraft] = useState({
     name: "新用户",
@@ -1857,7 +2274,7 @@ function AdminUserCreator({
     initialCredits: "300"
   });
   return (
-    <div className="admin-create-strip admin-user-create-strip">
+    <div className="admin-modal-form admin-user-create-strip">
       <div>
         <strong>新建用户账号</strong>
         <span>创建后立即可登录，初始积分会写入流水。</span>
@@ -1895,14 +2312,18 @@ function AdminUserCreator({
 
 function UserRow({
   user,
+  selected,
+  onToggleSelected,
   onUserSave,
   onPasswordReset,
   onCreditAdjust
 }: {
   user: AdminUserRow;
-  onUserSave: (userId: string, input: Partial<Pick<AdminUserRow, "name" | "role" | "status">>) => void;
-  onPasswordReset: (userId: string, password: string) => void;
-  onCreditAdjust: (input: { userId: string; amount: number; description: string }) => void;
+  selected: boolean;
+  onToggleSelected: () => void;
+  onUserSave: (userId: string, input: Partial<Pick<AdminUserRow, "name" | "role" | "status">>) => AdminActionResult;
+  onPasswordReset: (userId: string, password: string) => AdminActionResult;
+  onCreditAdjust: (input: { userId: string; amount: number; description: string }) => AdminActionResult;
 }) {
   const [name, setName] = useState(user.name);
   const [role, setRole] = useState(user.role);
@@ -1914,6 +2335,9 @@ function UserRow({
   const identity = userIdentityLabel({ ...user, role });
   return (
     <article className="admin-user-management-row">
+      <label className="admin-row-checkbox">
+        <input type="checkbox" checked={selected} onChange={onToggleSelected} aria-label={`选择用户 ${user.name}`} />
+      </label>
       <div className="admin-user-account-cell">
         <input className="admin-user-name-input" value={name} onChange={(event) => setName(event.target.value)} aria-label="用户名" />
         <span>{user.email ?? "未绑定邮箱"}</span>
@@ -1981,10 +2405,10 @@ function UserRow({
   );
 }
 
-function RedeemBatchCreator({ onCreate }: { onCreate: (input: { name: string; prefix: string; credits: number; count: number; enabled?: boolean }) => void }) {
+function RedeemBatchCreator({ onCreate }: { onCreate: (input: { name: string; prefix: string; credits: number; count: number; enabled?: boolean }) => AdminActionResult }) {
   const [draft, setDraft] = useState({ name: "新用户体验码", prefix: "TRIAL", credits: "300", count: "20", enabled: true });
   return (
-    <div className="admin-batch-strip">
+    <div className="admin-modal-form admin-redeem-create-form">
       <div>
         <strong>批量生成唯一兑换码</strong>
         <span>每份不同 code，默认单个 code 可兑换 1 次。</span>
@@ -2133,10 +2557,10 @@ function RedeemCodeRow({
   );
 }
 
-function PlanCreator({ onCreate }: { onCreate: (input: Pick<Plan, "name" | "price" | "credits" | "bonusCredits" | "badge" | "features" | "shopUrl" | "enabled">) => void }) {
+function PlanCreator({ onCreate }: { onCreate: (input: Pick<Plan, "name" | "price" | "credits" | "bonusCredits" | "badge" | "features" | "shopUrl" | "enabled">) => AdminActionResult }) {
   const [draft, setDraft] = useState({ name: "内测体验包", price: "9.9", credits: "600", bonusCredits: "100", badge: "低价体验", features: "适合小红书引流试用；可生成一轮剧本和分镜图", shopUrl: "https://pay.ldxp.cn/shop/ZHP28OV1" });
   return (
-    <div className="admin-create-strip admin-plan-create-strip">
+    <div className="admin-modal-form admin-plan-create-strip">
       <div><strong>新增充值套餐</strong><span>前台按价格自动排序，只展示启用套餐。</span></div>
       <label className="admin-create-field"><span>套餐名</span><input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder="例如：内测体验包" /></label>
       <label className="admin-create-field"><span>售价</span><input type="number" value={draft.price} onChange={(event) => setDraft({ ...draft, price: event.target.value })} placeholder="例如：9.9" /></label>
@@ -2201,10 +2625,10 @@ function PlanRow({
   );
 }
 
-function MembershipCreator({ onCreate }: { onCreate: (input: Pick<MembershipPlan, "name" | "monthlyPrice" | "monthlyCredits" | "discountPercent" | "priorityLevel" | "badge" | "features" | "shopUrl" | "enabled">) => void }) {
+function MembershipCreator({ onCreate }: { onCreate: (input: Pick<MembershipPlan, "name" | "monthlyPrice" | "monthlyCredits" | "discountPercent" | "priorityLevel" | "badge" | "features" | "shopUrl" | "enabled">) => AdminActionResult }) {
   const [draft, setDraft] = useState({ name: "创作者月卡", monthlyPrice: "29", monthlyCredits: "3000", discountPercent: "10", priorityLevel: "1", badge: "推荐", features: "每月固定额度；模型调用折扣；优先队列", shopUrl: "https://pay.ldxp.cn/shop/ZHP28OV1" });
   return (
-    <div className="admin-create-strip admin-membership-create-strip">
+    <div className="admin-modal-form admin-membership-create-strip">
       <div><strong>新增订阅会员</strong><span>用于月额度、折扣和队列优先级管理。</span></div>
       <label className="admin-create-field"><span>会员名</span><input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder="例如：创作者月卡" /></label>
       <label className="admin-create-field"><span>月费</span><input type="number" value={draft.monthlyPrice} onChange={(event) => setDraft({ ...draft, monthlyPrice: event.target.value })} placeholder="例如：29" /></label>
@@ -2490,7 +2914,7 @@ function ProviderRow({
 function ProviderCreator({
   onCreate
 }: {
-  onCreate: (input: Pick<ModelProvider, "name" | "modality" | "enabled" | "baseUrl" | "models" | "costHint"> & { id?: string; iconUrl?: string; apiKey?: string; routing?: { mode?: "auto" | "manual"; preferredModel?: string; modelPool?: string[] }; unitCredits?: number; vendorCostCny?: number }) => void;
+  onCreate: (input: Pick<ModelProvider, "name" | "modality" | "enabled" | "baseUrl" | "models" | "costHint"> & { id?: string; iconUrl?: string; apiKey?: string; routing?: { mode?: "auto" | "manual"; preferredModel?: string; modelPool?: string[] }; unitCredits?: number; vendorCostCny?: number }) => AdminActionResult;
 }) {
   const [draft, setDraft] = useState({
     id: "",
@@ -2505,7 +2929,7 @@ function ProviderCreator({
     costHint: "后台手动接入渠道，支持测试连接和价格联动。"
   });
   return (
-    <div className="admin-create-strip admin-provider-create-strip">
+    <div className="admin-modal-form admin-provider-create-strip">
       <div>
         <strong>手动接入模型渠道</strong>
         <span>保存后自动生成模型价格策略；密钥仅服务端保存，不在列表明文展示。</span>
@@ -2575,7 +2999,7 @@ function PriceCreator({
     }));
   }, [selectedProvider]);
   return (
-    <div className="admin-create-strip admin-price-create-strip">
+    <div className="admin-modal-form admin-price-create-strip">
       <div><strong>新增价格策略</strong><span>模型渠道新增后会自动补齐，也可以在这里手动添加特殊模型价。</span></div>
       <select value={draft.providerId} onChange={(event) => setDraft({ ...draft, providerId: event.target.value, model: providers.find((item) => item.id === event.target.value)?.models[0] ?? "" })}>
         <option value="">自定义渠道</option>
