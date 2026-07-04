@@ -1652,11 +1652,21 @@ function PricesSection({
     return matchedKeyword && matchedModality && matchedStatus;
   });
   const grouped = groupPricesByProvider(rows);
+  const enabledRows = rows.filter((price) => price.enabled);
+  const avgCredits = enabledRows.length ? Math.round(enabledRows.reduce((sum, price) => sum + price.unitCredits, 0) / enabledRows.length) : 0;
+  const costTotal = rows.reduce((sum, price) => sum + price.vendorCostCny, 0);
+  const modalityCount = new Set(rows.map((price) => price.modality)).size;
 
   return (
-    <section className="admin-v2-section">
+    <section className="admin-v2-section admin-price-section">
+      <div className="admin-v2-metrics small">
+        <AdminMetric icon={<Layers3 size={20} />} label="价格策略" value={rows.length} hint={`全部记录 ${prices.length} 条`} tone="blue" />
+        <AdminMetric icon={<CheckCircle2 size={20} />} label="启用策略" value={enabledRows.length} hint="前台计费可见" tone="green" />
+        <AdminMetric icon={<WalletCards size={20} />} label="平均积分" value={avgCredits || "-"} hint="启用策略均价" tone="amber" />
+        <AdminMetric icon={<CircleDollarSign size={20} />} label="成本合计" value={`¥${costTotal.toFixed(3)}`} hint={`${modalityCount} 类模型能力`} tone="violet" />
+      </div>
       <PriceCreator providers={providers} onCreate={onCreate} />
-      <AdminToolbar>
+      <AdminToolbar right={<button className="admin-secondary-btn compact" type="button" onClick={() => setExpandedProvider(null)}>收起全部</button>}>
         <SearchField value={keyword} onChange={setKeyword} placeholder="搜索供应商或模型..." />
         <SelectFilter value={modality} onChange={setModality} options={["all", "text", "image", "video", "tts", "embedding"]} labels={{ all: "全部类型" }} />
         <SelectFilter value={status} onChange={setStatus} options={["all", "enabled", "disabled"]} labels={{ all: "全部状态", enabled: "启用", disabled: "停用" }} />
@@ -1673,6 +1683,7 @@ function PricesSection({
           />
         ))}
       </div>
+      {!grouped.length ? <EmptyHint text="没有匹配的价格策略。可以调整筛选条件，或先在模型路由里新增渠道。" /> : null}
       <TableFooter total={rows.length} />
     </section>
   );
@@ -2607,15 +2618,20 @@ function PriceProviderCard({
   const modalities = [...new Set(group.prices.map((price) => price.modality))];
   const avgCredits = group.total ? Math.round(group.prices.reduce((sum, price) => sum + price.unitCredits, 0) / group.total) : 0;
   const totalCost = group.prices.reduce((sum, price) => sum + price.vendorCostCny, 0);
+  const firstPrice = group.prices[0];
   return (
     <article className="admin-price-provider-card">
       <div className="admin-price-provider-head">
         <button className="admin-icon-btn" onClick={onToggleExpand} title={expanded ? "收起价格" : "展开价格"}>
           {expanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
         </button>
+        <span className={`admin-provider-icon ${firstPrice?.modality ?? "text"}`}>{group.provider.slice(0, 1).toUpperCase()}</span>
         <div className="admin-provider-title">
           <strong>{group.provider}</strong>
-          <span>{modalities.map(modalityLabel).join(" / ")}</span>
+          <span>{modalities.map(modalityLabel).join(" / ")} · {group.enabled}/{group.total} 启用</span>
+        </div>
+        <div className="admin-price-modality-tags">
+          {modalities.map((item) => <span className={`admin-chip modality-${item}`} key={item}>{modalityLabel(item)}</span>)}
         </div>
         <div className="admin-user-metrics compact">
           <MetricPill label="模型" value={group.total} strong />
@@ -2653,9 +2669,10 @@ function PriceRow({
     <div className="admin-price-row">
       <div>
         <strong>{price.model}</strong>
-        <span>{unitLabel(price.unit)}</span>
+        <span>{price.providerName}</span>
       </div>
-      <span className="admin-chip">{modalityLabel(price.modality)}</span>
+      <span className={`admin-chip modality-${price.modality}`}>{modalityLabel(price.modality)}</span>
+      <span className="admin-unit-chip">{unitLabel(price.unit)}</span>
       <label>
         <span>积分单价</span>
         <input className="mini-number" type="number" value={draft.unitCredits} onChange={(event) => setDraft({ ...draft, unitCredits: event.target.value })} />

@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import sharp from "sharp";
 import type { AdminUserRow, AssetItem, BatchGenerationResult, CreateProjectInput, GenerationTask, ProjectWorkflow, StoryboardExportRow, StoryboardShot, WorkbenchSummary } from "@aifilm/shared";
 import { textModelName, textProviderName } from "../agents/generator.js";
+import { buildSeedanceVideoPrompt, buildStoryboardFirstFramePrompt, createStoryboardProductionPackage } from "../agents/storyboardProduction.js";
 import { estimateCreation } from "../agents/workflow.js";
 import { estimateImageCredits, normalizeImageOutputQuality, normalizeImageOutputSize } from "@aifilm/shared";
 import { hashPassword } from "../auth/password.js";
@@ -1124,7 +1125,7 @@ export async function runProjectImageTasks(
     const generated = await Promise.all(
       shotsToGenerate.map((shot, index) =>
         generateImage({
-          prompt: buildReferencedShotPrompt(shot.imagePrompt, shot.referenceAssetIds, assetById),
+          prompt: buildStoryboardFirstFramePrompt({ workflow, shot, assetById }),
           negativePrompt: "字幕, 水印, Logo, 低清晰度, 畸形手, 多余手指, 换脸, 同款分身, 过暗, 欠曝, 模糊, 脏污画面",
           referenceImageUrls: shot.referenceAssetIds.map((assetId) => assetById.get(assetId)?.referenceUrl).filter(Boolean) as string[],
           ratio: workflow.project.videoRatio,
@@ -1334,8 +1335,8 @@ export async function runProjectVideoTasks(projectId: string, userId = DEMO_USER
             model: videoModel,
             message: "上游视频任务仍在生成中，稍后可继续刷新查询。"
           }
-        : await generateVideo({
-            prompt: shot.videoPrompt,
+      : await generateVideo({
+            prompt: buildSeedanceVideoPrompt({ workflow, shot, firstFrameAsset: imageAsset, assetById: new Map(workflow.assets.map((asset) => [asset.id, asset])) }),
             imageUrl: imageAsset?.referenceUrl,
             ratio: workflow.project.videoRatio,
             duration: shot.duration,
@@ -1518,6 +1519,12 @@ export async function getDirectorStoryboardRows(projectId: string, userId = DEMO
   const workflow = await getProjectWorkflow(projectId, userId);
   if (!workflow) throw new Error("项目不存在");
   return workflow.storyboards.map((shot, index) => buildDirectorStoryboardRow(workflow, shot, index));
+}
+
+export async function getStoryboardProductionPackage(projectId: string, userId = DEMO_USER_ID) {
+  const workflow = await getProjectWorkflow(projectId, userId);
+  if (!workflow) throw new Error("项目不存在");
+  return createStoryboardProductionPackage(workflow);
 }
 
 export async function exportDirectorStoryboardPackage(projectId: string, userId = DEMO_USER_ID) {

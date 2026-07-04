@@ -1,6 +1,7 @@
 import type { BatchGenerationResult, CreateProjectInput, StoryboardShot } from "@aifilm/shared";
 import { estimateImageCredits, normalizeImageOutputQuality, normalizeImageOutputSize } from "@aifilm/shared";
 import { generateProjectStoryboards, textModelName, textProviderName } from "../agents/generator.js";
+import { buildCharacterIdentityBoardPrompt, buildStoryboardFirstFramePrompt } from "../agents/storyboardProduction.js";
 import { generateImage } from "../providers/dashscopeImage.js";
 import type { ImageGenerationResult } from "../providers/types.js";
 import { persistImageReference } from "../storage/objectStorage.js";
@@ -238,7 +239,7 @@ export async function regenerateStoryboardShotImage(projectId: string, shotId: s
   if (account.balance - account.frozenBalance < credits) throw new Error("Insufficient credits");
 
   const imageResult = await generateImage({
-    prompt: buildReferencedShotPrompt(shot.imagePrompt, shot.referenceAssetIds, assetById),
+    prompt: buildStoryboardFirstFramePrompt({ workflow, shot, assetById }),
     negativePrompt: "subtitle, watermark, logo, low quality, deformed hands, extra fingers, face drift, duplicate person",
     referenceImageUrls: shot.referenceAssetIds.map((assetId) => assetById.get(assetId)?.referenceUrl).filter(Boolean) as string[],
     ratio: workflow.project.videoRatio,
@@ -399,7 +400,7 @@ export async function generateCharacterReferenceImages(projectId: string, userId
       return tx.asset.upsert({
         where: { id: `${asset.id}_turnaround` },
         update: {
-          description: `${asset.description} 的${viewLabel}，一张图包含正面、侧面、背面三栏，后续分镜图会引用该总图保持角色稳定。`,
+          description: `${asset.description} 的${viewLabel}，一张图包含正面全身、3/4侧面、背面和大头照，后续分镜图会引用该身份板保持角色稳定。`,
           prompt: buildCharacterReferencePrompt(asset.prompt, mode, asset.referenceUrl, asset.name),
           referenceUrl,
           status: "succeeded"
@@ -409,7 +410,7 @@ export async function generateCharacterReferenceImages(projectId: string, userId
           projectId,
           type: "role_derivative",
           name: `${asset.name} ${viewLabel}`,
-          description: `${asset.description} 的${viewLabel}，一张图包含正面、侧面、背面三栏，后续分镜图会引用该总图保持角色稳定。`,
+          description: `${asset.description} 的${viewLabel}，一张图包含正面全身、3/4侧面、背面和大头照，后续分镜图会引用该身份板保持角色稳定。`,
           prompt: buildCharacterReferencePrompt(asset.prompt, mode, asset.referenceUrl, asset.name),
           referenceUrl,
           status: "succeeded",
@@ -432,7 +433,7 @@ export async function generateCharacterReferenceImages(projectId: string, userId
       await tx.asset.update({
         where: { id: asset.id },
         data: {
-          prompt: [stripGeneratedTurnaroundNote(asset.prompt), "角色三视图总图已生成；上传锚定图继续保留为身份源图，分镜图会同时引用锚定图与三视图总图。"].join("\n"),
+          prompt: [stripGeneratedTurnaroundNote(asset.prompt), "角色身份板已生成；上传锚定图继续保留为身份源图，分镜图会同时引用锚定图与身份板。"].join("\n"),
           status: "succeeded"
         }
       });
@@ -636,35 +637,42 @@ function isMockImageProvider(provider: string) {
 }
 
 function buildCharacterReferencePrompt(basePrompt: string, mode: CharacterReferenceJob["mode"], referenceUrl?: string, characterName?: string) {
-  const base = [
-    characterName ? `This sheet is only for character "${characterName}". Do not generate or borrow any other named character.` : "",
-    referenceUrl ? "Use the provided image as an identity reference, not a style reference. First extract the visual signature: face shape, eye spacing, nose, mouth, hairstyle, hair color, outfit silhouette, outfit colors and body proportions; then preserve that exact same identity across all panels." : "",
+  return buildCharacterIdentityBoardPrompt({
+    character: {
+      id: characterName || "character_identity",
+      projectId: "",
+      name: characterName || "角色",
+      identity: "项目角色",
+      appearance: basePrompt,
+      costume: basePrompt,
+      personality: "保持角色气质稳定",
+      prompt: basePrompt,
+      negativePrompt: "text, labels, watermark, logo, face drift, different identity, different outfit",
+      consistencyLevel: "high"
+    },
+    projectArtStyle: "保持项目既定画风",
     basePrompt,
-    "single production character turnaround sheet in one image, horizontal 16:9 layout, exactly three full-body panels arranged left to right: front view, left side profile view, back view",
-    "the three panels are the same character, same face identity, same facial proportions, same hairstyle, same outfit color palette, same body proportions, neutral standing pose, clean warm-white background",
-    "keep the project art direction from the prompt; do not inherit low-resolution artifacts, crop, lighting or background from the uploaded photo unless they define identity",
-    "do not create three different characters, do not redesign the costume, do not change age, gender or ethnicity, do not switch to an elder or another role, do not change art style because of the uploaded reference, keep panel spacing clear, production-ready reference sheet",
-    "no text, no labels, no watermark"
-  ].filter(Boolean);
-  return base.join(", ");
+    referenceUrl,
+    assetName: characterName
+  });
 }
 
 function stripGeneratedTurnaroundNote(prompt: string) {
   return prompt
     .split("\n")
-    .filter((line) => !line.includes("角色三视图总图已生成"))
+    .filter((line) => !line.includes("角色三视图总图已生成") && !line.includes("角色身份板已生成"))
     .join("\n")
     .trim();
 }
 
 function characterViewModeFromAsset(id: string, name: string): CharacterReferenceJob["mode"] | undefined {
   const text = `${id} ${name}`.toLowerCase();
-  if (text.includes("turnaround") || text.includes("多视图") || text.includes("三视图") || text.includes("总图")) return "turnaround";
+  if (text.includes("turnaround") || text.includes("identity") || text.includes("多视图") || text.includes("三视图") || text.includes("身份板") || text.includes("总图")) return "turnaround";
   return undefined;
 }
 
 function characterViewLabel(mode: CharacterReferenceJob["mode"]) {
-  return "三视图总图";
+  return "角色身份板";
 }
 
 function hasExistingTurnaroundSheet(

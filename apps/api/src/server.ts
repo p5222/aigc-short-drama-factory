@@ -37,6 +37,7 @@ import {
   exportStoryboardRows,
   getExportJobForDownload,
   getDirectorStoryboardRows,
+  getStoryboardProductionPackage,
   getAdminSummary,
   getCreditAccount,
   getProjectWorkflow,
@@ -948,6 +949,13 @@ app.get(
   "/api/projects/:id/director-storyboard",
   asyncRoute(async (req, res) => {
     res.json(await getDirectorStoryboardRows(paramId(req.params.id), requestUserId(req)));
+  })
+);
+
+app.get(
+  "/api/projects/:id/storyboard-production-package",
+  asyncRoute(async (req, res) => {
+    res.json(await getStoryboardProductionPackage(paramId(req.params.id), requestUserId(req)));
   })
 );
 

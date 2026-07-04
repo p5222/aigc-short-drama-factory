@@ -1,6 +1,6 @@
 import { BookOpenCheck, Download, Film, Images, Loader2, Play, RefreshCw, Save, Sparkles, Trash2, Upload, UserRound, WandSparkles } from "lucide-react";
 import { useEffect, useState } from "react";
-import type { AssetItem, CharacterProfile, CreateProjectInput, DirectorStoryboardRow, EvaluationStage, ExportJob, ImageOutputQuality, ImageOutputSize, ModelPrice, ModelProvider, ProjectWorkflow, QualityReport, ScriptDraft, StoryboardShot, TaskStatus } from "@aifilm/shared";
+import type { AssetItem, CharacterProfile, CreateProjectInput, DirectorStoryboardRow, EvaluationStage, ExportJob, ImageOutputQuality, ImageOutputSize, ModelPrice, ModelProvider, ProjectWorkflow, QualityReport, ScriptDraft, StoryboardProductionPackage, StoryboardShot, TaskStatus } from "@aifilm/shared";
 import { imageOutputQualityOptions, imageOutputSizeOptions, imageParameterMultiplier, normalizeImageOutputQuality, normalizeImageOutputSize } from "@aifilm/shared";
 import { MetricCard } from "../components/MetricCard";
 import { api } from "../lib/api";
@@ -81,6 +81,8 @@ export function ProjectWorkbenchPage({ workflow, providers, modelPrices, onBack,
   const [qualityBusy, setQualityBusy] = useState(false);
   const [pendingRun, setPendingRun] = useState<NextAction["id"] | null>(null);
   const [exportJobs, setExportJobs] = useState<ExportJob[]>([]);
+  const [productionPackage, setProductionPackage] = useState<StoryboardProductionPackage | null>(null);
+  const [productionPackageError, setProductionPackageError] = useState("");
 
   useEffect(() => {
     if (!workflow?.project.id) return;
@@ -101,6 +103,24 @@ export function ProjectWorkbenchPage({ workflow, providers, modelPrices, onBack,
       active = false;
     };
   }, [workflow?.project.id]);
+
+  useEffect(() => {
+    if (!workflow?.project.id) return;
+    let active = true;
+    setProductionPackageError("");
+    api.storyboardProductionPackage(workflow.project.id)
+      .then((pkg) => {
+        if (active) setProductionPackage(pkg);
+      })
+      .catch((err) => {
+        if (!active) return;
+        setProductionPackage(null);
+        setProductionPackageError(err instanceof Error ? err.message : "故事板生产方案加载失败");
+      });
+    return () => {
+      active = false;
+    };
+  }, [workflow?.project.id, workflow?.characters.length, workflow?.assets.length, workflow?.storyboards.length, workflow?.qualityReports?.length]);
 
   useEffect(() => {
     if (!operation) return;
@@ -380,6 +400,8 @@ export function ProjectWorkbenchPage({ workflow, providers, modelPrices, onBack,
         {operation ? <WorkbenchOperationProgress operation={operation} elapsed={operationElapsed} /> : null}
       </section>
 
+      <StoryboardProductionPanel pkg={productionPackage} error={productionPackageError} />
+
       <div className="tabs workbench-tabs" data-tour-id="project-flow-tabs">
         <button className={activeTab === "script" ? "active" : ""} onClick={() => setActiveTab("script")}><BookOpenCheck size={18} />剧本确认</button>
         <button className={activeTab === "characters" ? "active" : ""} onClick={() => setActiveTab("characters")}><UserRound size={18} />角色定稿</button>
@@ -486,6 +508,108 @@ function FlowCheck({ done, title, text }: { done: boolean; title: string; text: 
       <strong>{title}</strong>
       <p>{text}</p>
     </div>
+  );
+}
+
+function StoryboardProductionPanel({ pkg, error }: { pkg: StoryboardProductionPackage | null; error?: string }) {
+  if (error) {
+    return (
+      <section className="panel storyboard-production-panel">
+        <div className="panel-head">
+          <div><h2>故事板生产方案</h2><small>{error}</small></div>
+        </div>
+      </section>
+    );
+  }
+  if (!pkg) {
+    return (
+      <section className="panel storyboard-production-panel">
+        <div className="panel-head">
+          <div><h2>故事板生产方案</h2><small>正在整理角色身份板、场景卡、首帧和视频提示词状态。</small></div>
+          <Loader2 size={18} className="spin" />
+        </div>
+      </section>
+    );
+  }
+  const snapshot = pkg.projectSnapshot;
+  const readiness = [
+    { label: "角色身份板", value: `${snapshot.roleIdentityBoards}/${snapshot.characters || 0}`, ready: snapshot.characters === 0 || snapshot.roleIdentityBoards >= snapshot.characters },
+    { label: "场景卡", value: `${snapshot.sceneCards}`, ready: snapshot.sceneCards > 0 },
+    { label: "首帧", value: `${snapshot.storyboardImages}/${snapshot.shots || 0}`, ready: snapshot.shots > 0 && snapshot.storyboardImages >= snapshot.shots },
+    { label: "视频", value: `${snapshot.videoClips}/${snapshot.shots || 0}`, ready: snapshot.videoClips > 0 }
+  ];
+  return (
+    <section className="panel storyboard-production-panel">
+      <div className="panel-head">
+        <div>
+          <h2>故事板生产方案</h2>
+          <small>{pkg.meaning}</small>
+        </div>
+        <div className="console-meta"><span>{pkg.version.toUpperCase()}</span><span>{snapshot.shots} 镜头</span><span>{snapshot.sceneCards} 场景</span></div>
+      </div>
+      <div className="storyboard-production-grid">
+        <div className="storyboard-production-card">
+          <strong>V1 基础闭环</strong>
+          <p>角色身份板到故事板首帧，再到 Seedance 图生视频。</p>
+          <div className="production-check-list">
+            {pkg.v1.selfCheck.map((item) => <span key={item}>{item}</span>)}
+          </div>
+        </div>
+        <div className="storyboard-production-card">
+          <strong>V2 中长剧稳定性</strong>
+          <p>用场景卡、镜头版本和质量门槛降低批量生成失控。</p>
+          <div className="production-readiness">
+            {readiness.map((item) => <div className={item.ready ? "ready" : ""} key={item.label}><span>{item.label}</span><strong>{item.value}</strong></div>)}
+          </div>
+        </div>
+        <div className="storyboard-production-card">
+          <strong>V3 成熟迭代</strong>
+          <p>提示词版本、自动修复和用户反馈数据沉淀。</p>
+          <div className="production-check-list">
+            {pkg.v3.selfCheck.map((item) => <span key={item}>{item}</span>)}
+          </div>
+        </div>
+      </div>
+      <div className="storyboard-production-detail">
+        <div>
+          <h3>场景卡</h3>
+          <div className="scene-card-list">
+            {pkg.v2.sceneCards.slice(0, 4).map((scene) => (
+              <article key={scene.id}>
+                <strong>{scene.name}</strong>
+                <span>{scene.shots} 镜头</span>
+                <p>{scene.description}</p>
+                <small>{scene.lockedAnchors.join(" / ")}</small>
+              </article>
+            ))}
+            {!pkg.v2.sceneCards.length ? <p className="muted-text">生成分镜后会自动整理场景卡候选。</p> : null}
+          </div>
+        </div>
+        <div>
+          <h3>质量门槛</h3>
+          <div className="quality-gate-list">
+            {pkg.v2.qualityGates.map((gate) => (
+              <article key={gate.stage}>
+                <div><strong>{gate.stage}</strong><span>{gate.threshold} 分</span></div>
+                <p>{gate.blockReason}</p>
+              </article>
+            ))}
+          </div>
+        </div>
+        <div>
+          <h3>自动修复</h3>
+          <div className="repair-rule-list">
+            {pkg.v3.autoRepair.map((rule) => (
+              <article key={rule.trigger}>
+                <strong>{rule.trigger}</strong>
+                <p>{rule.action}</p>
+                <small>{rule.fallback}</small>
+              </article>
+            ))}
+          </div>
+        </div>
+      </div>
+    </section>
   );
 }
 

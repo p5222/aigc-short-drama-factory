@@ -1,5 +1,6 @@
 ﻿import { useCallback, useEffect, useMemo, useState } from "react";
-import { Bell, ChartNoAxesCombined, ChevronDown, CircleDollarSign, FilePenLine, Gift, LayoutDashboard, Layers3, Moon, ReceiptText, SlidersHorizontal, UserRound } from "lucide-react";
+import { Bell, ChartNoAxesCombined, ChevronDown, CircleDollarSign, FilePenLine, Gift, LayoutDashboard, Layers3, MessageSquareText, Moon, ReceiptText, SlidersHorizontal, UserRound } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import type {
   AdminUserRow,
   AdminSummary,
@@ -34,7 +35,35 @@ import { WorkbenchPage } from "./pages/WorkbenchPage";
 export function App() {
   const isAdminRoute = window.location.pathname.startsWith("/admin");
   const adminRoles = useMemo(() => new Set(["admin", "operator", "finance", "support"]), []);
+  const adminNavGroups = useMemo<Array<{ label: string; items: Array<{ name: string; icon: LucideIcon }> }>>(() => [
+    {
+      label: "核心运营",
+      items: [
+        { name: "运营总览", icon: LayoutDashboard },
+        { name: "用户管理", icon: UserRound },
+        { name: "用户反馈", icon: MessageSquareText },
+        { name: "评测闭环", icon: ChartNoAxesCombined }
+      ]
+    },
+    {
+      label: "商业化",
+      items: [
+        { name: "兑换码", icon: Gift },
+        { name: "套餐会员", icon: CircleDollarSign },
+        { name: "订阅会员", icon: ReceiptText }
+      ]
+    },
+    {
+      label: "模型与生产",
+      items: [
+        { name: "模型路由", icon: SlidersHorizontal },
+        { name: "价格策略", icon: Layers3 },
+        { name: "提示词评分", icon: FilePenLine }
+      ]
+    }
+  ], []);
   const [activePage, setActivePage] = useState<PageKey>("workbench");
+  const [adminHash, setAdminHash] = useState(() => decodeURIComponent(window.location.hash.replace(/^#/, "")) || "运营总览");
   const [tourOpen, setTourOpen] = useState(false);
   const [tourIndex, setTourIndex] = useState(0);
   const [user, setUser] = useState<AuthUser | null>(null);
@@ -62,6 +91,14 @@ export function App() {
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
   }, [theme]);
+
+  useEffect(() => {
+    if (!isAdminRoute) return;
+    const syncAdminHash = () => setAdminHash(decodeURIComponent(window.location.hash.replace(/^#/, "")) || "运营总览");
+    window.addEventListener("hashchange", syncAdminHash);
+    syncAdminHash();
+    return () => window.removeEventListener("hashchange", syncAdminHash);
+  }, [isAdminRoute]);
 
   useEffect(() => {
     const token = localStorage.getItem("aifilm_auth_token");
@@ -322,21 +359,16 @@ export function App() {
             </div>
           </div>
           <nav className="admin-module-nav" aria-label="后台模块">
-            {[
-              ["运营总览", LayoutDashboard],
-              ["用户管理", UserRound],
-              ["评测闭环", ChartNoAxesCombined],
-              ["兑换码", Gift],
-              ["套餐会员", CircleDollarSign],
-              ["订阅会员", ReceiptText],
-              ["模型路由", SlidersHorizontal],
-              ["提示词评分", FilePenLine],
-              ["价格策略", Layers3]
-            ].map(([item, Icon]) => (
-              <a key={String(item)} href={`#${item}`}>
-                <Icon size={20} />
-                <span>{String(item)}</span>
-              </a>
+            {adminNavGroups.map((group) => (
+              <div className="admin-nav-group" key={group.label}>
+                <small>{group.label}</small>
+                {group.items.map(({ name, icon: Icon }) => (
+                  <a className={adminHash === name ? "active" : undefined} key={name} href={`#${name}`}>
+                    <Icon size={20} />
+                    <span>{name}</span>
+                  </a>
+                ))}
+              </div>
             ))}
           </nav>
           <div className="admin-sidebar-bottom">

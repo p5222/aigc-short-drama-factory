@@ -37,6 +37,7 @@
   RelayGatewayPolicy,
   RedeemCode,
   StoryboardExportRow,
+  StoryboardProductionPackage,
   StoryboardShot,
   UserFeedback,
   VideoModelTestResult,
@@ -463,6 +464,7 @@ export const api = {
     }),
   exportStoryboard: (projectId: string) => request<StoryboardExportRow[]>(`/projects/${projectId}/export/storyboard`),
   directorStoryboard: (projectId: string) => request<DirectorStoryboardRow[]>(`/projects/${projectId}/director-storyboard`),
+  storyboardProductionPackage: (projectId: string) => request<StoryboardProductionPackage>(`/projects/${projectId}/storyboard-production-package`),
   exportDirectorStoryboard: (projectId: string) =>
     request<DirectorStoryboardPackage>(`/projects/${projectId}/director-storyboard/export`, { method: "POST" }),
   exportJobs: (projectId: string) => request<ExportJob[]>(`/projects/${projectId}/export/jobs`),

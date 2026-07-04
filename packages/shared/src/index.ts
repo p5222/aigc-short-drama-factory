@@ -809,6 +809,62 @@ export interface DirectorStoryboardPackage {
   };
 }
 
+export interface StoryboardSceneCard {
+  id: string;
+  name: string;
+  description: string;
+  prompt: string;
+  referenceUrl?: string;
+  shots: number;
+  lockedAnchors: string[];
+}
+
+export interface StoryboardQualityGate {
+  stage: string;
+  threshold: number;
+  checks: string[];
+  blockReason: string;
+}
+
+export interface StoryboardAutoRepairRule {
+  trigger: string;
+  action: string;
+  fallback: string;
+}
+
+export interface StoryboardProductionPackage {
+  version: "v1" | "v2" | "v3";
+  meaning: string;
+  goals: string[];
+  workflow: string[];
+  v1: {
+    characterIdentity: string[];
+    storyboardPromptRules: string[];
+    seedancePromptRules: string[];
+    selfCheck: string[];
+  };
+  v2: {
+    sceneCards: StoryboardSceneCard[];
+    shotVersionPolicy: string[];
+    qualityGates: StoryboardQualityGate[];
+    selfCheck: string[];
+  };
+  v3: {
+    promptVersioning: string[];
+    autoRepair: StoryboardAutoRepairRule[];
+    dataFlywheel: string[];
+    selfCheck: string[];
+  };
+  projectSnapshot: {
+    characters: number;
+    roleIdentityBoards: number;
+    sceneCards: number;
+    shots: number;
+    storyboardImages: number;
+    videoClips: number;
+  };
+}
+
 export interface WritingAgentInput {
   title: string;
   premise: string;

@@ -8,6 +8,12 @@ export function RechargePage({ plans, membershipPlans, modelPrices, onRefresh }:
   const [redeemCode, setRedeemCode] = useState("");
   const [error, setError] = useState("");
   const defaultShopUrl = "https://pay.ldxp.cn/shop/ZHP28OV1";
+  const enabledModelPrices = modelPrices.filter((price) => price.enabled);
+  const modelPriceStats = {
+    providers: new Set(enabledModelPrices.map((price) => price.providerName)).size,
+    models: enabledModelPrices.length,
+    avgCredits: enabledModelPrices.length ? Math.round(enabledModelPrices.reduce((sum, price) => sum + price.unitCredits, 0) / enabledModelPrices.length) : 0
+  };
 
   async function redeem() {
     setMessage("");
@@ -99,22 +105,27 @@ export function RechargePage({ plans, membershipPlans, modelPrices, onRefresh }:
           ))}
         </div>
       </section>
-      <section className="panel">
+      <section className="panel model-price-panel">
         <div className="panel-head">
           <div><h2>模型价格表</h2><small>后台价格策略实时同步到前台，方便估算一次剧本、分镜图或视频生成的积分成本。</small></div>
+          <div className="model-price-summary">
+            <span><b>{modelPriceStats.providers}</b> 渠道</span>
+            <span><b>{modelPriceStats.models}</b> 模型</span>
+            <span><b>{modelPriceStats.avgCredits || "-"}</b> 平均积分</span>
+          </div>
         </div>
         <div className="model-price-table">
           <div className="model-price-row header"><span>渠道</span><span>模型</span><span>类型</span><span>计费单位</span><span>积分</span></div>
-          {modelPrices.filter((price) => price.enabled).slice(0, 16).map((price) => (
+          {enabledModelPrices.slice(0, 16).map((price) => (
             <div className="model-price-row" key={price.id}>
               <strong>{price.providerName}</strong>
               <span>{price.model}</span>
-              <span>{priceModalityText(price.modality)}</span>
-              <span>{priceUnitText(price.unit)}</span>
+              <span className={`model-price-chip modality-${price.modality}`}>{priceModalityText(price.modality)}</span>
+              <span className="model-price-unit">{priceUnitText(price.unit)}</span>
               <b>{price.unitCredits}</b>
             </div>
           ))}
-          {!modelPrices.filter((price) => price.enabled).length ? <div className="empty-state">后台还没有启用的模型价格策略。</div> : null}
+          {!enabledModelPrices.length ? <div className="empty-state">后台还没有启用的模型价格策略。</div> : null}
         </div>
       </section>
     </div>
