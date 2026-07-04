@@ -1,0 +1,89 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    image: node:24-alpine
+    restart: unless-stopped
+    working_dir: /app
+    env_file:
+      - .env.production
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./:/app
+      - api_node_modules:/app/node_modules
+      - api_storage:/app/storage
+    command: >
+      sh -lc "corepack enable &&
+      corepack prepare pnpm@11.7.0 --activate &&
+      pnpm install --frozen-lockfile &&
+      pnpm --filter @aifilm/shared build &&
+      pnpm --filter @aifilm/api db:generate &&
+      pnpm --filter @aifilm/api db:push &&
+      pnpm --filter @aifilm/api build &&
+      node apps/api/dist/server.js"
+    expose:
+      - "4000"
+
+  web:
+    image: node:24-alpine
+    restart: "no"
+    working_dir: /app
+    env_file:
+      - .env.production
+    volumes:
+      - ./:/app
+      - web_node_modules:/app/node_modules
+      - web_dist:/app/apps/web/dist
+    command: >
+      sh -lc "corepack enable &&
+      corepack prepare pnpm@11.7.0 --activate &&
+      pnpm install --frozen-lockfile &&
+      pnpm --filter @aifilm/shared build &&
+      pnpm --filter @aifilm/web build"
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      - api
+      - web
+    ports:
+      - "127.0.0.1:8080:80"
+    volumes:
+      - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - web_dist:/usr/share/nginx/html:ro
+      - api_storage:/app/storage:ro
+
+volumes:
+  postgres_data:
+  redis_data:
+  api_node_modules:
+  web_node_modules:
+  web_dist:
+  api_storage:

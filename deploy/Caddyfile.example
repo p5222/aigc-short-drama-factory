@@ -1,0 +1,19 @@
+# Initial IP-only deployment. Copy to /etc/caddy/Caddyfile on the server.
+# After binding a domain, replace ":80" with your domain name.
+
+:80 {
+  encode gzip
+  reverse_proxy 127.0.0.1:8080
+}
+
+# Future multi-app example:
+#
+# manjiao.example.com {
+#   encode gzip
+#   reverse_proxy 127.0.0.1:8080
+# }
+#
+# sub2api.example.com {
+#   encode gzip
+#   reverse_proxy 127.0.0.1:8090
+# }

@@ -1,0 +1,14 @@
+node_modules
+dist
+.env
+.env.local
+.turbo
+.vite
+coverage
+*.log
+outputs
+.codex_artifacts
+uploads
+storage
+backups
+*.pid

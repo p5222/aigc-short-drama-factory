@@ -1,0 +1,516 @@
+﻿import type {
+  AdminSummary,
+  AdminUserRow,
+  AnalyticsEventInput,
+  AssetItem,
+  BatchGenerationResult,
+  CreditAccount,
+  CreditTransaction,
+  CreateProjectInput,
+  CreationEstimate,
+  DirectorStoryboardPackage,
+  DirectorStoryboardRow,
+  EvaluationDataset,
+  EvaluationDatasetInput,
+  EvaluationOverview,
+  EvaluationRun,
+  EvaluationRunDetail,
+  FeedbackInput,
+  ExportJob,
+  GenerationTask,
+  ImageModelTestResult,
+  InvoiceRecord,
+  MembershipPlan,
+  ModelPrice,
+  ModelProvider,
+  ModelTestResult,
+  PaymentRecord,
+  Plan,
+  Project,
+  ProjectWorkflow,
+  PromptTemplate,
+  QualityEvaluationRunInput,
+  QualityEvaluationRunResult,
+  QualityProjectRow,
+  QualityReport,
+  RechargeOrder,
+  RelayGatewayPolicy,
+  RedeemCode,
+  StoryboardExportRow,
+  StoryboardShot,
+  UserFeedback,
+  VideoModelTestResult,
+  OpenSourceAdapterInfo,
+  VisualPipelineDescriptor,
+  VisualPipelineTestResult,
+  WritingAgentInput,
+  WritingAgentOutput,
+  CharacterConsistencyInput,
+  CharacterConsistencyOutput,
+  WorkbenchSummary
+} from "@aifilm/shared";
+
+const baseUrl = import.meta.env.VITE_API_BASE_URL ?? "/api";
+
+async function fetchWithFriendlyNetworkError(input: RequestInfo | URL, init?: RequestInit) {
+  try {
+    return await fetch(input, init);
+  } catch (error) {
+    const target = typeof input === "string" ? input : input instanceof URL ? input.toString() : baseUrl;
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`无法连接后端服务：${target}。请确认 API 服务已启动、端口 4000 可访问，或检查 VITE_API_BASE_URL 配置。原始错误：${message}`);
+  }
+}
+
+export interface AuthUser {
+  id: string;
+  name: string;
+  email?: string;
+  phone?: string;
+  role: string;
+  status: string;
+}
+
+export interface AuthResult {
+  token: string;
+  user: AuthUser;
+}
+
+async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const token = localStorage.getItem("aifilm_auth_token");
+  const response = await fetchWithFriendlyNetworkError(`${baseUrl}${path}`, {
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(options?.headers ?? {})
+    },
+    ...options
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    if (response.status === 401) localStorage.removeItem("aifilm_auth_token");
+    throw new Error(readableError(text, response.status));
+  }
+
+  if (response.status === 204) return undefined as T;
+  const text = await response.text();
+  return (text ? JSON.parse(text) : undefined) as T;
+}
+
+async function requestText(path: string, options?: RequestInit): Promise<string> {
+  const token = localStorage.getItem("aifilm_auth_token");
+  const response = await fetchWithFriendlyNetworkError(`${baseUrl}${path}`, {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(options?.headers ?? {})
+    },
+    ...options
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    if (response.status === 401) localStorage.removeItem("aifilm_auth_token");
+    throw new Error(readableError(text, response.status));
+  }
+
+  return response.text();
+}
+
+async function requestBlob(path: string, options?: RequestInit): Promise<Blob> {
+  const token = localStorage.getItem("aifilm_auth_token");
+  const response = await fetchWithFriendlyNetworkError(`${baseUrl}${path}`, {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(options?.headers ?? {})
+    },
+    ...options
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    if (response.status === 401) localStorage.removeItem("aifilm_auth_token");
+    throw new Error(readableError(text, response.status));
+  }
+
+  return response.blob();
+}
+
+function readableError(text: string, status: number) {
+  if (!text) return `请求失败：${status}`;
+
+  try {
+    const data = JSON.parse(text) as {
+      message?: string;
+      error?: string;
+      formErrors?: string[];
+      fieldErrors?: Record<string, string[]>;
+    };
+    if (data.message) return data.message;
+    if (data.error) return data.error;
+    const zodMessages = [
+      ...(data.formErrors ?? []),
+      ...Object.entries(data.fieldErrors ?? {}).flatMap(([field, messages]) => messages.map((message) => `${field}: ${message}`))
+    ];
+    if (zodMessages.length) return zodMessages.join("；");
+  } catch {
+    return text;
+  }
+
+  return `请求失败：${status}`;
+}
+
+export const api = {
+  login: (input: { account: string; password: string }) =>
+    request<AuthResult>("/auth/login", {
+      method: "POST",
+      body: JSON.stringify(input)
+    }),
+  register: (input: { phone: string; email: string; password: string }) =>
+    request<AuthResult>("/auth/register", {
+      method: "POST",
+      body: JSON.stringify(input)
+    }),
+  me: () => request<{ user: AuthUser }>("/auth/me"),
+  logout: () =>
+    request<{ ok: boolean }>("/auth/logout", {
+      method: "POST"
+    }),
+  workbench: () => request<WorkbenchSummary>("/workbench/summary"),
+  projects: () => request<Project[]>("/projects"),
+  pruneProjectsToLatest: () =>
+    request<{ keptProjectId?: string; keptProjectName?: string; deletedProjects: number; deletedTasks: number; deletedTransactions: number }>(
+      "/projects/prune-to-latest",
+      { method: "POST" }
+    ),
+  tasks: () => request<GenerationTask[]>("/tasks"),
+  creditAccount: () => request<CreditAccount>("/credits/account"),
+  transactions: () => request<CreditTransaction[]>("/credits/transactions"),
+  orders: () => request<RechargeOrder[]>("/billing/orders"),
+  createOrder: (input: { planId: string; channel?: "wechat" | "alipay" | "manual" | "mock" }) =>
+    request<RechargeOrder>("/billing/orders", {
+      method: "POST",
+      body: JSON.stringify(input)
+    }),
+  mockRechargeCallback: (input: { orderId: string; channel?: string; providerTradeNo?: string; amountCny?: number }) =>
+    request<{ order: RechargeOrder; payment: PaymentRecord }>("/billing/mock-callback", {
+      method: "POST",
+      body: JSON.stringify(input)
+    }),
+  payments: () => request<PaymentRecord[]>("/billing/payments"),
+  invoices: () => request<InvoiceRecord[]>("/billing/invoices"),
+  requestInvoice: (input: { orderId: string; title: string; taxNo?: string; email?: string }) =>
+    request<InvoiceRecord>("/billing/invoices", {
+      method: "POST",
+      body: JSON.stringify(input)
+    }),
+  redeemCode: (code: string) =>
+    request<CreditAccount>("/credits/redeem", {
+      method: "POST",
+      body: JSON.stringify({ code })
+    }),
+  plans: () => request<Plan[]>("/plans"),
+  membershipPlans: () => request<MembershipPlan[]>("/membership-plans"),
+  providers: () => request<ModelProvider[]>("/providers"),
+  modelPrices: () => request<ModelPrice[]>("/model-prices"),
+  templates: () => request<PromptTemplate[]>("/templates"),
+  trackEvent: (input: AnalyticsEventInput) =>
+    request<{ ok: boolean }>("/analytics/events", {
+      method: "POST",
+      body: JSON.stringify(input)
+    }),
+  submitFeedback: (input: FeedbackInput) =>
+    request<UserFeedback>("/feedback", {
+      method: "POST",
+      body: JSON.stringify(input)
+    }),
+  adminSummary: () => request<AdminSummary>("/admin/summary"),
+  adminEvaluationOverview: () => request<EvaluationOverview>("/admin/evaluation/overview"),
+  adminQualityProjects: () => request<QualityProjectRow[]>("/admin/evaluation/projects"),
+  adminEvaluationDatasets: () => request<EvaluationDataset[]>("/admin/evaluation/datasets"),
+  createEvaluationDataset: (input: EvaluationDatasetInput) =>
+    request<EvaluationDataset>("/admin/evaluation/datasets", {
+      method: "POST",
+      body: JSON.stringify(input)
+    }),
+  deleteEvaluationDataset: (id: string) =>
+    request<{ id: string; deleted: boolean; detachedRuns: number }>(`/admin/evaluation/datasets/${id}`, {
+      method: "DELETE"
+    }),
+  adminEvaluationRuns: () => request<EvaluationRun[]>("/admin/evaluation/runs"),
+  adminEvaluationRunDetail: (id: string) => request<EvaluationRunDetail>(`/admin/evaluation/runs/${id}`),
+  adminFeedback: (limit = 200) => request<UserFeedback[]>(`/admin/feedback?limit=${limit}`),
+  updateAdminFeedback: (
+    id: string,
+    input: Partial<Pick<UserFeedback, "status" | "priority" | "rootCause" | "assignee" | "resolution" | "convertedDatasetId">>
+  ) =>
+    request<UserFeedback>(`/admin/feedback/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(input)
+    }),
+  deleteEvaluationRun: (id: string) =>
+    request<{ id: string; deleted: boolean; deletedReports: number }>(`/admin/evaluation/runs/${id}`, {
+      method: "DELETE"
+    }),
+  deleteProjectQualityData: (projectId: string) =>
+    request<{ projectId: string; deletedReports: number; deletedFeedbacks: number }>(`/admin/evaluation/projects/${projectId}`, {
+      method: "DELETE"
+    }),
+  exportEvaluationRunCsv: (id: string) => requestBlob(`/admin/evaluation/runs/${id}/export.csv`),
+  exportEvaluationRunExcel: (id: string) => requestBlob(`/admin/evaluation/runs/${id}/export-excel.tsv`),
+  exportEvaluationRunsCsv: (ids?: string[]) => {
+    const query = ids?.length ? `?ids=${encodeURIComponent(ids.join(","))}` : "";
+    return requestBlob(`/admin/evaluation/runs/export.csv${query}`);
+  },
+  exportEvaluationRunsExcel: (ids?: string[]) => {
+    const query = ids?.length ? `?ids=${encodeURIComponent(ids.join(","))}` : "";
+    return requestBlob(`/admin/evaluation/runs/export-excel.tsv${query}`);
+  },
+  runQualityEvaluation: (input: QualityEvaluationRunInput) =>
+    request<QualityEvaluationRunResult>("/admin/evaluation/run", {
+      method: "POST",
+      body: JSON.stringify(input)
+    }),
+  adminPlans: () => request<Plan[]>("/admin/plans"),
+  adminMembershipPlans: () => request<MembershipPlan[]>("/admin/membership-plans"),
+  adminRedeemCodes: () => request<RedeemCode[]>("/admin/redeem-codes"),
+  createRedeemCodeBatch: (input: { name: string; prefix: string; credits: number; count: number; enabled?: boolean }) =>
+    request<RedeemCode[]>("/admin/redeem-codes/batch", {
+      method: "POST",
+      body: JSON.stringify(input)
+    }),
+  adminUsers: () => request<AdminUserRow[]>("/admin/users"),
+  createAdminUser: (input: { name: string; email?: string; phone?: string; password: string; role?: string; status?: string; initialCredits?: number }) =>
+    request<AdminUserRow>("/admin/users", {
+      method: "POST",
+      body: JSON.stringify(input)
+    }),
+  updateAdminUser: (id: string, input: Partial<Pick<AdminUserRow, "name" | "role" | "status">>) =>
+    request<AuthUser>(`/admin/users/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(input)
+    }),
+  resetAdminUserPassword: (id: string, input: { password: string }) =>
+    request<AuthUser>(`/admin/users/${id}/password`, {
+      method: "POST",
+      body: JSON.stringify(input)
+    }),
+  adjustUserCredits: (input: { userId: string; amount: number; description: string }) =>
+    request<CreditAccount>("/admin/users/credits/adjust", {
+      method: "POST",
+      body: JSON.stringify(input)
+    }),
+  updateModelPrice: (id: string, input: Partial<Pick<ModelPrice, "unitCredits" | "vendorCostCny" | "enabled">>) =>
+    request<ModelPrice>(`/admin/model-prices/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(input)
+    }),
+  createModelPrice: (input: Pick<ModelPrice, "providerName" | "modality" | "model" | "unit" | "unitCredits" | "vendorCostCny" | "enabled"> & { providerId?: string }) =>
+    request<ModelPrice>("/admin/model-prices", {
+      method: "POST",
+      body: JSON.stringify(input)
+    }),
+  deleteModelPrice: (id: string) =>
+    request<{ id: string; deleted: boolean }>(`/admin/model-prices/${id}`, {
+      method: "DELETE"
+    }),
+  updatePlan: (id: string, input: Partial<Pick<Plan, "name" | "price" | "credits" | "bonusCredits" | "badge" | "features" | "shopUrl" | "enabled">>) =>
+    request<Plan>(`/admin/plans/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(input)
+    }),
+  createPlan: (input: Pick<Plan, "name" | "price" | "credits" | "bonusCredits" | "badge" | "features" | "shopUrl" | "enabled">) =>
+    request<Plan>("/admin/plans", {
+      method: "POST",
+      body: JSON.stringify(input)
+    }),
+  deletePlan: (id: string) =>
+    request<Plan>(`/admin/plans/${id}`, {
+      method: "DELETE"
+    }),
+  updateMembershipPlan: (
+    id: string,
+    input: Partial<Pick<MembershipPlan, "name" | "monthlyPrice" | "monthlyCredits" | "discountPercent" | "priorityLevel" | "badge" | "features" | "shopUrl" | "enabled">>
+  ) =>
+    request<MembershipPlan>(`/admin/membership-plans/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(input)
+    }),
+  createMembershipPlan: (input: Pick<MembershipPlan, "name" | "monthlyPrice" | "monthlyCredits" | "discountPercent" | "priorityLevel" | "badge" | "features" | "shopUrl" | "enabled">) =>
+    request<MembershipPlan>("/admin/membership-plans", {
+      method: "POST",
+      body: JSON.stringify(input)
+    }),
+  deleteMembershipPlan: (id: string) =>
+    request<MembershipPlan>(`/admin/membership-plans/${id}`, {
+      method: "DELETE"
+    }),
+  updateRedeemCode: (
+    id: string,
+    input: Partial<Pick<RedeemCode, "name" | "code" | "credits" | "maxRedemptions" | "enabled">> & { startsAt?: string | null; endsAt?: string | null }
+  ) =>
+    request<RedeemCode>(`/admin/redeem-codes/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(input)
+    }),
+  deleteRedeemCode: (id: string) =>
+    request<{ id: string; deleted?: boolean } | RedeemCode>(`/admin/redeem-codes/${id}`, {
+      method: "DELETE"
+    }),
+  updateProvider: (
+    id: string,
+    input: Partial<Pick<ModelProvider, "name" | "modality" | "enabled" | "baseUrl" | "iconUrl" | "models" | "costHint">> & {
+      apiKey?: string | null;
+      routing?: { mode?: "auto" | "manual"; preferredModel?: string; modelPool?: string[] };
+    }
+  ) =>
+    request<ModelProvider>(`/admin/providers/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(input)
+    }),
+  createProvider: (
+    input: Pick<ModelProvider, "name" | "modality" | "enabled" | "baseUrl" | "models" | "costHint"> & {
+      id?: string;
+      iconUrl?: string;
+      apiKey?: string;
+      routing?: { mode?: "auto" | "manual"; preferredModel?: string; modelPool?: string[] };
+      unitCredits?: number;
+      vendorCostCny?: number;
+    }
+  ) =>
+    request<ModelProvider>("/admin/providers", {
+      method: "POST",
+      body: JSON.stringify(input)
+    }),
+  deleteProvider: (id: string) =>
+    request<{ id: string; deleted?: boolean } | ModelProvider>(`/admin/providers/${id}`, {
+      method: "DELETE"
+    }),
+  updatePromptTemplate: (id: string, input: Partial<Pick<PromptTemplate, "name" | "type" | "version" | "enabled" | "summary" | "content">>) =>
+    request<PromptTemplate>(`/admin/templates/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(input)
+    }),
+  createPromptTemplate: (input: Pick<PromptTemplate, "name" | "type" | "version" | "enabled" | "summary" | "content">) =>
+    request<PromptTemplate>("/admin/templates", {
+      method: "POST",
+      body: JSON.stringify(input)
+    }),
+  deletePromptTemplate: (id: string) =>
+    request<PromptTemplate>(`/admin/templates/${id}`, {
+      method: "DELETE"
+    }),
+  workflow: (projectId: string) => request<ProjectWorkflow>(`/projects/${projectId}/workflow`),
+  updateProjectModelRoutes: (projectId: string, input: Partial<Pick<CreateProjectInput, "textProvider" | "textModel" | "imageProvider" | "imageModel" | "imageSize" | "imageQuality" | "videoProvider" | "videoModel">>) =>
+    request<Project>(`/projects/${projectId}/model-routes`, {
+      method: "PATCH",
+      body: JSON.stringify(input)
+    }),
+  qualityReports: (projectId: string) => request<QualityReport[]>(`/projects/${projectId}/quality-reports`),
+  generateQualityReports: (projectId: string) =>
+    request<QualityReport[]>(`/projects/${projectId}/quality-reports/generate`, {
+      method: "POST"
+    }),
+  estimate: (input: Pick<CreateProjectInput, "content" | "mode" | "targetEpisodes" | "textProvider" | "textModel" | "imageProvider" | "imageModel" | "imageSize" | "imageQuality" | "videoProvider" | "videoModel">) =>
+    request<CreationEstimate>("/creation/estimate", {
+      method: "POST",
+      body: JSON.stringify(input)
+    }),
+  startCreation: (input: CreateProjectInput) =>
+    request<{ project: Project; task: GenerationTask; estimate: CreationEstimate; mode: "real" | "local" | "queued" }>(
+      "/creation/start",
+      {
+        method: "POST",
+        body: JSON.stringify(input)
+      }
+    ),
+  generateStoryboards: (projectId: string, input: Partial<Pick<CreateProjectInput, "artStyle" | "mode" | "videoRatio">>) =>
+    request<BatchGenerationResult>(`/projects/${projectId}/storyboards/generate`, {
+      method: "POST",
+      body: JSON.stringify(input)
+    }),
+  updateStoryboardShot: (projectId: string, shotId: string, input: Partial<StoryboardShot>) =>
+    request<StoryboardShot>(`/projects/${projectId}/storyboards/${shotId}`, {
+      method: "PATCH",
+      body: JSON.stringify(input)
+    }),
+  regenerateShotImage: (projectId: string, shotId: string) =>
+    request<BatchGenerationResult>(`/projects/${projectId}/storyboards/${shotId}/image/regenerate`, {
+      method: "POST"
+    }),
+  generateCharacterImages: (projectId: string, input?: { characterIds?: string[]; forceRegenerate?: boolean }) =>
+    request<BatchGenerationResult>(`/projects/${projectId}/characters/images/generate`, {
+      method: "POST",
+      body: JSON.stringify(input ?? {})
+    }),
+  setCharacterReferenceImage: (projectId: string, characterId: string, input: { referenceUrl: string; description?: string }) =>
+    request<AssetItem>(`/projects/${projectId}/characters/${characterId}/reference`, {
+      method: "POST",
+      body: JSON.stringify(input)
+    }),
+  deleteCharacterReferenceImage: (projectId: string, characterId: string) =>
+    request<{ ok: boolean; characterId: string; deletedAssets: number }>(`/projects/${projectId}/characters/${characterId}/reference`, {
+      method: "DELETE"
+    }),
+  generateImages: (projectId: string, input?: { shotIds?: string[]; forceRegenerate?: boolean }) =>
+    request<BatchGenerationResult>(`/projects/${projectId}/images/generate`, {
+      method: "POST",
+      body: JSON.stringify(input ?? {})
+    }),
+  generateVideos: (projectId: string) =>
+    request<BatchGenerationResult>(`/projects/${projectId}/videos/generate`, {
+      method: "POST"
+    }),
+  exportStoryboard: (projectId: string) => request<StoryboardExportRow[]>(`/projects/${projectId}/export/storyboard`),
+  directorStoryboard: (projectId: string) => request<DirectorStoryboardRow[]>(`/projects/${projectId}/director-storyboard`),
+  exportDirectorStoryboard: (projectId: string) =>
+    request<DirectorStoryboardPackage>(`/projects/${projectId}/director-storyboard/export`, { method: "POST" }),
+  exportJobs: (projectId: string) => request<ExportJob[]>(`/projects/${projectId}/export/jobs`),
+  createExportJob: (projectId: string, input: { type: "tts" | "subtitle" | "video_export" }) =>
+    request<ExportJob>(`/projects/${projectId}/export/jobs`, {
+      method: "POST",
+      body: JSON.stringify(input)
+    }),
+  retryTask: (taskId: string) =>
+    request<GenerationTask>(`/tasks/${taskId}/retry`, {
+      method: "POST"
+    }),
+  cancelTask: (taskId: string) =>
+    request<GenerationTask>(`/tasks/${taskId}/cancel`, {
+      method: "POST"
+    }),
+  modelTest: (input?: Pick<CreateProjectInput, "textProvider" | "textModel">) =>
+    request<ModelTestResult>("/settings/model-test", {
+      method: "POST",
+      body: JSON.stringify(input ?? {})
+    }),
+  imageModelTest: (input?: Pick<CreateProjectInput, "imageProvider" | "imageModel">) =>
+    request<ImageModelTestResult>("/settings/image-model-test", {
+      method: "POST",
+      body: JSON.stringify(input ?? {})
+    }),
+  videoModelTest: (input?: Pick<CreateProjectInput, "videoProvider" | "videoModel">) =>
+    request<VideoModelTestResult>("/settings/video-model-test", {
+      method: "POST",
+      body: JSON.stringify(input ?? {})
+    }),
+  relayGatewayPolicy: () => request<RelayGatewayPolicy>("/admin/relay-gateway/policy"),
+  writingAgentPlan: (input: WritingAgentInput) =>
+    request<WritingAgentOutput>("/agents/writing/plan", {
+      method: "POST",
+      body: JSON.stringify(input)
+    }),
+  characterConsistencyPlan: (input: CharacterConsistencyInput) =>
+    request<CharacterConsistencyOutput>("/agents/character-consistency/plan", {
+      method: "POST",
+      body: JSON.stringify(input)
+    }),
+  openSourceAdapters: () => request<OpenSourceAdapterInfo[]>("/agents/open-source-adapters"),
+  visualPipelines: () => request<VisualPipelineDescriptor[]>("/admin/plugins/visual-pipelines"),
+  testVisualPipeline: (pipelineId: string) =>
+    request<VisualPipelineTestResult>("/admin/plugins/visual-pipelines/test", {
+      method: "POST",
+      body: JSON.stringify({ pipelineId })
+    })
+};
+
