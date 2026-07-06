@@ -408,9 +408,10 @@ export const api = {
       body: JSON.stringify(input)
     }),
   qualityReports: (projectId: string) => request<QualityReport[]>(`/projects/${projectId}/quality-reports`),
-  generateQualityReports: (projectId: string) =>
+  generateQualityReports: (projectId: string, input?: { stages?: Array<"script" | "character" | "storyboard" | "image" | "video"> }) =>
     request<QualityReport[]>(`/projects/${projectId}/quality-reports/generate`, {
-      method: "POST"
+      method: "POST",
+      body: JSON.stringify(input ?? {})
     }),
   estimate: (input: Pick<CreateProjectInput, "content" | "mode" | "targetEpisodes" | "textProvider" | "textModel" | "imageProvider" | "imageModel" | "imageSize" | "imageQuality" | "videoProvider" | "videoModel">) =>
     request<CreationEstimate>("/creation/estimate", {
@@ -468,6 +469,7 @@ export const api = {
   exportDirectorStoryboard: (projectId: string) =>
     request<DirectorStoryboardPackage>(`/projects/${projectId}/director-storyboard/export`, { method: "POST" }),
   exportJobs: (projectId: string) => request<ExportJob[]>(`/projects/${projectId}/export/jobs`),
+  downloadExportJob: (projectId: string, jobId: string) => requestBlob(`/projects/${projectId}/export/jobs/${jobId}/download`),
   createExportJob: (projectId: string, input: { type: "tts" | "subtitle" | "video_export" }) =>
     request<ExportJob>(`/projects/${projectId}/export/jobs`, {
       method: "POST",

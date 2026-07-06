@@ -75,7 +75,7 @@ export interface ScriptDraft {
 export interface AssetItem {
   id: string;
   projectId: string;
-  type: "role" | "role_derivative" | "scene" | "prop" | "image" | "video" | "audio" | "subtitle" | "cover";
+  type: "role" | "role_derivative" | "role_reference" | "scene" | "prop" | "image" | "video" | "audio" | "subtitle" | "cover";
   name: string;
   description: string;
   prompt: string;
