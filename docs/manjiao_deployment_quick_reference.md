@@ -76,6 +76,14 @@ Invoke-WebRequest https://www.manjiao.cloud/health -UseBasicParsing
 - Verification passed: `https://manjiao.cloud/` returned 200; `https://manjiao.cloud/health` returned 200; `https://www.manjiao.cloud/health` returned 200.
 - GitHub push from this machine failed twice on 2026-07-07 because `github.com:443` timed out. Server deploy was completed by clean `git archive HEAD` upload through SSH alias `manjiao`.
 
+## 2026-07-07 Canvas Workflow Deployment Note
+
+- Deployed source commit: `f3aa387 fix: preserve platform announcement schema` (includes `8dbe0af feat: add canvas workflow prompts`).
+- Backup directory: `/opt/manjiao-backups/20260707_113943`.
+- Public asset fingerprint after deploy: `assets/index-B77y8r4o.js` and `assets/index-DcEkJGtB.css`.
+- Verification passed: `https://manjiao.cloud/` returned 200; `https://manjiao.cloud/health` returned 200; `https://www.manjiao.cloud/health` returned 200.
+- Deployment note: initial clean archive exposed a Prisma safety warning because production already had a non-empty `PlatformAnnouncement` table while the committed schema did not include the model. Do not use `--accept-data-loss`; keep the schema compatibility model so Prisma preserves the table.
+
 ## 2026-07-07 Deployment Note
 
 - Deployed commit: `7147f70 feat: redesign project workbench v2`
