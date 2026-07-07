@@ -250,6 +250,24 @@ model UserFeedback {
   @@index([createdAt])
 }
 
+model PlatformAnnouncement {
+  id        String    @id
+  title     String
+  body      String
+  type      String    @default("info")
+  enabled   Boolean   @default(true)
+  pinned    Boolean   @default(false)
+  startsAt  DateTime?
+  endsAt    DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([enabled])
+  @@index([pinned])
+  @@index([startsAt])
+  @@index([endsAt])
+  @@index([createdAt])
+}
 model QualityReport {
   id                String          @id
   projectId         String
