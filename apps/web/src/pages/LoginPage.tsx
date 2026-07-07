@@ -47,12 +47,20 @@ interface HomeScene {
 
 const phonePattern = /^1[3-9]\d{9}$/;
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const CARD_VIDEO_DELAY_MS = 950;
+const BG_FRAME_TIMEOUT_MS = 3200;
+const WARMUP_DELAY_MS = 1200;
+const cineAssetBaseUrl = (import.meta.env.VITE_CINE_ASSET_BASE_URL ?? "").replace(/\/+$/, "");
+
+function cineAsset(path: string) {
+  return `${cineAssetBaseUrl}${path}`;
+}
 
 const scenes: HomeScene[] = [
   {
     id: "01",
-    videoUrl: "/media/cineart-home/desert_fast.mp4",
-    posterUrl: "/media/cineart-home/desert_poster.jpg",
+    videoUrl: cineAsset("/media/cineart-home/desert_fast.mp4"),
+    posterUrl: cineAsset("/media/cineart-home/desert_poster.jpg"),
     eyebrow: "CINE·CAM 01",
     meta: "SHOT-LEVEL PRECISION",
     title: { cn: "分镜级精准控制", en: "Shot-level precision" },
@@ -61,8 +69,8 @@ const scenes: HomeScene[] = [
   },
   {
     id: "02",
-    videoUrl: "/media/cineart-home/photo-w_fast.mp4",
-    posterUrl: "/media/cineart-home/photo-w_poster.jpg",
+    videoUrl: cineAsset("/media/cineart-home/photo-w_fast.mp4"),
+    posterUrl: cineAsset("/media/cineart-home/photo-w_poster.jpg"),
     eyebrow: "CINE·CAM 02",
     meta: "CHARACTER CONSISTENCY",
     title: { cn: "角色跨镜头一致", en: "Character consistency" },
@@ -70,8 +78,8 @@ const scenes: HomeScene[] = [
   },
   {
     id: "03",
-    videoUrl: "/media/cineart-home/punk-future_fast.mp4",
-    posterUrl: "/media/cineart-home/punk-future_poster.jpg",
+    videoUrl: cineAsset("/media/cineart-home/punk-future_fast.mp4"),
+    posterUrl: cineAsset("/media/cineart-home/punk-future_poster.jpg"),
     eyebrow: "CINE·CAM 03",
     meta: "STYLE, LOCKED",
     title: { cn: "风格一键锁定", en: "Style, locked" },
@@ -79,8 +87,8 @@ const scenes: HomeScene[] = [
   },
   {
     id: "04",
-    videoUrl: "/media/cineart-home/girl-booth_fast.mp4",
-    posterUrl: "/media/cineart-home/girl-booth_poster.jpg",
+    videoUrl: cineAsset("/media/cineart-home/girl-booth_fast.mp4"),
+    posterUrl: cineAsset("/media/cineart-home/girl-booth_poster.jpg"),
     eyebrow: "CINE·CAM 04",
     meta: "ASSETS THAT COMPOUND",
     title: { cn: "资产沉淀复用", en: "Reusable assets" },
@@ -88,8 +96,8 @@ const scenes: HomeScene[] = [
   },
   {
     id: "05",
-    videoUrl: "/media/cineart-home/bicycle-smile_fast.mp4",
-    posterUrl: "/media/cineart-home/bicycle-smile_poster.jpg",
+    videoUrl: cineAsset("/media/cineart-home/bicycle-smile_fast.mp4"),
+    posterUrl: cineAsset("/media/cineart-home/bicycle-smile_poster.jpg"),
     eyebrow: "CINE·CAM 05",
     meta: "QUEUE IT, SHIP IT",
     title: { cn: "极速出片", en: "Queue it, ship it" },
@@ -208,23 +216,48 @@ function stopAndReleaseVideo(video: HTMLVideoElement | null) {
   video.load();
 }
 
-function waitForDrawableFrame(video: HTMLVideoElement) {
-  if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) return Promise.resolve();
+function waitForDrawableFrame(video: HTMLVideoElement, timeoutMs = BG_FRAME_TIMEOUT_MS) {
+  if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && video.videoWidth > 0) {
+    return Promise.resolve(true);
+  }
 
-  return new Promise<void>((resolve) => {
+  return new Promise<boolean>((resolve) => {
     let done = false;
-    const finish = () => {
+    let frameCallbackId: number | null = null;
+    const frameVideo = video as HTMLVideoElement & {
+      requestVideoFrameCallback?: (callback: () => void) => number;
+      cancelVideoFrameCallback?: (handle: number) => void;
+    };
+    const finish = (ready: boolean) => {
       if (done) return;
       done = true;
       window.clearTimeout(timer);
-      video.removeEventListener("loadeddata", finish);
-      video.removeEventListener("canplay", finish);
-      resolve();
+      video.removeEventListener("loadeddata", onReady);
+      video.removeEventListener("canplay", onReady);
+      video.removeEventListener("playing", onReady);
+      if (frameCallbackId !== null) frameVideo.cancelVideoFrameCallback?.(frameCallbackId);
+      resolve(ready);
     };
-    const timer = window.setTimeout(finish, 360);
-    video.addEventListener("loadeddata", finish, { once: true });
-    video.addEventListener("canplay", finish, { once: true });
+    const onReady = () => {
+      if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && video.videoWidth > 0) {
+        finish(true);
+      }
+    };
+    const timer = window.setTimeout(() => finish(video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && video.videoWidth > 0), timeoutMs);
+    video.addEventListener("loadeddata", onReady, { once: true });
+    video.addEventListener("canplay", onReady, { once: true });
+    video.addEventListener("playing", onReady, { once: true });
+    frameCallbackId = frameVideo.requestVideoFrameCallback?.(() => finish(true)) ?? null;
   });
+}
+
+function shouldUseCardVideo() {
+  const motionQuery = window.matchMedia?.("(prefers-reduced-motion: reduce)");
+  const navigatorWithConnection = navigator as Navigator & {
+    connection?: { saveData?: boolean; effectiveType?: string };
+  };
+  const connection = navigatorWithConnection.connection;
+  return !motionQuery?.matches && !connection?.saveData && connection?.effectiveType !== "2g";
 }
 
 function ManagedSceneVideo({ posterUrl, videoUrl }: { posterUrl: string; videoUrl: string }) {
@@ -249,6 +282,7 @@ function ManagedSceneVideo({ posterUrl, videoUrl }: { posterUrl: string; videoUr
       preload="auto"
       poster={posterUrl}
       autoPlay
+      disablePictureInPicture
     />
   );
 }
@@ -259,6 +293,8 @@ export function LoginPage({ onAuthed, variant = "creator" }: LoginPageProps) {
   const [locale, setLocale] = useState<Locale>("cn");
   const [languageOpen, setLanguageOpen] = useState(false);
   const [activeScene, setActiveScene] = useState(0);
+  const [cardVideoScene, setCardVideoScene] = useState<number | null>(null);
+  const [allowCardVideo, setAllowCardVideo] = useState(true);
   const [account, setAccount] = useState("");
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
@@ -274,6 +310,7 @@ export function LoginPage({ onAuthed, variant = "creator" }: LoginPageProps) {
   const warmupVideoRef = useRef<HTMLVideoElement | null>(null);
   const visibleBgSlot = useRef(0);
   const lastBgScene = useRef(0);
+  const bgRequestId = useRef(0);
   const stackRef = useRef<HTMLDivElement | null>(null);
   const cardRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const activeSceneRef = useRef(activeScene);
@@ -292,10 +329,23 @@ export function LoginPage({ onAuthed, variant = "creator" }: LoginPageProps) {
   }, []);
 
   useEffect(() => {
+    setAllowCardVideo(shouldUseCardVideo());
+  }, []);
+
+  useEffect(() => {
+    setCardVideoScene(null);
+    if (!allowCardVideo) return undefined;
+    const timer = window.setTimeout(() => setCardVideoScene(activeScene), CARD_VIDEO_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [activeScene, allowCardVideo]);
+
+  useEffect(() => {
     const primary = bgRefs.current[0];
     const secondary = bgRefs.current[1];
     if (!primary) return undefined;
 
+    primary.poster = scenes[0].posterUrl;
+    primary.preload = "auto";
     primary.src = scenes[0].videoUrl;
     primary.load();
     void primary.play().catch(() => undefined);
@@ -323,18 +373,23 @@ export function LoginPage({ onAuthed, variant = "creator" }: LoginPageProps) {
     if (!toVideo) return;
 
     let canceled = false;
+    const requestId = ++bgRequestId.current;
     gsap.killTweensOf([fromVideo, toVideo].filter(Boolean));
     toVideo.poster = nextScene.posterUrl;
     toVideo.preload = "auto";
     toVideo.src = nextScene.videoUrl;
     toVideo.load();
     void toVideo.play().catch(() => undefined);
-    gsap.set(toVideo, { autoAlpha: 0, scale: 1.012 });
-    visibleBgSlot.current = toSlot;
-    lastBgScene.current = activeScene;
+    gsap.set(toVideo, { autoAlpha: 0, scale: 1.006 });
 
-    void waitForDrawableFrame(toVideo).then(() => {
-      if (canceled) return;
+    void waitForDrawableFrame(toVideo).then((ready) => {
+      if (canceled || bgRequestId.current !== requestId) return;
+      if (!ready) {
+        stopAndReleaseVideo(toVideo);
+        return;
+      }
+      visibleBgSlot.current = toSlot;
+      lastBgScene.current = activeScene;
       gsap.to(toVideo, {
         autoAlpha: 1,
         scale: 1,
@@ -359,20 +414,37 @@ export function LoginPage({ onAuthed, variant = "creator" }: LoginPageProps) {
   useEffect(() => {
     const warmupIndex = (activeScene + 1) % scenes.length;
     const nextScene = scenes[warmupIndex];
-    let video = warmupVideoRef.current;
-    if (!video) {
-      video = document.createElement("video");
-      video.muted = true;
-      video.playsInline = true;
-      warmupVideoRef.current = video;
-    }
-    video.preload = "metadata";
-    video.poster = nextScene.posterUrl;
-    video.src = nextScene.videoUrl;
-    video.load();
+    let canceled = false;
+    const idleWindow = window as Window & {
+      requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
+      cancelIdleCallback?: (handle: number) => void;
+    };
+    const warmup = () => {
+      if (canceled) return;
+      let video = warmupVideoRef.current;
+      if (!video) {
+        video = document.createElement("video");
+        video.muted = true;
+        video.playsInline = true;
+        warmupVideoRef.current = video;
+      }
+      video.preload = "metadata";
+      video.poster = nextScene.posterUrl;
+      video.src = nextScene.videoUrl;
+      video.load();
+    };
+    const handle = idleWindow.requestIdleCallback
+      ? idleWindow.requestIdleCallback(warmup, { timeout: WARMUP_DELAY_MS })
+      : window.setTimeout(warmup, WARMUP_DELAY_MS);
 
     return () => {
-      stopAndReleaseVideo(video);
+      canceled = true;
+      if (idleWindow.cancelIdleCallback && typeof handle === "number") {
+        idleWindow.cancelIdleCallback(handle);
+      } else {
+        window.clearTimeout(handle);
+      }
+      stopAndReleaseVideo(warmupVideoRef.current);
     };
   }, [activeScene]);
 
@@ -744,7 +816,9 @@ export function LoginPage({ onAuthed, variant = "creator" }: LoginPageProps) {
               muted
               loop
               playsInline
-              preload={slot === 0 ? "auto" : "none"}
+              preload={slot === 0 ? "metadata" : "none"}
+              poster={slot === 0 ? scenes[0].posterUrl : undefined}
+              disablePictureInPicture
               ref={(node) => {
                 bgRefs.current[slot] = node;
               }}
@@ -805,6 +879,7 @@ export function LoginPage({ onAuthed, variant = "creator" }: LoginPageProps) {
         <div className="cine-card-stack transform-gpu" ref={stackRef} aria-label="CINE CAM 3D 视频卡片堆叠">
           {scenes.map((scene, index) => {
             const isActive = index === activeScene;
+            const shouldPlayActiveVideo = isActive && cardVideoScene === index;
             return (
               <button
                 className={isActive ? "cine-film-card active will-change-transform transform-gpu" : "cine-film-card will-change-transform transform-gpu"}
@@ -815,10 +890,10 @@ export function LoginPage({ onAuthed, variant = "creator" }: LoginPageProps) {
                 }}
                 type="button"
               >
-                {isActive ? (
+                {shouldPlayActiveVideo ? (
                   <ManagedSceneVideo posterUrl={scene.posterUrl} videoUrl={scene.videoUrl} />
                 ) : (
-                  <img className="cine-card-media" src={scene.posterUrl} alt={scene.title[locale]} draggable={false} />
+                  <img className="cine-card-media" src={scene.posterUrl} alt={scene.title[locale]} decoding="async" draggable={false} loading={index === activeScene ? "eager" : "lazy"} />
                 )}
                 <div className="cine-card-overlay" />
                 <div className="cine-card-sheen" />

@@ -36,16 +36,14 @@ body.auth-surface {
 
 .cine-bg-buffer {
   opacity: 0;
-  filter: saturate(1.04) contrast(1.02) brightness(0.98);
-  transform: translateZ(0) scale(1.012);
+  transform: translateZ(0) scale(1.006);
   will-change: opacity, transform;
 }
 
 .cine-radial-glow {
   pointer-events: none;
   background: radial-gradient(circle at 32% 48%, rgba(0, 251, 166, 0.055) 0%, transparent 52%);
-  opacity: 0.9;
-  animation: cinePulse 4s ease-in-out infinite alternate;
+  opacity: 0.68;
 }
 
 .cine-bottom-gradient {
@@ -56,11 +54,6 @@ body.auth-surface {
 .cine-left-gradient {
   pointer-events: none;
   background: linear-gradient(to right, rgba(0, 0, 0, 0.14), transparent 48%, transparent);
-}
-
-@keyframes cinePulse {
-  from { opacity: 0.48; }
-  to { opacity: 0.96; }
 }
 
 .cine-top-nav {
