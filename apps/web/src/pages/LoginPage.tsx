@@ -277,7 +277,6 @@ function ManagedSceneVideo({ posterUrl, videoUrl }: { posterUrl: string; videoUr
       ref={ref}
       className="cine-card-media"
       muted
-      loop
       playsInline
       preload="auto"
       poster={posterUrl}
@@ -292,6 +291,7 @@ export function LoginPage({ onAuthed, variant = "creator" }: LoginPageProps) {
   const [mode, setMode] = useState<AuthMode>("login");
   const [locale, setLocale] = useState<Locale>("cn");
   const [languageOpen, setLanguageOpen] = useState(false);
+  const [requestedScene, setRequestedScene] = useState(0);
   const [activeScene, setActiveScene] = useState(0);
   const [cardVideoScene, setCardVideoScene] = useState<number | null>(null);
   const [allowCardVideo, setAllowCardVideo] = useState(true);
@@ -318,6 +318,11 @@ export function LoginPage({ onAuthed, variant = "creator" }: LoginPageProps) {
   const isAdmin = variant === "admin";
   const activeMode = isAdmin ? "login" : mode;
   const t = copy[locale];
+
+  const selectScene = useCallback((index: number) => {
+    const nextScene = (index + scenes.length) % scenes.length;
+    setRequestedScene((current) => (current === nextScene ? current : nextScene));
+  }, []);
 
   useEffect(() => {
     activeSceneRef.current = activeScene;
@@ -363,9 +368,10 @@ export function LoginPage({ onAuthed, variant = "creator" }: LoginPageProps) {
   }, []);
 
   useEffect(() => {
-    if (lastBgScene.current === activeScene) return;
+    if (lastBgScene.current === requestedScene) return;
 
-    const nextScene = scenes[activeScene];
+    const sceneIndex = requestedScene;
+    const nextScene = scenes[sceneIndex];
     const fromSlot = visibleBgSlot.current;
     const toSlot = 1 - fromSlot;
     const fromVideo = bgRefs.current[fromSlot];
@@ -386,10 +392,12 @@ export function LoginPage({ onAuthed, variant = "creator" }: LoginPageProps) {
       if (canceled || bgRequestId.current !== requestId) return;
       if (!ready) {
         stopAndReleaseVideo(toVideo);
+        setRequestedScene(lastBgScene.current);
         return;
       }
       visibleBgSlot.current = toSlot;
-      lastBgScene.current = activeScene;
+      lastBgScene.current = sceneIndex;
+      setActiveScene(sceneIndex);
       gsap.to(toVideo, {
         autoAlpha: 1,
         scale: 1,
@@ -409,7 +417,7 @@ export function LoginPage({ onAuthed, variant = "creator" }: LoginPageProps) {
     return () => {
       canceled = true;
     };
-  }, [activeScene]);
+  }, [requestedScene]);
 
   useEffect(() => {
     const warmupIndex = (activeScene + 1) % scenes.length;
@@ -458,37 +466,40 @@ export function LoginPage({ onAuthed, variant = "creator" }: LoginPageProps) {
     let frame = 0;
     const cards = cardRefs.current.slice(0, scenes.length).filter(Boolean) as HTMLButtonElement[];
     const setters = cards.map((card) => ({
-      x: gsap.quickSetter(card, "x", "px"),
-      y: gsap.quickSetter(card, "y", "px"),
-      z: gsap.quickSetter(card, "z", "px"),
-      rotateY: gsap.quickSetter(card, "rotateY", "deg"),
-      rotateZ: gsap.quickSetter(card, "rotateZ", "deg"),
-      scale: gsap.quickSetter(card, "scale"),
-      opacity: gsap.quickSetter(card, "opacity")
+      x: gsap.quickTo(card, "x", { duration: 0.42, ease: "power3.out" }),
+      y: gsap.quickTo(card, "y", { duration: 0.42, ease: "power3.out" }),
+      z: gsap.quickTo(card, "z", { duration: 0.42, ease: "power3.out" }),
+      rotateY: gsap.quickTo(card, "rotateY", { duration: 0.42, ease: "power3.out" }),
+      rotateZ: gsap.quickTo(card, "rotateZ", { duration: 0.42, ease: "power3.out" }),
+      scale: gsap.quickTo(card, "scale", { duration: 0.42, ease: "power3.out" }),
+      opacity: gsap.quickTo(card, "opacity", { duration: 0.32, ease: "power2.out" })
     }));
 
     gsap.set(cards, {
       force3D: true,
-      transformPerspective: 950,
+      transformPerspective: 1180,
       transformStyle: "preserve-3d"
     });
 
     function render() {
-      smoothX += (targetX - smoothX) * 0.11;
+      smoothX += (targetX - smoothX) * 0.12;
       const active = activeSceneRef.current;
-      const center = (scenes.length - 1) / 2;
+      const total = scenes.length;
       setters.forEach((setter, index) => {
-        const distance = index - active;
-        const depth = Math.abs(distance);
-        const fanWeight = index - center;
+        let offset = index - active;
+        if (offset > total / 2) offset -= total;
+        if (offset < -total / 2) offset += total;
+        const depth = Math.abs(offset);
         const isActive = index === active;
-        const x = distance * 42 + smoothX * fanWeight * 34;
-        const y = depth * 13 + (isActive ? -18 - Math.abs(smoothX) * 10 : depth * 3);
-        const z = isActive ? 98 : -depth * 48;
-        const rotateY = smoothX * fanWeight * -7 + distance * -4;
-        const rotateZ = distance * 5.8 + smoothX * fanWeight * 4.4;
-        const scale = isActive ? 1.06 : Math.max(0.74, 0.96 - depth * 0.07 + Math.max(0, 0.03 - depth * 0.01));
-        const opacity = isActive ? 1 : Math.max(0.46, 0.86 - depth * 0.12);
+        const side = offset === 0 ? 0 : Math.sign(offset);
+        const fanSpread = 1 + Math.abs(smoothX) * 0.18;
+        const x = offset * (78 + depth * 14) * fanSpread + side * smoothX * 28;
+        const y = isActive ? -26 - Math.abs(smoothX) * 10 : depth * 22 + (depth > 1 ? 14 : 0);
+        const z = isActive ? 150 : -depth * 78;
+        const rotateY = offset * -8 + side * smoothX * -7;
+        const rotateZ = offset * 8.5 + side * smoothX * 5;
+        const scale = isActive ? 1.12 : depth === 1 ? 0.94 : 0.82;
+        const opacity = isActive ? 1 : depth === 1 ? 0.82 : 0.58;
         setter.x(x);
         setter.y(y);
         setter.z(z);
@@ -496,7 +507,7 @@ export function LoginPage({ onAuthed, variant = "creator" }: LoginPageProps) {
         setter.rotateZ(rotateZ);
         setter.scale(scale);
         setter.opacity(opacity);
-        cards[index].style.zIndex = String(isActive ? 40 : 30 - depth);
+        cards[index].style.zIndex = String(isActive ? 80 : 60 - depth * 10);
       });
       frame = window.requestAnimationFrame(render);
     }
@@ -539,7 +550,12 @@ export function LoginPage({ onAuthed, variant = "creator" }: LoginPageProps) {
   }
 
   function nextScene() {
-    setActiveScene((value) => (value + 1) % scenes.length);
+    selectScene(lastBgScene.current + 1);
+  }
+
+  function handleBackgroundEnded(slot: number) {
+    if (slot !== visibleBgSlot.current) return;
+    selectScene(lastBgScene.current + 1);
   }
 
   async function submit() {
@@ -814,11 +830,11 @@ export function LoginPage({ onAuthed, variant = "creator" }: LoginPageProps) {
               className="cine-bg-buffer absolute inset-0 h-full w-full object-cover"
               key={slot}
               muted
-              loop
               playsInline
               preload={slot === 0 ? "metadata" : "none"}
               poster={slot === 0 ? scenes[0].posterUrl : undefined}
               disablePictureInPicture
+              onEnded={() => handleBackgroundEnded(slot)}
               ref={(node) => {
                 bgRefs.current[slot] = node;
               }}
@@ -830,12 +846,12 @@ export function LoginPage({ onAuthed, variant = "creator" }: LoginPageProps) {
         </div>
 
         <nav className="cine-top-nav" aria-label="首页导航">
-          <button className="cine-logo-text nav-logo" type="button" onClick={() => setActiveScene(0)}>
+          <button className="cine-logo-text nav-logo" type="button" onClick={() => selectScene(0)}>
             <span>漫角</span>
             <small>MANJIAO.CLOUD</small>
           </button>
           <div className="cine-nav-links">
-            <button className="active" type="button" onClick={() => setActiveScene(0)}>{t.navHome}</button>
+            <button className="active" type="button" onClick={() => selectScene(0)}>{t.navHome}</button>
             <button type="button" onClick={() => openAuth("login")}>{t.navProduct}</button>
             <button type="button" onClick={() => openAuth("login")}>{t.navStudio}</button>
             <button type="button" onClick={() => openAuth("login")}>{t.navEvents}</button>
@@ -884,7 +900,7 @@ export function LoginPage({ onAuthed, variant = "creator" }: LoginPageProps) {
               <button
                 className={isActive ? "cine-film-card active will-change-transform transform-gpu" : "cine-film-card will-change-transform transform-gpu"}
                 key={scene.id}
-                onClick={() => setActiveScene(index)}
+                onClick={() => selectScene(index)}
                 ref={(node) => {
                   cardRefs.current[index] = node;
                 }}
