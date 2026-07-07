@@ -1,0 +1,1047 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Manjiao Design Desk V2 Concepts</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #050b18;
+      --panel: #0b1426;
+      --panel-2: #101b30;
+      --line: rgba(139, 167, 207, 0.18);
+      --line-strong: rgba(45, 212, 191, 0.35);
+      --text: #edf6ff;
+      --muted: #8ba4c6;
+      --soft: #6d84a7;
+      --cyan: #38bdf8;
+      --teal: #2dd4bf;
+      --green: #6ee7b7;
+      --amber: #f8c45d;
+      --red: #fb7185;
+      --blue: #60a5fa;
+      --radius: 8px;
+      font-family: Inter, "Microsoft YaHei", "PingFang SC", "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    .concept {
+      width: 1440px;
+      height: 1024px;
+      overflow: hidden;
+      padding: 18px 20px;
+      background:
+        linear-gradient(180deg, #071021 0%, #040917 100%);
+    }
+
+    body[data-concept="a"] .concept:not(.a),
+    body[data-concept="b"] .concept:not(.b),
+    body[data-concept="c"] .concept:not(.c) {
+      display: none;
+    }
+
+    h1, h2, h3, p { margin: 0; }
+    button { font: inherit; }
+
+    .top {
+      display: grid;
+      gap: 14px;
+      margin-bottom: 14px;
+    }
+
+    .title-row,
+    .split-row,
+    .between {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      min-width: 0;
+    }
+
+    .title-row h1 {
+      font-size: 25px;
+      line-height: 1.1;
+      letter-spacing: 0;
+    }
+
+    .subtitle {
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .pill-row,
+    .status-row,
+    .chips {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .pill,
+    .chip,
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 28px;
+      padding: 0 10px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      color: #b7c8e4;
+      background: rgba(13, 25, 45, 0.82);
+      font-size: 12px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .pill.active,
+    .chip.active {
+      color: #eaffff;
+      border-color: rgba(56, 189, 248, 0.48);
+      background: rgba(14, 89, 149, 0.38);
+    }
+
+    .badge.good { color: #bdfbe5; border-color: rgba(45, 212, 191, 0.35); background: rgba(12, 92, 84, 0.42); }
+    .badge.warn { color: #ffe7a6; border-color: rgba(248, 196, 93, 0.38); background: rgba(114, 75, 22, 0.35); }
+    .badge.red { color: #ffc8d1; border-color: rgba(251, 113, 133, 0.38); background: rgba(112, 26, 52, 0.35); }
+
+    .primary {
+      min-height: 38px;
+      padding: 0 16px;
+      border: 0;
+      border-radius: 7px;
+      color: #04111e;
+      background: #eaf8ff;
+      font-size: 13px;
+      font-weight: 950;
+      box-shadow: inset 0 -1px 0 rgba(3, 7, 18, 0.28);
+    }
+
+    .ghost {
+      min-height: 34px;
+      padding: 0 12px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      color: #dcecff;
+      background: rgba(13, 25, 45, 0.86);
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    .metric-strip,
+    .pipeline {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 8px;
+      padding: 8px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(8, 15, 30, 0.78);
+    }
+
+    .metric,
+    .step {
+      display: grid;
+      gap: 4px;
+      min-height: 62px;
+      padding: 10px 12px;
+      border: 1px solid rgba(139, 167, 207, 0.14);
+      border-radius: 7px;
+      background: rgba(15, 29, 51, 0.68);
+    }
+
+    .metric strong,
+    .step strong {
+      color: #f2fbff;
+      font-size: 20px;
+      line-height: 1;
+    }
+
+    .metric span,
+    .step span {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .step.ready { border-color: rgba(45, 212, 191, 0.32); background: rgba(14, 94, 85, 0.32); }
+    .step.active { border-color: rgba(56, 189, 248, 0.46); background: rgba(14, 89, 149, 0.34); }
+    .step.warn { border-color: rgba(248, 196, 93, 0.36); background: rgba(115, 77, 19, 0.28); }
+
+    .shell {
+      display: grid;
+      gap: 12px;
+      min-height: 0;
+    }
+
+    .panel {
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(9, 17, 32, 0.92);
+    }
+
+    .panel-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      min-height: 50px;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .panel-head h2 {
+      font-size: 15px;
+      letter-spacing: 0;
+    }
+
+    .panel-head small,
+    .micro {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .rail-list,
+    .stack {
+      display: grid;
+      gap: 8px;
+      padding: 12px;
+    }
+
+    .row {
+      display: grid;
+      gap: 5px;
+      min-height: 72px;
+      padding: 10px;
+      border: 1px solid rgba(139, 167, 207, 0.15);
+      border-radius: 7px;
+      background: rgba(13, 24, 43, 0.72);
+    }
+
+    .row.active {
+      border-color: rgba(96, 165, 250, 0.58);
+      background: rgba(18, 56, 99, 0.58);
+    }
+
+    .row-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      color: #eff8ff;
+      font-size: 13px;
+      font-weight: 950;
+    }
+
+    .row small {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .progress {
+      height: 6px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: rgba(139, 167, 207, 0.14);
+    }
+
+    .bar {
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, var(--cyan), var(--teal));
+    }
+
+    .a .shell {
+      grid-template-columns: 280px minmax(0, 1fr) 360px;
+      height: 828px;
+    }
+
+    .scene-detail {
+      display: grid;
+      grid-template-rows: auto 1fr;
+      min-height: 0;
+    }
+
+    .detail-body {
+      display: grid;
+      grid-template-rows: auto auto 1fr auto;
+      gap: 12px;
+      padding: 14px;
+      min-height: 0;
+    }
+
+    .summary-card {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 220px;
+      gap: 14px;
+      padding: 14px;
+      border: 1px solid rgba(139, 167, 207, 0.15);
+      border-radius: 7px;
+      background: rgba(13, 24, 43, 0.72);
+    }
+
+    .summary-card h2 {
+      font-size: 22px;
+      margin: 6px 0;
+    }
+
+    .summary-card p {
+      color: #cfe0f7;
+      font-size: 13px;
+      line-height: 1.65;
+    }
+
+    .scene-thumb {
+      display: grid;
+      place-items: end start;
+      min-height: 126px;
+      padding: 12px;
+      border-radius: 7px;
+      border: 1px solid rgba(56, 189, 248, 0.22);
+      background:
+        linear-gradient(145deg, rgba(17, 28, 46, 0.1), rgba(7, 28, 45, 0.4)),
+        linear-gradient(135deg, #24344b 0%, #101929 46%, #173e49 100%);
+    }
+
+    .scene-thumb strong {
+      font-size: 13px;
+    }
+
+    .prop-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .prop {
+      min-height: 82px;
+      padding: 10px;
+      border: 1px solid rgba(139, 167, 207, 0.14);
+      border-radius: 7px;
+      background: rgba(15, 29, 51, 0.62);
+    }
+
+    .prop span {
+      display: block;
+      margin-bottom: 6px;
+      color: var(--cyan);
+      font-size: 11px;
+      font-weight: 950;
+    }
+
+    .prop p {
+      color: #d7e8ff;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .excerpt {
+      min-height: 176px;
+      padding: 12px;
+      border: 1px solid rgba(139, 167, 207, 0.14);
+      border-radius: 7px;
+      background: rgba(15, 29, 51, 0.46);
+      color: #cfe0f7;
+      font-size: 13px;
+      line-height: 1.7;
+    }
+
+    .inspector-list {
+      display: grid;
+      gap: 8px;
+      padding: 12px;
+    }
+
+    .inspect-row {
+      display: grid;
+      grid-template-columns: 90px minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+      min-height: 42px;
+      padding: 8px 10px;
+      border-bottom: 1px solid rgba(139, 167, 207, 0.12);
+    }
+
+    .inspect-row strong {
+      color: #dff5ff;
+      font-size: 12px;
+    }
+
+    .inspect-row span {
+      overflow: hidden;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .b .shell {
+      grid-template-columns: 260px minmax(0, 1fr) 360px;
+      grid-template-rows: minmax(0, 1fr) 96px;
+      height: 828px;
+    }
+
+    .b .main-board {
+      grid-column: 2;
+      grid-row: 1;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    .matrix {
+      display: grid;
+      gap: 14px;
+      height: 100%;
+      padding: 14px;
+      overflow: hidden;
+    }
+
+    .scene-band {
+      display: grid;
+      gap: 10px;
+      min-height: 0;
+    }
+
+    .band-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      color: #eaf6ff;
+      font-size: 13px;
+      font-weight: 950;
+    }
+
+    .shot-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .shot-card {
+      display: grid;
+      grid-template-rows: 118px auto;
+      min-height: 206px;
+      overflow: hidden;
+      border: 1px solid rgba(139, 167, 207, 0.16);
+      border-radius: 7px;
+      background: rgba(13, 24, 43, 0.78);
+    }
+
+    .shot-card.active {
+      border-color: rgba(56, 189, 248, 0.56);
+      box-shadow: inset 0 0 0 1px rgba(56, 189, 248, 0.12);
+    }
+
+    .frame {
+      position: relative;
+      overflow: hidden;
+      background:
+        linear-gradient(160deg, rgba(238, 242, 255, 0.12), rgba(15, 23, 42, 0.22)),
+        radial-gradient(circle at 25% 70%, rgba(56, 189, 248, 0.35), transparent 28%),
+        linear-gradient(135deg, #1c2a3d 0%, #0e1728 48%, #153640 100%);
+    }
+
+    .frame.alt {
+      background:
+        linear-gradient(160deg, rgba(248, 196, 93, 0.16), rgba(15, 23, 42, 0.22)),
+        radial-gradient(circle at 72% 38%, rgba(45, 212, 191, 0.28), transparent 24%),
+        linear-gradient(135deg, #2e2733 0%, #111827 48%, #233245 100%);
+    }
+
+    .frame.dark {
+      background:
+        linear-gradient(160deg, rgba(96, 165, 250, 0.14), rgba(15, 23, 42, 0.18)),
+        radial-gradient(circle at 50% 54%, rgba(248, 196, 93, 0.25), transparent 23%),
+        linear-gradient(135deg, #111927 0%, #070d19 55%, #172235 100%);
+    }
+
+    .frame::before,
+    .frame::after {
+      content: "";
+      position: absolute;
+      bottom: -18px;
+      width: 54px;
+      height: 82px;
+      border-radius: 999px 999px 0 0;
+      background: rgba(232, 240, 255, 0.18);
+      filter: blur(0.1px);
+    }
+
+    .frame::before { left: 24%; }
+    .frame::after { right: 24%; height: 70px; background: rgba(45, 212, 191, 0.16); }
+
+    .frame-label {
+      position: absolute;
+      left: 10px;
+      top: 10px;
+      padding: 5px 7px;
+      border-radius: 6px;
+      color: #eff8ff;
+      background: rgba(5, 10, 20, 0.68);
+      font-size: 11px;
+      font-weight: 950;
+    }
+
+    .shot-info {
+      display: grid;
+      gap: 8px;
+      padding: 10px;
+    }
+
+    .shot-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      color: #f4fbff;
+      font-size: 13px;
+      font-weight: 950;
+    }
+
+    .shot-info p {
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.4;
+    }
+
+    .dot-row {
+      display: flex;
+      gap: 5px;
+    }
+
+    .dot {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 24px;
+      height: 22px;
+      border-radius: 6px;
+      color: #91a9c9;
+      background: rgba(139, 167, 207, 0.12);
+      font-size: 11px;
+      font-weight: 950;
+    }
+
+    .dot.on { color: #06111b; background: var(--green); }
+    .dot.work { color: #06111b; background: var(--amber); }
+
+    .b .inspector {
+      grid-column: 3;
+      grid-row: 1 / span 2;
+      min-height: 0;
+    }
+
+    .selected-preview {
+      height: 190px;
+      margin: 12px;
+      border: 1px solid rgba(56, 189, 248, 0.24);
+      border-radius: 7px;
+      background:
+        linear-gradient(160deg, rgba(238, 242, 255, 0.10), rgba(15, 23, 42, 0.18)),
+        radial-gradient(circle at 35% 58%, rgba(56, 189, 248, 0.35), transparent 28%),
+        linear-gradient(135deg, #1c2a3d 0%, #0e1728 48%, #153640 100%);
+    }
+
+    .dependency {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      align-items: center;
+      min-height: 44px;
+      padding: 9px 12px;
+      border-bottom: 1px solid rgba(139, 167, 207, 0.12);
+      color: #dcecff;
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    .timeline {
+      grid-column: 1 / span 2;
+      grid-row: 2;
+      display: grid;
+      grid-template-columns: repeat(9, minmax(0, 1fr));
+      gap: 6px;
+      padding: 12px;
+    }
+
+    .clip {
+      display: grid;
+      align-content: center;
+      gap: 4px;
+      min-height: 58px;
+      padding: 0 8px;
+      border: 1px solid rgba(139, 167, 207, 0.14);
+      border-radius: 7px;
+      background: rgba(13, 24, 43, 0.78);
+      color: #d9edff;
+      font-size: 11px;
+      font-weight: 900;
+    }
+
+    .clip.ready { border-color: rgba(45, 212, 191, 0.32); background: rgba(14, 94, 85, 0.32); }
+    .clip.active { border-color: rgba(56, 189, 248, 0.52); background: rgba(14, 89, 149, 0.36); }
+
+    .c .shell {
+      grid-template-columns: 230px minmax(0, 1fr) 342px;
+      grid-template-rows: minmax(0, 1fr);
+      height: 828px;
+    }
+
+    .preview-layout {
+      display: grid;
+      grid-template-rows: 372px 170px minmax(0, 1fr);
+      gap: 12px;
+      min-height: 0;
+      padding: 12px;
+    }
+
+    .hero-preview {
+      position: relative;
+      border: 1px solid rgba(56, 189, 248, 0.24);
+      border-radius: 7px;
+      background:
+        linear-gradient(160deg, rgba(15, 23, 42, 0.06), rgba(15, 23, 42, 0.2)),
+        radial-gradient(circle at 48% 68%, rgba(248, 196, 93, 0.22), transparent 23%),
+        radial-gradient(circle at 28% 54%, rgba(56, 189, 248, 0.28), transparent 24%),
+        linear-gradient(135deg, #202a3a 0%, #101827 45%, #1d343e 100%);
+      overflow: hidden;
+    }
+
+    .hero-preview::before,
+    .hero-preview::after {
+      content: "";
+      position: absolute;
+      bottom: -32px;
+      width: 120px;
+      height: 190px;
+      border-radius: 999px 999px 0 0;
+      background: rgba(226, 238, 255, 0.14);
+    }
+
+    .hero-preview::before { left: 31%; }
+    .hero-preview::after { right: 31%; height: 160px; background: rgba(45, 212, 191, 0.12); }
+
+    .preview-overlay {
+      position: absolute;
+      left: 16px;
+      right: 16px;
+      bottom: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 12px;
+      border: 1px solid rgba(139, 167, 207, 0.18);
+      border-radius: 7px;
+      background: rgba(4, 10, 20, 0.72);
+    }
+
+    .variant-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .variant {
+      display: grid;
+      grid-template-rows: 92px auto;
+      overflow: hidden;
+      border: 1px solid rgba(139, 167, 207, 0.15);
+      border-radius: 7px;
+      background: rgba(13, 24, 43, 0.78);
+    }
+
+    .variant .frame { min-height: 92px; }
+    .variant strong { padding: 8px; font-size: 12px; }
+
+    .export-list {
+      display: grid;
+      gap: 8px;
+      padding: 12px;
+    }
+
+    .export-item {
+      display: grid;
+      grid-template-columns: 24px 1fr auto;
+      gap: 8px;
+      align-items: center;
+      min-height: 42px;
+      padding: 8px;
+      border: 1px solid rgba(139, 167, 207, 0.13);
+      border-radius: 7px;
+      background: rgba(13, 24, 43, 0.58);
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    .num {
+      display: inline-grid;
+      place-items: center;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      color: #04111e;
+      background: var(--green);
+      font-size: 11px;
+      font-weight: 950;
+    }
+
+    .stage-list .row {
+      min-height: 62px;
+    }
+  </style>
+</head>
+<body>
+  <section class="concept a">
+    <div class="top">
+      <div class="title-row">
+        <div>
+          <h1>剧本解析确认台</h1>
+          <p class="subtitle">先把剧本文字确认成可生产的场次、角色、地点和风险，再进入设计总台。</p>
+        </div>
+        <div class="pill-row">
+          <span class="pill active">剧本 V3</span>
+          <span class="pill">3 场次</span>
+          <span class="pill">9 镜头预估</span>
+          <span class="pill">2 个风险</span>
+          <button class="primary">进入设计总台</button>
+        </div>
+      </div>
+      <div class="metric-strip">
+        <div class="metric"><strong>已就绪</strong><span>剧本正文</span></div>
+        <div class="metric"><strong>3</strong><span>场次候选</span></div>
+        <div class="metric"><strong>2</strong><span>角色候选</span></div>
+        <div class="metric"><strong>1</strong><span>场景资产</span></div>
+        <div class="metric"><strong>9</strong><span>镜头预估</span></div>
+        <div class="metric"><strong>86%</strong><span>解析可信度</span></div>
+      </div>
+    </div>
+
+    <div class="shell">
+      <aside class="panel">
+        <div class="panel-head">
+          <div><h2>场次目录</h2><small>按风险和确认状态筛选</small></div>
+        </div>
+        <div class="pill-row" style="padding:12px 12px 0">
+          <span class="chip active">全部</span>
+          <span class="chip">未确认</span>
+          <span class="chip">有风险</span>
+        </div>
+        <div class="rail-list">
+          <div class="row active">
+            <div class="row-title"><span>1. 雨夜教学楼走廊</span><em class="badge good">已确认</em></div>
+            <small>教学楼 · 夜晚 · 3 镜头 · 周屿 / 林晚</small>
+            <div class="progress"><div class="bar" style="width:88%"></div></div>
+          </div>
+          <div class="row">
+            <div class="row-title"><span>2. 天台对白</span><em class="badge warn">待修正</em></div>
+            <small>天台 · 清晨 · 4 镜头 · 台词偏长</small>
+            <div class="progress"><div class="bar" style="width:62%"></div></div>
+          </div>
+          <div class="row">
+            <div class="row-title"><span>3. 校门离别</span><em class="badge good">可拆镜</em></div>
+            <small>校门 · 白天 · 2 镜头 · 转场明确</small>
+            <div class="progress"><div class="bar" style="width:76%"></div></div>
+          </div>
+          <div class="row">
+            <div class="row-title"><span>4. 回忆片段</span><em class="badge red">缺地点</em></div>
+            <small>未知地点 · 黄昏 · 3 镜头 · 需确认</small>
+            <div class="progress"><div class="bar" style="width:38%"></div></div>
+          </div>
+        </div>
+      </aside>
+
+      <main class="panel scene-detail">
+        <div class="panel-head">
+          <div><h2>场 1 · 雨夜教学楼走廊</h2><small>从原文中识别出地点、人物、动作目标和台词结构</small></div>
+          <div class="pill-row"><span class="badge good">可进入设计</span><span class="badge">3 镜头</span></div>
+        </div>
+        <div class="detail-body">
+          <div class="summary-card">
+            <div>
+              <span class="badge good">解析可信度 91%</span>
+              <h2>林晚在雨夜走廊遇见周屿</h2>
+              <p>画面目标是建立雨夜压抑感、两人久别重逢的距离，以及周屿主动靠近的关系变化。建议拆成环境建立、人物对视、近景对白三个镜头。</p>
+            </div>
+            <div class="scene-thumb"><strong>视觉基调 · 冷雨 / 走廊反光</strong></div>
+          </div>
+
+          <div class="prop-grid">
+            <div class="prop"><span>地点</span><p>教学楼三层走廊，玻璃窗有雨痕，冷色日光灯。</p></div>
+            <div class="prop"><span>人物</span><p>周屿：高二数学教师 / 林晚：语文实习教师。</p></div>
+            <div class="prop"><span>动作目标</span><p>林晚独自站定，周屿靠近，两人短对白。</p></div>
+            <div class="prop"><span>情绪</span><p>压抑、克制、久别重逢的迟疑。</p></div>
+            <div class="prop"><span>台词量</span><p>2 条短台词，无超长对白风险。</p></div>
+            <div class="prop"><span>镜头意图</span><p>建立空间、关系靠近、台词落点。</p></div>
+          </div>
+
+          <div class="excerpt">
+            雨声吞没了她上一世最后的痛意。林晚停在玻璃窗前，倒影被走廊灯拉得很长。周屿从楼梯口走来，手里还拿着未批完的试卷。<br>
+            周屿：“你终于来了。”<br>
+            林晚没有回头，只轻声说：“这一次，我不会再逃。”
+          </div>
+
+          <div class="chips">
+            <span class="chip active">角色 2/2</span>
+            <span class="chip active">地点已识别</span>
+            <span class="chip">道具 2</span>
+            <span class="chip">声音：雨声</span>
+            <span class="chip active">可拆镜</span>
+          </div>
+        </div>
+      </main>
+
+      <aside class="panel">
+        <div class="panel-head">
+          <div><h2>生产元素 Inspector</h2><small>确认后同步到设计总台</small></div>
+        </div>
+        <div class="inspector-list">
+          <div class="inspect-row"><strong>角色</strong><span>周屿 / 林晚</span><em class="badge good">高一致性</em></div>
+          <div class="inspect-row"><strong>场景</strong><span>教学楼走廊</span><em class="badge warn">需参考图</em></div>
+          <div class="inspect-row"><strong>道具</strong><span>试卷、玻璃窗、伞</span><em class="badge">3 项</em></div>
+          <div class="inspect-row"><strong>声音</strong><span>雨声、脚步声、走廊回声</span><em class="badge">3 项</em></div>
+          <div class="inspect-row"><strong>风险</strong><span>场景参考不足</span><em class="badge warn">可修正</em></div>
+        </div>
+        <div class="stack">
+          <div class="prop"><span>修正建议</span><p>给教学楼走廊补一张场景参考，避免后续镜头背景漂移。</p></div>
+          <div class="prop"><span>下一步</span><p>进入设计总台后，系统会把本场拆成 3 张镜头卡，并继承角色与场景依赖。</p></div>
+          <button class="primary">确认本场解析</button>
+          <button class="ghost">拆分为两个场次</button>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <section class="concept b">
+    <div class="top">
+      <div class="title-row">
+        <div>
+          <h1>设计总台</h1>
+          <p class="subtitle">把剧本解析结果转成视觉生产矩阵：角色、场景、分镜图、视频片段在同一张总台里推进。</p>
+        </div>
+        <div class="pill-row">
+          <button class="ghost">回到剧本解析</button>
+          <button class="primary">生成缺失分镜图</button>
+        </div>
+      </div>
+      <div class="pipeline">
+        <div class="step ready"><strong>1</strong><span>剧本解析 3/3</span></div>
+        <div class="step ready"><strong>2</strong><span>角色锁定 2/2</span></div>
+        <div class="step active"><strong>3</strong><span>场景资产 1/3</span></div>
+        <div class="step active"><strong>4</strong><span>分镜图 5/9</span></div>
+        <div class="step warn"><strong>5</strong><span>视频片段 1/9</span></div>
+        <div class="step"><strong>6</strong><span>导出待处理</span></div>
+      </div>
+    </div>
+
+    <div class="shell">
+      <aside class="panel">
+        <div class="panel-head">
+          <div><h2>场景组</h2><small>按场次查看生产完整度</small></div>
+        </div>
+        <div class="rail-list">
+          <div class="row active">
+            <div class="row-title"><span>场 1 · 雨夜走廊</span><em class="badge good">5/5</em></div>
+            <small>夜晚 · 教学楼 · 周屿 / 林晚</small>
+            <div class="progress"><div class="bar" style="width:92%"></div></div>
+          </div>
+          <div class="row">
+            <div class="row-title"><span>场 2 · 天台对白</span><em class="badge warn">2 风险</em></div>
+            <small>清晨 · 天台 · 台词偏长</small>
+            <div class="progress"><div class="bar" style="width:56%"></div></div>
+          </div>
+          <div class="row">
+            <div class="row-title"><span>场 3 · 校门离别</span><em class="badge">待图</em></div>
+            <small>白天 · 校门 · 2 镜头</small>
+            <div class="progress"><div class="bar" style="width:44%"></div></div>
+          </div>
+          <div class="row">
+            <div class="row-title"><span>资产库</span><em class="badge good">12</em></div>
+            <small>角色 4 · 场景 3 · 道具 5</small>
+          </div>
+        </div>
+      </aside>
+
+      <main class="panel main-board">
+        <div class="panel-head">
+          <div><h2>故事板矩阵</h2><small>按场景分组，批量查看分镜图、视频和字幕状态</small></div>
+          <div class="pill-row"><span class="chip active">镜头卡</span><span class="chip">场景卡</span><span class="chip">风险</span></div>
+        </div>
+        <div class="matrix">
+          <div class="scene-band">
+            <div class="band-title"><span>场 1 · 雨夜教学楼走廊</span><small>3 镜头 · 44s · 已锁定角色</small></div>
+            <div class="shot-grid">
+              <article class="shot-card active">
+                <div class="frame"><span class="frame-label">镜头 1 · 远景</span></div>
+                <div class="shot-info">
+                  <div class="shot-title"><span>走廊建立</span><em class="badge good">图已定</em></div>
+                  <p>雨夜走廊，林晚停在玻璃窗前，冷光反射。</p>
+                  <div class="chips"><span class="chip">林晚</span><span class="chip">走廊</span></div>
+                  <div class="dot-row"><span class="dot on">图</span><span class="dot on">视</span><span class="dot">字</span><span class="dot">音</span></div>
+                </div>
+              </article>
+              <article class="shot-card">
+                <div class="frame alt"><span class="frame-label">镜头 2 · 中景</span></div>
+                <div class="shot-info">
+                  <div class="shot-title"><span>周屿靠近</span><em class="badge warn">待场景</em></div>
+                  <p>周屿从楼梯口出现，关系距离被压缩。</p>
+                  <div class="chips"><span class="chip">周屿</span><span class="chip">林晚</span></div>
+                  <div class="dot-row"><span class="dot on">图</span><span class="dot work">视</span><span class="dot">字</span><span class="dot">音</span></div>
+                </div>
+              </article>
+              <article class="shot-card">
+                <div class="frame dark"><span class="frame-label">镜头 3 · 近景</span></div>
+                <div class="shot-info">
+                  <div class="shot-title"><span>台词落点</span><em class="badge good">可生成</em></div>
+                  <p>林晚轻声回应，情绪克制，镜头慢推。</p>
+                  <div class="chips"><span class="chip">对白</span><span class="chip">慢推</span></div>
+                  <div class="dot-row"><span class="dot on">图</span><span class="dot">视</span><span class="dot">字</span><span class="dot">音</span></div>
+                </div>
+              </article>
+            </div>
+          </div>
+          <div class="scene-band">
+            <div class="band-title"><span>场 2 · 天台对白</span><small>4 镜头 · 62s · 台词需拆分</small></div>
+            <div class="shot-grid">
+              <article class="shot-card"><div class="frame alt"><span class="frame-label">镜头 4</span></div><div class="shot-info"><div class="shot-title"><span>天台风声</span><em class="badge">草图</em></div><p>清晨冷风，二人隔着栏杆站立。</p><div class="dot-row"><span class="dot work">图</span><span class="dot">视</span><span class="dot">字</span><span class="dot">音</span></div></div></article>
+              <article class="shot-card"><div class="frame"><span class="frame-label">镜头 5</span></div><div class="shot-info"><div class="shot-title"><span>周屿质问</span><em class="badge red">长台词</em></div><p>对白超过 12 秒，建议拆成两个镜头。</p><div class="dot-row"><span class="dot">图</span><span class="dot">视</span><span class="dot">字</span><span class="dot">音</span></div></div></article>
+              <article class="shot-card"><div class="frame dark"><span class="frame-label">镜头 6</span></div><div class="shot-info"><div class="shot-title"><span>林晚沉默</span><em class="badge">待图</em></div><p>情绪停顿，留给下场转场。</p><div class="dot-row"><span class="dot">图</span><span class="dot">视</span><span class="dot">字</span><span class="dot">音</span></div></div></article>
+            </div>
+          </div>
+        </div>
+      </main>
+
+      <aside class="panel inspector">
+        <div class="panel-head">
+          <div><h2>镜头 Inspector</h2><small>镜头 1 · 走廊建立</small></div>
+        </div>
+        <div class="selected-preview"></div>
+        <div class="dependency"><span>角色资产</span><em class="badge good">周屿 / 林晚已锁</em></div>
+        <div class="dependency"><span>场景资产</span><em class="badge warn">缺走廊参考</em></div>
+        <div class="dependency"><span>首帧图</span><em class="badge good">已生成</em></div>
+        <div class="dependency"><span>视频片段</span><em class="badge good">1 个版本</em></div>
+        <div class="dependency"><span>字幕/配音</span><em class="badge">待生成</em></div>
+        <div class="stack">
+          <div class="prop"><span>导演提示</span><p>保留窗面雨痕和地面反光，人物不要占满画面，先建立空间压抑感。</p></div>
+          <button class="primary">进入单镜头导演台</button>
+          <button class="ghost">精修场景资产</button>
+          <button class="ghost">重生成分镜图</button>
+        </div>
+      </aside>
+
+      <div class="panel timeline">
+        <div class="clip ready">S1-1<br><span>14s</span></div>
+        <div class="clip active">S1-2<br><span>15s</span></div>
+        <div class="clip">S1-3<br><span>15s</span></div>
+        <div class="clip">S2-1<br><span>12s</span></div>
+        <div class="clip">S2-2<br><span>18s</span></div>
+        <div class="clip">S2-3<br><span>16s</span></div>
+        <div class="clip">S3-1<br><span>10s</span></div>
+        <div class="clip">S3-2<br><span>12s</span></div>
+        <div class="clip">导出<br><span>待合成</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="concept c">
+    <div class="top">
+      <div class="title-row">
+        <div>
+          <h1>视频闭环导演总控台</h1>
+          <p class="subtitle">当镜头图基本定稿后，在这里处理视频片段、字幕、配音、封面和可发布导出。</p>
+        </div>
+        <div class="pill-row">
+          <span class="badge good">健康检查通过</span>
+          <span class="badge warn">缺 4 段配音</span>
+          <button class="primary">导出可发布视频</button>
+        </div>
+      </div>
+      <div class="pipeline">
+        <div class="step ready"><strong>9</strong><span>镜头总数</span></div>
+        <div class="step ready"><strong>5</strong><span>首帧已定</span></div>
+        <div class="step active"><strong>3</strong><span>视频片段</span></div>
+        <div class="step warn"><strong>5</strong><span>字幕待校</span></div>
+        <div class="step warn"><strong>4</strong><span>配音待生成</span></div>
+        <div class="step"><strong>0</strong><span>导出版本</span></div>
+      </div>
+    </div>
+
+    <div class="shell">
+      <aside class="panel">
+        <div class="panel-head"><div><h2>生产阶段</h2><small>视频闭环路径</small></div></div>
+        <div class="rail-list stage-list">
+          <div class="row active"><div class="row-title"><span>镜头视频</span><em class="badge good">3/9</em></div><small>图生视频 / 多版本选择</small></div>
+          <div class="row"><div class="row-title"><span>配音音轨</span><em class="badge warn">5/9</em></div><small>TTS / 角色声线</small></div>
+          <div class="row"><div class="row-title"><span>字幕校对</span><em class="badge warn">4 待校</em></div><small>SRT / 样式 / 时间轴</small></div>
+          <div class="row"><div class="row-title"><span>封面与标题</span><em class="badge">待做</em></div><small>发布资产</small></div>
+          <div class="row"><div class="row-title"><span>合成导出</span><em class="badge">未就绪</em></div><small>MP4 / 检查清单</small></div>
+        </div>
+      </aside>
+
+      <main class="panel">
+        <div class="panel-head">
+          <div><h2>当前镜头 · S1-2 周屿靠近</h2><small>检查视频、字幕和配音是否能进入最终合成</small></div>
+          <div class="pill-row"><span class="chip active">版本 B</span><span class="chip">15s</span><span class="chip">慢推</span></div>
+        </div>
+        <div class="preview-layout">
+          <div class="hero-preview">
+            <div class="preview-overlay">
+              <div><strong>走廊冷光 / 两人距离压缩</strong><p class="subtitle">视频版本 B · 角色未漂移 · 背景反光稳定</p></div>
+              <div class="pill-row"><span class="badge good">可入时间线</span><span class="badge">1080P</span></div>
+            </div>
+          </div>
+          <div class="variant-grid">
+            <div class="variant"><div class="frame"></div><strong>版本 A · 表情弱</strong></div>
+            <div class="variant"><div class="frame alt"></div><strong>版本 B · 推荐</strong></div>
+            <div class="variant"><div class="frame dark"></div><strong>版本 C · 运镜强</strong></div>
+            <div class="variant"><div class="frame"></div><strong>重生成占位</strong></div>
+          </div>
+          <div class="panel" style="padding:12px">
+            <div class="band-title"><span>时间线</span><small>总时长 118s · 当前选中 S1-2</small></div>
+            <div class="timeline" style="grid-template-columns:repeat(9,minmax(0,1fr)); padding:10px 0 0">
+              <div class="clip ready">S1-1</div><div class="clip active">S1-2</div><div class="clip ready">S1-3</div><div class="clip">S2-1</div><div class="clip">S2-2</div><div class="clip">S2-3</div><div class="clip">S3-1</div><div class="clip">S3-2</div><div class="clip">封面</div>
+            </div>
+          </div>
+        </div>
+      </main>
+
+      <aside class="panel">
+        <div class="panel-head"><div><h2>导出检查</h2><small>发布前闭环</small></div></div>
+        <div class="export-list">
+          <div class="export-item"><span class="num">1</span><span>镜头视频完整</span><em class="badge warn">3/9</em></div>
+          <div class="export-item"><span class="num">2</span><span>字幕时间轴</span><em class="badge warn">待校</em></div>
+          <div class="export-item"><span class="num">3</span><span>配音音轨</span><em class="badge">5/9</em></div>
+          <div class="export-item"><span class="num">4</span><span>角色连续性</span><em class="badge good">通过</em></div>
+          <div class="export-item"><span class="num">5</span><span>封面与标题</span><em class="badge">待生成</em></div>
+        </div>
+        <div class="stack">
+          <div class="prop"><span>当前风险</span><p>S2-2 台词过长，建议拆字幕并补一段反应镜头。</p></div>
+          <div class="prop"><span>导出策略</span><p>先导出 720P 审片版，确认后再生成 1080P 发布版。</p></div>
+          <button class="primary">生成缺失配音</button>
+          <button class="ghost">校对字幕</button>
+          <button class="ghost">导出审片版</button>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <script>
+    const concept = new URLSearchParams(location.search).get("concept") || "a";
+    document.body.dataset.concept = concept;
+  </script>
+</body>
+</html>
