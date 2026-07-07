@@ -68,6 +68,14 @@ Invoke-WebRequest https://www.manjiao.cloud/health -UseBasicParsing
 (Invoke-WebRequest https://manjiao.cloud/ -UseBasicParsing).Content
 ```
 
+## 2026-07-07 Production Desk V2 Deployment Note
+
+- Deployed source: clean `git archive HEAD` from the local commit containing this note (`feat: redesign project production desks v2`; run `git log -1 --oneline` for the exact amended hash).
+- Backup directory: `/opt/manjiao-backups/20260707_104233`
+- New public asset fingerprint after deploy: `assets/index-CM1uVcN9.js` and `assets/index-C-kN7Ljy.css`
+- Verification passed: `https://manjiao.cloud/` returned 200; `https://manjiao.cloud/health` returned 200; `https://www.manjiao.cloud/health` returned 200.
+- GitHub push from this machine failed twice on 2026-07-07 because `github.com:443` timed out. Server deploy was completed by clean `git archive HEAD` upload through SSH alias `manjiao`.
+
 ## 2026-07-07 Deployment Note
 
 - Deployed commit: `7147f70 feat: redesign project workbench v2`

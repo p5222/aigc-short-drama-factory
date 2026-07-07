@@ -284,16 +284,16 @@ export function ProjectWorkbenchPage({ workflow, providers, modelPrices, onBack,
       </section>
 
       <div className="tabs workbench-tabs" data-tour-id="project-flow-tabs">
-        <button className={activeTab === "script" ? "active" : ""} onClick={() => setActiveTab("script")}><BookOpenCheck size={18} />剧本分场</button>
+        <button className={activeTab === "script" ? "active" : ""} onClick={() => setActiveTab("script")}><BookOpenCheck size={18} />剧本解析</button>
         <button className={activeTab === "characters" ? "active" : ""} onClick={() => setActiveTab("characters")}><UserRound size={18} />角色场景</button>
-        <button className={activeTab === "storyboard" ? "active" : ""} onClick={() => setActiveTab("storyboard")}><WandSparkles size={18} />分镜表</button>
-        <button className={activeTab === "images" ? "active" : ""} onClick={() => setActiveTab("images")}><Images size={18} />分镜总台</button>
-        <button className={activeTab === "video" ? "active export-tab" : "export-tab"} onClick={() => setActiveTab("video")}><Film size={18} />视频合成</button>
+        <button className={activeTab === "storyboard" ? "active" : ""} onClick={() => setActiveTab("storyboard")}><WandSparkles size={18} />设计总台</button>
+        <button className={activeTab === "images" ? "active" : ""} onClick={() => setActiveTab("images")}><Images size={18} />单镜头导演台</button>
+        <button className={activeTab === "video" ? "active export-tab" : "export-tab"} onClick={() => setActiveTab("video")}><Film size={18} />视频闭环</button>
       </div>
 
       {activeTab === "script" ? <ScriptBoard script={script} characters={characters} storyboards={storyboards} isBusy={isBusy} onOpenCharacters={() => setActiveTab("characters")} onGenerateStoryboards={() => void runWorkflowAction("storyboard")} /> : null}
       {activeTab === "characters" ? <CreatorCharacterBoard projectId={project.id} characters={characters} roleAssets={roleAssets} sceneAssets={sceneAssets} qualityReports={qualityReports} feedbacks={feedbacks} isBusy={isBusy} onRefresh={refreshProject} onGenerate={() => void runWorkflowAction("character")} onPreview={setPreviewImage} /> : null}
-      {activeTab === "storyboard" ? <StoryboardBoard storyboards={storyboards} sceneAssets={sceneAssets} productionPackage={productionPackage} isBusy={isBusy} onGenerate={() => void runWorkflowAction("storyboard")} /> : null}
+      {activeTab === "storyboard" ? <DesignDeskBoard storyboards={storyboards} characters={characters} roleAssets={roleAssets} sceneAssets={sceneAssets} imageAssets={imageAssets} videoAssets={videoAssets} productionPackage={productionPackage} isBusy={isBusy} onGenerate={() => void runWorkflowAction("storyboard")} onOpenDirector={() => setActiveTab("images")} onOpenVideo={() => setActiveTab("video")} onPreview={setPreviewImage} /> : null}
       {activeTab === "images" ? <CreatorImagesBoard projectId={project.id} storyboards={storyboards} characters={characters} roleAssets={roleAssets} sceneAssets={sceneAssets} imageAssets={imageAssets} qualityReports={qualityReports} feedbacks={feedbacks} isBusy={isBusy} onRefresh={refreshProject} onPreview={setPreviewImage} /> : null}
       {activeTab === "video" ? <VideoBoard projectId={project.id} storyboards={storyboards} imageAssets={imageAssets} videoAssets={videoAssets} exportJobs={exportJobs} isBusy={isBusy} onGenerate={() => void runWorkflowAction("video")} onCreateExport={createExport} onRefresh={refreshProject} /> : null}
       {previewImage ? <ImagePreviewModal preview={previewImage} onClose={() => setPreviewImage(null)} /> : null}
@@ -801,9 +801,12 @@ function CreatorImagesBoard({
   const latestReport = latestStageReport(qualityReports, "image");
   const imageFeedback = feedbacks.filter((item) => item.stage === "image");
   const activeShot = storyboards.find((shot) => shot.id === activeShotId) ?? storyboards[0];
+  const activeShotIndex = activeShot ? storyboards.findIndex((shot) => shot.id === activeShot.id) : -1;
   const activeAsset = activeShot ? imageAssetByShotId.get(activeShot.id) : undefined;
+  const activeSceneAsset = activeShot ? findSceneAsset(activeShot.scene, sceneAssets) : undefined;
   const pendingShotIds = storyboards.filter((shot) => !imageAssetByShotId.get(shot.id)?.referenceUrl).map((shot) => shot.id);
   const activeReferenceIds = new Set(activeShot?.referenceAssetIds ?? []);
+  const sceneGroups = useMemo(() => buildProductionSceneGroups(storyboards), [storyboards]);
   const lockedRoleAssets = characters
     .map((character) => ({ character, asset: resolveCharacterIdentityAsset(character, roleAssets) }))
     .filter((item) => item.asset?.referenceUrl);
@@ -898,11 +901,11 @@ function CreatorImagesBoard({
   }
 
   return (
-    <section className="panel creator-shot-workbench storyboard-final-cockpit">
-      <div className="panel-head">
+    <section className="panel creator-shot-workbench director-desk-workbench">
+      <div className="panel-head director-desk-head">
         <div>
-          <h2>分镜可视化总台</h2>
-          <small>继承前置角色、场景和分镜表；先单张测试，再多选生成，最后进入视频合成。</small>
+          <h2>单镜头导演台</h2>
+          <small>单个镜头做精修：首帧、角色、场景、镜头参数和视频提示词都在这里精细调整。</small>
         </div>
         <div className="inline-actions">
           <button className="ghost-button" onClick={() => void runImageEvaluation()} disabled={working === "evaluate" || !imageAssets.length}>{working === "evaluate" ? <Loader2 size={16} className="spin-icon" /> : <BookOpenCheck size={16} />}离线评测</button>
@@ -911,101 +914,159 @@ function CreatorImagesBoard({
         </div>
       </div>
 
+      <div className="director-status-strip">
+        <article><span>当前模型</span><strong>Qwen Image / wan2.6-t2i</strong></article>
+        <article><span>图像尺寸</span><strong>按项目路由</strong></article>
+        <article><span>参考图</span><strong>{lockedRoleAssets.length + sceneAssets.length} 个</strong></article>
+        <article><span>预计消耗</span><strong>{activeShot ? "单镜头计费" : "-"}</strong></article>
+        <article className={working ? "running" : ""}><span>当前任务</span><strong>{working ? "生成中" : "空闲"}</strong></article>
+      </div>
+
       <QualityReportCard report={latestReport} emptyTitle="分镜图尚未离线评测" emptyText="生成首帧后可手动评测，创作者评分和系统评分都会进入后台 badcase 池。" />
       {message ? <p className="success-text">{message}</p> : null}
 
-      <div className="storyboard-cockpit-shell">
-        <aside className="cockpit-reference-panel">
-          <section>
-            <h3>角色参考</h3>
-            <div className="cockpit-reference-list">
-              {lockedRoleAssets.map(({ character, asset }) => (
-                <article key={character.id} className={asset && activeReferenceIds.has(asset.id) ? "active" : ""}>
-                  <button type="button" onClick={() => asset?.referenceUrl && onPreview({ url: asset.referenceUrl, title: character.name })}>
-                    {asset?.referenceUrl ? <StableImage src={asset.referenceUrl} alt={character.name} /> : <UserRound size={16} />}
-                  </button>
-                  <div><strong>{character.name}</strong><span>{asset && activeReferenceIds.has(asset.id) ? "当前镜头引用" : "已锁定 ID"}</span></div>
-                </article>
-              ))}
-              {!lockedRoleAssets.length ? <em>请先在角色场景页生成角色三视图</em> : null}
-            </div>
-          </section>
-          <section>
-            <h3>场景参考</h3>
-            <div className="cockpit-reference-list">
-              {sceneAssets.map((asset) => (
-                <article key={asset.id} className={activeReferenceIds.has(asset.id) || activeShot?.scene === asset.name ? "active" : ""}>
-                  <button type="button" onClick={() => asset.referenceUrl && onPreview({ url: asset.referenceUrl, title: asset.name })} disabled={!asset.referenceUrl}>
-                    {asset.referenceUrl ? <StableImage src={asset.referenceUrl} alt={asset.name} /> : <Images size={16} />}
-                  </button>
-                  <div><strong>{asset.name}</strong><span>{activeReferenceIds.has(asset.id) || activeShot?.scene === asset.name ? "当前场景" : "场景卡"}</span></div>
-                </article>
-              ))}
-              {!sceneAssets.length ? <em>请先生成分镜表沉淀场景卡</em> : null}
-            </div>
-          </section>
+      <div className="director-desk-layout">
+        <aside className="director-shot-tree">
+          <div className="design-section-title">
+            <h3>镜头列表</h3>
+            <small>第 1 集 · {storyboards.length} 镜头</small>
+          </div>
+          <div className="director-shot-tree-scroll">
+            {sceneGroups.map((group) => (
+              <section key={group.id}>
+                <button className="director-scene-toggle" type="button">
+                  <span>场 {group.sceneNo}</span>
+                  <strong>{group.scene}</strong>
+                  <small>{group.shots.length} 镜头 · {group.duration}s</small>
+                </button>
+                {group.shots.map((shot) => {
+                  const index = storyboards.findIndex((item) => item.id === shot.id);
+                  const asset = imageAssetByShotId.get(shot.id);
+                  const selected = selectedIds.includes(shot.id);
+                  const active = activeShot?.id === shot.id;
+                  return (
+                    <article className={active ? "active" : ""} key={shot.id}>
+                      <input type="checkbox" checked={selected} onChange={() => toggleShot(shot.id)} aria-label={`选择 ${formatShotNo(shot, index)}`} />
+                      <button type="button" className={asset?.referenceUrl ? "director-shot-thumb ready" : "director-shot-thumb"} onClick={() => setActiveShotId(shot.id)}>
+                        {asset?.referenceUrl ? <StableImage src={asset.referenceUrl} alt={asset.name} /> : <Sparkles size={16} />}
+                      </button>
+                      <button type="button" onClick={() => setActiveShotId(shot.id)}>
+                        <strong>{formatShotNo(shot, index)}</strong>
+                        <span>{shot.pictureDesc}</span>
+                        <small>{asset?.referenceUrl ? "已完成" : "未生成"} · {shot.duration}s</small>
+                      </button>
+                    </article>
+                  );
+                })}
+              </section>
+            ))}
+            {!storyboards.length ? <div className="empty-state">暂无分镜，请先完成分镜拆解。</div> : null}
+          </div>
         </aside>
 
-        <div className="creator-shot-layout">
-        <div className="creator-shot-list">
-          {storyboards.map((shot, index) => {
-            const asset = imageAssetByShotId.get(shot.id);
-            const selected = selectedIds.includes(shot.id);
-            const active = activeShot?.id === shot.id;
-            return (
-              <article key={shot.id} className={active ? "active" : ""}>
-                <label>
-                  <input type="checkbox" checked={selected} onChange={() => toggleShot(shot.id)} />
-                  <span>{formatShotNo(shot, index)}</span>
-                </label>
-                <button type="button" className={asset?.referenceUrl ? "shot-mini-thumb ready" : "shot-mini-thumb"} onClick={() => setActiveShotId(shot.id)}>
-                  {asset?.referenceUrl ? <StableImage src={asset.referenceUrl} alt={asset.name} /> : <Sparkles size={18} />}
-                </button>
-                <p>{shot.pictureDesc}</p>
-                <small>{asset?.referenceUrl ? "已生成" : "待生成"} · {shot.shotSize} · {shot.duration}s</small>
-              </article>
-            );
-          })}
-          {!storyboards.length ? <div className="empty-state">暂无分镜，请先完成分镜拆解。</div> : null}
-        </div>
-
-        <div className="creator-shot-preview">
-          {activeAsset?.referenceUrl ? (
-            <button type="button" onClick={() => onPreview({ url: activeAsset.referenceUrl!, title: activeAsset.name })}>
-              <StableImage src={activeAsset.referenceUrl} alt={activeAsset.name} />
-            </button>
-          ) : (
-            <div className="shot-preview-empty large"><Sparkles size={30} /><strong>{activeShot ? formatShotNo(activeShot, storyboards.indexOf(activeShot)) : "选择镜头"}</strong><small>先生成单张测试图</small></div>
-          )}
+        <main className="director-canvas-column">
+          <div className="director-canvas-head">
+            <div>
+              <h3>{activeShot ? formatShotNo(activeShot, Math.max(activeShotIndex, 0)) : "选择镜头"}</h3>
+              <small>{activeShot?.pictureDesc || "选择一个镜头后编辑画面。"}</small>
+            </div>
+            <div className="segmented-control">
+              <button className="active" type="button">原图</button>
+              <button type="button">对比</button>
+            </div>
+          </div>
+          <button className={activeAsset?.referenceUrl ? "director-preview-frame ready" : "director-preview-frame"} type="button" onClick={() => activeAsset?.referenceUrl && onPreview({ url: activeAsset.referenceUrl, title: activeAsset.name })}>
+            {activeAsset?.referenceUrl ? <StableImage src={activeAsset.referenceUrl} alt={activeAsset.name} /> : <div><Sparkles size={32} /><strong>{activeShot ? "首帧待生成" : "选择镜头"}</strong><small>先生成单张测试图</small></div>}
+          </button>
           {activeShot ? (
-            <div className="inline-actions">
-              <button className="primary-button" onClick={() => void generateOne(activeShot)} disabled={Boolean(working) || isBusy}>{working === `one:${activeShot.id}` ? <Loader2 size={16} className="spin-icon" /> : <Sparkles size={16} />}生成/重生当前</button>
-              <button className="ghost-button" onClick={() => toggleShot(activeShot.id)}>{selectedIds.includes(activeShot.id) ? "取消选中" : "加入多选"}</button>
+            <div className="inline-actions director-canvas-actions">
+              <button className="primary-button" onClick={() => void generateOne(activeShot)} disabled={Boolean(working) || isBusy}>{working === `one:${activeShot.id}` ? <Loader2 size={16} className="spin-icon" /> : <Sparkles size={16} />}单镜头生成</button>
+              <button className="ghost-button" onClick={() => toggleShot(activeShot.id)}>{selectedIds.includes(activeShot.id) ? "取消多选" : "加入多选"}</button>
+              <button className="ghost-button" onClick={() => void saveActiveShot()} disabled={working === "save"}><Save size={16} />保存镜头</button>
             </div>
           ) : null}
-        </div>
 
-        <aside className="creator-shot-editor">
-          <div className="panel-head compact">
-            <div><h3>镜头编辑板</h3><small>修改后会清空该镜头旧首帧，避免图文不一致。</small></div>
-            <button className="ghost-button" onClick={() => void saveActiveShot()} disabled={!activeShot || working === "save"}><Save size={16} />保存</button>
+          <div className="director-version-strip">
+            <div className="design-section-title">
+              <h3>图片版本</h3>
+              <small>后续可接入强制重绘和版本对比</small>
+            </div>
+            <div>
+              {[0, 1, 2, 3].map((slot) => {
+                const current = slot === 0 ? activeAsset : undefined;
+                return (
+                  <button className={current?.referenceUrl ? "ready" : ""} key={slot} type="button" onClick={() => current?.referenceUrl && onPreview({ url: current.referenceUrl, title: current.name })}>
+                    {current?.referenceUrl ? <StableImage src={current.referenceUrl} alt={current.name} /> : <Sparkles size={18} />}
+                    <span>v{slot + 1} {slot === 0 ? "当前" : slot === 1 ? "重绘" : slot === 2 ? "参考优化" : "空位"}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </main>
+
+        <aside className="director-settings-panel">
+          <div className="director-settings-tabs">
+            <button className="active" type="button">镜头设置</button>
+            <button type="button">角色</button>
+            <button type="button">场景</button>
+            <button type="button">高级参数</button>
           </div>
           {activeShot ? (
-            <div className="shot-edit-form">
-              <label><span>画面描述</span><textarea value={String(draft.pictureDesc ?? "")} onChange={(event) => setDraft((current) => ({ ...current, pictureDesc: event.target.value }))} /></label>
-              <label><span>动作调度</span><textarea value={String(draft.action ?? "")} onChange={(event) => setDraft((current) => ({ ...current, action: event.target.value }))} /></label>
-              <div className="shot-edit-grid">
-                <label><span>景别</span><input value={String(draft.shotSize ?? "")} onChange={(event) => setDraft((current) => ({ ...current, shotSize: event.target.value }))} /></label>
-                <label><span>机位</span><input value={String(draft.cameraAngle ?? "")} onChange={(event) => setDraft((current) => ({ ...current, cameraAngle: event.target.value }))} /></label>
-                <label><span>运镜</span><input value={String(draft.cameraMovement ?? "")} onChange={(event) => setDraft((current) => ({ ...current, cameraMovement: event.target.value }))} /></label>
+            <>
+              <div className="shot-edit-form director-edit-form">
+                <div className="shot-edit-grid">
+                  <label><span>时长</span><input value={String(activeShot.duration ?? "")} readOnly /></label>
+                  <label><span>景别</span><input value={String(draft.shotSize ?? "")} onChange={(event) => setDraft((current) => ({ ...current, shotSize: event.target.value }))} /></label>
+                  <label><span>机位</span><input value={String(draft.cameraAngle ?? "")} onChange={(event) => setDraft((current) => ({ ...current, cameraAngle: event.target.value }))} /></label>
+                  <label><span>运镜</span><input value={String(draft.cameraMovement ?? "")} onChange={(event) => setDraft((current) => ({ ...current, cameraMovement: event.target.value }))} /></label>
+                  <label><span>角色</span><input value={activeShot.characters.join(" / ") || "待绑定"} readOnly /></label>
+                  <label><span>场景</span><input value={activeShot.scene || activeSceneAsset?.name || "待绑定"} readOnly /></label>
+                </div>
+                <label><span>动作</span><textarea value={String(draft.action ?? "")} onChange={(event) => setDraft((current) => ({ ...current, action: event.target.value }))} /></label>
                 <label><span>情绪</span><input value={String(draft.emotion ?? "")} onChange={(event) => setDraft((current) => ({ ...current, emotion: event.target.value }))} /></label>
+                <label><span>图片提示词</span><textarea value={String(draft.imagePrompt ?? "")} onChange={(event) => setDraft((current) => ({ ...current, imagePrompt: event.target.value }))} /></label>
+                <label><span>视频提示词</span><textarea value={String(draft.videoPrompt ?? "")} onChange={(event) => setDraft((current) => ({ ...current, videoPrompt: event.target.value }))} /></label>
               </div>
-              <label><span>对白</span><textarea value={String(draft.dialogue ?? "")} onChange={(event) => setDraft((current) => ({ ...current, dialogue: event.target.value }))} /></label>
-              <label><span>图片提示词</span><textarea value={String(draft.imagePrompt ?? "")} onChange={(event) => setDraft((current) => ({ ...current, imagePrompt: event.target.value }))} /></label>
-              <label><span>视频提示词</span><textarea value={String(draft.videoPrompt ?? "")} onChange={(event) => setDraft((current) => ({ ...current, videoPrompt: event.target.value }))} /></label>
-            </div>
+              <div className="director-reference-stack">
+                <section>
+                  <h3>角色参考</h3>
+                  {lockedRoleAssets.slice(0, 4).map(({ character, asset }) => (
+                    <button className={asset && activeReferenceIds.has(asset.id) ? "active" : ""} key={character.id} type="button" onClick={() => asset?.referenceUrl && onPreview({ url: asset.referenceUrl, title: character.name })}>
+                      {asset?.referenceUrl ? <StableImage src={asset.referenceUrl} alt={character.name} /> : <UserRound size={15} />}
+                      <span>{character.name}</span>
+                    </button>
+                  ))}
+                </section>
+                <section>
+                  <h3>场景参考</h3>
+                  <button className={activeSceneAsset?.referenceUrl ? "active" : ""} type="button" onClick={() => activeSceneAsset?.referenceUrl && onPreview({ url: activeSceneAsset.referenceUrl, title: activeSceneAsset.name })}>
+                    {activeSceneAsset?.referenceUrl ? <StableImage src={activeSceneAsset.referenceUrl} alt={activeSceneAsset.name} /> : <Images size={15} />}
+                    <span>{activeSceneAsset?.name || activeShot.scene || "待场景"}</span>
+                  </button>
+                </section>
+              </div>
+            </>
           ) : <div className="empty-state">请选择一个镜头。</div>}
         </aside>
+      </div>
+
+      <div className="director-matrix-panel">
+        <div className="design-section-title">
+          <h3>故事板矩阵</h3>
+          <small>概览模式：由单镜头资产自动组成</small>
+        </div>
+        <div className="director-matrix-grid">
+          {storyboards.map((shot, index) => {
+            const asset = imageAssetByShotId.get(shot.id);
+            return (
+              <button className={activeShot?.id === shot.id ? "active" : ""} key={shot.id} onClick={() => setActiveShotId(shot.id)} type="button">
+                <span>{asset?.referenceUrl ? <StableImage src={asset.referenceUrl} alt={asset.name} /> : <Sparkles size={18} />}</span>
+                <strong>{formatShotNo(shot, index)}</strong>
+                <small>{asset?.referenceUrl ? "已生成" : "待生成"} · {shot.duration}s</small>
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -1138,55 +1199,241 @@ function dimensionLabel(name: string) {
   return labels[name] ?? name;
 }
 
-function StoryboardBoard({ storyboards, sceneAssets, productionPackage, isBusy, onGenerate }: { storyboards: StoryboardShot[]; sceneAssets: AssetItem[]; productionPackage: StoryboardProductionPackage | null; isBusy: boolean; onGenerate: () => void }) {
+function DesignDeskBoard({
+  storyboards,
+  characters,
+  roleAssets,
+  sceneAssets,
+  imageAssets,
+  videoAssets,
+  productionPackage,
+  isBusy,
+  onGenerate,
+  onOpenDirector,
+  onOpenVideo,
+  onPreview
+}: {
+  storyboards: StoryboardShot[];
+  characters: CharacterProfile[];
+  roleAssets: AssetItem[];
+  sceneAssets: AssetItem[];
+  imageAssets: AssetItem[];
+  videoAssets: AssetItem[];
+  productionPackage: StoryboardProductionPackage | null;
+  isBusy: boolean;
+  onGenerate: () => void;
+  onOpenDirector: () => void;
+  onOpenVideo: () => void;
+  onPreview: (preview: { url: string; title: string }) => void;
+}) {
+  const sceneGroups = useMemo(() => buildProductionSceneGroups(storyboards), [storyboards]);
+  const imageAssetByShotId = useMemo(() => buildShotAssetMap(imageAssets, "image"), [imageAssets]);
+  const videoAssetByShotId = useMemo(() => buildShotAssetMap(videoAssets, "video"), [videoAssets]);
+  const [activeShotId, setActiveShotId] = useState(storyboards[0]?.id ?? "");
+  const activeShot = storyboards.find((shot) => shot.id === activeShotId) ?? storyboards[0];
+  const activeIndex = activeShot ? storyboards.findIndex((shot) => shot.id === activeShot.id) : -1;
+  const activeImage = activeShot ? imageAssetByShotId.get(activeShot.id) : undefined;
+  const activeVideo = activeShot ? videoAssetByShotId.get(activeShot.id) : undefined;
+  const activeSceneAsset = activeShot ? findSceneAsset(activeShot.scene, sceneAssets) : undefined;
   const snapshot = productionPackage?.projectSnapshot;
-  const sceneNames = uniqueSceneNames(storyboards);
-  const totalDuration = storyboards.reduce((sum, shot) => sum + (shot.duration || 0), 0);
-  const sceneAssetNames = new Set(sceneAssets.map((asset) => asset.name));
+  const lockedRoleCount = countCompletedCharacterSheets(characters, roleAssets);
+  const readySceneCount = sceneAssets.filter((asset) => asset.referenceUrl || asset.status === "succeeded").length;
+  const readyImages = storyboards.filter((shot) => imageAssetByShotId.get(shot.id)?.referenceUrl).length;
+  const playableVideos = storyboards.filter((shot) => isPlayableVideoUrl(videoAssetByShotId.get(shot.id)?.referenceUrl)).length;
+
+  useEffect(() => {
+    if (!storyboards.length) return;
+    setActiveShotId((current) => current && storyboards.some((shot) => shot.id === current) ? current : storyboards[0].id);
+  }, [storyboards]);
+
+  const deskSteps = [
+    { no: 1, label: "剧本解析", value: `${sceneGroups.length || 0} 场`, ready: sceneGroups.length > 0 },
+    { no: 2, label: "角色锁定", value: `${lockedRoleCount}/${characters.length}`, ready: !characters.length || lockedRoleCount >= characters.length },
+    { no: 3, label: "场景资产", value: `${readySceneCount}/${Math.max(sceneGroups.length, sceneAssets.length)}`, ready: readySceneCount > 0 },
+    { no: 4, label: "分镜图", value: `${readyImages}/${storyboards.length}`, ready: storyboards.length > 0 && readyImages >= storyboards.length },
+    { no: 5, label: "视频片段", value: `${playableVideos}/${storyboards.length}`, ready: playableVideos > 0 },
+    { no: 6, label: "导出处理", value: snapshot?.videoClips ? "可合成" : "待处理", ready: Boolean(snapshot?.videoClips) }
+  ];
+
   return (
-    <section className="panel storyboard-board-clean storyboard-table-workbench preworkbench-board">
-      <div className="panel-head">
-        <div><h2>分镜表编辑工作台</h2><small>这里确认镜头级清单、角色绑定、场景绑定和提示词草案；最终分镜图在“分镜总台”单张测试生成。</small></div>
-        <button className="primary-button" onClick={onGenerate} disabled={isBusy}><WandSparkles size={18} />生成/刷新分镜表</button>
-      </div>
-      <div className="storyboard-summary-grid">
-        <article><strong>{storyboards.length}</strong><span>镜头</span></article>
-        <article><strong>{sceneNames.length}</strong><span>场次</span></article>
-        <article><strong>{totalDuration}s</strong><span>预估时长</span></article>
-        <article><strong>{snapshot?.storyboardImages ?? 0}</strong><span>已出首帧</span></article>
+    <section className="panel design-desk-workbench">
+      <div className="panel-head design-desk-head">
+        <div>
+          <h2>设计总台</h2>
+          <small>把剧本解析结果转成视觉生产矩阵：角色、场景、分镜图、视频片段在同一张总台里推进。</small>
+        </div>
+        <div className="inline-actions">
+          <button className="ghost-button" onClick={onGenerate} disabled={isBusy}><WandSparkles size={18} />刷新分镜表</button>
+          <button className="primary-button" onClick={onOpenDirector} disabled={!storyboards.length}><Images size={18} />进入单镜头导演台</button>
+        </div>
       </div>
 
-      <div className="storyboard-table-layout">
-        <aside className="storyboard-scene-index">
-          <h3>场次索引</h3>
-          {sceneNames.map((scene) => {
-            const count = storyboards.filter((shot) => shot.scene === scene).length;
-            return <article key={scene} className={sceneAssetNames.has(scene) ? "ready" : ""}><strong>{scene}</strong><span>{count} 个镜头</span><small>{sceneAssetNames.has(scene) ? "场景卡已沉淀" : "待沉淀场景卡"}</small></article>;
-          })}
-          {!sceneNames.length ? <div className="empty-state">暂无场次，先生成分镜表。</div> : null}
+      <div className="design-stage-strip">
+        {deskSteps.map((step) => (
+          <article className={step.ready ? "ready" : ""} key={step.label}>
+            <strong>{step.no}</strong>
+            <span>{step.label}</span>
+            <small>{step.value}</small>
+          </article>
+        ))}
+      </div>
+
+      <div className="design-desk-layout">
+        <aside className="design-scene-rail">
+          <div className="design-section-title">
+            <h3>场景组</h3>
+            <small>按场次查看生产完整度</small>
+          </div>
+          <div className="design-scene-list">
+            {sceneGroups.map((group) => {
+              const imageReady = group.shots.filter((shot) => imageAssetByShotId.get(shot.id)?.referenceUrl).length;
+              const videoReady = group.shots.filter((shot) => isPlayableVideoUrl(videoAssetByShotId.get(shot.id)?.referenceUrl)).length;
+              const progress = group.shots.length ? Math.round(((imageReady + videoReady) / (group.shots.length * 2)) * 100) : 0;
+              return (
+                <button className={activeShot && group.shots.some((shot) => shot.id === activeShot.id) ? "active" : ""} key={group.id} onClick={() => setActiveShotId(group.shots[0]?.id ?? "")} type="button">
+                  <strong>场 {group.sceneNo} · {group.scene}</strong>
+                  <span>{group.characters.join(" / ") || "待绑定角色"} · {group.duration}s</span>
+                  <small>{imageReady}/{group.shots.length} 首帧 · {videoReady}/{group.shots.length} 视频</small>
+                  <i><b style={{ width: `${progress}%` }} /></i>
+                </button>
+              );
+            })}
+            {!sceneGroups.length ? <div className="empty-state">暂无场景组，请先生成分镜表。</div> : null}
+          </div>
         </aside>
 
-        <div className="storyboard-row-list storyboard-edit-table">
-          {storyboards.map((shot, index) => (
-            <article key={shot.id}>
-              <div className="storyboard-row-main">
-                <strong>{formatShotNo(shot, index)}</strong>
-                <span>{shot.shotSize}</span>
-                <span>{shot.cameraAngle}</span>
-                <span>{shot.cameraMovement}</span>
-                <small>{shot.duration}s</small>
-              </div>
-              <p>{shot.pictureDesc}</p>
-              <div className="storyboard-row-tags">
-                <span>场景：{shot.scene}</span>
-                <span>角色：{shot.characters.length ? shot.characters.join(" / ") : "待绑定"}</span>
-                {shot.dialogue ? <span>台词：{shot.dialogue}</span> : null}
-              </div>
-            </article>
-          ))}
-          {!storyboards.length ? <div className="empty-state">暂无分镜，请先确认剧本并生成分镜拆解。</div> : null}
-        </div>
+        <main className="design-matrix-panel">
+          <div className="design-matrix-head">
+            <div>
+              <h3>故事板矩阵</h3>
+              <small>按场景组批量查看分镜图、视频、字幕和声音状态</small>
+            </div>
+            <div className="segmented-control">
+              <button className="active" type="button">镜头卡</button>
+              <button type="button">场景卡</button>
+              <button type="button">风险</button>
+            </div>
+          </div>
 
+          <div className="design-story-grid">
+            {sceneGroups.map((group) => (
+              <section className="design-scene-section" key={group.id}>
+                <div className="design-scene-section-head">
+                  <strong>场 {group.sceneNo} · {group.scene}</strong>
+                  <span>{group.shots.length} 镜头 · {group.duration}s · {group.characters.length ? "已绑定角色" : "待绑定角色"}</span>
+                </div>
+                <div className="design-shot-card-grid">
+                  {group.shots.map((shot) => {
+                    const index = storyboards.findIndex((item) => item.id === shot.id);
+                    const image = imageAssetByShotId.get(shot.id);
+                    const video = videoAssetByShotId.get(shot.id);
+                    const active = activeShot?.id === shot.id;
+                    return (
+                      <button className={active ? "design-shot-card active" : "design-shot-card"} key={shot.id} onClick={() => setActiveShotId(shot.id)} type="button">
+                        <span className={image?.referenceUrl ? "design-shot-thumb ready" : "design-shot-thumb"}>
+                          {image?.referenceUrl ? <StableImage src={image.referenceUrl} alt={image.name} /> : <><i /><b /></>}
+                        </span>
+                        <strong>{formatShotNo(shot, index)}</strong>
+                        <p>{shot.pictureDesc}</p>
+                        <span className="design-shot-statuses">
+                          <em className={image?.referenceUrl ? "ready" : ""}>图</em>
+                          <em className={isPlayableVideoUrl(video?.referenceUrl) ? "ready" : ""}>视</em>
+                          <em className={shot.dialogue || shot.voiceOver ? "ready" : ""}>字</em>
+                          <em className={shot.environmentSound || shot.soundEffect ? "ready" : ""}>音</em>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+            ))}
+            {!sceneGroups.length ? <div className="empty-state">暂无分镜。完成剧本解析后，点击刷新分镜表。</div> : null}
+          </div>
+
+          <ProductionTimeline storyboards={storyboards} imageAssetByShotId={imageAssetByShotId} videoAssetByShotId={videoAssetByShotId} />
+        </main>
+
+        <aside className="design-inspector">
+          <div className="design-section-title">
+            <h3>镜头 Inspector</h3>
+            <small>{activeShot ? `${formatShotNo(activeShot, Math.max(activeIndex, 0))} · ${activeShot.pictureDesc.slice(0, 18)}` : "选择镜头查看"}</small>
+          </div>
+          <button className={activeImage?.referenceUrl ? "design-inspector-preview ready" : "design-inspector-preview"} type="button" onClick={() => activeImage?.referenceUrl && onPreview({ url: activeImage.referenceUrl, title: activeImage.name })}>
+            {activeImage?.referenceUrl ? <StableImage src={activeImage.referenceUrl} alt={activeImage.name} /> : <Sparkles size={30} />}
+          </button>
+          {activeShot ? (
+            <>
+              <div className="design-asset-checks">
+                <AssetCheck label="角色资产" value={activeShot.characters.length ? activeShot.characters.join(" / ") : "待绑定"} ready={activeShot.characters.length > 0} />
+                <AssetCheck label="场景资产" value={activeSceneAsset?.referenceUrl ? "已锁定场景图" : activeSceneAsset ? "文本场景已锁定" : "缺少场景参考"} ready={Boolean(activeSceneAsset)} />
+                <AssetCheck label="首帧图" value={activeImage?.referenceUrl ? "已生成" : "待生成"} ready={Boolean(activeImage?.referenceUrl)} />
+                <AssetCheck label="视频片段" value={isPlayableVideoUrl(activeVideo?.referenceUrl) ? "可播放" : activeVideo ? statusText[activeVideo.status] : "待生成"} ready={isPlayableVideoUrl(activeVideo?.referenceUrl)} />
+                <AssetCheck label="字幕/配音" value={activeShot.dialogue || activeShot.voiceOver ? "有台词可生成" : "暂无台词"} ready={Boolean(activeShot.dialogue || activeShot.voiceOver)} />
+              </div>
+              <div className="design-guidance-note">
+                <strong>导演提示</strong>
+                <p>{activeShot.videoPrompt || activeShot.imagePrompt || activeShot.pictureDesc}</p>
+              </div>
+              <button className="primary-button full-button" onClick={onOpenDirector} type="button"><Images size={18} />进入单镜头导演台</button>
+              <button className="ghost-button full-button" onClick={onOpenVideo} type="button"><Film size={18} />查看视频闭环</button>
+              <button className="ghost-button full-button" onClick={onGenerate} disabled={isBusy} type="button"><WandSparkles size={18} />重生成分镜表</button>
+            </>
+          ) : <div className="empty-state">请选择一个镜头。</div>}
+        </aside>
+      </div>
+    </section>
+  );
+}
+
+function AssetCheck({ label, value, ready }: { label: string; value: string; ready: boolean }) {
+  return (
+    <div className={ready ? "ready" : ""}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function ProductionTimeline({
+  storyboards,
+  imageAssetByShotId,
+  videoAssetByShotId
+}: {
+  storyboards: StoryboardShot[];
+  imageAssetByShotId: Map<string, AssetItem>;
+  videoAssetByShotId: Map<string, AssetItem>;
+}) {
+  const tracks = [
+    { key: "image", label: "首帧轨道", status: (shot: StoryboardShot) => imageAssetByShotId.get(shot.id)?.referenceUrl ? "ready" : "pending" },
+    { key: "video", label: "视频轨道", status: (shot: StoryboardShot) => isPlayableVideoUrl(videoAssetByShotId.get(shot.id)?.referenceUrl) ? "ready" : videoAssetByShotId.get(shot.id) ? "running" : "pending" },
+    { key: "caption", label: "字幕/配音", status: (shot: StoryboardShot) => shot.dialogue || shot.voiceOver ? "ready" : "pending" },
+    { key: "sound", label: "音效/BGM", status: (shot: StoryboardShot) => shot.environmentSound || shot.soundEffect ? "ready" : "pending" }
+  ];
+  const totalDuration = Math.max(1, storyboards.reduce((sum, shot) => sum + (shot.duration || 0), 0));
+
+  return (
+    <section className="production-timeline">
+      <div className="production-timeline-head">
+        <strong>生产时间线</strong>
+        <span>{storyboards.length} 镜头 · {totalDuration}s · 可接入视频闭环</span>
+      </div>
+      <div className="production-timeline-scroll">
+        {tracks.map((track) => (
+          <div className="production-track-row" key={track.key}>
+            <strong>{track.label}</strong>
+            <div>
+              {storyboards.map((shot, index) => {
+                const width = `${Math.max(72, Math.round(((shot.duration || 1) / totalDuration) * 840))}px`;
+                return (
+                  <span className={`production-segment ${track.status(shot)}`} key={`${track.key}-${shot.id}`} style={{ width }}>
+                    <b>{index + 1}</b>
+                    <em>{shot.duration || 1}s</em>
+                  </span>
+                );
+              })}
+            </div>
+          </div>
+        ))}
       </div>
     </section>
   );
@@ -1222,8 +1469,25 @@ function ImagesBoard({ storyboards, imageAssets, isBusy, onGenerate, onPreview }
 }
 
 function VideoBoard({ projectId, storyboards, imageAssets, videoAssets, exportJobs, isBusy, onGenerate, onCreateExport, onRefresh }: { projectId: string; storyboards: StoryboardShot[]; imageAssets: AssetItem[]; videoAssets: AssetItem[]; exportJobs: ExportJob[]; isBusy: boolean; onGenerate: () => void; onCreateExport: (type: "tts" | "subtitle" | "video_export") => void; onRefresh: () => void | Promise<void> }) {
-  const playableVideoCount = videoAssets.filter((asset) => isPlayableVideoUrl(asset.referenceUrl)).length;
+  const imageAssetByShotId = useMemo(() => buildShotAssetMap(imageAssets, "image"), [imageAssets]);
+  const videoAssetByShotId = useMemo(() => buildShotAssetMap(videoAssets, "video"), [videoAssets]);
+  const [activeShotId, setActiveShotId] = useState(storyboards[0]?.id ?? "");
+  const playableVideoCount = storyboards.filter((shot) => isPlayableVideoUrl(videoAssetByShotId.get(shot.id)?.referenceUrl)).length;
   const latestJob = exportJobs[0];
+  const latestMp4 = exportJobs.find((job) => job.outputKind === "mp4" || job.type === "video_export");
+  const audioJob = exportJobs.find((job) => job.audioUrl || job.outputKind === "audio" || job.type === "tts");
+  const subtitleJob = exportJobs.find((job) => job.subtitleUrl || job.outputKind === "subtitle" || job.type === "subtitle");
+  const activeShot = storyboards.find((shot) => shot.id === activeShotId) ?? storyboards[0];
+  const activeIndex = activeShot ? storyboards.findIndex((shot) => shot.id === activeShot.id) : -1;
+  const activeImage = activeShot ? imageAssetByShotId.get(activeShot.id) : undefined;
+  const activeVideo = activeShot ? videoAssetByShotId.get(activeShot.id) : undefined;
+  const totalDuration = Math.max(1, storyboards.reduce((sum, shot) => sum + (shot.duration || 0), 0));
+  const hasWarnings = exportJobs.some((job) => job.warnings?.length || job.errorReason);
+
+  useEffect(() => {
+    if (!storyboards.length) return;
+    setActiveShotId((current) => current && storyboards.some((shot) => shot.id === current) ? current : storyboards[0].id);
+  }, [storyboards]);
 
   async function downloadJob(job: ExportJob) {
     const blob = await api.downloadExportJob(projectId, job.id);
@@ -1238,43 +1502,183 @@ function VideoBoard({ projectId, storyboards, imageAssets, videoAssets, exportJo
   }
 
   return (
-    <section className="panel video-timeline-board">
-      <div className="panel-head">
-        <div><h2>视频合成工作台</h2><small>先生成镜头视频片段，再生成配音、字幕并合成 MP4。当前首帧 {imageAssets.length}/{storyboards.length}，可播放视频 {playableVideoCount}/{storyboards.length}。</small></div>
-        <button className="primary-button" onClick={onGenerate} disabled={isBusy || !imageAssets.length}><Film size={18} />生成镜头视频片段</button>
-      </div>
-      <div className="video-flow-strip">
-        <article className={videoAssets.length ? "ready" : ""}><strong>1</strong><span>生成片段</span><small>只提交已有首帧的镜头</small></article>
-        <article className={latestJob?.audioUrl ? "ready" : ""}><strong>2</strong><span>配音字幕</span><small>按镜头台词生成音轨和 SRT</small></article>
-        <article className={latestJob?.outputKind === "mp4" ? "ready" : ""}><strong>3</strong><span>合成 MP4</span><small>封装片段、配音、字幕</small></article>
-        <article className={latestJob?.downloadUrl ? "ready" : ""}><strong>4</strong><span>预览下载</span><small>通过权限校验下载</small></article>
-      </div>
-      <div className="inline-actions">
-        <button className="ghost-button" onClick={() => void onCreateExport("tts")} disabled={isBusy}><Download size={18} />生成配音</button>
-        <button className="ghost-button" onClick={() => void onCreateExport("subtitle")} disabled={isBusy}><Download size={18} />生成字幕</button>
-        <button className="primary-button" onClick={() => void onCreateExport("video_export")} disabled={isBusy}><Download size={18} />合成 MP4</button>
-        <button className="ghost-button" onClick={() => void onRefresh()}><RefreshCw size={18} />刷新状态</button>
-      </div>
-      <div className="video-clip-grid">
-        {storyboards.map((shot, index) => {
-          const video = videoAssets[index];
-          const image = imageAssets[index];
-          return (
-            <article key={shot.id}>
-              <div className="video-thumb">{isPlayableVideoUrl(video?.referenceUrl) ? <video src={video!.referenceUrl} controls preload="metadata" /> : image?.referenceUrl ? <img src={image.referenceUrl} alt={image.name} /> : <span>首帧待生成</span>}</div>
-              <strong>{formatShotNo(shot, index)}</strong>
-              <span>{video ? statusText[video.status] : "待视频"}</span>
-            </article>
-          );
-        })}
-      </div>
-      {latestJob ? (
-        <div className="latest-export-card">
-          <strong>{latestJob.outputKind === "mp4" ? "MP4 成片已生成" : latestJob.outputKind === "diagnostic_bundle" ? "诊断包已生成" : "导出任务"}</strong>
-          <span>{latestJob.errorReason || `状态：${latestJob.status}`}</span>
-          <button className="ghost-button" onClick={() => void downloadJob(latestJob)} disabled={latestJob.status !== "succeeded"}>下载文件</button>
+    <section className="panel video-loop-desk">
+      <div className="panel-head video-loop-head">
+        <div>
+          <h2>视频闭环导演总控台</h2>
+          <small>从镜头视频、配音、字幕、封面到 MP4 导出做最后闭环。当前首帧 {imageAssets.length}/{storyboards.length}，可播放视频 {playableVideoCount}/{storyboards.length}。</small>
         </div>
-      ) : null}
+        <div className="inline-actions">
+          <button className="ghost-button" onClick={() => void onRefresh()}><RefreshCw size={18} />刷新状态</button>
+          <button className="primary-button" onClick={onGenerate} disabled={isBusy || !imageAssets.length}><Film size={18} />生成镜头视频</button>
+        </div>
+      </div>
+
+      <div className="video-loop-progress-strip">
+        <article className={playableVideoCount ? "ready" : ""}><span>片段完成</span><strong>{playableVideoCount}/{storyboards.length}</strong><i><b style={{ width: `${storyboards.length ? Math.round((playableVideoCount / storyboards.length) * 100) : 0}%` }} /></i></article>
+        <article className={audioJob?.status === "succeeded" || Boolean(audioJob?.audioUrl) ? "ready" : ""}><span>TTS 配音</span><strong>{audioJob?.status === "succeeded" || audioJob?.audioUrl ? "正常" : "待生成"}</strong></article>
+        <article className={subtitleJob?.status === "succeeded" || Boolean(subtitleJob?.subtitleUrl) ? "ready" : ""}><span>字幕状态</span><strong>{subtitleJob?.status === "succeeded" || subtitleJob?.subtitleUrl ? "正常" : "待生成"}</strong></article>
+        <article className={latestMp4?.status === "succeeded" ? "ready" : ""}><span>导出就绪</span><strong>{latestMp4?.status === "succeeded" ? "可下载" : "待合成"}</strong></article>
+        <article><span>预计时长</span><strong>{formatClock(totalDuration)}</strong></article>
+      </div>
+
+      <div className="video-loop-layout">
+        <aside className="video-clip-manifest">
+          <div className="design-section-title">
+            <h3>片段清单</h3>
+            <small>{storyboards.length} 个镜头 · 单击切换预览</small>
+          </div>
+          <div className="video-clip-list">
+            {storyboards.map((shot, index) => {
+              const video = videoAssetByShotId.get(shot.id);
+              const image = imageAssetByShotId.get(shot.id);
+              const ready = isPlayableVideoUrl(video?.referenceUrl);
+              return (
+                <button className={activeShot?.id === shot.id ? "active" : ""} key={shot.id} onClick={() => setActiveShotId(shot.id)} type="button">
+                  <span className={ready || image?.referenceUrl ? "video-clip-mini ready" : "video-clip-mini"}>{ready ? <video src={video!.referenceUrl} muted preload="metadata" /> : image?.referenceUrl ? <StableImage src={image.referenceUrl} alt={image.name} /> : <Film size={16} />}</span>
+                  <strong>{String(index + 1).padStart(2, "0")}</strong>
+                  <span>{shot.pictureDesc}</span>
+                  <small>{shot.duration}s · {ready ? "完成" : video ? statusText[video.status] : "待视频"}</small>
+                </button>
+              );
+            })}
+            {!storyboards.length ? <div className="empty-state">暂无片段，请先生成分镜。</div> : null}
+          </div>
+        </aside>
+
+        <main className="video-preview-console">
+          <div className="video-preview-head">
+            <div>
+              <h3>当前预览：{activeShot ? formatShotNo(activeShot, Math.max(activeIndex, 0)) : "待选择镜头"}</h3>
+              <small>{activeShot?.scene || "暂无场景"} · {activeShot?.shotSize || "-"} · {activeShot?.cameraMovement || "-"}</small>
+            </div>
+            <span>{activeVideo?.status ? statusText[activeVideo.status] : "待生成"}</span>
+          </div>
+          <div className="video-player-frame">
+            {isPlayableVideoUrl(activeVideo?.referenceUrl) ? (
+              <video src={activeVideo!.referenceUrl} controls preload="metadata" />
+            ) : activeImage?.referenceUrl ? (
+              <StableImage src={activeImage.referenceUrl} alt={activeImage.name} />
+            ) : (
+              <div><Film size={34} /><strong>待生成视频片段</strong><small>先在单镜头导演台生成首帧，再提交图生视频。</small></div>
+            )}
+          </div>
+          <div className="video-transport-bar">
+            <button className="icon-button" type="button" aria-label="播放"><Play size={17} /></button>
+            <span>{activeShot ? formatClock(storyboards.slice(0, Math.max(activeIndex, 0)).reduce((sum, shot) => sum + (shot.duration || 0), 0)) : "00:00"} / {formatClock(totalDuration)}</span>
+            <small>{activeShot?.dialogue || activeShot?.voiceOver || "暂无台词"}</small>
+          </div>
+          <VideoTimelineTracks storyboards={storyboards} imageAssetByShotId={imageAssetByShotId} videoAssetByShotId={videoAssetByShotId} activeShotId={activeShot?.id} onSelect={setActiveShotId} />
+        </main>
+
+        <aside className="video-export-inspector">
+          <section className={hasWarnings ? "export-check-card warn" : "export-check-card ready"}>
+            <div>
+              <AlertTriangle size={17} />
+              <strong>{hasWarnings ? "发现导出问题" : "导出检查通过"}</strong>
+            </div>
+            <p>{hasWarnings ? "仍有失败任务、警告或缺失素材，建议查看底部错误与警告。" : "片段、字幕和配音状态可继续合成。"}</p>
+          </section>
+          <section className="export-settings-card">
+            <h3>输出设置</h3>
+            <label><span>输出比例</span><select defaultValue="9:16"><option>9:16</option><option>16:9</option><option>1:1</option></select></label>
+            <label><span>帧率</span><select defaultValue="24"><option value="24">24 fps</option><option value="30">30 fps</option></select></label>
+            <label><span>文件名</span><input defaultValue="manjiao_final_v1.mp4" /></label>
+          </section>
+          <section className="cover-frame-card">
+            <h3>封面帧</h3>
+            <button type="button">
+              {activeImage?.referenceUrl ? <StableImage src={activeImage.referenceUrl} alt={activeImage.name} /> : <Images size={20} />}
+            </button>
+          </section>
+          <section className="export-task-stack">
+            <h3>生成任务</h3>
+            <button className="ghost-button" onClick={() => void onCreateExport("tts")} disabled={isBusy}><Download size={16} />生成配音</button>
+            <button className="ghost-button" onClick={() => void onCreateExport("subtitle")} disabled={isBusy}><Download size={16} />生成字幕</button>
+            <button className="primary-button" onClick={() => void onCreateExport("video_export")} disabled={isBusy}><Download size={16} />合成 MP4</button>
+          </section>
+        </aside>
+      </div>
+
+      <div className="video-output-dashboard">
+        <section>
+          <h3>导出任务历史</h3>
+          {exportJobs.slice(0, 4).map((job) => (
+            <article key={job.id}>
+              <strong>{exportJobLabel(job)}</strong>
+              <span className={`status ${job.status}`}>{job.status}</span>
+              <small>{new Date(job.updatedAt).toLocaleString()}</small>
+              <button className="ghost-button" onClick={() => void downloadJob(job)} disabled={job.status !== "succeeded"}>下载</button>
+            </article>
+          ))}
+          {!exportJobs.length ? <div className="empty-state">暂无导出任务。</div> : null}
+        </section>
+        <section>
+          <h3>最新输出</h3>
+          {latestJob ? (
+            <div className="latest-output-card">
+              <strong>{exportJobLabel(latestJob)}</strong>
+              <span>{latestJob.errorReason || `状态：${latestJob.status}`}</span>
+              <button className="ghost-button" onClick={() => void downloadJob(latestJob)} disabled={latestJob.status !== "succeeded"}><Download size={16} />下载文件</button>
+            </div>
+          ) : <div className="empty-state">合成后这里会展示最新输出。</div>}
+        </section>
+        <section>
+          <h3>错误与警告</h3>
+          {exportJobs.flatMap((job) => [...(job.warnings ?? []), job.errorReason].filter(Boolean).map((item) => ({ id: `${job.id}-${item}`, text: item! }))).slice(0, 5).map((item) => <p key={item.id}>{item.text}</p>)}
+          {!hasWarnings ? <p>暂无错误和警告。</p> : null}
+        </section>
+      </div>
+    </section>
+  );
+}
+
+function VideoTimelineTracks({
+  storyboards,
+  imageAssetByShotId,
+  videoAssetByShotId,
+  activeShotId,
+  onSelect
+}: {
+  storyboards: StoryboardShot[];
+  imageAssetByShotId: Map<string, AssetItem>;
+  videoAssetByShotId: Map<string, AssetItem>;
+  activeShotId?: string;
+  onSelect: (shotId: string) => void;
+}) {
+  const totalDuration = Math.max(1, storyboards.reduce((sum, shot) => sum + (shot.duration || 0), 0));
+  const tracks = [
+    { key: "video", label: "视频轨道", ready: (shot: StoryboardShot) => isPlayableVideoUrl(videoAssetByShotId.get(shot.id)?.referenceUrl), text: (shot: StoryboardShot) => videoAssetByShotId.get(shot.id) ? "片段" : "待片段" },
+    { key: "audio", label: "配音轨道", ready: (shot: StoryboardShot) => Boolean(shot.dialogue || shot.voiceOver), text: (shot: StoryboardShot) => shot.dialogue || shot.voiceOver || "待配音" },
+    { key: "caption", label: "字幕轨道", ready: (shot: StoryboardShot) => Boolean(shot.dialogue), text: (shot: StoryboardShot) => shot.dialogue || "待字幕" },
+    { key: "sfx", label: "音效轨道", ready: (shot: StoryboardShot) => Boolean(shot.environmentSound || shot.soundEffect), text: (shot: StoryboardShot) => shot.environmentSound || shot.soundEffect || "环境声" }
+  ];
+
+  return (
+    <section className="video-track-timeline">
+      <div className="video-time-ruler">
+        <span>00:00</span>
+        <span>{formatClock(Math.round(totalDuration / 2))}</span>
+        <span>{formatClock(totalDuration)}</span>
+      </div>
+      {tracks.map((track) => (
+        <div className="video-track-row" key={track.key}>
+          <strong>{track.label}</strong>
+          <div>
+            {storyboards.map((shot, index) => {
+              const width = `${Math.max(82, Math.round(((shot.duration || 1) / totalDuration) * 980))}px`;
+              const image = imageAssetByShotId.get(shot.id);
+              return (
+                <button className={`${track.ready(shot) ? "ready" : ""} ${activeShotId === shot.id ? "active" : ""}`} key={`${track.key}-${shot.id}`} onClick={() => onSelect(shot.id)} style={{ width }} type="button">
+                  {track.key === "video" && image?.referenceUrl ? <StableImage src={image.referenceUrl} alt={image.name} /> : null}
+                  <span>{index + 1}</span>
+                  <em>{track.text(shot)}</em>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ))}
     </section>
   );
 }
@@ -1458,6 +1862,59 @@ function formatShotNo(shot: StoryboardShot | undefined, index: number) {
 
 function uniqueSceneNames(storyboards: StoryboardShot[]) {
   return [...new Set(storyboards.map((shot) => shot.scene.trim()).filter(Boolean))];
+}
+
+function buildShotAssetMap(assets: AssetItem[], prefix: "image" | "video") {
+  const map = new Map<string, AssetItem>();
+  assets.forEach((asset) => {
+    const normalized = asset.id.replace(new RegExp(`^${prefix}_`), "");
+    map.set(normalized, asset);
+  });
+  return map;
+}
+
+function buildProductionSceneGroups(storyboards: StoryboardShot[]) {
+  const groups = new Map<string, StoryboardShot[]>();
+  storyboards.forEach((shot) => {
+    const key = `${shot.episodeNo}-${shot.sceneNo}-${shot.scene || "未命名场景"}`;
+    groups.set(key, [...(groups.get(key) ?? []), shot]);
+  });
+  return Array.from(groups.entries())
+    .map(([id, shots]) => {
+      const ordered = [...shots].sort((a, b) => a.shotNo - b.shotNo);
+      const first = ordered[0];
+      return {
+        id,
+        sceneNo: first?.sceneNo ?? 1,
+        scene: first?.scene || "未命名场景",
+        shots: ordered,
+        duration: ordered.reduce((sum, shot) => sum + (shot.duration || 0), 0),
+        characters: [...new Set(ordered.flatMap((shot) => shot.characters).filter(Boolean))]
+      };
+    })
+    .sort((a, b) => a.sceneNo - b.sceneNo);
+}
+
+function findSceneAsset(scene: string | undefined, sceneAssets: AssetItem[]) {
+  if (!scene) return undefined;
+  const clean = scene.trim();
+  return sceneAssets.find((asset) => asset.name === clean)
+    ?? sceneAssets.find((asset) => clean.includes(asset.name) || asset.name.includes(clean));
+}
+
+function formatClock(seconds: number) {
+  const safe = Math.max(0, Math.round(seconds));
+  const minutes = Math.floor(safe / 60);
+  const remain = safe % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(remain).padStart(2, "0")}`;
+}
+
+function exportJobLabel(job: ExportJob) {
+  if (job.outputKind === "mp4" || job.type === "video_export") return "MP4 成片";
+  if (job.outputKind === "audio" || job.type === "tts") return "TTS 配音";
+  if (job.outputKind === "subtitle" || job.type === "subtitle") return "字幕文件";
+  if (job.outputKind === "diagnostic_bundle") return "诊断包";
+  return "导出任务";
 }
 
 type ScriptSceneStatus = "locked" | "ready" | "risk" | "draft" | "blocked";
