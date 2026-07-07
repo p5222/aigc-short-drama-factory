@@ -3,6 +3,7 @@ import {
   BookOpenCheck,
   CheckCircle2,
   Clock3,
+  Copy,
   Download,
   Film,
   FileText,
@@ -21,7 +22,7 @@ import {
   UserRound,
   WandSparkles
 } from "lucide-react";
-import { useEffect, useMemo, useState, type ChangeEvent } from "react";
+import { useEffect, useMemo, useState, type ChangeEvent, type ReactNode } from "react";
 import type {
   AssetItem,
   CharacterProfile,
@@ -295,7 +296,7 @@ export function ProjectWorkbenchPage({ workflow, providers, modelPrices, onBack,
       {activeTab === "characters" ? <CreatorCharacterBoard projectId={project.id} characters={characters} roleAssets={roleAssets} sceneAssets={sceneAssets} qualityReports={qualityReports} feedbacks={feedbacks} isBusy={isBusy} onRefresh={refreshProject} onGenerate={() => void runWorkflowAction("character")} onPreview={setPreviewImage} /> : null}
       {activeTab === "storyboard" ? <DesignDeskBoard storyboards={storyboards} characters={characters} roleAssets={roleAssets} sceneAssets={sceneAssets} imageAssets={imageAssets} videoAssets={videoAssets} productionPackage={productionPackage} isBusy={isBusy} onGenerate={() => void runWorkflowAction("storyboard")} onOpenDirector={() => setActiveTab("images")} onOpenVideo={() => setActiveTab("video")} onPreview={setPreviewImage} /> : null}
       {activeTab === "images" ? <CreatorImagesBoard projectId={project.id} storyboards={storyboards} characters={characters} roleAssets={roleAssets} sceneAssets={sceneAssets} imageAssets={imageAssets} qualityReports={qualityReports} feedbacks={feedbacks} isBusy={isBusy} onRefresh={refreshProject} onPreview={setPreviewImage} /> : null}
-      {activeTab === "video" ? <VideoBoard projectId={project.id} storyboards={storyboards} imageAssets={imageAssets} videoAssets={videoAssets} exportJobs={exportJobs} isBusy={isBusy} onGenerate={() => void runWorkflowAction("video")} onCreateExport={createExport} onRefresh={refreshProject} /> : null}
+      {activeTab === "video" ? <VideoBoard projectId={project.id} storyboards={storyboards} characters={characters} roleAssets={roleAssets} imageAssets={imageAssets} videoAssets={videoAssets} exportJobs={exportJobs} isBusy={isBusy} onGenerate={() => void runWorkflowAction("video")} onCreateExport={createExport} onRefresh={refreshProject} /> : null}
       {previewImage ? <ImagePreviewModal preview={previewImage} onClose={() => setPreviewImage(null)} /> : null}
     </div>
   );
@@ -623,6 +624,22 @@ function CreatorCharacterBoard({
   const characterFeedback = feedbacks.filter((item) => item.stage === "character");
   const lockedRoleCount = countCompletedCharacterSheets(characters, roleAssets);
   const lockedSceneCount = sceneAssets.filter((asset) => asset.referenceUrl || asset.status === "succeeded").length;
+  const [canvasCharacterId, setCanvasCharacterId] = useState(characters[0]?.id ?? "");
+  const canvasCharacter = characters.find((character) => character.id === canvasCharacterId) ?? characters[0];
+  const canvasIdentityAsset = canvasCharacter ? resolveCharacterIdentityAsset(canvasCharacter, roleAssets) : undefined;
+  const canvasReferenceAssets = canvasCharacter ? roleAssets.filter((asset) => asset.type === "role_reference" && asset.relatedCharacterId === canvasCharacter.id && asset.referenceUrl) : [];
+  const characterBoardPrompt = canvasCharacter ? buildCanvasCharacterBoardPrompt(canvasCharacter, canvasIdentityAsset, canvasReferenceAssets) : "";
+  const characterCanvasSteps = [
+    { label: "输入参考图", value: `${canvasReferenceAssets.length + (canvasIdentityAsset?.referenceUrl ? 1 : 0)} 张`, ready: Boolean(canvasReferenceAssets.length || canvasIdentityAsset?.referenceUrl) },
+    { label: "生成角色身份板", value: "16:9", ready: Boolean(canvasIdentityAsset?.referenceUrl) },
+    { label: "锁定一致性", value: `${lockedRoleCount}/${characters.length}`, ready: characters.length > 0 && lockedRoleCount >= characters.length },
+    { label: "进入故事板", value: `${lockedSceneCount} 场景`, ready: lockedRoleCount > 0 }
+  ];
+
+  useEffect(() => {
+    if (!characters.length) return;
+    setCanvasCharacterId((current) => current && characters.some((character) => character.id === current) ? current : characters[0].id);
+  }, [characters]);
 
   async function runEvaluation() {
     setEvaluating(true);
@@ -691,6 +708,30 @@ function CreatorCharacterBoard({
         <article><strong>{roleAssets.filter((asset) => asset.type === "role_reference").length}</strong><span>创作者参考</span></article>
         <article><strong>{latestReport?.totalScore ?? "-"}</strong><span>离线评分</span></article>
       </div>
+
+      <CanvasWorkflowPanel
+        tone="character"
+        eyebrow="CANVAS WORKFLOW 01"
+        title="角色身份板生成协议"
+        description="用参考图和角色卡生成 16:9 角色身份板，先锁脸、服装、姿态语言和表情范围，再交给故事板与视频节点复用。"
+        steps={characterCanvasSteps}
+        promptTitle={canvasCharacter ? `${canvasCharacter.name} 角色板提示词` : "角色板提示词"}
+        promptHint="输入：参考图 + 角色卡。输出：白底电影身份板，不生成环境、道具、Logo、水印。"
+        prompt={characterBoardPrompt}
+      >
+        <div className="canvas-character-selector">
+          {characters.map((character) => {
+            const identityAsset = resolveCharacterIdentityAsset(character, roleAssets);
+            return (
+              <button className={canvasCharacter?.id === character.id ? "active" : ""} key={character.id} onClick={() => setCanvasCharacterId(character.id)} type="button">
+                <span>{identityAsset?.referenceUrl ? <StableImage src={identityAsset.referenceUrl} alt={character.name} /> : <UserRound size={16} />}</span>
+                <strong>{character.name}</strong>
+                <small>{identityAsset?.referenceUrl ? "身份板已锁定" : "待生成身份板"}</small>
+              </button>
+            );
+          })}
+        </div>
+      </CanvasWorkflowPanel>
 
       <QualityReportCard report={latestReport} emptyTitle="角色尚未离线评测" emptyText="生成或上传参考图后，可手动点击离线评测，结果会回流后台质量中心。" />
       {localMessage ? <p className="success-text">{localMessage}</p> : null}
@@ -804,6 +845,7 @@ function CreatorImagesBoard({
   const activeShotIndex = activeShot ? storyboards.findIndex((shot) => shot.id === activeShot.id) : -1;
   const activeAsset = activeShot ? imageAssetByShotId.get(activeShot.id) : undefined;
   const activeSceneAsset = activeShot ? findSceneAsset(activeShot.scene, sceneAssets) : undefined;
+  const activeShotCanvasPrompt = activeShot ? buildCanvasSingleShotPrompt(activeShot, characters, activeSceneAsset) : "";
   const pendingShotIds = storyboards.filter((shot) => !imageAssetByShotId.get(shot.id)?.referenceUrl).map((shot) => shot.id);
   const activeReferenceIds = new Set(activeShot?.referenceAssetIds ?? []);
   const sceneGroups = useMemo(() => buildProductionSceneGroups(storyboards), [storyboards]);
@@ -1012,6 +1054,12 @@ function CreatorImagesBoard({
             <button type="button">场景</button>
             <button type="button">高级参数</button>
           </div>
+          <CanvasPromptCard
+            title="单镜头画布输入"
+            hint="输入：角色身份板 + 场景卡 + 当前镜头。用于单镜头重绘、局部精修和后续图生视频。"
+            prompt={activeShotCanvasPrompt}
+            compact
+          />
           {activeShot ? (
             <>
               <div className="shot-edit-form director-edit-form">
@@ -1240,6 +1288,13 @@ function DesignDeskBoard({
   const readySceneCount = sceneAssets.filter((asset) => asset.referenceUrl || asset.status === "succeeded").length;
   const readyImages = storyboards.filter((shot) => imageAssetByShotId.get(shot.id)?.referenceUrl).length;
   const playableVideos = storyboards.filter((shot) => isPlayableVideoUrl(videoAssetByShotId.get(shot.id)?.referenceUrl)).length;
+  const storyboardCanvasPrompt = buildCanvasStoryboardBoardPrompt(storyboards, characters, sceneAssets);
+  const storyboardCanvasSteps = [
+    { label: "角色身份板", value: `${lockedRoleCount}/${characters.length}`, ready: !characters.length || lockedRoleCount >= characters.length },
+    { label: "场景参考", value: `${readySceneCount}`, ready: readySceneCount > 0 },
+    { label: "12格故事板", value: `${Math.min(12, storyboards.length)}/12`, ready: storyboards.length >= 6 },
+    { label: "视频提示词", value: playableVideos ? "已联动" : "待推导", ready: playableVideos > 0 }
+  ];
 
   useEffect(() => {
     if (!storyboards.length) return;
@@ -1277,6 +1332,19 @@ function DesignDeskBoard({
           </article>
         ))}
       </div>
+
+      <CanvasWorkflowPanel
+        tone="storyboard"
+        eyebrow="CANVAS WORKFLOW 02"
+        title="12宫格故事板画布"
+        description="把分镜表、角色身份板和场景参考合成一张黑白手绘电影故事板，用彩色箭头标注动作、机位、构图、灯光和情绪，降低视频抽卡概率。"
+        steps={storyboardCanvasSteps}
+        promptTitle="故事板矩阵生成提示词"
+        promptHint="输入：分镜表 + 角色身份板 + 场景参考。输出：16:9、12格、黑白草图、有彩色导演标注的故事板。"
+        prompt={storyboardCanvasPrompt}
+      >
+        <CanvasBeatGrid storyboards={storyboards} imageAssetByShotId={imageAssetByShotId} activeShotId={activeShot?.id} onSelect={setActiveShotId} />
+      </CanvasWorkflowPanel>
 
       <div className="design-desk-layout">
         <aside className="design-scene-rail">
@@ -1468,7 +1536,7 @@ function ImagesBoard({ storyboards, imageAssets, isBusy, onGenerate, onPreview }
   );
 }
 
-function VideoBoard({ projectId, storyboards, imageAssets, videoAssets, exportJobs, isBusy, onGenerate, onCreateExport, onRefresh }: { projectId: string; storyboards: StoryboardShot[]; imageAssets: AssetItem[]; videoAssets: AssetItem[]; exportJobs: ExportJob[]; isBusy: boolean; onGenerate: () => void; onCreateExport: (type: "tts" | "subtitle" | "video_export") => void; onRefresh: () => void | Promise<void> }) {
+function VideoBoard({ projectId, storyboards, characters, roleAssets, imageAssets, videoAssets, exportJobs, isBusy, onGenerate, onCreateExport, onRefresh }: { projectId: string; storyboards: StoryboardShot[]; characters: CharacterProfile[]; roleAssets: AssetItem[]; imageAssets: AssetItem[]; videoAssets: AssetItem[]; exportJobs: ExportJob[]; isBusy: boolean; onGenerate: () => void; onCreateExport: (type: "tts" | "subtitle" | "video_export") => void; onRefresh: () => void | Promise<void> }) {
   const imageAssetByShotId = useMemo(() => buildShotAssetMap(imageAssets, "image"), [imageAssets]);
   const videoAssetByShotId = useMemo(() => buildShotAssetMap(videoAssets, "video"), [videoAssets]);
   const [activeShotId, setActiveShotId] = useState(storyboards[0]?.id ?? "");
@@ -1481,6 +1549,7 @@ function VideoBoard({ projectId, storyboards, imageAssets, videoAssets, exportJo
   const activeIndex = activeShot ? storyboards.findIndex((shot) => shot.id === activeShot.id) : -1;
   const activeImage = activeShot ? imageAssetByShotId.get(activeShot.id) : undefined;
   const activeVideo = activeShot ? videoAssetByShotId.get(activeShot.id) : undefined;
+  const activeSeedancePrompt = activeShot ? buildCanvasSeedanceVideoPrompt(activeShot, storyboards, characters, roleAssets) : "";
   const totalDuration = Math.max(1, storyboards.reduce((sum, shot) => sum + (shot.duration || 0), 0));
   const hasWarnings = exportJobs.some((job) => job.warnings?.length || job.errorReason);
 
@@ -1568,6 +1637,12 @@ function VideoBoard({ projectId, storyboards, imageAssets, videoAssets, exportJo
             <span>{activeShot ? formatClock(storyboards.slice(0, Math.max(activeIndex, 0)).reduce((sum, shot) => sum + (shot.duration || 0), 0)) : "00:00"} / {formatClock(totalDuration)}</span>
             <small>{activeShot?.dialogue || activeShot?.voiceOver || "暂无台词"}</small>
           </div>
+          <CanvasPromptCard
+            title="Seedance 2.0 当前视频提示词"
+            hint="输入：@[CHARACTER REF] 角色身份板 + @[STORYBOARD REF] 故事板/首帧参考。按故事板节拍推导动作、机位、灯光和尾帧。"
+            prompt={activeSeedancePrompt}
+            compact
+          />
           <VideoTimelineTracks storyboards={storyboards} imageAssetByShotId={imageAssetByShotId} videoAssetByShotId={videoAssetByShotId} activeShotId={activeShot?.id} onSelect={setActiveShotId} />
         </main>
 
@@ -1680,6 +1755,112 @@ function VideoTimelineTracks({
         </div>
       ))}
     </section>
+  );
+}
+
+type CanvasWorkflowStep = { label: string; value: string; ready: boolean };
+
+function CanvasWorkflowPanel({
+  tone,
+  eyebrow,
+  title,
+  description,
+  steps,
+  promptTitle,
+  promptHint,
+  prompt,
+  children
+}: {
+  tone: "character" | "storyboard" | "video";
+  eyebrow: string;
+  title: string;
+  description: string;
+  steps: CanvasWorkflowStep[];
+  promptTitle: string;
+  promptHint: string;
+  prompt: string;
+  children?: ReactNode;
+}) {
+  return (
+    <section className={`canvas-workflow-panel ${tone}`}>
+      <div className="canvas-workflow-head">
+        <div>
+          <span>{eyebrow}</span>
+          <h3>{title}</h3>
+          <p>{description}</p>
+        </div>
+        <div className="canvas-workflow-steps">
+          {steps.map((step, index) => (
+            <article className={step.ready ? "ready" : ""} key={step.label}>
+              <small>{String(index + 1).padStart(2, "0")}</small>
+              <strong>{step.label}</strong>
+              <span>{step.value}</span>
+            </article>
+          ))}
+        </div>
+      </div>
+      {children}
+      <CanvasPromptCard title={promptTitle} hint={promptHint} prompt={prompt} />
+    </section>
+  );
+}
+
+function CanvasPromptCard({ title, hint, prompt, compact = false }: { title: string; hint: string; prompt: string; compact?: boolean }) {
+  const [copied, setCopied] = useState(false);
+
+  async function copyPrompt() {
+    if (!prompt) return;
+    try {
+      await navigator.clipboard.writeText(prompt);
+    } catch {
+      const textarea = document.createElement("textarea");
+      textarea.value = prompt;
+      textarea.setAttribute("readonly", "true");
+      textarea.style.position = "fixed";
+      textarea.style.left = "-9999px";
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      textarea.remove();
+    }
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1300);
+  }
+
+  return (
+    <div className={compact ? "canvas-prompt-card compact" : "canvas-prompt-card"}>
+      <div className="canvas-prompt-head">
+        <div>
+          <strong>{title}</strong>
+          <span>{hint}</span>
+        </div>
+        <button className="ghost-button" type="button" onClick={() => void copyPrompt()} disabled={!prompt}>
+          {copied ? <CheckCircle2 size={15} /> : <Copy size={15} />}
+          {copied ? "已复制" : "复制"}
+        </button>
+      </div>
+      <pre>{prompt || "等待分镜、角色或参考素材生成后，系统会自动拼出可复制的提示词。"}</pre>
+    </div>
+  );
+}
+
+function CanvasBeatGrid({ storyboards, imageAssetByShotId, activeShotId, onSelect }: { storyboards: StoryboardShot[]; imageAssetByShotId: Map<string, AssetItem>; activeShotId?: string; onSelect: (shotId: string) => void }) {
+  const slots = Array.from({ length: 12 }, (_, index) => storyboards[index]);
+  return (
+    <div className="canvas-beat-grid">
+      {slots.map((shot, index) => {
+        const image = shot ? imageAssetByShotId.get(shot.id) : undefined;
+        return (
+          <button className={`${shot?.id === activeShotId ? "active" : ""} ${image?.referenceUrl ? "ready" : ""}`} key={shot?.id ?? `empty-${index}`} type="button" onClick={() => shot && onSelect(shot.id)} disabled={!shot}>
+            <span className="canvas-beat-thumb">
+              {image?.referenceUrl ? <StableImage src={image.referenceUrl} alt={image.name} /> : <WandSparkles size={18} />}
+            </span>
+            <strong>{String(index + 1).padStart(2, "0")}</strong>
+            <small>{shot ? shot.action || shot.pictureDesc : "待补节拍"}</small>
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
@@ -1849,6 +2030,104 @@ function resolveCharacterDisplayAsset(character: CharacterProfile, assets: Asset
     asset.type === "role"
   );
   return byReferenceId ?? identityBoard ?? primaryRole;
+}
+
+function buildCanvasCharacterBoardPrompt(character: CharacterProfile, identityAsset?: AssetItem, referenceAssets: AssetItem[] = []) {
+  const refs = [identityAsset, ...referenceAssets]
+    .filter((asset): asset is AssetItem => Boolean(asset?.referenceUrl))
+    .map((asset) => `@${asset.name}`)
+    .join("、") || "@[CHARACTER REF]";
+  return [
+    "创建一张艺术性的 16:9 角色身份板。",
+    `[主体]：使用参考图 ${refs}，角色名：${character.name}，身份：${compactPromptText(character.identity)}。`,
+    `外貌：${compactPromptText(character.appearance)}。服装：${compactPromptText(character.costume)}。性格/表演气质：${compactPromptText(character.personality)}。`,
+    "纯白色 / 柔和米白色背景；无环境、无道具、无标志、无水印。",
+    "设计方向：不要创建标准角色参考表，创建一张电影感身份板，像高端动画工作室的角色研究与艺术节布局结合。",
+    "布局不对称、优雅且视觉上令人难忘，使用大留白、整体化图像比例和有意的不平衡；避免网格、蓝图设计、目录布局和重复转场展示。",
+    "主要构图：放置一个大型英雄全身视角，略微偏离中心作为视觉锚点。",
+    "辅助研究：中性全身视角、背面视角、侧面视角、坐姿、倾斜姿势、蹲姿、俯视身体角度、仰视身体角度、富有表现力的肖像研究。",
+    "身份锁定：所有视角保持同一张脸、相同面部比例、相同发型、相同服装、相同身体比例、相同姿势语言和相同视觉个性。",
+    "有用参考细节：清晰的面部形状、发型轮廓、服装轮廓、身体形状、手部、姿势和表情范围，便于未来图像和视频生成。",
+    "艺术性部分：加入小轮廓研究区、表情研究区和面部/头发/服装细节研究区；只在有帮助的位置使用小型手写风格标签：名称、角色、核心情绪、视觉标志。",
+    "风格：简约、电影感、高端、艺术书般、干净、富有表现力、适合制作。"
+  ].join("\n");
+}
+
+function buildCanvasStoryboardBoardPrompt(storyboards: StoryboardShot[], characters: CharacterProfile[], sceneAssets: AssetItem[]) {
+  if (!storyboards.length) return "";
+  const beats = storyboards.slice(0, 12).map((shot, index) => {
+    return `${index + 1}. ${shot.scene || "未命名场景"}｜${shot.characters.join("、") || "无角色"}｜${shot.action || shot.pictureDesc}｜${shot.shotSize} / ${shot.cameraAngle} / ${shot.cameraMovement}｜情绪：${shot.emotion || "推进"}`;
+  }).join("\n");
+  const characterBrief = describeCharactersForPrompt(uniqueCharacterNames(storyboards, characters), characters);
+  const sceneBrief = sceneAssets.slice(0, 4).map((asset) => `${asset.name}：${compactPromptText(asset.description || asset.prompt)}`).join("；") || uniqueSceneNames(storyboards).join("、");
+  return [
+    "为故事板创建一个原始的电影分镜板，专注于激烈的身体动作、明确的场面调度和可生成视频的镜头逻辑。",
+    "输入参考：@[CHARACTER REF] 角色身份板 + @[SCENE REF] 场景参考 + 当前分镜表。不要要求用户逐格手动改提示词；请根据主题、角色、场景和分镜节拍自动改写为一整张故事板生成提示词。",
+    "16:9 故事板表格，12 个电影风格面板。实际故事板绘图必须仅为黑白：粗糙铅笔线条、最少细节、快速手势绘图能量、简单解剖结构构建、强烈且可读的轮廓。保持艺术作品轻量、动态且未完成，像早期编舞预览。",
+    `角色设定：${characterBrief || "沿用角色身份板，保持同一脸型、服装和姿态语言。"}`,
+    `场景设定：${sceneBrief || "保持环境最小化，只保留对运动和构图有帮助的空间线索。"}`,
+    "每个面板必须包含可见运动和强烈身体动量，避免静态站立姿势。使用电影摄影技巧：手持能量、快速平移、环绕运动、头顶镜头、侧面剪影、长焦压缩、极端负空间。",
+    "保持环境最小化但有意义：空旷空间、烟雾、织物运动、硬光束、湿地板反射，只在需要时出现。",
+    "标注颜色系统：红色箭头=身体运动；蓝色箭头=摄影机运动；绿色标记=取景/构图笔记；橙色标记=灯光方向；紫色标记=声音/情感强调；黑色文本=简短镜头标签和面板笔记。",
+    "不要生成九宫格视频感，不要彩色成片，不要精修插画，不要长段中文正文，不要水印，不要 Logo。",
+    "12 个节拍，从左到右、从上到下：",
+    beats,
+    "最终画面应该像一张可用于视频模型的导演故事板：主题、场景、摄像机、灯光、动作过程清楚标注，能显著降低抽卡概率。"
+  ].join("\n");
+}
+
+function buildCanvasSingleShotPrompt(shot: StoryboardShot, characters: CharacterProfile[], sceneAsset?: AssetItem) {
+  const characterBrief = describeCharactersForPrompt(shot.characters, characters);
+  return [
+    "根据角色身份板、场景参考和当前镜头，生成单镜头可精修首帧。",
+    "输入参考：@[CHARACTER REF] 角色身份板 + @[SCENE REF] 场景卡 + 当前分镜文字。",
+    `镜头：${shot.pictureDesc}`,
+    `角色：${characterBrief || shot.characters.join("、") || "无角色"}`,
+    `场景：${shot.scene}${sceneAsset ? `；场景卡：${compactPromptText(sceneAsset.description || sceneAsset.prompt)}` : ""}`,
+    `动作：${shot.action || "轻微动作推进"}；情绪：${shot.emotion || "情绪推进"}`,
+    `机位：${shot.shotSize}，${shot.cameraAngle}，${shot.cameraMovement}`,
+    `站位/轴线：${shot.spatialRelation || "保持 screen-left / center / screen-right 清晰"}；连续性：${shot.orientation || "保持首尾帧方向稳定"}`,
+    "输出单张首帧图，不要分格，不要字幕，不要说明字，不要水印；角色脸型、服装、发型和身体比例必须匹配角色身份板。"
+  ].join("\n");
+}
+
+function buildCanvasSeedanceVideoPrompt(shot: StoryboardShot, storyboards: StoryboardShot[], characters: CharacterProfile[], roleAssets: AssetItem[]) {
+  const storyboardBeats = storyboards.slice(0, 12).map((item, index) => `${index + 1}.${item.action || item.pictureDesc}`).join(" / ");
+  const characterBrief = describeCharactersForPrompt(shot.characters, characters);
+  const lockedRefs = roleAssets.filter((asset) => asset.referenceUrl && (asset.type === "role" || asset.type === "role_derivative" || asset.type === "role_reference")).length;
+  return [
+    "使用故事板参考 @[STORYBOARD REF] 作为视频的完整视觉和情感叙事来源。",
+    "按照故事板从左到右、从上到下的节拍关系理解动作，不要重新解释动作、构图、镜头角度或情绪递进。",
+    `当前片段：${formatShotNo(shot, Math.max(0, storyboards.findIndex((item) => item.id === shot.id)))}，时长 ${Math.min(15, Math.max(2, shot.duration || 4))} 秒。`,
+    `角色参考：@[CHARACTER REF]，已锁定参考 ${lockedRefs} 张。保持与角色身份板相同的绝对核心主体身份：${characterBrief || shot.characters.join("、") || "场景主体"}。不要改变外貌、服装、神态特征和身体比例。`,
+    `环境：${shot.scene}。画面：${shot.pictureDesc}`,
+    `镜头语言：${shot.shotSize}，${shot.cameraAngle}，${shot.cameraMovement}。保持 ${shot.spatialRelation || "明确前中后景与左右站位"}。`,
+    `动作流：${shot.action || "根据当前分镜执行连续自然动作"}。情绪/声音：${shot.emotion || "紧张推进"}；${shot.dialogue || shot.voiceOver || shot.environmentSound || shot.soundEffect || "无对白时保留环境声和动作节奏"}。`,
+    `全局 12 节拍压缩参考：${storyboardBeats || "沿用故事板节拍"}`,
+    "首帧锚点必须匹配当前首帧/故事板面板；尾帧锚点为动作完成后的清晰姿态，保留 0.5-1 秒稳定停顿，方便下一镜衔接。",
+    "使用有冲击力但清晰的剪辑感、动作匹配、轻微推进或跟拍；不要让同一段里完成太多同步变化。",
+    "避免项：不要字幕、不要标题字、不要解释字、不要水印、不要 Logo、不要站位互换、不要越轴、不要换脸、不要换装、不要生成九宫格视频。"
+  ].join("\n");
+}
+
+function uniqueCharacterNames(storyboards: StoryboardShot[], characters: CharacterProfile[]) {
+  const names = Array.from(new Set(storyboards.flatMap((shot) => shot.characters).filter(Boolean)));
+  return names.length ? names : characters.slice(0, 4).map((character) => character.name);
+}
+
+function describeCharactersForPrompt(names: string[], characters: CharacterProfile[]) {
+  return names
+    .slice(0, 5)
+    .map((name) => {
+      const profile = characters.find((character) => character.name === name);
+      if (!profile) return name;
+      return `${profile.name}：${compactPromptText(profile.identity)}，${compactPromptText(profile.appearance)}，${compactPromptText(profile.costume)}`;
+    })
+    .join("；");
+}
+
+function compactPromptText(value?: string) {
+  return (value || "待补充").replace(/\s+/g, " ").trim();
 }
 
 function isPlayableVideoUrl(url?: string) {

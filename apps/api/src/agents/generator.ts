@@ -539,6 +539,8 @@ function buildPrompt(input: CreateProjectInput) {
     "每条 storyboard 必须包含 sceneNo, shotNo, duration, shotSize, cameraAngle, cameraMovement, characters, scene, pictureDesc, action, orientation, spatialRelation, dialogue, voiceOver, environmentSound, soundEffect, emotion, imagePrompt, videoPrompt。",
     "分镜规则：台词零删改；一镜一动作或一情绪变化；单镜 2-8 秒；长台词拆镜；角色不能无故消失；多人同框写清左右站位与朝向。",
     "导演增强规则：每镜必须能推导出焦距和 FOV；shotSize/cameraAngle/cameraMovement 使用生产词汇，例如 24mm广角建立、35mm跟拍、50mm中近景对白、85mm情绪近景、100mm道具微距。spatialRelation 必须写 screen-left/center/screen-right 和 foreground/midground/background。orientation 写清视线、身体朝向、180度轴线、首帧与尾帧连续性。",
+    "画布工作流规则：分镜表要能自动汇总成 16:9 的 12 宫格黑白手绘电影故事板；每镜必须包含可标注的主体运动、摄影机运动、构图、灯光方向和情绪/声音重点，方便后续故事板整图生成。",
+    "故事板矩阵规则：pictureDesc/action/cameraMovement/emotion 要足够具体，能够被压缩进 12 个连续节拍；避免静态站立镜头，优先设计可读动作、姿态变化、推拉摇移或剪辑衔接。",
     "Seedance 2.0 规则：每段不超过 15 秒；复杂动作拆段；videoPrompt 先写首帧锚点、镜头焦距/FOV、人物站位、主动作、声音、尾帧锚点和避免项。避免项必须包含不要生成对白字幕、标题字、解释字、水印、不要站位互换、不要越轴。",
     "导演草图规则：草图只描述视觉构图，不让图像模型生成长中文说明、镜头号、CAM 标签或表格；人物站位、机位、FOV、导演说明后续由 HTML/SVG 确定性生成。",
     "角色一致性规则：外貌、服装、配饰只在角色卡中稳定定义；分镜提示词主要写动作、情绪、空间关系和镜头；不要让同一角色换脸或换装，除非剧情明确要求。",
@@ -1209,27 +1211,37 @@ function toTextArray(value: unknown, fallback: string[]) {
 
 function buildCharacterPrompt(character: PipelineCharacter, artStyle: string) {
   return [
-    character.name,
-    character.identity,
-    character.appearance,
-    character.costume,
-    character.personality,
-    artStyle,
-    "consistent face, stable hairstyle, stable outfit color, clean character reference, front view and 3/4 view"
+    "创建一张艺术性的 16:9 角色身份板，纯白色或柔和米白色背景，无环境、无道具、无标志、无水印。",
+    `角色：${character.name}；身份：${character.identity}；外貌：${character.appearance}；服装：${character.costume}；性格/表演气质：${character.personality}。`,
+    `画风：${artStyle}。`,
+    "不要创建标准角色参考表；创建电影感身份板，像高端动画工作室的角色研究与艺术书布局结合。",
+    "布局不对称、优雅且视觉上令人难忘；使用大留白和有意的不平衡，避免网格、蓝图设计、目录布局和重复转场展示。",
+    "放置一个大型英雄全身视角，略微偏离中心作为视觉锚点；周围加入中性全身、背面、侧面、坐姿、倾斜姿势、蹲姿、俯视、仰视和表情肖像研究。",
+    "身份锁定：所有视角保持相同面部比例、发型轮廓、服装轮廓、身体比例、手部结构、姿势语言和视觉个性。",
+    "加入小轮廓研究区、表情研究区和面部/头发/服装细节研究区；只使用少量手写风格标签：名称、角色、核心情绪、视觉标志。",
+    "简约、电影感、高端、艺术书般、干净、富有表现力、适合后续图像和视频制作。"
   ].join(", ");
 }
 
 function buildImagePrompt(shot: PipelineStoryboard, pictureDesc: string, input: CreateProjectInput, characters: string[]) {
   return safeText(
     shot.imagePrompt,
-    `${pictureDesc}；出场角色：${characters.join("、") || "无"}；${input.artStyle}；${shot.shotSize || "中景"}；${input.videoRatio}；无字幕，无水印`
+    `单镜头首帧，不要分格；${pictureDesc}；出场角色：${characters.join("、") || "无"}；${input.artStyle}；${shot.shotSize || "中景"}；${shot.cameraAngle || "平视"}；${shot.cameraMovement || "轻微运动"}；角色脸型、发型、服装和身体比例保持角色身份板一致；无字幕，无水印`
   );
 }
 
 function buildVideoPrompt(shot: PipelineStoryboard, pictureDesc: string, input: CreateProjectInput, characters: string[]) {
   return safeText(
     shot.videoPrompt,
-    `主体：${characters.join("、") || "场景"}；画面：${pictureDesc}；运镜：${shot.cameraMovement || "固定镜头"}；动作：${shot.action || "轻微动作"}；风格：${input.artStyle}；人物面部稳定，动作连贯自然，无字幕，无水印`
+    [
+      "Seedance 2.0 图生视频提示词。",
+      `主体：${characters.join("、") || "场景"}；角色身份必须匹配角色身份板，不换脸、不换装、不改变身体比例。`,
+      `首帧锚点：${pictureDesc}。`,
+      `镜头：${shot.shotSize || "中景"}，${shot.cameraAngle || "平视"}，${shot.cameraMovement || "轻微推进"}；保持 screen-left/center/screen-right 和 180 度轴线稳定。`,
+      `主动作：${shot.action || "轻微动作推进"}；情绪：${shot.emotion || "情绪推进"}；声音：${shot.environmentSound || shot.soundEffect || "环境声"}。`,
+      `尾帧锚点：动作完成后保留清晰姿态，方便下一镜衔接；风格：${input.artStyle}。`,
+      "避免项：不要生成对白字幕、标题字、解释字、水印、Logo，不要站位互换，不要越轴，不要九宫格视频。"
+    ].join(" ")
   );
 }
 
