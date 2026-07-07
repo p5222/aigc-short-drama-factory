@@ -5,11 +5,6 @@ body.auth-surface {
 }
 
 .cine-home-page {
-  width: 100vw;
-  height: 100vh;
-  overflow: hidden;
-  background: #000;
-  color: #fff;
   font-family:
     "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Source Han Sans SC",
     "Microsoft YaHei", "Geist Sans", ui-sans-serif, system-ui, sans-serif;
@@ -21,17 +16,12 @@ body.auth-surface {
 }
 
 .cine-hero {
-  position: relative;
-  width: 100vw;
-  height: 100vh;
   min-height: 680px;
-  overflow: hidden;
   background: #000;
   isolation: isolate;
 }
 
 .cine-video-layer,
-.cine-video-layer video,
 .cine-radial-glow,
 .cine-bottom-gradient,
 .cine-left-gradient {
@@ -44,41 +34,33 @@ body.auth-surface {
   background: #000;
 }
 
-.cine-video-layer video {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
+.cine-bg-buffer {
   opacity: 0;
-  transform: scale(1.005);
-  filter: saturate(1.02) contrast(1.01) brightness(0.98);
-  transition: opacity 520ms ease, transform 4800ms linear;
-}
-
-.cine-video-layer video.active {
-  opacity: 1;
-  transform: scale(1);
+  filter: saturate(1.04) contrast(1.02) brightness(0.98);
+  transform: translateZ(0) scale(1.012);
+  will-change: opacity, transform;
 }
 
 .cine-radial-glow {
   pointer-events: none;
-  background: radial-gradient(circle at 30% 50%, rgba(0, 251, 166, 0.06) 0%, transparent 50%);
-  opacity: 0.95;
+  background: radial-gradient(circle at 32% 48%, rgba(0, 251, 166, 0.055) 0%, transparent 52%);
+  opacity: 0.9;
   animation: cinePulse 4s ease-in-out infinite alternate;
 }
 
 .cine-bottom-gradient {
   pointer-events: none;
-  background: linear-gradient(to top, rgba(0, 0, 0, 0.45), transparent 50%, transparent);
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.28), transparent 44%, transparent);
 }
 
 .cine-left-gradient {
   pointer-events: none;
-  background: linear-gradient(to right, rgba(0, 0, 0, 0.16), transparent 50%, transparent);
+  background: linear-gradient(to right, rgba(0, 0, 0, 0.14), transparent 48%, transparent);
 }
 
 @keyframes cinePulse {
-  from { opacity: 0.55; }
-  to { opacity: 0.98; }
+  from { opacity: 0.48; }
+  to { opacity: 0.96; }
 }
 
 .cine-top-nav {
@@ -87,11 +69,11 @@ body.auth-surface {
   left: 0;
   right: 0;
   z-index: 80;
-  height: 77px;
+  height: 92px;
   display: grid;
   grid-template-columns: minmax(190px, 1fr) auto minmax(190px, 1fr);
   align-items: center;
-  padding: 20px 64px;
+  padding: 18px 64px;
   background: transparent;
 }
 
@@ -130,6 +112,15 @@ body.auth-surface {
   cursor: pointer;
 }
 
+.nav-logo span {
+  font-size: 45px;
+}
+
+.nav-logo small {
+  font-size: 12px;
+  letter-spacing: 2.6px;
+}
+
 .cine-nav-links {
   display: flex;
   align-items: center;
@@ -140,7 +131,7 @@ body.auth-surface {
 .cine-nav-actions button {
   border: 0;
   background: transparent;
-  color: rgba(255, 255, 255, 0.6);
+  color: rgba(255, 255, 255, 0.62);
   cursor: pointer;
 }
 
@@ -197,7 +188,7 @@ body.auth-surface {
   justify-content: center;
   gap: 6px;
   padding: 8px;
-  color: rgba(255, 255, 255, 0.42);
+  color: rgba(255, 255, 255, 0.55);
   font-size: 14px;
   font-weight: 800;
   text-transform: uppercase;
@@ -219,25 +210,25 @@ body.auth-surface {
   right: 0;
   top: calc(100% + 8px);
   z-index: 100;
-  width: 112px;
+  width: 140px;
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 12px;
-  background: rgba(4, 4, 4, 0.92);
+  background: rgba(4, 9, 9, 0.94);
   box-shadow: 0 18px 34px rgba(0, 0, 0, 0.36);
   backdrop-filter: blur(16px);
 }
 
 .cine-language-menu button {
   width: 100%;
-  min-height: 42px;
+  min-height: 46px;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 14px;
-  color: rgba(255, 255, 255, 0.5);
+  gap: 9px;
+  padding: 0 16px;
+  color: rgba(255, 255, 255, 0.58);
   font-size: 14px;
-  font-weight: 700;
+  font-weight: 800;
   text-align: left;
 }
 
@@ -251,6 +242,10 @@ body.auth-surface {
   width: 6px;
   height: 6px;
   border-radius: 999px;
+  background: transparent;
+}
+
+.cine-language-menu button.active span {
   background: #00fba6;
   box-shadow: 0 0 12px rgba(0, 251, 166, 0.7);
 }
@@ -290,7 +285,7 @@ body.auth-surface {
 
 .cine-center-copy p {
   margin: 0 0 14px;
-  color: rgba(0, 251, 166, 0.8);
+  color: rgba(0, 251, 166, 0.82);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 14px;
   letter-spacing: 0.4em;
@@ -304,12 +299,12 @@ body.auth-surface {
   font-size: clamp(64px, 7.5vw, 96px);
   font-weight: 1000;
   line-height: 1;
-  letter-spacing: -0.02em;
+  letter-spacing: 0;
   text-shadow: 0 10px 34px rgba(0, 0, 0, 0.32);
 }
 
 .cine-center-copy span {
-  color: rgba(255, 255, 255, 0.64);
+  color: rgba(255, 255, 255, 0.68);
   font-size: clamp(18px, 1.8vw, 24px);
   letter-spacing: 0.04em;
   text-shadow: 0 4px 18px rgba(0, 0, 0, 0.45);
@@ -317,45 +312,44 @@ body.auth-surface {
 
 .cine-card-stack {
   position: absolute;
-  left: 66px;
-  bottom: 48px;
-  z-index: 30;
-  width: 250px;
-  height: 228px;
+  left: clamp(42px, 5vw, 76px);
+  bottom: 54px;
+  z-index: 34;
+  width: 320px;
+  height: 260px;
+  perspective: 960px;
+  transform-style: preserve-3d;
+  contain: layout paint;
 }
 
 .cine-film-card {
   position: absolute;
-  left: 0;
-  bottom: 0;
-  z-index: var(--card-z);
-  width: 139px;
-  height: 185px;
+  left: 54px;
+  bottom: 18px;
+  width: 148px;
+  height: 198px;
   overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.22);
+  border: 1px solid rgba(255, 255, 255, 0.2);
   border-radius: 8px;
   padding: 0;
   background: #080808;
-  opacity: var(--card-o);
-  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.32);
+  box-shadow: 0 24px 54px rgba(0, 0, 0, 0.34);
   cursor: pointer;
-  transform: translate(var(--card-x), var(--card-y)) rotate(var(--card-r)) scale(var(--card-s));
+  transform-style: preserve-3d;
   transform-origin: bottom center;
-  transition: transform 240ms ease, opacity 220ms ease, border-color 220ms ease, filter 220ms ease;
+  will-change: transform, opacity;
+  backface-visibility: hidden;
 }
 
 .cine-film-card.active,
 .cine-film-card:hover,
 .cine-film-card:focus-visible {
-  z-index: 20;
-  opacity: 1;
   border-color: #00fba6;
   outline: 0;
-  filter: drop-shadow(0 0 16px rgba(0, 251, 166, 0.28));
-  transform: translate(var(--card-x), calc(var(--card-y) - 2px)) rotate(var(--card-r)) scale(calc(var(--card-s) + 0.05));
+  filter: drop-shadow(0 0 18px rgba(0, 251, 166, 0.28));
 }
 
-.cine-film-card video,
+.cine-card-media,
 .cine-card-overlay,
 .cine-card-sheen,
 .cine-card-corners {
@@ -363,24 +357,26 @@ body.auth-surface {
   inset: 0;
 }
 
-.cine-film-card video {
+.cine-card-media {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  transform: translateZ(0);
 }
 
 .cine-card-overlay {
-  background: linear-gradient(to top, rgba(0, 0, 0, 0.6), transparent 50%, transparent);
-  opacity: 0.5;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.62), transparent 48%, transparent);
+  opacity: 0.52;
 }
 
 .cine-film-card.active .cine-card-overlay {
-  opacity: 0.3;
+  opacity: 0.32;
 }
 
 .cine-card-sheen {
   pointer-events: none;
-  background: linear-gradient(120deg, transparent 30%, rgba(255, 255, 255, 0.12) 50%, transparent 70%);
+  background: linear-gradient(120deg, transparent 28%, rgba(255, 255, 255, 0.13) 50%, transparent 72%);
+  mix-blend-mode: screen;
 }
 
 .cine-card-corners::before,
@@ -389,7 +385,7 @@ body.auth-surface {
 .cine-film-card::after {
   content: "";
   position: absolute;
-  z-index: 2;
+  z-index: 4;
   width: 24px;
   height: 24px;
   pointer-events: none;
@@ -427,7 +423,7 @@ body.auth-surface {
 .cine-card-head,
 .cine-card-body {
   position: absolute;
-  z-index: 3;
+  z-index: 5;
   left: 10px;
   right: 10px;
 }
@@ -441,7 +437,7 @@ body.auth-surface {
 }
 
 .cine-card-head span {
-  color: rgba(255, 255, 255, 0.52);
+  color: rgba(255, 255, 255, 0.58);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 8px;
   font-weight: 800;
@@ -465,7 +461,7 @@ body.auth-surface {
 
 .cine-card-body p {
   margin: 0 0 3px;
-  color: rgba(255, 255, 255, 0.42);
+  color: rgba(255, 255, 255, 0.48);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 8px;
   line-height: 1.42;
@@ -478,7 +474,8 @@ body.auth-surface {
 }
 
 .cine-card-body strong {
-  color: rgba(255, 255, 255, 0.74);
+  display: block;
+  color: rgba(255, 255, 255, 0.76);
   font-size: 10px;
   font-weight: 800;
   line-height: 1.3;
@@ -490,10 +487,86 @@ body.auth-surface {
 
 .cine-card-body small {
   float: right;
-  margin-top: 1px;
-  color: rgba(255, 255, 255, 0.35);
+  margin-top: 2px;
+  color: rgba(255, 255, 255, 0.38);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 7px;
+}
+
+.cine-active-scan-ui {
+  position: absolute;
+  inset: 48px 24px 56px;
+  z-index: 6;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  opacity: 0;
+  animation: scanUiIn 520ms ease 160ms forwards;
+}
+
+.cine-active-scan-ui::before,
+.cine-active-scan-ui::after,
+.cine-active-scan-ui i::before,
+.cine-active-scan-ui i::after {
+  content: "";
+  position: absolute;
+  width: 22px;
+  height: 22px;
+  border-color: #00fba6;
+  filter: drop-shadow(0 0 10px rgba(0, 251, 166, 0.7));
+}
+
+.cine-active-scan-ui::before {
+  left: 0;
+  top: 0;
+  border-left: 2px solid;
+  border-top: 2px solid;
+}
+
+.cine-active-scan-ui::after {
+  right: 0;
+  top: 0;
+  border-right: 2px solid;
+  border-top: 2px solid;
+}
+
+.cine-active-scan-ui i::before {
+  left: 0;
+  bottom: 0;
+  border-left: 2px solid;
+  border-bottom: 2px solid;
+}
+
+.cine-active-scan-ui i::after {
+  right: 0;
+  bottom: 0;
+  border-right: 2px solid;
+  border-bottom: 2px solid;
+}
+
+.cine-active-scan-ui span {
+  border: 1px solid rgba(0, 251, 166, 0.38);
+  border-radius: 999px;
+  padding: 5px 8px;
+  color: #00fba6;
+  background: rgba(0, 10, 7, 0.58);
+  box-shadow: 0 0 24px rgba(0, 251, 166, 0.18);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  white-space: nowrap;
+}
+
+@keyframes scanUiIn {
+  from {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 .cine-side-control {
@@ -507,7 +580,7 @@ body.auth-surface {
 }
 
 .cine-side-control span {
-  color: rgba(255, 255, 255, 0.52);
+  color: rgba(255, 255, 255, 0.58);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
   font-weight: 800;
@@ -519,10 +592,10 @@ body.auth-surface {
   height: 40px;
   display: grid;
   place-items: center;
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.22);
   border-radius: 999px;
   color: #fff;
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(255, 255, 255, 0.035);
   cursor: pointer;
   transition: border-color 200ms ease, background 200ms ease, transform 200ms ease;
 }
@@ -531,32 +604,6 @@ body.auth-surface {
   border-color: #00fba6;
   background: rgba(0, 251, 166, 0.1);
   transform: translateX(2px);
-}
-
-.cine-footer {
-  position: absolute;
-  left: 32px;
-  right: 32px;
-  bottom: 17px;
-  z-index: 28;
-  display: grid;
-  justify-items: center;
-  gap: 6px;
-  color: rgba(255, 255, 255, 0.4);
-  font-size: 12px;
-  text-align: center;
-  pointer-events: auto;
-}
-
-.cine-footer p {
-  margin: 0;
-}
-
-.cine-footer div {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 14px;
 }
 
 .cine-mobile-start {
@@ -651,10 +698,6 @@ body.auth-surface {
   font-size: 26px;
 }
 
-.cine-auth-card.login-mode .cine-auth-brand p {
-  line-height: 1.45;
-}
-
 .cine-auth-card.login-mode .cine-logo-text span {
   font-size: 26px;
 }
@@ -677,10 +720,6 @@ body.auth-surface {
   margin-bottom: 10px;
 }
 
-.cine-auth-card.login-mode .cine-auth-tabs button {
-  min-height: 34px;
-}
-
 .cine-auth-tabs button {
   min-height: 38px;
   display: inline-flex;
@@ -693,6 +732,10 @@ body.auth-surface {
   background: transparent;
   font-weight: 850;
   cursor: pointer;
+}
+
+.cine-auth-card.login-mode .cine-auth-tabs button {
+  min-height: 34px;
 }
 
 .cine-auth-tabs button.active {
@@ -981,8 +1024,8 @@ body.auth-surface {
   }
 
   .cine-card-stack {
-    left: 22px;
-    bottom: 100px;
+    left: 20px;
+    bottom: 102px;
     transform: scale(0.88);
     transform-origin: left bottom;
   }
@@ -990,17 +1033,6 @@ body.auth-surface {
   .cine-side-control {
     right: 20px;
     bottom: 122px;
-  }
-
-  .cine-footer {
-    left: 18px;
-    right: 18px;
-    bottom: 18px;
-    font-size: 11px;
-  }
-
-  .cine-footer div {
-    gap: 6px 12px;
   }
 
   .cine-mobile-start {
@@ -1048,7 +1080,7 @@ body.auth-surface {
   }
 
   .cine-card-stack {
-    left: 12px;
+    left: -4px;
     transform: scale(0.72);
   }
 
