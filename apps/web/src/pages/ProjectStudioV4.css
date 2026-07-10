@@ -1,0 +1,168 @@
+.project-workbench .studio-v4-stage-nav {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(138px, 1fr)) auto;
+  align-items: stretch;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: rgba(9, 15, 24, 0.88);
+}
+
+.project-workbench .studio-v4-stage-nav > button {
+  min-width: 0;
+  min-height: 62px;
+  display: grid;
+  grid-template-columns: 28px 1fr;
+  grid-template-rows: auto auto;
+  align-content: center;
+  column-gap: 10px;
+  border: 0;
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 0;
+  padding: 9px 14px;
+  color: rgba(255, 255, 255, 0.62);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: color 160ms ease, background 160ms ease;
+}
+
+.project-workbench .studio-v4-stage-nav > button > span {
+  grid-row: 1 / 3;
+  align-self: center;
+  width: 27px;
+  height: 27px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 50%;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.project-workbench .studio-v4-stage-nav > button strong {
+  overflow: hidden;
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-workbench .studio-v4-stage-nav > button small {
+  overflow: hidden;
+  color: rgba(255, 255, 255, 0.38);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-workbench .studio-v4-stage-nav > button:hover,
+.project-workbench .studio-v4-stage-nav > button.active {
+  color: #fff;
+  background: rgba(67, 124, 255, 0.12);
+}
+
+.project-workbench .studio-v4-stage-nav > button.active {
+  box-shadow: inset 0 -2px 0 #4f7cff;
+}
+
+.project-workbench .studio-v4-stage-nav > button.done > span {
+  color: #6ee7b7;
+  border-color: rgba(110, 231, 183, 0.4);
+  background: rgba(16, 185, 129, 0.12);
+}
+
+.project-workbench .studio-v4-project-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px;
+}
+
+.project-workbench .studio-v4-project-meta span {
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.project-workbench .studio-v4-message {
+  margin: 0;
+  border: 1px solid currentColor;
+  border-radius: 6px;
+  padding: 10px 14px;
+}
+
+.project-workbench .studio-v4-shots-stage {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.project-workbench .studio-v4-view-switch {
+  min-height: 46px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 6px;
+  background: rgba(9, 15, 24, 0.86);
+}
+
+.project-workbench .studio-v4-view-switch button {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  border-radius: 6px;
+  padding: 0 13px;
+  color: rgba(255, 255, 255, 0.58);
+  background: transparent;
+  cursor: pointer;
+}
+
+.project-workbench .studio-v4-view-switch button.active {
+  color: #fff;
+  background: #315ee8;
+}
+
+.project-workbench .studio-v4-view-switch > span {
+  margin-left: auto;
+  padding-right: 10px;
+  color: rgba(255, 255, 255, 0.38);
+  font-size: 11px;
+}
+
+:root[data-theme="light"] .project-workbench .studio-v4-stage-nav,
+:root[data-theme="light"] .project-workbench .studio-v4-view-switch {
+  border-color: #d7dfeb;
+  background: #fff;
+}
+
+:root[data-theme="light"] .project-workbench .studio-v4-stage-nav > button {
+  color: #536178;
+  border-color: #e4e9f1;
+}
+
+:root[data-theme="light"] .project-workbench .studio-v4-stage-nav > button.active {
+  color: #172033;
+  background: #edf3ff;
+}
+
+:root[data-theme="light"] .project-workbench .studio-v4-stage-nav small,
+:root[data-theme="light"] .project-workbench .studio-v4-project-meta span,
+:root[data-theme="light"] .project-workbench .studio-v4-view-switch > span {
+  color: #7b879a;
+}
+
+@media (max-width: 1100px) {
+  .project-workbench .studio-v4-stage-nav { grid-template-columns: repeat(4, minmax(110px, 1fr)); }
+  .project-workbench .studio-v4-project-meta { display: none; }
+}
+
+@media (max-width: 720px) {
+  .project-workbench .studio-v4-stage-nav { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .project-workbench .studio-v4-stage-nav > button { border-bottom: 1px solid rgba(255, 255, 255, 0.08); }
+  .project-workbench .studio-v4-view-switch { align-items: stretch; flex-wrap: wrap; }
+  .project-workbench .studio-v4-view-switch > span { width: 100%; margin-left: 0; padding: 4px 8px; }
+}

@@ -1,5 +1,6 @@
 ﻿import {
   Activity,
+  BookOpen,
   ChevronDown,
   ChevronRight,
   CheckCircle2,
@@ -13,6 +14,7 @@
   Image,
   Layers3,
   Loader2,
+  Megaphone,
   Plus,
   Trash2,
   PlayCircle,
@@ -35,20 +37,26 @@ import type {
   AdminSummary,
   AdminUserRow,
   EvaluationDataset,
+  ExperimentRun,
   EvaluationStage,
   EvaluationOverview,
   EvaluationRun,
+  HelpArticle,
   ImageModelTestResult,
   MembershipPlan,
   ModelPrice,
   ModelProvider,
   ModelTestResult,
+  PlatformAnnouncement,
+  PromptVersion,
   Plan,
   PromptTemplate,
+  QualityCenterOverview,
   QualityEvaluationRunResult,
   QualityProjectRow,
   RedeemCode,
   RelayGatewayPolicy,
+  ShowcaseWork,
   VideoModelTestResult,
   OpenSourceAdapterInfo,
   UserFeedback,
@@ -68,13 +76,14 @@ type PipelineTestState = {
   result?: VisualPipelineTestResult;
 };
 
-const adminModules = ["运营总览", "用户管理", "用户反馈", "评测闭环", "提示词评分", "兑换码", "套餐会员", "订阅会员", "模型路由", "价格策略"];
+const adminModules = ["运营总览", "用户管理", "平台公告", "创作现场管理", "创作质量中心", "提示词评分", "兑换码", "套餐会员", "订阅会员", "模型路由", "价格策略"];
 
 const moduleCopy: Record<string, { title: string; subtitle: string }> = {
   运营总览: { title: "运营总览", subtitle: "查看用户、积分、模型成本和任务健康度。" },
   用户管理: { title: "用户管理", subtitle: "管理账号状态、身份权限、积分余额、密码重置和运营入账。" },
-  用户反馈: { title: "用户反馈处理", subtitle: "查看手机端和创作者提交的问题，按阶段、标签和可用性定位产品阻塞。" },
-  评测闭环: { title: "评测闭环", subtitle: "按项目、阶段、模型和用户反馈评估生成质量，用数据决定下一轮迭代。" },
+  平台公告: { title: "平台公告", subtitle: "维护前台工作台公告，并在子模块管理帮助中心教程与 FAQ。" },
+  创作现场管理: { title: "创作现场管理", subtitle: "审核创作者提交的真实作品，维护封面、视频、精选和前台展示顺序。" },
+  创作质量中心: { title: "创作质量中心", subtitle: "根据真实创作内容定位阶段瓶颈，对比模型与提示词版本，持续验证优化效果。" },
   兑换码: { title: "兑换码", subtitle: "批量生成唯一兑换码，控制额度、次数和启停状态。" },
   套餐会员: { title: "套餐会员", subtitle: "管理前台充值包，启停后前端自动适配展示。" },
   订阅会员: { title: "订阅会员", subtitle: "管理月度额度、折扣、优先队列和会员权益。" },
@@ -91,6 +100,8 @@ export function AdminPage({
   plans,
   membershipPlans,
   redeemCodes,
+  announcements,
+  helpArticles,
   users,
   evaluation,
   qualityProjects,
@@ -103,6 +114,8 @@ export function AdminPage({
   plans: Plan[];
   membershipPlans: MembershipPlan[];
   redeemCodes: RedeemCode[];
+  announcements: PlatformAnnouncement[];
+  helpArticles: HelpArticle[];
   users: AdminUserRow[];
   evaluation?: EvaluationOverview;
   qualityProjects: QualityProjectRow[];
@@ -122,6 +135,7 @@ export function AdminPage({
     const hash = decodeURIComponent(window.location.hash.replace(/^#/, ""));
     if (hash === "用户积分") return "用户管理";
     if (hash === "智能体接入") return "提示词评分";
+    if (qualityPanelFromHash(hash)) return "创作质量中心";
     return adminModules.includes(hash) ? hash : "运营总览";
   });
 
@@ -144,6 +158,10 @@ export function AdminPage({
       }
       if (hash === "智能体接入") {
         setActiveModule("提示词评分");
+        return;
+      }
+      if (qualityPanelFromHash(hash)) {
+        setActiveModule("创作质量中心");
         return;
       }
       if (adminModules.includes(hash)) setActiveModule(hash);
@@ -269,10 +287,6 @@ export function AdminPage({
           <button className="admin-icon-btn" onClick={onRefresh} title="刷新">
             <RefreshCw size={18} />
           </button>
-          <span className="admin-balance-pill">
-            <CircleDollarSign size={18} />
-            ¥{(summary?.providerCost ?? 0).toFixed(2)}
-          </span>
         </div>
       </header>
 
@@ -280,7 +294,8 @@ export function AdminPage({
       {error ? <p className="admin-toast danger">{error}</p> : null}
 
       {activeModule === "运营总览" ? <DashboardSection summary={summary} providers={providers} modelPrices={modelPrices} /> : null}
-      {activeModule === "评测闭环" ? <EvaluationSection evaluation={evaluation} projects={qualityProjects} providers={providers} onRefresh={onRefresh} /> : null}
+      {activeModule === "创作现场管理" ? <ShowcaseWorksSection /> : null}
+      {activeModule === "创作质量中心" ? <QualityCenterSection evaluation={evaluation} projects={qualityProjects} providers={providers} onRefresh={onRefresh} /> : null}
       {activeModule === "提示词评分" ? (
         <PromptScoringSection
           templates={templates}
@@ -298,7 +313,18 @@ export function AdminPage({
           onCreditAdjust={(input) => runAction(() => api.adjustUserCredits(input), "用户积分已调整，流水已写入。")}
         />
       ) : null}
-      {activeModule === "用户反馈" ? <FeedbackOpsSection evaluation={evaluation} projects={qualityProjects} onRefresh={onRefresh} /> : null}
+      {activeModule === "平台公告" ? (
+        <AnnouncementsSection
+          announcements={announcements}
+          helpArticles={helpArticles}
+          onCreate={(input) => runAction(() => api.createAnnouncement(input), "平台公告已创建，前台工作台会按置顶和时间展示。")}
+          onSave={(id, input) => runAction(() => api.updateAnnouncement(id, input), "平台公告已保存。")}
+          onDelete={(id) => runAction(() => api.deleteAnnouncement(id), "平台公告已删除。")}
+          onHelpCreate={(input) => runAction(() => api.createHelpArticle(input), "帮助文章已创建，前台帮助中心会自动展示。")}
+          onHelpSave={(id, input) => runAction(() => api.updateHelpArticle(id, input), "帮助文章已保存。")}
+          onHelpDelete={(id) => runAction(() => api.deleteHelpArticle(id), "帮助文章已删除。")}
+        />
+      ) : null}
       {activeModule === "兑换码" ? (
         <RedeemSection
           redeemCodes={redeemCodes}
@@ -394,12 +420,214 @@ function DashboardSection({ summary, providers, modelPrices }: { summary?: Admin
         </div>
       </div>
 
-      <div className="admin-cost-grid">
-        <CostBreakdownCard title="阶段成本" rows={(summary?.costByStage ?? []).map((row) => ({ name: costStageLabel(row.stage), tasks: row.tasks, credits: row.credits, cost: row.providerCost, failed: row.failed, successRate: row.successRate }))} />
-        <CostBreakdownCard title="模型毛利风险" rows={(summary?.costByModel ?? []).map((row) => ({ name: `${row.provider} / ${row.model}`, sub: costStageLabel(row.modality), tasks: row.tasks, credits: row.credits, cost: row.providerCost, failed: row.failed, successRate: row.successRate }))} />
-      </div>
     </section>
   );
+}
+
+function ShowcaseWorksSection() {
+  const [items, setItems] = useState<ShowcaseWork[]>([]);
+  const [status, setStatus] = useState("pending");
+  const [keyword, setKeyword] = useState("");
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [loading, setLoading] = useState(true);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [selected, setSelected] = useState<ShowcaseWork | null>(null);
+  const [draft, setDraft] = useState<ShowcaseWork | null>(null);
+  const [reviewNote, setReviewNote] = useState("");
+  const [working, setWorking] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    setPage(1);
+  }, [status, keyword]);
+
+  useEffect(() => {
+    let active = true;
+    const timer = window.setTimeout(() => {
+      setLoading(true);
+      void api.adminShowcaseWorks(page, 20, status, keyword)
+        .then((result) => {
+          if (!active) return;
+          setItems(result.items);
+          setTotal(result.total);
+          setTotalPages(result.totalPages);
+        })
+        .catch((reason) => active && setError(reason instanceof Error ? reason.message : "作品列表读取失败"))
+        .finally(() => active && setLoading(false));
+    }, 180);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [keyword, page, reloadKey, status]);
+
+  function openWork(work: ShowcaseWork) {
+    setSelected(work);
+    setDraft({ ...work });
+    setReviewNote(work.reviewNote ?? "");
+    setMessage("");
+    setError("");
+  }
+
+  async function refreshSelected(next?: ShowcaseWork) {
+    const result = await api.adminShowcaseWorks(page, 20, status, keyword);
+    setItems(result.items);
+    setTotal(result.total);
+    setTotalPages(result.totalPages);
+    if (next && (status === "all" || next.status === status)) {
+      setSelected(next);
+      setDraft({ ...next });
+    } else if (next) {
+      setSelected(null);
+      setDraft(null);
+    }
+  }
+
+  async function saveDraft() {
+    if (!selected || !draft) return;
+    setWorking(true);
+    setMessage("");
+    setError("");
+    try {
+      const updated = await api.updateAdminShowcaseWork(selected.id, {
+        title: draft.title,
+        description: draft.description,
+        category: draft.category,
+        creatorName: draft.creatorName,
+        coverUrl: draft.coverUrl,
+        videoUrl: draft.videoUrl,
+        durationLabel: draft.durationLabel,
+        featured: draft.featured,
+        sortOrder: draft.sortOrder
+      });
+      setMessage("作品展示信息已保存。");
+      await refreshSelected(updated);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "保存失败");
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function review(decision: "approve" | "reject") {
+    if (!selected || !draft) return;
+    setWorking(true);
+    setMessage("");
+    setError("");
+    try {
+      if (decision === "approve") {
+        await api.updateAdminShowcaseWork(selected.id, {
+          title: draft.title,
+          description: draft.description,
+          category: draft.category,
+          creatorName: draft.creatorName,
+          coverUrl: draft.coverUrl,
+          videoUrl: draft.videoUrl,
+          durationLabel: draft.durationLabel,
+          featured: draft.featured,
+          sortOrder: draft.sortOrder
+        });
+      }
+      const updated = await api.reviewAdminShowcaseWork(selected.id, { decision, note: reviewNote });
+      setMessage(decision === "approve" ? "作品已通过审核并发布到前台。" : "作品已驳回，创作者可以修改后重新提交。");
+      await refreshSelected(updated);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "审核失败");
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  return (
+    <section className="admin-v2-section showcase-admin-section">
+      {message ? <p className="admin-toast success">{message}</p> : null}
+      {error ? <p className="admin-toast danger">{error}</p> : null}
+      <div className="admin-v2-card showcase-admin-list-card">
+        <div className="admin-v2-card-head showcase-admin-toolbar">
+          <div><h2>作品审核队列</h2><p>前台只会展示状态为“已通过”的持久化作品。</p></div>
+          <div>
+            <label><Search size={16} /><input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="搜索作品或作者" /></label>
+            <select className="admin-filter-select" value={status} onChange={(event) => setStatus(event.target.value)}>
+              <option value="pending">待审核</option>
+              <option value="approved">已通过</option>
+              <option value="rejected">已驳回</option>
+              <option value="all">全部</option>
+            </select>
+            <button className="admin-icon-btn" type="button" title="刷新审核队列" onClick={() => setReloadKey((current) => current + 1)}><RefreshCw size={17} /></button>
+          </div>
+        </div>
+        <div className="showcase-admin-summary"><strong>{total}</strong><span>条记录</span><small>创作者提交后自动进入待审核队列</small></div>
+        {loading ? <div className="empty-state">正在加载作品...</div> : null}
+        {!loading ? (
+          <div className="showcase-admin-grid">
+            {items.map((work) => (
+              <article key={work.id}>
+                <button className="showcase-admin-cover" type="button" onClick={() => openWork(work)}>
+                  <img src={work.coverUrl} alt={work.title} />
+                  <span><PlayCircle size={22} /></span>
+                </button>
+                <div>
+                  <span className={`showcase-review-status ${work.status}`}>{showcaseStatusLabel(work.status)}</span>
+                  {work.featured ? <em>精选</em> : null}
+                  <h3>{work.title}</h3>
+                  <p>{work.creatorName} · {work.category} · {work.durationLabel}</p>
+                  <small>{work.submittedAt ? new Date(work.submittedAt).toLocaleString() : "官方初始化作品"}</small>
+                  <button className="admin-secondary-btn" type="button" onClick={() => openWork(work)}>查看与审核</button>
+                </div>
+              </article>
+            ))}
+            {!items.length ? <div className="empty-state">当前筛选条件下没有作品。</div> : null}
+          </div>
+        ) : null}
+        {totalPages > 1 ? (
+          <div className="showcase-admin-pagination">
+            <button type="button" disabled={page <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))}>上一页</button>
+            <span>{page} / {totalPages}</span>
+            <button type="button" disabled={page >= totalPages} onClick={() => setPage((current) => Math.min(totalPages, current + 1))}>下一页</button>
+          </div>
+        ) : null}
+      </div>
+
+      {selected && draft ? (
+        <div className="showcase-admin-modal" role="dialog" aria-modal="true" aria-label={`审核 ${selected.title}`}>
+          <button className="showcase-admin-backdrop" type="button" aria-label="关闭" onClick={() => { setSelected(null); setDraft(null); }} />
+          <section>
+            <header><div><span>{showcaseStatusLabel(selected.status)}</span><h2>{selected.title}</h2></div><button type="button" aria-label="关闭" onClick={() => { setSelected(null); setDraft(null); }}><X size={18} /></button></header>
+            <div className="showcase-admin-modal-body">
+              <div className="showcase-admin-preview">
+                <video src={draft.videoUrl} poster={draft.coverUrl} controls playsInline preload="metadata" />
+                <p>提交项目：{draft.projectId || "官方初始化"}</p>
+              </div>
+              <div className="showcase-admin-form">
+                <label><span>作品标题</span><input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} /></label>
+                <label><span>作者显示名</span><input value={draft.creatorName} onChange={(event) => setDraft({ ...draft, creatorName: event.target.value })} /></label>
+                <label><span>分类</span><input value={draft.category} onChange={(event) => setDraft({ ...draft, category: event.target.value })} /></label>
+                <label><span>时长</span><input value={draft.durationLabel} onChange={(event) => setDraft({ ...draft, durationLabel: event.target.value })} /></label>
+                <label className="wide"><span>作品说明</span><textarea value={draft.description} onChange={(event) => setDraft({ ...draft, description: event.target.value })} /></label>
+                <label className="wide"><span>封面地址</span><input value={draft.coverUrl} onChange={(event) => setDraft({ ...draft, coverUrl: event.target.value })} /></label>
+                <label className="wide"><span>视频地址</span><input value={draft.videoUrl} onChange={(event) => setDraft({ ...draft, videoUrl: event.target.value })} /></label>
+                <label><span>展示顺序</span><input type="number" min={0} value={draft.sortOrder} onChange={(event) => setDraft({ ...draft, sortOrder: Number(event.target.value) })} /></label>
+                <label className="showcase-featured-toggle"><input type="checkbox" checked={draft.featured} onChange={(event) => setDraft({ ...draft, featured: event.target.checked })} /><span>设为官方精选</span></label>
+                <label className="wide"><span>审核意见</span><textarea value={reviewNote} onChange={(event) => setReviewNote(event.target.value)} placeholder="驳回时说明需要修改的内容" /></label>
+              </div>
+            </div>
+            <footer>
+              <button className="admin-secondary-btn" type="button" disabled={working} onClick={() => void saveDraft()}>保存信息</button>
+              <button className="showcase-reject-btn" type="button" disabled={working} onClick={() => void review("reject")}><X size={16} />驳回</button>
+              <button className="admin-primary-btn" type="button" disabled={working} onClick={() => void review("approve")}><CheckCircle2 size={16} />通过并发布</button>
+            </footer>
+          </section>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function showcaseStatusLabel(status: ShowcaseWork["status"]) {
+  return status === "approved" ? "已通过" : status === "rejected" ? "已驳回" : status === "draft" ? "草稿" : "待审核";
 }
 
 function CostBreakdownCard({
@@ -447,6 +675,763 @@ function costStageLabel(stage: string) {
   return labels[stage] ?? stage;
 }
 
+type QualityPanelKey = "overview" | "signals" | "datasets" | "experiments" | "models" | "release";
+
+const qualityPanelHashes: Record<QualityPanelKey, string> = {
+  overview: "质量总览",
+  signals: "事件与VOC",
+  datasets: "质量数据集",
+  experiments: "实验评测",
+  models: "模型与成本",
+  release: "优化回流"
+};
+
+function qualityPanelFromHash(hash: string): QualityPanelKey | undefined {
+  if (hash === "用户反馈") return "signals";
+  if (hash === "评测闭环") return "experiments";
+  if (hash === "发布与溯源") return "release";
+  return (Object.entries(qualityPanelHashes).find(([, value]) => value === hash)?.[0] as QualityPanelKey | undefined);
+}
+
+function QualityCenterSection({
+  evaluation,
+  projects,
+  providers,
+  onRefresh
+}: {
+  evaluation?: EvaluationOverview;
+  projects: QualityProjectRow[];
+  providers: ModelProvider[];
+  onRefresh: () => void;
+}) {
+  const [activePanel, setActivePanel] = useState<QualityPanelKey>(() => qualityPanelFromHash(decodeURIComponent(window.location.hash.replace(/^#/, ""))) ?? "overview");
+  const [snapshot, setSnapshot] = useState<QualityCenterOverview>();
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    void loadQualityCenter(false);
+  }, []);
+
+  useEffect(() => {
+    function syncQualityPanel() {
+      const panel = qualityPanelFromHash(decodeURIComponent(window.location.hash.replace(/^#/, "")));
+      if (panel) setActivePanel(panel);
+    }
+    window.addEventListener("hashchange", syncQualityPanel);
+    return () => window.removeEventListener("hashchange", syncQualityPanel);
+  }, []);
+
+  async function loadQualityCenter(refreshParent = true) {
+    setLoading(true);
+    setError("");
+    try {
+      setSnapshot(await api.adminQualityCenter());
+      if (refreshParent) onRefresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "质量中心读取失败");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function navigatePanel(panel: QualityPanelKey) {
+    setActivePanel(panel);
+    window.location.hash = qualityPanelHashes[panel];
+  }
+
+  function refreshQualityData() {
+    onRefresh();
+    void loadQualityCenter(false);
+  }
+
+  const panelItems: Array<{ id: QualityPanelKey; label: string; count?: ReactNode; meta?: string; tone?: "default" | "blue" | "green" | "amber" | "violet" | "danger" }> = [
+    { id: "overview", label: "总览", count: `${snapshot?.summary.successRate ?? 0}%`, meta: "全链路健康", tone: "blue" },
+    { id: "signals", label: "事件与 VOC", count: snapshot?.summary.openEvents ?? 0, meta: "处置/归因/回访", tone: (snapshot?.summary.openEvents ?? 0) ? "amber" : "green" },
+    { id: "datasets", label: "数据集", count: snapshot?.samples.length ?? 0, meta: "标杆/问题/回归", tone: "green" },
+    { id: "experiments", label: "实验评测", count: snapshot?.lab.runs.length ?? 0, meta: "规则/LLM/横评", tone: "blue" },
+    { id: "models", label: "模型与成本", count: snapshot?.modelMonitoring.length ?? 0, meta: "可用性/耗时/成本", tone: (snapshot?.modelMonitoring.some((row) => row.healthStatus === "blocked")) ? "danger" : "green" },
+    { id: "release", label: "优化回流", count: snapshot?.stageOptimization.bottleneck ? snapshot.stageOptimization.rows.find((row) => row.key === snapshot.stageOptimization.bottleneck)?.label : "-", meta: "瓶颈/实验/复测", tone: "violet" }
+  ];
+
+  return (
+    <section className="admin-v2-section quality-center-section">
+      <div className="admin-v2-metrics">
+        <AdminMetric icon={<CheckCircle2 size={22} />} label="成功率" value={`${snapshot?.summary.successRate ?? 0}%`} hint={`失败率 ${snapshot?.summary.failureRate ?? 0}%`} tone="green" />
+        <AdminMetric icon={<ChartNoAxesCombined size={22} />} label="平均评分" value={snapshot?.summary.averageScore || "-"} hint="剧本/角色/分镜/图片/视频" tone="blue" />
+        <AdminMetric icon={<Activity size={22} />} label="P95 耗时" value={formatDuration(snapshot?.summary.p95LatencyMs ?? 0)} hint={`${snapshot?.summary.openEvents ?? 0} 个未关闭事件`} tone="amber" />
+        <AdminMetric icon={<DatabaseZap size={22} />} label="模型健康" value={`${snapshot?.summary.modelHealth ?? 0}%`} hint={`${snapshot?.summary.costAnomalies ?? 0} 个成本异常`} tone="violet" />
+      </div>
+
+      <AdminModuleWorkbench
+        railTitle="质量工作区"
+        railDescription="信号、样本、实验和优化复测共用一条质量链路。"
+        railItems={panelItems}
+        activeRail={activePanel}
+        onRailChange={(id) => navigatePanel(id as QualityPanelKey)}
+        railFooter={<button className="admin-primary-btn compact" onClick={() => void loadQualityCenter()} disabled={loading}>{loading ? <Loader2 size={15} className="spin-icon" /> : <RefreshCw size={15} />}刷新质量快照</button>}
+      >
+        {error ? <p className="admin-toast danger">{error}</p> : null}
+        {!snapshot && !error ? <EmptyHint text={loading ? "正在读取质量中心快照..." : "暂无质量中心数据。"} /> : null}
+        {snapshot && activePanel === "overview" ? <QualityOverviewPanel snapshot={snapshot} onNavigate={navigatePanel} /> : null}
+        {snapshot && activePanel === "signals" ? <QualitySignalsPanel snapshot={snapshot} evaluation={evaluation} projects={projects} onRefresh={refreshQualityData} /> : null}
+        {snapshot && activePanel === "datasets" ? <QualityDatasetWorkspace snapshot={snapshot} /> : null}
+        {snapshot && activePanel === "experiments" ? <QualityLabPanel snapshot={snapshot} evaluation={evaluation} projects={projects} providers={providers} onRefresh={refreshQualityData} /> : null}
+        {snapshot && activePanel === "models" ? <QualityModelMonitorPanel rows={snapshot.modelMonitoring} /> : null}
+        {snapshot && activePanel === "release" ? <QualityOptimizationWorkspace snapshot={snapshot} /> : null}
+      </AdminModuleWorkbench>
+    </section>
+  );
+}
+
+function QualityOverviewPanel({ snapshot, onNavigate }: { snapshot: QualityCenterOverview; onNavigate: (panel: QualityPanelKey) => void }) {
+  const blockedModels = snapshot.modelMonitoring.filter((row) => row.healthStatus === "blocked").length;
+  const openPriorityEvents = snapshot.events.filter((event) => ["p0", "p1"].includes(event.priority) && !["resolved", "ignored", "converted"].includes(event.status)).length;
+  const bottleneck = snapshot.stageOptimization.rows.find((row) => row.key === snapshot.stageOptimization.bottleneck);
+  const readySamples = snapshot.samples.filter((sample) => sample.readiness === "pass").length;
+  const activeSamples = snapshot.samples.reduce((sum, sample) => sum + sample.sampleCount, 0);
+  const statusTone = openPriorityEvents || bottleneck?.health === "blocked" ? "danger" : blockedModels || bottleneck?.health === "warning" || !readySamples ? "warning" : "good";
+  const statusLabel = statusTone === "danger" ? "需要介入" : statusTone === "warning" ? "持续关注" : "运行稳定";
+  const flowSteps = [
+    { label: "信号", value: `${snapshot.voc.length} VOC / ${snapshot.events.length} 事件` },
+    { label: "处置", value: `${snapshot.summary.openEvents} 未关闭` },
+    { label: "数据集", value: `${snapshot.samples.length} 集 / ${activeSamples} 条` },
+    { label: "实验评测", value: `${snapshot.lab.runs.length} 次运行` },
+    { label: "模型与成本", value: `${blockedModels} 阻塞 / ${snapshot.summary.costAnomalies} 异常` },
+    { label: "优化回流", value: `${bottleneck?.label ?? "待建立基线"} / ${snapshot.lineage.length} 作品` }
+  ];
+  const summaryMetrics = [
+    { label: "失败率", value: `${snapshot.summary.failureRate}%`, detail: snapshot.summary.failureRate ? "需要核查失败链路" : "本轮无明显失败波动", tone: snapshot.summary.failureRate ? "warning" : "good" },
+    { label: "平均评分", value: snapshot.summary.averageScore || "-", detail: "覆盖剧本 / 角色 / 分镜 / 图片 / 视频", tone: snapshot.summary.averageScore >= 80 ? "good" : "warning" },
+    { label: "P95 耗时", value: formatDuration(snapshot.summary.p95LatencyMs), detail: "高耗时会影响生成体验", tone: snapshot.summary.p95LatencyMs > 180000 ? "warning" : "info" },
+    { label: "成本异常", value: snapshot.summary.costAnomalies, detail: snapshot.summary.costAnomalies ? "请看成本与模型路由" : "未触发成本预警", tone: snapshot.summary.costAnomalies ? "danger" : "good" },
+    { label: "模型健康", value: `${snapshot.summary.modelHealth}%`, detail: `${blockedModels} 个模型阻塞`, tone: blockedModels ? "danger" : "good" }
+  ];
+  const riskRows: Array<{ title: string; body: string; status: string; tone: string; action: string; panel: QualityPanelKey }> = [
+    {
+      title: "事件压力",
+      body: `${snapshot.events.length} 个质量事件，${snapshot.summary.openEvents} 个未关闭，${openPriorityEvents} 个 P0/P1 需要优先复核和用户回访。`,
+      status: openPriorityEvents ? "需处理" : snapshot.summary.openEvents ? "待闭环" : "稳定",
+      tone: openPriorityEvents ? "danger" : snapshot.summary.openEvents ? "warning" : "good",
+      action: "进入事件池",
+      panel: "signals"
+    },
+    {
+      title: "模型健康",
+      body: `${snapshot.modelMonitoring.length} 条模型监控记录，${blockedModels} 条阻塞；按成功率、错误码、P95 耗时和成本共同判断。`,
+      status: blockedModels ? "阻塞" : snapshot.summary.modelHealth < 95 ? "关注" : "健康",
+      tone: blockedModels ? "danger" : snapshot.summary.modelHealth < 95 ? "warning" : "good",
+      action: "看模型监控",
+      panel: "models"
+    },
+    {
+      title: "样本资产",
+      body: `${snapshot.samples.length} 个样本集，${readySamples} 个可直接用于回归；核心样本不足时不建议直接上线。`,
+      status: readySamples ? "可回归" : "需补齐",
+      tone: readySamples ? "good" : "warning",
+      action: "补样本库",
+      panel: "datasets"
+    },
+    {
+      title: "当前优化重点",
+      body: bottleneck ? `${bottleneck.label}是最近 ${snapshot.stageOptimization.windowDays} 天的主要瓶颈：${bottleneck.recommendation}` : "当前样本不足，先完成四阶段基线评测。",
+      status: bottleneck?.health === "blocked" ? "优先优化" : bottleneck ? "继续验证" : "待建基线",
+      tone: bottleneck?.health === "blocked" ? "danger" : "warning",
+      action: "进入优化回流",
+      panel: "release"
+    }
+  ];
+  return (
+    <div className="quality-panel-stack">
+      <section className={`quality-command-summary ${statusTone}`}>
+        <div className="quality-command-score">
+          <span>总体质量概况</span>
+          <strong>{snapshot.summary.successRate}%</strong>
+          <small>成功率</small>
+          <em>{statusLabel}</em>
+        </div>
+        <div className="quality-command-body">
+          <div>
+            <h2>质量总览</h2>
+            <p>把成功率、失败、耗时、成本、模型阻塞和发布风险压缩在同一行，先判断系统状态，再进入对应池子处理。</p>
+          </div>
+          <div className="quality-kpi-strip">
+            {summaryMetrics.map((metric) => (
+              <article className={`quality-kpi-cell ${metric.tone}`} key={metric.label}>
+                <span>{metric.label}</span>
+                <strong>{metric.value}</strong>
+                <small>{metric.detail}</small>
+              </article>
+            ))}
+          </div>
+        </div>
+      </section>
+      <div className="quality-flow-strip" aria-label="质量闭环流程">
+        {flowSteps.map((item, index) => (
+          <article key={item.label}>
+            <span>{index + 1}</span>
+            <strong>{item.label}</strong>
+            <small>{item.value}</small>
+          </article>
+        ))}
+      </div>
+      <QualityStageContractMatrix snapshot={snapshot} />
+      <section className="quality-risk-list">
+        <header>
+          <strong>本轮风险队列</strong>
+          <span>横向列表优先展示判断、状态和下一步动作。</span>
+        </header>
+        {riskRows.map((row) => (
+          <article className={`quality-risk-row ${row.tone}`} key={row.title}>
+            <strong>{row.title}</strong>
+            <p>{row.body}</p>
+            <span>{row.status}</span>
+            <button type="button" onClick={() => onNavigate(row.panel)}>{row.action}</button>
+          </article>
+        ))}
+      </section>
+      <article className="admin-v2-card quality-events-preview">
+        <div className="admin-v2-card-head">
+          <div>
+            <h2>最近质量信号</h2>
+            <p>用户反馈、任务失败、模型错误、评测失败和人工复核会汇入同一个事件池。</p>
+          </div>
+        </div>
+        <div className="quality-signal-list">
+          {snapshot.events.slice(0, 6).map((event) => (
+            <article className="quality-signal-row" key={event.id}>
+              <span className={`feedback-priority ${event.priority}`}>{feedbackPriorityLabel(event.priority)}</span>
+              <strong>{event.title}</strong>
+              <p>{event.description}</p>
+              <small>{event.sourceLabel} · {stageLabelSafe(event.stage)} · {formatDate(event.createdAt)}</small>
+              <b>{event.actionLabel}</b>
+            </article>
+          ))}
+          {!snapshot.events.length ? <EmptyHint text="暂无质量事件。" /> : null}
+        </div>
+      </article>
+    </div>
+  );
+}
+
+function QualitySignalsPanel({
+  snapshot,
+  evaluation,
+  projects,
+  onRefresh
+}: {
+  snapshot: QualityCenterOverview;
+  evaluation?: EvaluationOverview;
+  projects: QualityProjectRow[];
+  onRefresh: () => void;
+}) {
+  const [view, setView] = useState<"workorders" | "signals" | "voc" | "attribution">("workorders");
+  const systemEvents = snapshot.events.filter((event) => event.source !== "user_feedback" && event.source !== "manual_review");
+  return (
+    <div className="quality-panel-stack">
+      <section className="quality-workspace-head">
+        <div>
+          <span>发现与处置</span>
+          <h2>事件与 VOC</h2>
+          <p>用户反馈作为可流转工单处理；任务失败、模型错误和评测失败保留为系统信号，避免把只读快照误当成已落库工单。</p>
+        </div>
+        <div className="quality-subnav" role="tablist" aria-label="事件与 VOC 视图">
+          {[
+            ["workorders", "工单处置", snapshot.voc.length],
+            ["signals", "系统信号", systemEvents.length],
+            ["voc", "VOC 视图", snapshot.voc.length],
+            ["attribution", "归因趋势", snapshot.attribution.length]
+          ].map(([key, label, count]) => (
+            <button key={key} type="button" className={view === key ? "active" : ""} onClick={() => setView(key as typeof view)}>
+              {label}<b>{count}</b>
+            </button>
+          ))}
+        </div>
+      </section>
+      {view === "workorders" ? <FeedbackOpsSection evaluation={evaluation} projects={projects} onRefresh={onRefresh} /> : null}
+      {view === "signals" ? <QualityEventPoolPanel events={systemEvents} /> : null}
+      {view === "voc" ? <QualityVocPanel rows={snapshot.voc} /> : null}
+      {view === "attribution" ? <QualityAttributionPanel rows={snapshot.attribution} /> : null}
+    </div>
+  );
+}
+
+function QualityDatasetWorkspace({ snapshot }: { snapshot: QualityCenterOverview }) {
+  return (
+    <div className="quality-panel-stack">
+      <section className="quality-workspace-head">
+        <div>
+          <span>可复用质量资产</span>
+          <h2>数据集</h2>
+          <p>将标杆案例、线上 badcase、回归案例和边界案例统一版本化；每次评测运行会保存不可变数据集快照。</p>
+        </div>
+      </section>
+      <QualityStageContractMatrix snapshot={snapshot} />
+      <QualitySampleLibraryPanel rows={snapshot.samples} />
+    </div>
+  );
+}
+
+function QualityOptimizationWorkspace({ snapshot }: { snapshot: QualityCenterOverview }) {
+  return (
+    <div className="quality-panel-stack">
+      <section className="quality-workspace-head">
+        <div>
+          <span>诊断与复测</span>
+          <h2>优化回流</h2>
+          <p>按四阶段定位主要瓶颈，查看高频问题与根因，再用同一批样本对比模型或提示词；优化结果回到下一轮评测，不干预创作者是否发布。</p>
+        </div>
+      </section>
+      <QualityStageOptimizationPanel data={snapshot.stageOptimization} />
+      <QualityAssetLineagePanel rows={snapshot.lineage} />
+    </div>
+  );
+}
+
+function QualityStageOptimizationPanel({ data }: { data: QualityCenterOverview["stageOptimization"] }) {
+  const bottleneck = data.rows.find((row) => row.key === data.bottleneck);
+  return (
+    <section className="quality-optimization-panel">
+      <header>
+        <div>
+          <span>最近 {data.windowDays} 天</span>
+          <h2>阶段优化诊断</h2>
+          <p>综合阶段评分、通过率、用户不可用反馈和生成失败，优先处理影响最大的环节。</p>
+        </div>
+        <div className={`quality-bottleneck ${bottleneck?.health ?? "warning"}`}>
+          <span>当前主要瓶颈</span>
+          <strong>{bottleneck?.label ?? "待建立基线"}</strong>
+        </div>
+      </header>
+      <div className="quality-optimization-grid">
+        {data.rows.map((row) => (
+          <article key={row.key} className={row.health}>
+            <header><strong>{row.label}</strong><span>{qualityGateLabel(row.health)}</span></header>
+            <div className="quality-optimization-metrics">
+              <MetricPill label="均分" value={row.averageScore || "-"} strong />
+              <MetricPill label="通过率" value={row.reportCount ? `${row.passRate}%` : "待评测"} />
+              <MetricPill label="待处理反馈" value={row.openFeedback} />
+              <MetricPill label="生成失败" value={row.failedTasks} />
+            </div>
+            <div className="quality-chip-row">
+              {[...row.topProblems, ...row.topRootCauses].slice(0, 4).map((item) => <span key={item}>{item}</span>)}
+              {!row.topProblems.length && !row.topRootCauses.length ? <span>暂无高频问题</span> : null}
+            </div>
+            <p>{row.recommendation}</p>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function QualityStageContractMatrix({ snapshot }: { snapshot: QualityCenterOverview }) {
+  const contracts: Array<{
+    key: string;
+    label: string;
+    stages: EvaluationStage[];
+    output: string;
+    gate: string;
+  }> = [
+    { key: "content", label: "内容", stages: ["script"], output: "故事结构 / 分集 / 对白", gate: "结构完整、角色动机成立、内容可拍" },
+    { key: "assets", label: "资产", stages: ["character", "image"], output: "角色设定 / 参考图 / 场景资产", gate: "角色锁定、引用清晰、视觉一致" },
+    { key: "storyboard", label: "分镜", stages: ["storyboard"], output: "镜头表 / 画面提示 / 节奏", gate: "镜头覆盖、时空连续、可生成" },
+    { key: "final", label: "成片", stages: ["video"], output: "视频片段 / 配音 / 导出", gate: "片段可用、音画连续、成本可控" }
+  ];
+  return (
+    <section className="quality-stage-contract" aria-label="前后台四阶段质量契约">
+      <header>
+        <div><span>前后台统一口径</span><strong>四阶段质量契约</strong></div>
+        <p>前台保持四步创作，后台保留五个细粒度评分项；“资产”聚合角色与图片评测，不改写历史数据。</p>
+      </header>
+      <div className="quality-contract-grid">
+        {contracts.map((contract, index) => {
+          const diagnosis = snapshot.stageOptimization.rows.find((row) => row.key === contract.key);
+          const reports = snapshot.lab.recentReports.filter((report) => contract.stages.includes(report.stage));
+          const openEvents = snapshot.events.filter((event) => contract.stages.includes(event.stage as EvaluationStage) && !["resolved", "ignored", "converted"].includes(event.status));
+          const urgent = openEvents.filter((event) => event.priority === "p0" || event.priority === "p1").length;
+          const passRate = diagnosis?.passRate ?? (reports.length ? Math.round((reports.filter((report) => report.pass).length / reports.length) * 100) : 0);
+          const averageScore = diagnosis?.averageScore ?? average(reports.map((report) => report.totalScore));
+          const datasets = snapshot.samples.filter((sample) => sample.stages.some((stage) => contract.stages.includes(stage))).length;
+          const status = urgent ? "blocked" : diagnosis?.health ?? (!reports.length || passRate < 80 || openEvents.length ? "warning" : "pass");
+          return (
+            <article key={contract.key} className={status}>
+              <div className="quality-contract-index">{index + 1}</div>
+              <div className="quality-contract-copy">
+                <strong>{contract.label}</strong>
+                <span>{contract.output}</span>
+                <small>{contract.gate}</small>
+              </div>
+              <dl>
+                <div><dt>均分</dt><dd>{averageScore || "-"}</dd></div>
+                <div><dt>通过率</dt><dd>{reports.length ? `${passRate}%` : "待评测"}</dd></div>
+                <div><dt>待优化</dt><dd>{diagnosis?.openFeedback ?? openEvents.length}</dd></div>
+                <div><dt>数据集</dt><dd>{datasets}</dd></div>
+              </dl>
+              <em>{status === "blocked" ? "阻塞" : status === "warning" ? "待验证" : "通过"}</em>
+            </article>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function QualityEventPoolPanel({ events }: { events: QualityCenterOverview["events"] }) {
+  const [keyword, setKeyword] = useState("");
+  const [source, setSource] = useState("all");
+  const [rootCause, setRootCause] = useState("all");
+  const sourceOptions = ["all", ...uniqueStrings(events.map((event) => event.source))];
+  const rootOptions = ["all", ...uniqueStrings(events.map((event) => event.rootCause))];
+  const filtered = events.filter((event) =>
+    (source === "all" || event.source === source) &&
+    (rootCause === "all" || event.rootCause === rootCause) &&
+    `${event.title} ${event.description} ${event.projectName ?? ""} ${event.provider ?? ""} ${event.model ?? ""}`.toLowerCase().includes(keyword.toLowerCase())
+  );
+  return (
+    <article className="admin-v2-card">
+      <div className="admin-v2-card-head">
+        <div>
+          <h2>质量事件池</h2>
+          <p>统一收集用户反馈、任务失败、模型错误、评测失败、人工复核，按根因进入修复或样本沉淀。</p>
+        </div>
+        <MetricPill label="当前匹配" value={filtered.length} strong />
+      </div>
+      <AdminToolbar>
+        <SearchField value={keyword} onChange={setKeyword} placeholder="搜索事件、作品、模型或错误..." />
+        <SelectFilter value={source} onChange={setSource} options={sourceOptions} labels={{ all: "全部来源", user_feedback: "用户反馈", task_failure: "任务失败", model_error: "模型错误", evaluation_failure: "评测失败", manual_review: "人工复核" }} />
+        <SelectFilter value={rootCause} onChange={setRootCause} options={rootOptions} labels={{ all: "全部根因" }} />
+      </AdminToolbar>
+      <div className="quality-event-list">
+        {filtered.map((event) => <QualityEventCard key={event.id} event={event} />)}
+        {!filtered.length ? <EmptyHint text="暂无匹配质量事件。" /> : null}
+      </div>
+    </article>
+  );
+}
+
+function QualityEventCard({ event }: { event: QualityCenterOverview["events"][number] }) {
+  return (
+    <article className="quality-event-card">
+      <div>
+        <span className={`feedback-priority ${event.priority}`}>{feedbackPriorityLabel(event.priority)}</span>
+        <strong>{event.title}</strong>
+        <small>{event.sourceLabel} · {stageLabelSafe(event.stage)} · {formatDate(event.createdAt)}</small>
+      </div>
+      <p>{event.description}</p>
+      <div className="quality-chip-row">
+        <span>{event.rootCause}</span>
+        <span>{qualityEventStatusLabel(event.status)}</span>
+        {event.provider || event.model ? <span>{event.provider ?? "未知渠道"} / {event.model ?? "未知模型"}</span> : null}
+        {event.score ? <span>{event.score}分</span> : null}
+        {event.latencyMs ? <span>{formatDuration(event.latencyMs)}</span> : null}
+      </div>
+      <footer>
+        <span>{event.projectName ?? event.userName ?? "未关联上下文"}</span>
+        <b>{event.actionLabel}</b>
+      </footer>
+    </article>
+  );
+}
+
+function QualityVocPanel({ rows }: { rows: QualityCenterOverview["voc"] }) {
+  const [keyword, setKeyword] = useState("");
+  const [priority, setPriority] = useState("all");
+  const filtered = rows.filter((row) =>
+    (priority === "all" || row.priority === priority) &&
+    `${row.content} ${row.projectName ?? ""} ${row.userName ?? ""} ${row.tags.join(" ")}`.toLowerCase().includes(keyword.toLowerCase())
+  );
+  return (
+    <article className="admin-v2-card">
+      <div className="admin-v2-card-head">
+        <div>
+          <h2>用户反馈 VOC</h2>
+          <p>这里只处理用户声音、投诉建议、客服回访和补偿结论；可复现的代表性问题再进入事件池和样本库。</p>
+        </div>
+        <MetricPill label="需补偿" value={rows.filter((row) => row.compensationNeeded).length} strong />
+      </div>
+      <AdminToolbar>
+        <SearchField value={keyword} onChange={setKeyword} placeholder="搜索用户、作品、反馈、标签..." />
+        <SelectFilter value={priority} onChange={setPriority} options={["all", "p0", "p1", "p2", "p3"]} labels={{ all: "全部优先级", p0: "P0 阻塞", p1: "P1 高", p2: "P2 中", p3: "P3 低" }} />
+      </AdminToolbar>
+      <div className="quality-voc-list">
+        {filtered.map((row) => (
+          <article key={row.id}>
+            <header>
+              <span className={`feedback-priority ${row.priority}`}>{feedbackPriorityLabel(row.priority)}</span>
+              <strong>{row.projectName ?? "未关联作品"}</strong>
+              <small>{row.userName ?? row.userId} · {feedbackStatusLabel(row.status)} · {formatDate(row.createdAt)}</small>
+            </header>
+            <p>{row.content || "用户未填写补充说明。"}</p>
+            <div className="quality-chip-row">
+              <span>{feedbackUsabilityLabel(row.usability)}</span>
+              {row.tags.slice(0, 4).map((tag) => <span key={tag}>{tag}</span>)}
+              {row.compensationNeeded ? <span className="danger">需补偿核实</span> : null}
+            </div>
+            <footer>{row.customerAction}</footer>
+          </article>
+        ))}
+        {!filtered.length ? <EmptyHint text="暂无匹配 VOC 反馈。" /> : null}
+      </div>
+    </article>
+  );
+}
+
+function QualityModelMonitorPanel({ rows }: { rows: QualityCenterOverview["modelMonitoring"] }) {
+  const [keyword, setKeyword] = useState("");
+  const [stage, setStage] = useState("all");
+  const filtered = rows.filter((row) =>
+    qualityFrontStageMatches(row.stage, row.modality, stage) &&
+    `${row.provider} ${row.model} ${row.topErrors.map((item) => item.reason).join(" ")}`.toLowerCase().includes(keyword.toLowerCase())
+  );
+  return (
+    <article className="admin-v2-card">
+      <div className="admin-v2-card-head">
+        <div>
+          <h2>模型监控</h2>
+          <p>按文本、生图、视频、TTS、导出查看模型可用性、错误码、P95 耗时、积分消耗和成本异常。</p>
+        </div>
+      </div>
+      <AdminToolbar>
+        <SearchField value={keyword} onChange={setKeyword} placeholder="搜索渠道、模型、错误原因..." />
+        <SelectFilter value={stage} onChange={setStage} options={["all", "content", "assets", "storyboard", "final"]} labels={{ all: "全部阶段", content: "内容", assets: "资产", storyboard: "分镜", final: "成片" }} />
+      </AdminToolbar>
+      <div className="quality-model-monitor-grid">
+        {filtered.map((row) => (
+          <article key={`${row.provider}:${row.model}:${row.stage}`} className={`quality-monitor-card ${row.healthStatus}`}>
+            <header>
+              <strong>{row.provider}</strong>
+              <span>{row.model}</span>
+              <em>{qualityGateLabel(row.healthStatus)}</em>
+            </header>
+            <div className="quality-monitor-metrics">
+              <MetricPill label="成功率" value={`${row.successRate}%`} strong />
+              <MetricPill label="失败率" value={`${row.failureRate}%`} />
+              <MetricPill label="P95" value={formatDuration(row.p95LatencyMs)} />
+              <MetricPill label="积分" value={row.credits} />
+              <MetricPill label="成本" value={`¥${row.costCny.toFixed(2)}`} />
+            </div>
+            <footer>
+              {row.topErrors.length ? row.topErrors.map((error) => <span key={error.reason}>{error.reason} × {error.count}</span>) : <span>暂无主要错误</span>}
+            </footer>
+          </article>
+        ))}
+        {!filtered.length ? <EmptyHint text="暂无模型监控记录。" /> : null}
+      </div>
+    </article>
+  );
+}
+
+function QualityLabPanel({ snapshot, evaluation, projects, providers, onRefresh }: { snapshot: QualityCenterOverview; evaluation?: EvaluationOverview; projects: QualityProjectRow[]; providers: ModelProvider[]; onRefresh: () => void }) {
+  return (
+    <div className="quality-panel-stack">
+      <EvaluationSection evaluation={evaluation} projects={projects} providers={providers} onRefresh={onRefresh} />
+    </div>
+  );
+}
+
+function QualitySampleLibraryPanel({ rows }: { rows: QualityCenterOverview["samples"] }) {
+  const [sampleType, setSampleType] = useState("all");
+  const filtered = rows.filter((row) => sampleType === "all" || row.sampleType === sampleType);
+  return (
+    <article className="admin-v2-card">
+      <div className="admin-v2-card-head">
+        <div>
+          <h2>样本库</h2>
+          <p>维护 golden sample、badcase sample、regression sample 和边界样本，支撑离线评测与发布门禁。</p>
+        </div>
+      </div>
+      <AdminToolbar>
+        <SelectFilter value={sampleType} onChange={setSampleType} options={["all", "golden", "badcase", "regression", "boundary", "manual"]} labels={{ all: "全部样本", golden: "Golden", badcase: "Badcase", regression: "Regression", boundary: "边界样本", manual: "人工样本" }} />
+      </AdminToolbar>
+      <div className="quality-sample-grid">
+        {filtered.map((row) => (
+          <article key={row.id} className={`quality-sample-card ${row.readiness}`}>
+            <header>
+              <strong>{row.name}</strong>
+              <span>{sampleTypeLabel(row.sampleType)} · {row.sampleCount} 项</span>
+            </header>
+            <p>{row.description || "暂无样本说明。"}</p>
+            <div className="quality-chip-row">
+              {row.stages.map((stage) => <span key={stage}>{stageLabel(stage)}</span>)}
+            </div>
+            <footer>
+              <span>{row.latestRunName ? `${row.latestRunName} · ${row.latestRunPassRate}%` : "尚未运行评测"}</span>
+              <b>{qualityGateLabel(row.readiness)}</b>
+            </footer>
+          </article>
+        ))}
+        {!filtered.length ? <EmptyHint text="暂无该类型样本。" /> : null}
+      </div>
+    </article>
+  );
+}
+
+function QualityAttributionPanel({ rows }: { rows: QualityCenterOverview["attribution"] }) {
+  return (
+    <article className="admin-v2-card">
+      <div className="admin-v2-card-head">
+        <div>
+          <h2>归因看板</h2>
+          <p>按模型失败、提示词问题、角色一致性、工作流问题、UI误导、成本异常等根因观察问题集中度。</p>
+        </div>
+      </div>
+      <div className="quality-attribution-grid">
+        {rows.map((row) => (
+          <article key={row.rootCause}>
+            <header>
+              <strong>{row.rootCause}</strong>
+              <span>{row.count} 个事件 · {row.open} 未关闭</span>
+            </header>
+            <div className="quality-attribution-bar"><span style={{ width: `${Math.min(100, row.count * 8)}%` }} /></div>
+            <p>{row.recommendation}</p>
+            <div className="quality-chip-row">
+              {row.stages.map((stage) => <span key={stage}>{stageLabelSafe(stage)}</span>)}
+            </div>
+          </article>
+        ))}
+        {!rows.length ? <EmptyHint text="暂无归因数据。" /> : null}
+      </div>
+    </article>
+  );
+}
+
+function QualityReleaseGatePanel({ rows }: { rows: QualityCenterOverview["releaseGates"] }) {
+  return (
+    <article className="admin-v2-card">
+      <div className="admin-v2-card-head">
+        <div>
+          <h2>发布门禁</h2>
+          <p>新 prompt、新模型、新流程上线前，必须检查核心样本、最近评测、P0/P1、模型健康、成本异常和溯源覆盖。</p>
+        </div>
+      </div>
+      <div className="quality-gate-grid">
+        {rows.map((row) => (
+          <article key={row.id} className={`quality-gate-card ${row.status}`}>
+            <header>
+              <strong>{row.name}</strong>
+              <span>{qualityGateLabel(row.status)}</span>
+            </header>
+            <p>{row.target}</p>
+            <dl>
+              <div><dt>指标</dt><dd>{row.metric}</dd></div>
+              <div><dt>阈值</dt><dd>{row.threshold}</dd></div>
+              <div><dt>当前</dt><dd>{row.current}</dd></div>
+              <div><dt>负责人</dt><dd>{row.owner}</dd></div>
+            </dl>
+            <footer>{row.action}</footer>
+          </article>
+        ))}
+      </div>
+    </article>
+  );
+}
+
+function QualityAssetLineagePanel({ rows }: { rows: QualityCenterOverview["lineage"] }) {
+  const [keyword, setKeyword] = useState("");
+  const filtered = rows.filter((row) => `${row.projectName} ${row.userName} ${row.userEmail ?? ""} ${row.artStyle} ${row.modelRoutes.text ?? ""} ${row.modelRoutes.image ?? ""} ${row.modelRoutes.video ?? ""}`.toLowerCase().includes(keyword.toLowerCase()));
+  return (
+    <article className="admin-v2-card">
+      <div className="admin-v2-card-head">
+        <div>
+          <h2>真实效果预览</h2>
+          <p>按用户和项目查看真实生成效果、角色小图、分镜小图、模型路由、最近评测和反馈，方便整理 badcase。</p>
+        </div>
+      </div>
+      <AdminToolbar>
+        <SearchField value={keyword} onChange={setKeyword} placeholder="搜索作品、用户、模型或风格..." />
+      </AdminToolbar>
+      <div className="quality-preview-list">
+        {filtered.map((row) => (
+          <article key={row.projectId} className={`quality-preview-card ${row.safetyStatus}`}>
+            <header>
+              <div>
+                <strong>{row.projectName}</strong>
+                <span>{row.userName}{row.userEmail ? ` · ${row.userEmail}` : ""} · {row.artStyle} · {row.videoRatio} · {formatDate(row.updatedAt)}</span>
+              </div>
+              <b>{qualityGateLabel(row.safetyStatus)} · {row.totalCredits} 积分</b>
+            </header>
+            <div className="quality-preview-route-row">
+              <span>文本：{row.modelRoutes.text ?? "未记录"}</span>
+              <span>生图：{row.modelRoutes.image ?? "未记录"}</span>
+              <span>视频：{row.modelRoutes.video ?? "未记录"}</span>
+            </div>
+            <div className="quality-preview-media-grid">
+              <section>
+                <strong>角色效果</strong>
+                <div className="quality-thumb-strip">
+                  {row.roleThumbs.map((asset) => (
+                    <figure key={asset.assetId}>
+                      {asset.url ? <AdminStableImage src={asset.url} alt={asset.name} /> : <span />}
+                      <figcaption>{asset.type === "role_reference" ? "参考" : asset.type === "role_derivative" ? "三视图" : "角色"}</figcaption>
+                    </figure>
+                  ))}
+                  {!row.roleThumbs.length ? <small>暂无角色图</small> : null}
+                </div>
+              </section>
+              <section>
+                <strong>分镜首帧</strong>
+                <div className="quality-thumb-strip storyboard">
+                  {row.storyboardThumbs.map((asset) => (
+                    <figure key={asset.assetId}>
+                      {asset.url ? <AdminStableImage src={asset.url} alt={asset.name} /> : <span />}
+                      <figcaption>{asset.shotNo ?? "镜头"}</figcaption>
+                    </figure>
+                  ))}
+                  {!row.storyboardThumbs.length ? <small>暂无分镜图</small> : null}
+                </div>
+              </section>
+            </div>
+            <div className="quality-preview-signal-grid">
+              <section>
+                <strong>最近评测</strong>
+                {row.latestReports.map((report) => (
+                  <span key={report.id} className={report.pass ? "pass" : "warning"}>{stageLabelSafe(report.stage)} {report.score}分 · {report.action}</span>
+                ))}
+                {!row.latestReports.length ? <span>未评测</span> : null}
+              </section>
+              <section>
+                <strong>最近任务</strong>
+                {row.latestTasks.slice(0, 3).map((task) => (
+                  <span key={task.id}>{task.type} · {task.provider}/{task.model} · {task.status} · {task.credits}积分</span>
+                ))}
+                {!row.latestTasks.length ? <span>暂无任务</span> : null}
+              </section>
+              <section>
+                <strong>反馈摘要</strong>
+                <span>{row.feedbackSummary.total} 条反馈 · {row.feedbackSummary.unusable} 条不可用</span>
+                <div className="quality-chip-row">{row.feedbackSummary.topTags.map((tag) => <span key={tag}>{tag}</span>)}</div>
+              </section>
+            </div>
+            <div className="quality-lineage-stage-grid">
+              {row.stages.map((stage) => (
+                <section key={stage.stage} className={stage.status}>
+                  <strong>{stageLabelSafe(stage.stage)}</strong>
+                  <span>{stage.provider ?? "未记录渠道"} / {stage.model ?? "未记录模型"}</span>
+                  <small>{stage.promptVersion ?? "未记录 prompt"}</small>
+                  <em>{stage.tasks} 任务 · {stage.assets} 资产 · {stage.score || "-"}分</em>
+                </section>
+              ))}
+            </div>
+          </article>
+        ))}
+        {!filtered.length ? <EmptyHint text="暂无匹配资产溯源记录。" /> : null}
+      </div>
+    </article>
+  );
+}
+
+function AdminStableImage({ src, alt }: { src: string; alt: string }) {
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => setLoaded(false), [src]);
+  return (
+    <span className={loaded ? "stable-image loaded" : "stable-image"}>
+      <span />
+      <img src={src} alt={alt} loading="lazy" decoding="async" onLoad={() => setLoaded(true)} />
+    </span>
+  );
+}
+
 function EvaluationSection({
   evaluation,
   projects,
@@ -462,14 +1447,17 @@ function EvaluationSection({
   const blockedProjects = projects.filter((project) => project.blockedReasons.length > 0 || project.feedbacks.some((feedback) => feedback.usability !== "usable"));
   const textProviders = providers.filter((provider) => provider.modality === "text" && provider.enabled && !isDeprecatedChannel(provider.id, provider.name));
   const defaultProjectIds = projects.slice(0, 3).map((row) => row.project.id);
-  const [activeEvalTab, setActiveEvalTab] = useState<"run" | "records" | "projects" | "models">("run");
+  const [activeEvalTab, setActiveEvalTab] = useState<"run" | "experiments" | "records" | "projects" | "models">("run");
   const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>(defaultProjectIds);
-  const [selectedStages, setSelectedStages] = useState<EvaluationStage[]>(["script", "character", "storyboard", "image"]);
+  const [selectedStages, setSelectedStages] = useState<EvaluationStage[]>(["script", "character", "image", "storyboard", "video"]);
   const [mode, setMode] = useState<"rules" | "hybrid" | "llm">("rules");
   const [selectedModels, setSelectedModels] = useState<string[]>([]);
   const [maxLlmCalls, setMaxLlmCalls] = useState(3);
   const [datasets, setDatasets] = useState<EvaluationDataset[]>([]);
   const [runs, setRuns] = useState<EvaluationRun[]>([]);
+  const [promptVersions, setPromptVersions] = useState<PromptVersion[]>([]);
+  const [selectedPromptVersionId, setSelectedPromptVersionId] = useState("");
+  const [selectedGenerationPromptVersionId, setSelectedGenerationPromptVersionId] = useState("");
   const [selectedDatasetId, setSelectedDatasetId] = useState("");
   const [datasetName, setDatasetName] = useState("");
   const [datasetDescription, setDatasetDescription] = useState("");
@@ -490,9 +1478,14 @@ function EvaluationSection({
 
   async function refreshEvaluationSnapshots() {
     try {
-      const [datasetRows, runRows] = await Promise.all([api.adminEvaluationDatasets(), api.adminEvaluationRuns()]);
-      setDatasets(datasetRows);
-      setRuns(runRows);
+      const [datasetPage, runPage, promptPage] = await Promise.all([
+        api.adminEvaluationDatasetsPage(1, 100),
+        api.adminEvaluationRunsPage(1, 100),
+        api.adminPromptVersions(1, 100)
+      ]);
+      setDatasets(datasetPage.items);
+      setRuns(runPage.items);
+      setPromptVersions(promptPage.items);
     } catch (err) {
       setRunError(err instanceof Error ? err.message : "评测快照读取失败");
     }
@@ -557,6 +1550,8 @@ function EvaluationSection({
         stages: selectedStages,
         mode,
         evaluatorModels,
+        promptVersionId: selectedPromptVersionId || undefined,
+        generationPromptVersionId: selectedGenerationPromptVersionId || undefined,
         maxLlmCalls: mode === "rules" ? 0 : maxLlmCalls,
         maxShotsPerPrompt: 8,
         includeFeedback: true
@@ -580,16 +1575,10 @@ function EvaluationSection({
         <AdminMetric icon={<DatabaseZap size={22} />} label="待处理项目" value={blockedProjects.length} hint="低分或不可用反馈" tone="violet" />
       </div>
 
-      <div className="evaluation-product-loop">
-        <PolicyItem title="样本集筛选" body={`${datasets.length} 个样本集，当前选择 ${selectedProjectIds.length} 个作品，可按项目/用户关键词过滤。`} />
-        <PolicyItem title="多模型评测" body={mode === "rules" ? "当前为规则评分；切到 Hybrid/LLM 后可同时选择多个文本模型横评。" : `已选择 ${selectedModels.length} 个评测模型，上限 ${maxLlmCalls} 次调用。`} />
-        <PolicyItem title="提示词版本" body="后台“提示词评分”维护各阶段启用版本，评测报告会记录 provider/model/promptVersion。" />
-        <PolicyItem title="反馈回流" body={`${blockedProjects.length} 个项目带低分或人工反馈，可回流到提示词、模型路由和角色质量门禁。`} />
-      </div>
-
       <div className="evaluation-tabbar">
         {[
           ["run", "运行评测"],
+          ["experiments", "版本与实验"],
           ["records", "评测记录"],
           ["projects", "项目质检池"],
           ["models", "模型表现"]
@@ -622,7 +1611,7 @@ function EvaluationSection({
             </div>
             <div className="evaluation-selected-strip">
               <strong>{selectedDataset?.name ?? "当前样本"}</strong>
-              <span>{selectedProjectIds.length} 项 · {selectedStages.map(stageLabel).join(" / ")}</span>
+              <span>{selectedProjectIds.length} 项 · {selectedFrontendStageLabels(selectedStages).join(" / ")}</span>
               <div>
                 {selectedProjectRows.slice(0, 5).map((row) => <em key={row.project.id}>{row.project.name}</em>)}
                 {selectedProjectRows.length > 5 ? <em>+{selectedProjectRows.length - 5}</em> : null}
@@ -652,8 +1641,10 @@ function EvaluationSection({
             <div>
               <strong>评测阶段</strong>
               <div className="evaluation-chip-row">
-                {(["script", "character", "storyboard", "image", "video"] as EvaluationStage[]).map((stage) => (
-                  <button type="button" key={stage} className={selectedStages.includes(stage) ? "active" : ""} onClick={() => toggleStage(selectedStages, stage, setSelectedStages)}>{stageLabel(stage)}</button>
+                {frontendEvaluationStages.map((group) => (
+                  <button type="button" key={group.key} className={group.stages.every((stage) => selectedStages.includes(stage)) ? "active" : ""} onClick={() => toggleFrontendStageGroup(selectedStages, group.stages, setSelectedStages)}>
+                    {group.label}<small>{group.detail}</small>
+                  </button>
                 ))}
               </div>
             </div>
@@ -671,6 +1662,26 @@ function EvaluationSection({
                   </button>
                 ))}
               </div>
+            </div>
+            <div>
+              <strong>评测提示词版本</strong>
+              <select className="evaluation-dataset-select" value={selectedPromptVersionId} onChange={(event) => setSelectedPromptVersionId(event.target.value)}>
+                <option value="">使用当前启用评分模板</option>
+                {promptVersions.filter((prompt) => prompt.purpose === "evaluation" && selectedStages.includes(prompt.stage)).map((prompt) => (
+                  <option key={prompt.id} value={prompt.id}>{stageLabel(prompt.stage)} · {prompt.name} · {prompt.version} · {prompt.status === "active" ? "启用" : "草稿"}</option>
+                ))}
+              </select>
+              <small className="evaluation-config-hint">这里只控制评分标准；生成提示词效果应使用对应版本生成样本后，再比较两次评测运行。</small>
+            </div>
+            <div>
+              <strong>样本生成提示词版本</strong>
+              <select className="evaluation-dataset-select" value={selectedGenerationPromptVersionId} onChange={(event) => setSelectedGenerationPromptVersionId(event.target.value)}>
+                <option value="">未记录 / 使用项目现有版本</option>
+                {promptVersions.filter((prompt) => prompt.purpose === "generation" && selectedStages.includes(prompt.stage)).map((prompt) => (
+                  <option key={prompt.id} value={prompt.id}>{stageLabel(prompt.stage)} · {prompt.name} · {prompt.version}</option>
+                ))}
+              </select>
+              <small className="evaluation-config-hint">用于标记当前样本由哪个生成提示词产出，方便后续提示词效果对比。</small>
             </div>
             <div className={mode === "rules" ? "evaluation-llm-panel disabled" : "evaluation-llm-panel"}>
               <div className="evaluation-budget-row">
@@ -714,10 +1725,180 @@ function EvaluationSection({
         ) : null}
       </article> : null}
 
+      {activeEvalTab === "experiments" ? <EvaluationExperimentWorkspace runs={runs} promptVersions={promptVersions} onRefresh={refreshEvaluationSnapshots} /> : null}
       {activeEvalTab === "records" ? <EvaluationRecordsCard runs={runs} datasets={datasets} onDeleteRun={async (id) => { await api.deleteEvaluationRun(id); await refreshEvaluationSnapshots(); onRefresh(); }} onDeleteDataset={async (id) => { await api.deleteEvaluationDataset(id); await refreshEvaluationSnapshots(); }} onRefresh={refreshEvaluationSnapshots} /> : null}
       {activeEvalTab === "projects" ? <ProjectQualityPool projects={projects} onDeleteQuality={async (projectId) => { await api.deleteProjectQualityData(projectId); onRefresh(); }} /> : null}
       {activeEvalTab === "models" ? <ModelQualityCard modelQuality={modelQuality} providers={providers} /> : null}
     </section>
+  );
+}
+
+function EvaluationExperimentWorkspace({
+  runs,
+  promptVersions,
+  onRefresh
+}: {
+  runs: EvaluationRun[];
+  promptVersions: PromptVersion[];
+  onRefresh: () => Promise<void>;
+}) {
+  const completedRuns = runs.filter((run) => run.status === "completed");
+  const [experiments, setExperiments] = useState<ExperimentRun[]>([]);
+  const [experimentPage, setExperimentPage] = useState(1);
+  const [experimentPages, setExperimentPages] = useState(1);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const [promptDraft, setPromptDraft] = useState({ key: "quality-script", name: "内容评分提示词", stage: "script" as EvaluationStage, purpose: "evaluation" as PromptVersion["purpose"], version: "v1", content: "", notes: "" });
+  const [experimentDraft, setExperimentDraft] = useState({
+    name: "模型/提示词对比实验",
+    stage: "script" as EvaluationStage,
+    experimentType: "model" as ExperimentRun["experimentType"],
+    baselineRunId: "",
+    candidateRunId: "",
+    hypothesis: "候选版本在相同或可比样本上的平均分与通过率不低于基线。"
+  });
+
+  useEffect(() => {
+    void loadExperiments(1);
+  }, []);
+
+  async function loadExperiments(page = experimentPage) {
+    setLoading(true);
+    setError("");
+    try {
+      const result = await api.adminExperiments(page, 12);
+      setExperiments(result.items);
+      setExperimentPage(result.page);
+      setExperimentPages(result.totalPages);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "实验记录读取失败");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function savePromptVersion() {
+    setLoading(true);
+    setError("");
+    setMessage("");
+    try {
+      await api.createPromptVersion({ ...promptDraft, status: "draft" });
+      setPromptDraft((current) => ({ ...current, version: nextPromptVersion(current.version), content: "", notes: "" }));
+      setMessage("提示词版本已保存，可在运行评测时选择。生成提示词实验请先用该版本生成对应样本。");
+      await onRefresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "提示词版本保存失败");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function activatePrompt(prompt: PromptVersion) {
+    setLoading(true);
+    setError("");
+    try {
+      await api.updatePromptVersion(prompt.id, { status: "active" });
+      setMessage(`已启用 ${prompt.name} ${prompt.version}，同一提示词 Key 的旧启用版本已归档。`);
+      await onRefresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "提示词启用失败");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function createExperiment() {
+    setLoading(true);
+    setError("");
+    setMessage("");
+    try {
+      const experiment = await api.createExperiment({
+        name: experimentDraft.name,
+        stage: experimentDraft.stage,
+        hypothesis: experimentDraft.hypothesis,
+        experimentType: experimentDraft.experimentType,
+        baselineRunId: experimentDraft.baselineRunId,
+        candidateRunId: experimentDraft.candidateRunId,
+        successMetric: "候选平均分与通过率不低于基线"
+      });
+      setMessage(experiment.resultSummary);
+      await loadExperiments(1);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "实验创建失败");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const stageRuns = completedRuns.filter((run) => run.stages.includes(experimentDraft.stage));
+  return (
+    <div className="evaluation-experiment-workspace">
+      {error ? <p className="admin-toast danger">{error}</p> : null}
+      {message ? <p className="admin-toast success">{message}</p> : null}
+      <section className="evaluation-experiment-intro">
+        <div><span>迭代方法</span><h2>同样本、单变量、可复现</h2></div>
+        <p>先建立基线运行，再只替换一个模型或提示词生成候选运行。系统比较两次真实评测结果，不用主观印象判断优化是否有效。</p>
+      </section>
+
+      <div className="evaluation-experiment-builder-grid">
+        <article className="admin-v2-card evaluation-version-builder">
+          <div className="admin-v2-card-head"><div><h2>提示词版本库</h2><p>保存评分提示词版本；生成提示词也可记录版本，但必须用对应版本生成样本后再做运行对比。</p></div></div>
+          <div className="evaluation-version-form">
+            <input value={promptDraft.key} onChange={(event) => setPromptDraft({ ...promptDraft, key: event.target.value })} placeholder="版本 Key，例如 storyboard-generate" />
+            <input value={promptDraft.name} onChange={(event) => setPromptDraft({ ...promptDraft, name: event.target.value })} placeholder="提示词名称" />
+            <select value={promptDraft.purpose} onChange={(event) => setPromptDraft({ ...promptDraft, purpose: event.target.value as PromptVersion["purpose"] })}><option value="evaluation">评分提示词</option><option value="generation">生成提示词</option></select>
+            <select value={promptDraft.stage} onChange={(event) => setPromptDraft({ ...promptDraft, stage: event.target.value as EvaluationStage })}>{frontendEvaluationStages.flatMap((group) => group.stages).map((stage) => <option key={stage} value={stage}>{stageLabel(stage)}</option>)}</select>
+            <input value={promptDraft.version} onChange={(event) => setPromptDraft({ ...promptDraft, version: event.target.value })} placeholder="版本，例如 v2" />
+            <textarea value={promptDraft.content} onChange={(event) => setPromptDraft({ ...promptDraft, content: event.target.value })} placeholder="提示词正文或评分 rubric" />
+            <input value={promptDraft.notes} onChange={(event) => setPromptDraft({ ...promptDraft, notes: event.target.value })} placeholder="本版改动说明" />
+            <button className="admin-primary-btn" type="button" disabled={loading || !promptDraft.key.trim() || !promptDraft.name.trim() || !promptDraft.content.trim()} onClick={() => void savePromptVersion()}><Plus size={16} />保存版本</button>
+          </div>
+          <div className="evaluation-version-list">
+            {promptVersions.slice(0, 10).map((prompt) => (
+              <div key={prompt.id}>
+                <strong>{stageLabel(prompt.stage)} · {prompt.name} · {prompt.version}</strong>
+                <span>{prompt.purpose === "generation" ? "生成" : "评分"} · {prompt.key} · {prompt.status === "active" ? "当前启用" : prompt.status === "archived" ? "已归档" : "草稿"}</span>
+                {prompt.status !== "active" ? <button type="button" onClick={() => void activatePrompt(prompt)} disabled={loading}>设为启用</button> : <b>启用中</b>}
+              </div>
+            ))}
+            {!promptVersions.length ? <EmptyHint text="还没有提示词版本，先保存一个基线版本。" /> : null}
+          </div>
+        </article>
+
+        <article className="admin-v2-card evaluation-comparison-builder">
+          <div className="admin-v2-card-head"><div><h2>创建对比实验</h2><p>选择覆盖同一阶段的两次已完成评测，自动计算候选相对基线的分数与通过率变化。</p></div></div>
+          <div className="evaluation-comparison-form">
+            <input value={experimentDraft.name} onChange={(event) => setExperimentDraft({ ...experimentDraft, name: event.target.value })} placeholder="实验名称" />
+            <select value={experimentDraft.experimentType} onChange={(event) => setExperimentDraft({ ...experimentDraft, experimentType: event.target.value as ExperimentRun["experimentType"] })}>
+              <option value="model">模型对比</option><option value="prompt">提示词对比</option><option value="combined">组合策略对比</option>
+            </select>
+            <select value={experimentDraft.stage} onChange={(event) => setExperimentDraft({ ...experimentDraft, stage: event.target.value as EvaluationStage, baselineRunId: "", candidateRunId: "" })}>{frontendEvaluationStages.flatMap((group) => group.stages).map((stage) => <option key={stage} value={stage}>{stageLabel(stage)}</option>)}</select>
+            <select value={experimentDraft.baselineRunId} onChange={(event) => setExperimentDraft({ ...experimentDraft, baselineRunId: event.target.value })}><option value="">选择基线运行</option>{stageRuns.map((run) => <option key={run.id} value={run.id}>{run.name} · {run.summary.averageScore || "-"}分 · {run.summary.passRate}%</option>)}</select>
+            <select value={experimentDraft.candidateRunId} onChange={(event) => setExperimentDraft({ ...experimentDraft, candidateRunId: event.target.value })}><option value="">选择候选运行</option>{stageRuns.map((run) => <option key={run.id} value={run.id}>{run.name} · {run.summary.averageScore || "-"}分 · {run.summary.passRate}%</option>)}</select>
+            <textarea value={experimentDraft.hypothesis} onChange={(event) => setExperimentDraft({ ...experimentDraft, hypothesis: event.target.value })} placeholder="这次只改了什么，预期改善哪个指标？" />
+            <button className="admin-primary-btn" type="button" disabled={loading || !experimentDraft.baselineRunId || !experimentDraft.candidateRunId || experimentDraft.baselineRunId === experimentDraft.candidateRunId} onClick={() => void createExperiment()}><ChartNoAxesCombined size={16} />生成对比结论</button>
+          </div>
+        </article>
+      </div>
+
+      <section className="evaluation-experiment-results">
+        <header><div><span>历史实验</span><h2>版本效果对比</h2></div><button className="admin-secondary-btn compact" type="button" disabled={loading} onClick={() => void loadExperiments(experimentPage)}><RefreshCw size={15} />刷新</button></header>
+        {experiments.map((experiment) => (
+          <article key={experiment.id} className={experiment.winner}>
+            <div><span>{experimentTypeLabel(experiment.experimentType)} · {stageLabel(experiment.stage)}</span><strong>{experiment.name}</strong><small>{experiment.hypothesis}</small></div>
+            <div className="evaluation-comparison-score"><span>基线<strong>{experiment.metrics.baselineScore}</strong></span><b>→</b><span>候选<strong>{experiment.metrics.candidateScore}</strong></span><em>{signedNumber(experiment.metrics.scoreDelta)} 分</em></div>
+            <div className="evaluation-comparison-meta"><span>通过率 {experiment.metrics.baselinePassRate}% → {experiment.metrics.candidatePassRate}%</span><span>改善 {experiment.metrics.sampleDeltas.filter((row) => row.status === "improved").length} · 退化 {experiment.metrics.sampleDeltas.filter((row) => row.status === "regressed").length}</span><span>{experiment.baselineVersion} vs {experiment.candidateVersion}</span></div>
+            <p>{experiment.resultSummary}</p>
+            {experiment.metrics.sampleDeltas.length ? <div className="evaluation-sample-deltas">
+              {experiment.metrics.sampleDeltas.slice(0, 8).map((row) => <span className={row.status} key={`${row.projectId}:${row.stage}`}>{row.projectName ?? row.projectId.slice(-8)} · {row.baseline ?? "-"} → {row.candidate ?? "-"} · {row.delta === undefined ? row.status : signedNumber(row.delta)}</span>)}
+            </div> : null}
+          </article>
+        ))}
+        {!experiments.length ? <EmptyHint text="暂无对比实验。先运行两个版本的评测，再创建模型或提示词对比。" /> : null}
+        <div className="admin-pagination"><button type="button" disabled={experimentPage <= 1} onClick={() => void loadExperiments(experimentPage - 1)}>‹</button><button className="active" type="button">{experimentPage} / {experimentPages}</button><button type="button" disabled={experimentPage >= experimentPages} onClick={() => void loadExperiments(experimentPage + 1)}>›</button></div>
+      </section>
+    </div>
   );
 }
 
@@ -739,6 +1920,9 @@ function FeedbackOpsSection({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [loadedFullFeedback, setLoadedFullFeedback] = useState(false);
+  const [feedbackPage, setFeedbackPage] = useState(1);
+  const [feedbackPages, setFeedbackPages] = useState(1);
+  const [feedbackTotal, setFeedbackTotal] = useState(evaluation?.recentFeedback.length ?? 0);
   const [selectedId, setSelectedId] = useState("");
   const [handlingId, setHandlingId] = useState("");
   const [draft, setDraft] = useState({
@@ -754,14 +1938,18 @@ function FeedbackOpsSection({
   }, [evaluation?.recentFeedback, loadedFullFeedback]);
 
   useEffect(() => {
-    void loadFeedback(false);
+    void loadFeedback(false, 1);
   }, []);
 
-  async function loadFeedback(refreshParent = true) {
+  async function loadFeedback(refreshParent = true, targetPage = feedbackPage) {
     setLoading(true);
     setError("");
     try {
-      setFeedbacks(await api.adminFeedback(300));
+      const result = await api.adminFeedbackPage(targetPage, 50, keyword, stage, status);
+      setFeedbacks(result.items);
+      setFeedbackPage(result.page);
+      setFeedbackPages(result.totalPages);
+      setFeedbackTotal(result.total);
       setLoadedFullFeedback(true);
       if (refreshParent) onRefresh();
     } catch (err) {
@@ -785,8 +1973,15 @@ function FeedbackOpsSection({
   const unusable = feedbacks.filter((item) => item.usability === "unusable").length;
   const pending = feedbacks.filter((item) => ["open", "triaged", "processing"].includes(item.status)).length;
   const urgent = feedbacks.filter((item) => item.priority === "p0" || item.priority === "p1").length;
-  const converted = feedbacks.filter((item) => item.status === "converted").length;
+  const settledSamples = feedbacks.filter((item) => item.status === "converted" || item.convertedDatasetId).length;
   const topTags = topFeedbackTags(feedbacks);
+  const selectedProject = selectedFeedback?.projectId ? projectById.get(selectedFeedback.projectId) : undefined;
+  const selectedRootCause = selectedFeedback ? (draft.rootCause || inferRootCause(selectedFeedback)) : "";
+  const hasAttribution = Boolean(draft.rootCause.trim());
+  const hasResolution = draft.resolution.trim().length >= 8;
+  const hasLinkedProject = Boolean(selectedFeedback?.projectId);
+  const canSettleSample = Boolean(selectedFeedback && hasLinkedProject && hasAttribution && hasResolution);
+  const handlingSelected = selectedFeedback ? handlingId === selectedFeedback.id : false;
 
   useEffect(() => {
     if (!selectedFeedback) return;
@@ -800,7 +1995,10 @@ function FeedbackOpsSection({
     });
   }, [selectedFeedback?.id]);
 
-  async function saveFeedback(input: Partial<Pick<UserFeedback, "status" | "priority" | "rootCause" | "assignee" | "resolution" | "convertedDatasetId">>) {
+  async function persistFeedbackUpdate(
+    input: Partial<Pick<UserFeedback, "status" | "priority" | "rootCause" | "assignee" | "resolution" | "convertedDatasetId">>,
+    fallbackMessage = "反馈处理保存失败"
+  ) {
     if (!selectedFeedback) return;
     setHandlingId(selectedFeedback.id);
     setError("");
@@ -815,8 +2013,87 @@ function FeedbackOpsSection({
         resolution: updated.resolution ?? ""
       });
       onRefresh();
+      return updated;
     } catch (err) {
-      setError(err instanceof Error ? err.message : "反馈处理保存失败");
+      setError(err instanceof Error ? err.message : fallbackMessage);
+    } finally {
+      setHandlingId("");
+    }
+  }
+
+  async function saveFeedback(input: Partial<Pick<UserFeedback, "status" | "priority" | "rootCause" | "assignee" | "resolution" | "convertedDatasetId">>) {
+    await persistFeedbackUpdate(input);
+  }
+
+  async function createReviewTask() {
+    if (!selectedFeedback) return;
+    await persistFeedbackUpdate({
+      status: "processing",
+      priority: draft.priority,
+      rootCause: selectedRootCause,
+      assignee: draft.assignee,
+      resolution: draft.resolution.trim() || "已创建人工复核任务，待复现后补充影响范围、修复方案和验证结果。"
+    }, "复核任务创建失败");
+  }
+
+  async function settleFeedbackSample() {
+    if (!selectedFeedback) return;
+    if (!selectedFeedback.projectId) {
+      setError("该反馈未关联作品，无法沉淀为评测样本。");
+      return;
+    }
+    if (!draft.rootCause.trim() || !draft.resolution.trim()) {
+      setError("请先补齐根因归类和处理结论，再沉淀为评测样本。");
+      return;
+    }
+
+    setHandlingId(selectedFeedback.id);
+    setError("");
+    try {
+      let datasetId = selectedFeedback.convertedDatasetId;
+      if (!datasetId) {
+        const dataset = await api.createEvaluationDataset({
+          name: `反馈样本-${stageLabel(selectedFeedback.stage)}-${selectedProject?.project.name ?? selectedFeedback.id.slice(-6)}`.slice(0, 80),
+          description: [
+            `来源反馈：${selectedFeedback.content || "用户未填写补充说明。"}`,
+            `根因：${draft.rootCause}`,
+            `处理结论：${draft.resolution}`
+          ].join("\n").slice(0, 500),
+          source: "feedback",
+          projectIds: [selectedFeedback.projectId],
+          stages: [selectedFeedback.stage],
+          filters: {
+            feedbackId: selectedFeedback.id,
+            priority: draft.priority,
+            rootCause: draft.rootCause,
+            usability: selectedFeedback.usability,
+            rating: selectedFeedback.rating,
+            tags: selectedFeedback.tags
+          },
+          owner: draft.assignee.trim() || "feedback-ops"
+        });
+        datasetId = dataset.id;
+      }
+
+      const updated = await api.updateAdminFeedback(selectedFeedback.id, {
+        status: "converted",
+        priority: draft.priority,
+        rootCause: draft.rootCause,
+        assignee: draft.assignee,
+        resolution: draft.resolution,
+        convertedDatasetId: datasetId
+      });
+      setFeedbacks((current) => current.map((item) => item.id === updated.id ? updated : item));
+      setDraft({
+        status: updated.status,
+        priority: updated.priority,
+        rootCause: updated.rootCause ?? "",
+        assignee: updated.assignee ?? "",
+        resolution: updated.resolution ?? ""
+      });
+      onRefresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "评测样本沉淀失败");
     } finally {
       setHandlingId("");
     }
@@ -825,19 +2102,19 @@ function FeedbackOpsSection({
   return (
     <section className="admin-v2-section feedback-ops-section">
       <div className="admin-v2-metrics">
-        <AdminMetric icon={<MessageSquareText size={22} />} label="反馈总数" value={feedbacks.length} hint="最近最多 300 条" tone="blue" />
-        <AdminMetric icon={<Activity size={22} />} label="待处理" value={pending} hint={`${urgent} 条 P0/P1`} tone="amber" />
+        <AdminMetric icon={<MessageSquareText size={22} />} label="反馈池" value={feedbackTotal} hint={`数据库分页 · 第 ${feedbackPage}/${feedbackPages} 页`} tone="blue" />
+        <AdminMetric icon={<Activity size={22} />} label="待归因" value={pending} hint={`${urgent} 条 P0/P1`} tone="amber" />
         <AdminMetric icon={<CheckCircle2 size={22} />} label="平均评分" value={average(feedbacks.map((item) => item.rating)) || "-"} hint={`${unusable} 条不可用`} tone="green" />
-        <AdminMetric icon={<DatabaseZap size={22} />} label="已转样本" value={converted} hint="可回流评测池" tone="violet" />
+        <AdminMetric icon={<DatabaseZap size={22} />} label="已沉淀" value={settledSamples} hint="可用于回归评测" tone="violet" />
       </div>
 
       <AdminToolbar
-        right={<button className="admin-primary-btn" onClick={() => void loadFeedback()} disabled={loading}>{loading ? <Loader2 className="spin-icon" size={16} /> : <RefreshCw size={16} />}刷新反馈</button>}
+        right={<button className="admin-primary-btn" onClick={() => void loadFeedback(true, 1)} disabled={loading}>{loading ? <Loader2 className="spin-icon" size={16} /> : <Search size={16} />}查询反馈</button>}
       >
         <SearchField value={keyword} onChange={setKeyword} placeholder="搜索反馈内容、标签、作品或用户..." />
         <SelectFilter value={stage} onChange={(value) => setStage(value as typeof stage)} options={["all", "script", "character", "storyboard", "image", "video"]} labels={{ all: "全部阶段", script: "剧本", character: "角色", storyboard: "分镜", image: "图片", video: "视频" }} />
         <SelectFilter value={usability} onChange={(value) => setUsability(value as typeof usability)} options={["all", "usable", "barely_usable", "unusable"]} labels={{ all: "全部可用性", usable: "可用", barely_usable: "勉强可用", unusable: "不可用" }} />
-        <SelectFilter value={status} onChange={(value) => setStatus(value as typeof status)} options={["all", "open", "triaged", "processing", "resolved", "converted", "ignored"]} labels={{ all: "全部状态", open: "待处理", triaged: "已分诊", processing: "处理中", resolved: "已解决", converted: "已转样本", ignored: "忽略" }} />
+        <SelectFilter value={status} onChange={(value) => setStatus(value as typeof status)} options={["all", "open", "triaged", "processing", "resolved", "converted", "ignored"]} labels={{ all: "全部状态", open: "待分析", triaged: "已归因", processing: "复核中", resolved: "已解决", converted: "已沉淀", ignored: "已关闭" }} />
         <SelectFilter value={priority} onChange={(value) => setPriority(value as typeof priority)} options={["all", "p0", "p1", "p2", "p3"]} labels={{ all: "全部优先级", p0: "P0 阻塞", p1: "P1 高", p2: "P2 中", p3: "P3 低" }} />
       </AdminToolbar>
 
@@ -861,6 +2138,7 @@ function FeedbackOpsSection({
                 <div className="feedback-ops-tags">
                   <span>{feedbackStatusLabel(feedback.status)}</span>
                   <span>{feedbackUsabilityLabel(feedback.usability)}</span>
+                  {feedback.convertedDatasetId ? <span>已入评测样本</span> : null}
                   {(feedback.rootCause ? [feedback.rootCause] : feedback.tags).slice(0, 3).map((tag) => <span key={tag}>{tag}</span>)}
                 </div>
                 <div className="feedback-ops-meta">
@@ -879,37 +2157,78 @@ function FeedbackOpsSection({
               <div className="feedback-detail-head">
                 <div>
                   <span className={`feedback-priority ${draft.priority}`}>{feedbackPriorityLabel(draft.priority)}</span>
-                  <h2>{projectById.get(selectedFeedback.projectId ?? "")?.project.name ?? "未关联作品"}</h2>
+                  <h2>{selectedProject?.project.name ?? "未关联作品"}</h2>
                   <p>{stageLabel(selectedFeedback.stage)} · {feedbackUsabilityLabel(selectedFeedback.usability)} · 来源 {selectedFeedback.source}</p>
                 </div>
-                <button className="admin-secondary-btn compact" type="button" onClick={() => window.location.hash = "评测闭环"}>进入质检池</button>
+                <button className="admin-secondary-btn compact" type="button" onClick={() => window.location.hash = "评测闭环"}>查看评测闭环</button>
+              </div>
+              <div className="feedback-flow-strip" aria-label="反馈处理流程">
+                <span className="done">收集 badcase</span>
+                <span className={draft.rootCause ? "done" : ""}>归因分析</span>
+                <span className={draft.status === "processing" || draft.status === "resolved" || draft.status === "converted" ? "done" : ""}>复核处理</span>
+                <span className={selectedFeedback.convertedDatasetId || draft.status === "converted" ? "done" : ""}>样本沉淀</span>
               </div>
               <blockquote>{selectedFeedback.content || "用户未填写补充说明。"}</blockquote>
               <div className="feedback-detail-meta">
                 <span>ID：{selectedFeedback.id}</span>
-                <span>用户：{projectById.get(selectedFeedback.projectId ?? "")?.userName ?? selectedFeedback.userId}</span>
+                <span>用户：{selectedProject?.userName ?? selectedFeedback.userId}</span>
                 <span>创建：{formatDate(selectedFeedback.createdAt)}</span>
                 {selectedFeedback.processedAt ? <span>处理：{formatDate(selectedFeedback.processedAt)}</span> : null}
+                {selectedFeedback.convertedDatasetId ? <span>样本：{selectedFeedback.convertedDatasetId}</span> : null}
+              </div>
+              <div className="feedback-section-title">
+                <ShieldCheck size={17} />
+                <div>
+                  <strong>归因处理</strong>
+                  <span>记录根因、优化动作和复测结果，形成你自己的迭代闭环。</span>
+                </div>
               </div>
               <div className="feedback-edit-grid">
                 <label><span>处理状态</span><select value={draft.status} onChange={(event) => setDraft({ ...draft, status: event.target.value as UserFeedback["status"] })}>{feedbackStatusOptions.map((item) => <option key={item} value={item}>{feedbackStatusLabel(item)}</option>)}</select></label>
                 <label><span>优先级</span><select value={draft.priority} onChange={(event) => setDraft({ ...draft, priority: event.target.value as UserFeedback["priority"] })}>{feedbackPriorityOptions.map((item) => <option key={item} value={item}>{feedbackPriorityLabel(item)}</option>)}</select></label>
-                <label><span>根因归类</span><select value={draft.rootCause} onChange={(event) => setDraft({ ...draft, rootCause: event.target.value })}>{feedbackRootCauseOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
-                <label><span>负责人</span><input value={draft.assignee} onChange={(event) => setDraft({ ...draft, assignee: event.target.value })} placeholder="运营/产品/研发姓名" /></label>
+                <label><span>根因归类</span><select value={draft.rootCause} onChange={(event) => setDraft({ ...draft, rootCause: event.target.value })}><option value="">未归因</option>{feedbackRootCauseOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
               </div>
               <label className="feedback-resolution-field">
                 <span>处理结论</span>
-                <textarea value={draft.resolution} onChange={(event) => setDraft({ ...draft, resolution: event.target.value })} placeholder="记录排查结论、修复方案、是否需要补偿或回流评测。" />
+                <textarea value={draft.resolution} onChange={(event) => setDraft({ ...draft, resolution: event.target.value })} placeholder="记录复现情况、影响范围、修复方案、补偿结论或回归验证结果。" />
               </label>
+              <div className="feedback-closure-grid">
+                <section>
+                  <div className="feedback-section-title compact">
+                    <FilePenLine size={16} />
+                    <div>
+                      <strong>复测记录</strong>
+                      <span>将当前 badcase 标记为优化中，完成后补充复测结论。</span>
+                    </div>
+                  </div>
+                  <button className="admin-secondary-btn compact" disabled={handlingSelected} onClick={() => void createReviewTask()} type="button">开始优化复测</button>
+                </section>
+                <section>
+                  <div className="feedback-section-title compact">
+                    <DatabaseZap size={16} />
+                    <div>
+                      <strong>评测样本沉淀</strong>
+                      <span>仅沉淀有代表性、可复现且已归因的反馈。</span>
+                    </div>
+                  </div>
+                  <div className="feedback-sample-checklist">
+                    <span className={hasLinkedProject ? "done" : ""}><CheckCircle2 size={13} />关联作品</span>
+                    <span className={hasAttribution ? "done" : ""}><CheckCircle2 size={13} />完成归因</span>
+                    <span className={hasResolution ? "done" : ""}><CheckCircle2 size={13} />处理结论</span>
+                  </div>
+                  <button className="admin-secondary-btn compact" disabled={handlingSelected || !canSettleSample} title={canSettleSample ? "沉淀为评测样本" : "需关联作品、根因归类和处理结论"} onClick={() => void settleFeedbackSample()} type="button">沉淀为评测样本</button>
+                </section>
+              </div>
               <div className="feedback-ops-actions sticky">
-                <button className="admin-secondary-btn compact" disabled={handlingId === selectedFeedback.id} onClick={() => void saveFeedback({ status: "processing", priority: draft.priority, rootCause: draft.rootCause, assignee: draft.assignee, resolution: draft.resolution })} type="button">标记处理中</button>
-                <button className="admin-secondary-btn compact" disabled={handlingId === selectedFeedback.id} onClick={() => void saveFeedback({ status: "converted", priority: draft.priority, rootCause: draft.rootCause || inferRootCause(selectedFeedback), assignee: draft.assignee, resolution: draft.resolution || "已纳入下一轮评测样本池，后续用于提示词/模型路由归因。" })} type="button">转评测样本</button>
-                <button className="admin-primary-btn compact" disabled={handlingId === selectedFeedback.id} onClick={() => void saveFeedback({ status: draft.status, priority: draft.priority, rootCause: draft.rootCause, assignee: draft.assignee, resolution: draft.resolution })} type="button">{handlingId === selectedFeedback.id ? <Loader2 className="spin-icon" size={15} /> : <FilePenLine size={15} />}保存处理</button>
+                <button className="admin-secondary-btn compact" disabled={handlingSelected} onClick={() => void saveFeedback({ status: "resolved", priority: draft.priority, rootCause: selectedRootCause, assignee: draft.assignee, resolution: draft.resolution })} type="button">标记已解决</button>
+                <button className="admin-secondary-btn compact" disabled={handlingSelected} onClick={() => void saveFeedback({ status: "ignored", priority: draft.priority, rootCause: draft.rootCause, assignee: draft.assignee, resolution: draft.resolution || "已关闭：不进入当前迭代处理。" })} type="button">关闭反馈</button>
+                <button className="admin-primary-btn compact" disabled={handlingSelected} onClick={() => void saveFeedback({ status: draft.status, priority: draft.priority, rootCause: draft.rootCause, assignee: draft.assignee, resolution: draft.resolution })} type="button">{handlingSelected ? <Loader2 className="spin-icon" size={15} /> : <FilePenLine size={15} />}保存处理</button>
               </div>
             </>
           ) : <EmptyHint text="请选择一条反馈进行处理。" />}
         </aside>
       </div>
+      <div className="admin-pagination"><button type="button" disabled={feedbackPage <= 1 || loading} onClick={() => void loadFeedback(false, feedbackPage - 1)}>‹</button><button className="active" type="button">{feedbackPage} / {feedbackPages}</button><button type="button" disabled={feedbackPage >= feedbackPages || loading} onClick={() => void loadFeedback(false, feedbackPage + 1)}>›</button></div>
     </section>
   );
 }
@@ -1007,7 +2326,7 @@ function UsersSection({
           }
         >
           <SearchField value={keyword} onChange={setKeyword} placeholder="搜索用户、邮箱、手机号、ID..." />
-          <SelectFilter value={role} onChange={setRole} options={["all", "creator", "admin", "operator", "finance", "support"]} labels={{ all: "全部角色", creator: "创作者", admin: "超级管理员", operator: "运营", finance: "财务", support: "客服" }} />
+          <SelectFilter value={role} onChange={setRole} options={["all", "creator", "admin"]} labels={{ all: "全部角色", creator: "创作者", admin: "后台管理员" }} />
           <SelectFilter value={status} onChange={setStatus} options={["all", "active", "disabled"]} labels={{ all: "全部状态", active: "正常", disabled: "停用" }} />
         </AdminToolbar>
         <div className="admin-data-card">
@@ -1054,6 +2373,441 @@ function UsersSection({
   );
 }
 
+type AnnouncementInput = Pick<PlatformAnnouncement, "title" | "body" | "type" | "enabled" | "pinned"> & { startsAt?: string | null; endsAt?: string | null };
+type HelpArticleInput = Pick<HelpArticle, "title" | "summary" | "content" | "category" | "tags" | "enabled" | "pinned" | "sortOrder">;
+
+function AnnouncementsSection({
+  announcements,
+  helpArticles,
+  onCreate,
+  onSave,
+  onDelete,
+  onHelpCreate,
+  onHelpSave,
+  onHelpDelete
+}: {
+  announcements: PlatformAnnouncement[];
+  helpArticles: HelpArticle[];
+  onCreate: (input: AnnouncementInput) => AdminActionResult;
+  onSave: (id: string, input: Partial<AnnouncementInput>) => AdminActionResult;
+  onDelete: (id: string) => AdminActionResult;
+  onHelpCreate: (input: HelpArticleInput) => AdminActionResult;
+  onHelpSave: (id: string, input: Partial<HelpArticleInput>) => AdminActionResult;
+  onHelpDelete: (id: string) => AdminActionResult;
+}) {
+  const [keyword, setKeyword] = useState("");
+  const [type, setType] = useState("all");
+  const [segment, setSegment] = useState("all");
+  const [createOpen, setCreateOpen] = useState(false);
+  const [submodule, setSubmodule] = useState<"announcements" | "help">("announcements");
+  const now = Date.now();
+  const rows = announcements.filter((item) => {
+    const matchedKeyword = `${item.title} ${item.body}`.toLowerCase().includes(keyword.toLowerCase());
+    const matchedType = type === "all" || item.type === type;
+    const matchedSegment =
+      segment === "all" ||
+      (segment === "active" && announcementIsLive(item, now)) ||
+      (segment === "pinned" && item.pinned) ||
+      (segment === "scheduled" && item.enabled && item.startsAt && new Date(item.startsAt).getTime() > now) ||
+      (segment === "expired" && item.endsAt && new Date(item.endsAt).getTime() < now) ||
+      (segment === "disabled" && !item.enabled) ||
+      item.type === segment;
+    return matchedKeyword && matchedType && matchedSegment;
+  });
+  const liveRows = announcements.filter((item) => announcementIsLive(item, now));
+  const railItems: AdminRailItem[] = [
+    { id: "all", label: "全部公告", count: announcements.length, meta: "后台公告池", tone: "blue" },
+    { id: "active", label: "前台生效", count: liveRows.length, meta: "工作台可见", tone: "green" },
+    { id: "pinned", label: "置顶", count: announcements.filter((item) => item.pinned).length, meta: "优先展示", tone: "amber" },
+    { id: "scheduled", label: "定时发布", count: announcements.filter((item) => item.enabled && item.startsAt && new Date(item.startsAt).getTime() > now).length, meta: "等待开始", tone: "blue" },
+    { id: "expired", label: "已过期", count: announcements.filter((item) => item.endsAt && new Date(item.endsAt).getTime() < now).length, meta: "自动隐藏", tone: "danger" },
+    { id: "disabled", label: "停用", count: announcements.filter((item) => !item.enabled).length, meta: "不会展示", tone: "danger" },
+    { id: "update", label: "更新", count: announcements.filter((item) => item.type === "update").length, meta: "版本/能力" },
+    { id: "guide", label: "指引", count: announcements.filter((item) => item.type === "guide").length, meta: "教程/说明", tone: "violet" },
+    { id: "warning", label: "提醒", count: announcements.filter((item) => item.type === "warning").length, meta: "故障/风险", tone: "amber" }
+  ];
+
+  return (
+    <section className="admin-v2-section admin-announcement-section">
+      <div className="admin-submodule-tabs">
+        <button className={submodule === "announcements" ? "active" : undefined} type="button" onClick={() => setSubmodule("announcements")}>
+          <Megaphone size={18} />公告管理<span>{announcements.length}</span>
+        </button>
+        <button className={submodule === "help" ? "active" : undefined} type="button" onClick={() => setSubmodule("help")}>
+          <BookOpen size={18} />帮助中心<span>{helpArticles.length}</span>
+        </button>
+      </div>
+      {submodule === "announcements" ? (
+        <>
+          <AdminModuleWorkbench
+            railTitle="公告分层"
+            railDescription="控制哪些公告进入前台工作台，并保留排期和置顶能力。"
+            railItems={railItems}
+            activeRail={segment}
+            onRailChange={setSegment}
+            railFooter={<span>当前命中 {rows.length} 条，前台生效 {liveRows.length} 条。</span>}
+          >
+            <div className="admin-v2-metrics small">
+              <AdminMetric icon={<Megaphone size={20} />} label="公告总数" value={announcements.length} hint="后台可管理记录" tone="blue" />
+              <AdminMetric icon={<CheckCircle2 size={20} />} label="前台生效" value={liveRows.length} hint="工作台正在展示" tone="green" />
+              <AdminMetric icon={<ShieldCheck size={20} />} label="置顶公告" value={announcements.filter((item) => item.pinned).length} hint="优先级最高" tone="amber" />
+              <AdminMetric icon={<Activity size={20} />} label="停用/过期" value={announcements.length - liveRows.length} hint="不会进入前台" tone="violet" />
+            </div>
+            <AdminToolbar right={<button className="admin-primary-btn" type="button" onClick={() => setCreateOpen(true)}><Plus size={18} />新增公告</button>}>
+              <SearchField value={keyword} onChange={setKeyword} placeholder="搜索标题或公告内容..." />
+              <SelectFilter value={type} onChange={setType} options={["all", "info", "guide", "update", "warning"]} labels={{ all: "全部类型", info: "信息", guide: "指引", update: "更新", warning: "提醒" }} />
+            </AdminToolbar>
+            <div className="admin-announcement-list">
+              {rows.map((item) => (
+                <AnnouncementRow key={item.id} announcement={item} onSave={onSave} onDelete={onDelete} />
+              ))}
+              {!rows.length ? <EmptyHint text="没有匹配的公告。可以切换左侧分层，或新增一条前台公告。" /> : null}
+            </div>
+            <TableFooter total={rows.length} />
+          </AdminModuleWorkbench>
+          <AdminModal open={createOpen} title="新增平台公告" description="公告启用后会出现在前台工作台，可用置顶和生效时间控制展示顺序。" onClose={() => setCreateOpen(false)} wide>
+            <AnnouncementCreator onCreate={(input) => { void onCreate(input); setCreateOpen(false); }} />
+          </AdminModal>
+        </>
+      ) : (
+        <HelpArticlesManager articles={helpArticles} onCreate={onHelpCreate} onSave={onHelpSave} onDelete={onHelpDelete} />
+      )}
+    </section>
+  );
+}
+
+const helpCategoryLabels: Record<HelpArticle["category"], string> = {
+  getting_started: "新手必读",
+  workflow: "脚本与剧情",
+  billing: "积分与账单",
+  account: "账号安全",
+  troubleshooting: "出问题怎么办",
+  community: "创作社群"
+};
+
+const helpCategoryOptions: Array<HelpArticle["category"]> = ["getting_started", "workflow", "billing", "account", "troubleshooting", "community"];
+
+function HelpArticlesManager({
+  articles,
+  onCreate,
+  onSave,
+  onDelete
+}: {
+  articles: HelpArticle[];
+  onCreate: (input: HelpArticleInput) => AdminActionResult;
+  onSave: (id: string, input: Partial<HelpArticleInput>) => AdminActionResult;
+  onDelete: (id: string) => AdminActionResult;
+}) {
+  const [keyword, setKeyword] = useState("");
+  const [category, setCategory] = useState("all");
+  const [segment, setSegment] = useState("all");
+  const [createOpen, setCreateOpen] = useState(false);
+  const rows = articles.filter((item) => {
+    const matchedKeyword = `${item.title} ${item.summary} ${item.content} ${item.tags.join(" ")}`.toLowerCase().includes(keyword.toLowerCase());
+    const matchedCategory = category === "all" || item.category === category;
+    const matchedSegment =
+      segment === "all" ||
+      (segment === "active" && item.enabled) ||
+      (segment === "pinned" && item.pinned) ||
+      (segment === "disabled" && !item.enabled) ||
+      item.category === segment;
+    return matchedKeyword && matchedCategory && matchedSegment;
+  });
+  const activeRows = articles.filter((item) => item.enabled);
+  const railItems: AdminRailItem[] = [
+    { id: "all", label: "全部帮助", count: articles.length, meta: "帮助中心内容池", tone: "blue" },
+    { id: "active", label: "前台生效", count: activeRows.length, meta: "帮助中心可见", tone: "green" },
+    { id: "pinned", label: "置顶", count: articles.filter((item) => item.pinned).length, meta: "优先展示", tone: "amber" },
+    { id: "disabled", label: "停用", count: articles.filter((item) => !item.enabled).length, meta: "不会展示", tone: "violet" },
+    ...helpCategoryOptions.map((item) => ({
+      id: item,
+      label: helpCategoryLabel(item),
+      count: articles.filter((article) => article.category === item).length,
+      meta: "分类内容"
+    }))
+  ];
+
+  return (
+    <AdminModuleWorkbench
+      railTitle="帮助中心"
+      railDescription="管理前台帮助中心的教程、FAQ 和操作说明。"
+      railItems={railItems}
+      activeRail={segment}
+      onRailChange={setSegment}
+      railFooter={<span>当前命中 {rows.length} 条，前台生效 {activeRows.length} 条。</span>}
+    >
+      <div className="admin-v2-metrics small">
+        <AdminMetric icon={<BookOpen size={20} />} label="帮助文章" value={articles.length} hint="后台可管理记录" tone="blue" />
+        <AdminMetric icon={<CheckCircle2 size={20} />} label="前台生效" value={activeRows.length} hint="帮助中心正在展示" tone="green" />
+        <AdminMetric icon={<ShieldCheck size={20} />} label="置顶内容" value={articles.filter((item) => item.pinned).length} hint="优先展示给用户" tone="amber" />
+        <AdminMetric icon={<Activity size={20} />} label="停用内容" value={articles.length - activeRows.length} hint="不会进入前台" tone="violet" />
+      </div>
+      <AdminToolbar right={<button className="admin-primary-btn" type="button" onClick={() => setCreateOpen(true)}><Plus size={18} />新增帮助</button>}>
+        <SearchField value={keyword} onChange={setKeyword} placeholder="搜索标题、摘要、正文或标签..." />
+        <SelectFilter value={category} onChange={setCategory} options={["all", ...helpCategoryOptions]} labels={{ all: "全部分类", ...helpCategoryLabels }} />
+      </AdminToolbar>
+      <div className="admin-announcement-list admin-help-article-list">
+        {rows.map((item) => (
+          <HelpArticleRow key={item.id} article={item} onSave={onSave} onDelete={onDelete} />
+        ))}
+        {!rows.length ? <EmptyHint text="没有匹配的帮助内容。可以切换左侧分类，或新增一条操作帮助。" /> : null}
+      </div>
+      <TableFooter total={rows.length} />
+      <AdminModal open={createOpen} title="新增帮助文章" description="文章启用后会进入前台帮助中心，可通过分类、排序和置顶控制展示。" onClose={() => setCreateOpen(false)} wide>
+        <HelpArticleCreator onCreate={(input) => { void onCreate(input); setCreateOpen(false); }} />
+      </AdminModal>
+    </AdminModuleWorkbench>
+  );
+}
+
+function HelpArticleRow({
+  article,
+  onSave,
+  onDelete
+}: {
+  article: HelpArticle;
+  onSave: (id: string, input: Partial<HelpArticleInput>) => AdminActionResult;
+  onDelete: (id: string) => AdminActionResult;
+}) {
+  const [draft, setDraft] = useState(() => helpArticleDraft(article));
+  useEffect(() => setDraft(helpArticleDraft(article)), [article.id, article.updatedAt]);
+  const dirty =
+    draft.title !== article.title ||
+    draft.summary !== article.summary ||
+    draft.content !== article.content ||
+    draft.category !== article.category ||
+    draft.tags !== article.tags.join("，") ||
+    draft.enabled !== article.enabled ||
+    draft.pinned !== article.pinned ||
+    Number(draft.sortOrder) !== article.sortOrder;
+  return (
+    <article className="admin-announcement-card admin-help-article-card">
+      <div className="admin-announcement-card-head">
+        <span className={`admin-chip help-${draft.category}`}>{helpCategoryLabel(draft.category)}</span>
+        <StatusChip active={draft.enabled} label={draft.enabled ? "展示中" : "停用"} />
+        {draft.pinned ? <span className="admin-status enabled">置顶</span> : null}
+        <div className="admin-row-actions">
+          <button className="admin-icon-btn" title={draft.enabled ? "停用" : "启用"} onClick={() => setDraft({ ...draft, enabled: !draft.enabled })}>{draft.enabled ? <ToggleRight size={18} /> : <ToggleLeft size={18} />}</button>
+          <button className={dirty ? "admin-text-btn primary" : "admin-text-btn"} disabled={!dirty || !draft.title.trim() || !draft.content.trim()} onClick={() => onSave(article.id, {
+            title: draft.title,
+            summary: draft.summary,
+            content: draft.content,
+            category: draft.category,
+            tags: splitTags(draft.tags),
+            enabled: draft.enabled,
+            pinned: draft.pinned,
+            sortOrder: Number(draft.sortOrder) || 0
+          })}>保存</button>
+          <button className="admin-icon-btn danger" title="删除帮助" onClick={() => { if (window.confirm("确认删除这条帮助内容？前台帮助中心会立即不再展示。")) onDelete(article.id); }}><Trash2 size={16} /></button>
+        </div>
+      </div>
+      <div className="admin-announcement-form-grid admin-help-form-grid">
+        <label className="wide"><span>标题</span><input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} /></label>
+        <label><span>分类</span><select value={draft.category} onChange={(event) => setDraft({ ...draft, category: event.target.value as HelpArticle["category"] })}>
+          {helpCategoryOptions.map((item) => <option value={item} key={item}>{helpCategoryLabel(item)}</option>)}
+        </select></label>
+        <label><span>排序</span><input type="number" min="0" value={draft.sortOrder} onChange={(event) => setDraft({ ...draft, sortOrder: event.target.value })} /></label>
+        <label><span>展示优先级</span><button className={draft.pinned ? "admin-secondary-btn compact active" : "admin-secondary-btn compact"} type="button" onClick={() => setDraft({ ...draft, pinned: !draft.pinned })}>{draft.pinned ? "已置顶" : "普通"}</button></label>
+        <label className="wide"><span>摘要</span><input value={draft.summary} onChange={(event) => setDraft({ ...draft, summary: event.target.value })} /></label>
+        <label className="wide"><span>正文</span><textarea value={draft.content} onChange={(event) => setDraft({ ...draft, content: event.target.value })} /></label>
+        <label className="wide"><span>标签</span><input value={draft.tags} onChange={(event) => setDraft({ ...draft, tags: event.target.value })} placeholder="用逗号分隔，例如：新手必读，积分" /></label>
+      </div>
+    </article>
+  );
+}
+
+function HelpArticleCreator({ onCreate }: { onCreate: (input: HelpArticleInput) => AdminActionResult }) {
+  const [draft, setDraft] = useState({
+    title: "",
+    summary: "",
+    content: "",
+    category: "getting_started" as HelpArticle["category"],
+    tags: "新手必读",
+    enabled: true,
+    pinned: false,
+    sortOrder: "10"
+  });
+  return (
+    <div className="admin-modal-form admin-announcement-create-form">
+      <div>
+        <strong>发布到前台帮助中心</strong>
+        <span>适合放新手教程、操作步骤、积分说明和常见故障处理，不要写成公告口吻。</span>
+      </div>
+      <label className="admin-create-field wide"><span>标题</span><input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} placeholder="例如：角色长相不稳定，应该怎么处理？" /></label>
+      <label className="admin-create-field wide"><span>摘要</span><input value={draft.summary} onChange={(event) => setDraft({ ...draft, summary: event.target.value })} placeholder="一句话说明这篇帮助解决什么问题。" /></label>
+      <label className="admin-create-field wide"><span>正文</span><textarea value={draft.content} onChange={(event) => setDraft({ ...draft, content: event.target.value })} placeholder="写清楚操作步骤、注意事项和排查顺序。" /></label>
+      <label className="admin-create-field"><span>分类</span><select value={draft.category} onChange={(event) => setDraft({ ...draft, category: event.target.value as HelpArticle["category"] })}>
+        {helpCategoryOptions.map((item) => <option value={item} key={item}>{helpCategoryLabel(item)}</option>)}
+      </select></label>
+      <label className="admin-create-field"><span>排序</span><input type="number" min="0" value={draft.sortOrder} onChange={(event) => setDraft({ ...draft, sortOrder: event.target.value })} /></label>
+      <label className="admin-create-field wide"><span>标签</span><input value={draft.tags} onChange={(event) => setDraft({ ...draft, tags: event.target.value })} placeholder="用逗号分隔，例如：新手必读，积分" /></label>
+      <label className="admin-create-field checkbox-field"><span>前台展示</span><input type="checkbox" checked={draft.enabled} onChange={(event) => setDraft({ ...draft, enabled: event.target.checked })} /></label>
+      <label className="admin-create-field checkbox-field"><span>置顶</span><input type="checkbox" checked={draft.pinned} onChange={(event) => setDraft({ ...draft, pinned: event.target.checked })} /></label>
+      <button className="admin-primary-btn" disabled={!draft.title.trim() || !draft.content.trim()} onClick={() => onCreate({
+        title: draft.title,
+        summary: draft.summary,
+        content: draft.content,
+        category: draft.category,
+        tags: splitTags(draft.tags),
+        enabled: draft.enabled,
+        pinned: draft.pinned,
+        sortOrder: Number(draft.sortOrder) || 0
+      })}>
+        <BookOpen size={18} />发布帮助
+      </button>
+    </div>
+  );
+}
+
+function helpArticleDraft(article: HelpArticle) {
+  return {
+    title: article.title,
+    summary: article.summary,
+    content: article.content,
+    category: article.category,
+    tags: article.tags.join("，"),
+    enabled: article.enabled,
+    pinned: article.pinned,
+    sortOrder: String(article.sortOrder)
+  };
+}
+
+function splitTags(value: string) {
+  return [...new Set(value.split(/[,，、\n]/).map((item) => item.trim()).filter(Boolean))].slice(0, 8);
+}
+
+function helpCategoryLabel(value: HelpArticle["category"]) {
+  return helpCategoryLabels[value] ?? value;
+}
+
+function AnnouncementRow({
+  announcement,
+  onSave,
+  onDelete
+}: {
+  announcement: PlatformAnnouncement;
+  onSave: (id: string, input: Partial<AnnouncementInput>) => AdminActionResult;
+  onDelete: (id: string) => AdminActionResult;
+}) {
+  const [draft, setDraft] = useState(() => announcementDraft(announcement));
+  useEffect(() => setDraft(announcementDraft(announcement)), [announcement.id, announcement.updatedAt]);
+  const dirty =
+    draft.title !== announcement.title ||
+    draft.body !== announcement.body ||
+    draft.type !== announcement.type ||
+    draft.enabled !== announcement.enabled ||
+    draft.pinned !== announcement.pinned ||
+    draft.startsAt !== dateInputValue(announcement.startsAt) ||
+    draft.endsAt !== dateInputValue(announcement.endsAt);
+  return (
+    <article className="admin-announcement-card">
+      <div className="admin-announcement-card-head">
+        <span className={`admin-chip announcement-${draft.type}`}>{announcementTypeLabel(draft.type)}</span>
+        <StatusChip active={draft.enabled && announcementIsLive({ ...announcement, ...draft, startsAt: dateToIso(draft.startsAt) ?? undefined, endsAt: dateToIso(draft.endsAt) ?? undefined }, Date.now())} label={draft.enabled ? "展示中" : "停用"} />
+        {draft.pinned ? <span className="admin-status enabled">置顶</span> : null}
+        <div className="admin-row-actions">
+          <button className="admin-icon-btn" title={draft.enabled ? "停用" : "启用"} onClick={() => setDraft({ ...draft, enabled: !draft.enabled })}>{draft.enabled ? <ToggleRight size={18} /> : <ToggleLeft size={18} />}</button>
+          <button className={dirty ? "admin-text-btn primary" : "admin-text-btn"} disabled={!dirty || !draft.title.trim() || !draft.body.trim()} onClick={() => onSave(announcement.id, {
+            title: draft.title,
+            body: draft.body,
+            type: draft.type,
+            enabled: draft.enabled,
+            pinned: draft.pinned,
+            startsAt: dateToIso(draft.startsAt),
+            endsAt: dateToIso(draft.endsAt)
+          })}>保存</button>
+          <button className="admin-icon-btn danger" title="删除公告" onClick={() => { if (window.confirm("确认删除这条平台公告？前台会立即不再展示。")) onDelete(announcement.id); }}><Trash2 size={16} /></button>
+        </div>
+      </div>
+      <div className="admin-announcement-form-grid">
+        <label className="wide"><span>标题</span><input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} /></label>
+        <label><span>类型</span><select value={draft.type} onChange={(event) => setDraft({ ...draft, type: event.target.value as PlatformAnnouncement["type"] })}>
+          <option value="info">信息</option>
+          <option value="guide">指引</option>
+          <option value="update">更新</option>
+          <option value="warning">提醒</option>
+        </select></label>
+        <label><span>展示优先级</span><button className={draft.pinned ? "admin-secondary-btn compact active" : "admin-secondary-btn compact"} type="button" onClick={() => setDraft({ ...draft, pinned: !draft.pinned })}>{draft.pinned ? "已置顶" : "普通"}</button></label>
+        <label><span>开始日期</span><input type="date" value={draft.startsAt} onChange={(event) => setDraft({ ...draft, startsAt: event.target.value })} /></label>
+        <label><span>结束日期</span><input type="date" value={draft.endsAt} onChange={(event) => setDraft({ ...draft, endsAt: event.target.value })} /></label>
+        <label className="wide"><span>公告内容</span><textarea value={draft.body} onChange={(event) => setDraft({ ...draft, body: event.target.value })} /></label>
+      </div>
+    </article>
+  );
+}
+
+function AnnouncementCreator({ onCreate }: { onCreate: (input: AnnouncementInput) => AdminActionResult }) {
+  const [draft, setDraft] = useState({
+    title: "",
+    body: "",
+    type: "info" as PlatformAnnouncement["type"],
+    enabled: true,
+    pinned: false,
+    startsAt: "",
+    endsAt: ""
+  });
+  return (
+    <div className="admin-modal-form admin-announcement-create-form">
+      <div>
+        <strong>发布到前台工作台</strong>
+        <span>推荐用于模型维护、价格变更、功能更新和新手引导，不要写过长营销文案。</span>
+      </div>
+      <label className="admin-create-field wide"><span>标题</span><input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} placeholder="例如：Seedance 视频通道维护通知" /></label>
+      <label className="admin-create-field wide"><span>内容</span><textarea value={draft.body} onChange={(event) => setDraft({ ...draft, body: event.target.value })} placeholder="说明影响范围、处理建议和恢复时间。" /></label>
+      <label className="admin-create-field"><span>类型</span><select value={draft.type} onChange={(event) => setDraft({ ...draft, type: event.target.value as PlatformAnnouncement["type"] })}>
+        <option value="info">信息</option>
+        <option value="guide">指引</option>
+        <option value="update">更新</option>
+        <option value="warning">提醒</option>
+      </select></label>
+      <label className="admin-create-field"><span>开始日期</span><input type="date" value={draft.startsAt} onChange={(event) => setDraft({ ...draft, startsAt: event.target.value })} /></label>
+      <label className="admin-create-field"><span>结束日期</span><input type="date" value={draft.endsAt} onChange={(event) => setDraft({ ...draft, endsAt: event.target.value })} /></label>
+      <label className="admin-create-field checkbox-field"><span>前台展示</span><input type="checkbox" checked={draft.enabled} onChange={(event) => setDraft({ ...draft, enabled: event.target.checked })} /></label>
+      <label className="admin-create-field checkbox-field"><span>置顶</span><input type="checkbox" checked={draft.pinned} onChange={(event) => setDraft({ ...draft, pinned: event.target.checked })} /></label>
+      <button className="admin-primary-btn" disabled={!draft.title.trim() || !draft.body.trim()} onClick={() => onCreate({
+        title: draft.title,
+        body: draft.body,
+        type: draft.type,
+        enabled: draft.enabled,
+        pinned: draft.pinned,
+        startsAt: dateToIso(draft.startsAt),
+        endsAt: dateToIso(draft.endsAt)
+      })}>
+        <Megaphone size={18} />发布公告
+      </button>
+    </div>
+  );
+}
+
+function announcementDraft(announcement: PlatformAnnouncement) {
+  return {
+    title: announcement.title,
+    body: announcement.body,
+    type: announcement.type,
+    enabled: announcement.enabled,
+    pinned: announcement.pinned,
+    startsAt: dateInputValue(announcement.startsAt),
+    endsAt: dateInputValue(announcement.endsAt)
+  };
+}
+
+function announcementIsLive(announcement: Pick<PlatformAnnouncement, "enabled" | "startsAt" | "endsAt">, now = Date.now()) {
+  if (!announcement.enabled) return false;
+  if (announcement.startsAt && new Date(announcement.startsAt).getTime() > now) return false;
+  if (announcement.endsAt && new Date(announcement.endsAt).getTime() < now) return false;
+  return true;
+}
+
+function announcementTypeLabel(value: PlatformAnnouncement["type"]) {
+  const labels: Record<PlatformAnnouncement["type"], string> = {
+    info: "信息",
+    guide: "指引",
+    update: "更新",
+    warning: "提醒"
+  };
+  return labels[value] ?? value;
+}
+
 function EvaluationRecordsCard({
   runs,
   datasets,
@@ -1071,12 +2825,24 @@ function EvaluationRecordsCard({
   const [exporting, setExporting] = useState("");
   const [exportError, setExportError] = useState("");
   const [selectedRunIds, setSelectedRunIds] = useState<string[]>([]);
-  const visibleRuns = runs.slice(0, 12);
+  const [visibleRuns, setVisibleRuns] = useState<EvaluationRun[]>(runs.slice(0, 12));
+  const [recordPage, setRecordPage] = useState(1);
+  const [recordPages, setRecordPages] = useState(1);
+  const [recordTotal, setRecordTotal] = useState(runs.length);
   const allVisibleSelected = visibleRuns.length > 0 && visibleRuns.every((run) => selectedRunIds.includes(run.id));
 
   useEffect(() => {
     setSelectedRunIds((current) => current.filter((id) => runs.some((run) => run.id === id)));
+    void loadRunPage(1);
   }, [runs]);
+
+  async function loadRunPage(page: number) {
+    const result = await api.adminEvaluationRunsPage(page, 12);
+    setVisibleRuns(result.items);
+    setRecordPage(result.page);
+    setRecordPages(result.totalPages);
+    setRecordTotal(result.total);
+  }
 
   function toggleRun(id: string) {
     setSelectedRunIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
@@ -1094,6 +2860,7 @@ function EvaluationRecordsCard({
     setDeleting(run.id);
     try {
       await onDeleteRun(run.id);
+      await loadRunPage(Math.min(recordPage, recordPages));
     } finally {
       setDeleting("");
     }
@@ -1112,7 +2879,7 @@ function EvaluationRecordsCard({
     setExporting(run.id);
     try {
       const blob = await api.exportEvaluationRunExcel(run.id);
-      downloadBlob(blob, `${run.name.replace(/[\\/:*?"<>|]/g, "_")}.xls`);
+      downloadBlob(blob, `${run.name.replace(/[\\/:*?"<>|]/g, "_")}.xlsx`);
     } catch (err) {
       setExportError(err instanceof Error ? err.message : "单个评测记录导出失败");
     } finally {
@@ -1127,7 +2894,7 @@ function EvaluationRecordsCard({
     setExporting(scope);
     try {
       const blob = await api.exportEvaluationRunsExcel(ids);
-      downloadBlob(blob, scope === "selected" ? `评测记录_已选${ids!.length}条.xls` : "评测记录_全部.xls");
+      downloadBlob(blob, scope === "selected" ? `评测记录_已选${ids!.length}条.xlsx` : "评测记录_全部.xlsx");
     } catch (err) {
       setExportError(err instanceof Error ? err.message : "评测记录导出失败");
     } finally {
@@ -1151,14 +2918,14 @@ function EvaluationRecordsCard({
             {exporting === "all" ? <Loader2 className="spin-icon" size={15} /> : <Download size={15} />}
             导出全部
           </button>
-          <button className="admin-icon-btn" onClick={() => void onRefresh()} title="刷新评测记录">
+          <button className="admin-icon-btn" onClick={() => void loadRunPage(recordPage)} title="刷新评测记录">
             <RefreshCw size={18} />
           </button>
         </div>
       </div>
       <div className="export-scope-note">
         <strong>导出逻辑</strong>
-        <span>默认下载 Excel 兼容的 UTF-16LE 表格，中文不会乱码；程序二次分析仍可调用 CSV 接口。</span>
+        <span>数据库共 {recordTotal} 次运行，当前第 {recordPage}/{recordPages} 页；导出全部仍覆盖完整记录。</span>
       </div>
       {exportError ? <p className="admin-toast danger">{exportError}</p> : null}
       <div className="evaluation-dataset-compact-list">
@@ -1198,8 +2965,9 @@ function EvaluationRecordsCard({
             ))}
           </tbody>
         </table>
-        {!runs.length ? <EmptyHint text="暂无评测记录。先在“运行评测”里选择样本并执行一次规则评分。" /> : null}
+        {!visibleRuns.length ? <EmptyHint text="暂无评测记录。先在“运行评测”里选择样本并执行一次规则评分。" /> : null}
       </div>
+      <div className="admin-pagination"><button type="button" disabled={recordPage <= 1} onClick={() => void loadRunPage(recordPage - 1)}>‹</button><button className="active" type="button">{recordPage} / {recordPages}</button><button type="button" disabled={recordPage >= recordPages} onClick={() => void loadRunPage(recordPage + 1)}>›</button></div>
     </article>
   );
 }
@@ -2043,6 +3811,100 @@ function stageLabel(stage: QualityProjectRow["latestStage"]) {
   return labels[stage] ?? stage;
 }
 
+const frontendEvaluationStages: Array<{ key: string; label: string; detail: string; stages: EvaluationStage[] }> = [
+  { key: "content", label: "内容", detail: "剧本", stages: ["script"] },
+  { key: "assets", label: "资产", detail: "角色 + 图片", stages: ["character", "image"] },
+  { key: "storyboard", label: "分镜", detail: "镜头结构", stages: ["storyboard"] },
+  { key: "final", label: "成片", detail: "视频", stages: ["video"] }
+];
+
+function selectedFrontendStageLabels(stages: EvaluationStage[]) {
+  return frontendEvaluationStages
+    .filter((group) => group.stages.some((stage) => stages.includes(stage)))
+    .map((group) => group.label);
+}
+
+function toggleFrontendStageGroup(values: EvaluationStage[], stages: EvaluationStage[], setter: (values: EvaluationStage[]) => void) {
+  const selected = stages.every((stage) => values.includes(stage));
+  const next = selected ? values.filter((stage) => !stages.includes(stage)) : uniqueStrings([...values, ...stages]) as EvaluationStage[];
+  const order: EvaluationStage[] = ["script", "character", "image", "storyboard", "video"];
+  setter(order.filter((stage) => next.includes(stage)));
+}
+
+function qualityFrontStageMatches(rawStage: string, modality: string, selected: string) {
+  if (selected === "all") return true;
+  if (selected === "content") return rawStage === "script" || rawStage === "text" || modality === "text";
+  if (selected === "assets") return rawStage === "character" || rawStage === "image" || modality === "image";
+  if (selected === "storyboard") return rawStage === "storyboard";
+  if (selected === "final") return ["video", "tts", "export"].includes(rawStage) || modality === "video" || modality === "tts";
+  return false;
+}
+
+function stageLabelSafe(stage: string) {
+  const labels: Record<string, string> = {
+    text: "文本",
+    script: "剧本",
+    character: "角色",
+    storyboard: "分镜",
+    image: "图片",
+    video: "视频",
+    tts: "配音",
+    export: "导出",
+    unknown: "未知"
+  };
+  return labels[stage] ?? stage;
+}
+
+function uniqueStrings(values: string[]) {
+  return [...new Set(values.filter(Boolean))];
+}
+
+function formatDuration(ms: number) {
+  if (!ms) return "-";
+  if (ms < 1000) return `${ms}ms`;
+  const seconds = Math.round(ms / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  if (minutes < 60) return rest ? `${minutes}m ${rest}s` : `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ${minutes % 60}m`;
+}
+
+function qualityEventStatusLabel(value: QualityCenterOverview["events"][number]["status"]) {
+  const labels: Record<string, string> = {
+    open: "待分析",
+    triaged: "已归因",
+    processing: "复核中",
+    resolved: "已解决",
+    ignored: "已关闭",
+    converted: "已沉淀",
+    detected: "已发现",
+    queued: "待复核"
+  };
+  return labels[value] ?? value;
+}
+
+function qualityGateLabel(value: QualityCenterOverview["releaseGates"][number]["status"]) {
+  const labels = {
+    pass: "通过",
+    warning: "关注",
+    blocked: "阻塞"
+  };
+  return labels[value] ?? value;
+}
+
+function sampleTypeLabel(value: QualityCenterOverview["samples"][number]["sampleType"]) {
+  const labels = {
+    golden: "Golden 标杆",
+    badcase: "Badcase 问题",
+    regression: "Regression 回归",
+    boundary: "Boundary 边界",
+    manual: "Manual 人工"
+  };
+  return labels[value] ?? value;
+}
+
 function modeLabel(mode: "rules" | "hybrid" | "llm") {
   const labels = {
     rules: "规则评分",
@@ -2050,6 +3912,19 @@ function modeLabel(mode: "rules" | "hybrid" | "llm") {
     llm: "LLM 对比"
   };
   return labels[mode];
+}
+
+function experimentTypeLabel(value: ExperimentRun["experimentType"]) {
+  return value === "model" ? "模型对比" : value === "prompt" ? "提示词对比" : "组合策略对比";
+}
+
+function signedNumber(value: number) {
+  return `${value > 0 ? "+" : ""}${value}`;
+}
+
+function nextPromptVersion(value: string) {
+  const match = value.match(/^(.*?)(\d+)$/);
+  return match ? `${match[1]}${Number(match[2]) + 1}` : `${value || "v"}2`;
 }
 
 function modalityLabel(value: string) {
@@ -2242,10 +4117,7 @@ function readAdminImageFile(file?: File) {
 
 const adminRoleLabels: Record<string, string> = {
   creator: "创作者",
-  admin: "超级管理员",
-  operator: "运营",
-  finance: "财务",
-  support: "客服"
+  admin: "后台管理员"
 };
 
 const adminStatusLabels: Record<string, string> = {
@@ -2269,7 +4141,7 @@ function AdminUserCreator({
     name: "新用户",
     email: "",
     phone: "",
-    password: "user123456",
+    password: "",
     role: "creator",
     initialCredits: "300"
   });
@@ -2284,16 +4156,13 @@ function AdminUserCreator({
       <label className="admin-create-field"><span>手机号</span><input value={draft.phone} onChange={(event) => setDraft({ ...draft, phone: event.target.value })} placeholder="例如：13800138000，可选" /></label>
       <label className="admin-create-field"><span>角色</span><select value={draft.role} onChange={(event) => setDraft({ ...draft, role: event.target.value })}>
         <option value="creator">创作者</option>
-        <option value="admin">超级管理员</option>
-        <option value="operator">运营</option>
-        <option value="finance">财务</option>
-        <option value="support">客服</option>
+        <option value="admin">后台管理员</option>
       </select></label>
       <label className="admin-create-field"><span>初始积分</span><input type="number" value={draft.initialCredits} onChange={(event) => setDraft({ ...draft, initialCredits: event.target.value })} placeholder="例如：300" /></label>
-      <label className="admin-create-field"><span>初始密码</span><input type="password" value={draft.password} onChange={(event) => setDraft({ ...draft, password: event.target.value })} placeholder="至少 6 位" /></label>
+      <label className="admin-create-field"><span>初始密码</span><input type="password" value={draft.password} onChange={(event) => setDraft({ ...draft, password: event.target.value })} placeholder="至少 12 位" /></label>
       <button
         className="admin-primary-btn"
-        disabled={!draft.name.trim() || (!draft.email.trim() && !draft.phone.trim()) || draft.password.length < 6}
+        disabled={!draft.name.trim() || (!draft.email.trim() && !draft.phone.trim()) || draft.password.length < 12}
         onClick={() => onCreate({
           name: draft.name,
           email: draft.email || undefined,
@@ -2350,10 +4219,7 @@ function UserRow({
         <strong>{identity}</strong>
         <select value={role} onChange={(event) => setRole(event.target.value)} aria-label="用户角色">
           <option value="creator">创作者</option>
-          <option value="admin">超级管理员</option>
-          <option value="operator">运营</option>
-          <option value="finance">财务</option>
-          <option value="support">客服</option>
+          <option value="admin">后台管理员</option>
         </select>
       </div>
 
@@ -2380,8 +4246,8 @@ function UserRow({
           <label>
             <span>重置密码</span>
             <div className="admin-inline-actions compact">
-              <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="输入 6 位以上新密码" />
-              <button className="admin-text-btn" disabled={password.length < 6} onClick={() => { onPasswordReset(user.id, password); setPassword(""); }}>重置</button>
+              <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="输入 12 位以上新密码" />
+              <button className="admin-text-btn" disabled={password.length < 12} onClick={() => { onPasswordReset(user.id, password); setPassword(""); }}>重置</button>
             </div>
           </label>
           <label>
@@ -2928,26 +4794,71 @@ function ProviderCreator({
     vendorCostCny: "0.02",
     costHint: "后台手动接入渠道，支持测试连接和价格联动。"
   });
+  const presets = [
+    { label: "文本中转", id: "custom-text", name: "OpenAI 兼容文本", modality: "text", models: "gpt-5.5, deepseek-chat", unitCredits: "8", vendorCostCny: "0.02" },
+    { label: "生图渠道", id: "custom-image", name: "自定义生图渠道", modality: "image", models: "gpt-image-2, qwen-image", unitCredits: "12", vendorCostCny: "0.08" },
+    { label: "视频渠道", id: "custom-video", name: "自定义视频渠道", modality: "video", models: "seedance-i2v, wanx-i2v", unitCredits: "16", vendorCostCny: "0.16" },
+    { label: "配音渠道", id: "custom-tts", name: "自定义配音渠道", modality: "tts", models: "tts-v1", unitCredits: "1", vendorCostCny: "0.002" }
+  ];
+  function applyPreset(preset: typeof presets[number]) {
+    setDraft((current) => ({
+      ...current,
+      id: preset.id,
+      name: preset.name,
+      modality: preset.modality,
+      models: preset.models,
+      unitCredits: preset.unitCredits,
+      vendorCostCny: preset.vendorCostCny
+    }));
+  }
   return (
-    <div className="admin-modal-form admin-provider-create-strip">
-      <div>
-        <strong>手动接入模型渠道</strong>
-        <span>保存后自动生成模型价格策略；密钥仅服务端保存，不在列表明文展示。</span>
-      </div>
-      <label className="admin-create-field"><span>渠道ID</span><input value={draft.id} onChange={(event) => setDraft({ ...draft, id: event.target.value })} placeholder="例如：zml-text，可选" /></label>
-      <label className="admin-create-field"><span>渠道名称</span><input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder="例如：ZML 中转文本" /></label>
-      <label className="admin-create-field"><span>模型类型</span><select value={draft.modality} onChange={(event) => setDraft({ ...draft, modality: event.target.value })}>
-        <option value="text">文本</option>
-        <option value="image">生图</option>
-        <option value="video">视频</option>
-        <option value="tts">配音</option>
-        <option value="embedding">向量</option>
-      </select></label>
-      <label className="admin-create-field wide"><span>Base URL</span><input value={draft.baseUrl} onChange={(event) => setDraft({ ...draft, baseUrl: event.target.value })} placeholder="例如：https://api.example.com/v1" /></label>
-      <label className="admin-create-field wide"><span>模型图标</span><input value={draft.iconUrl} onChange={(event) => setDraft({ ...draft, iconUrl: event.target.value })} placeholder="图片 URL，可选" /></label>
-      <label className="admin-create-field"><span>API Key</span><input type="password" value={draft.apiKey} onChange={(event) => setDraft({ ...draft, apiKey: event.target.value })} placeholder="留空则使用环境变量" /></label>
-      <label className="admin-create-field wide"><span>模型ID</span><input value={draft.models} onChange={(event) => setDraft({ ...draft, models: event.target.value })} placeholder="逗号/换行分隔，例如 gpt-5.5, qwen-image" /></label>
-      <label className="admin-create-field"><span>默认积分</span><input type="number" value={draft.unitCredits} onChange={(event) => setDraft({ ...draft, unitCredits: event.target.value })} placeholder="例如：8" /></label>
+    <div className="admin-channel-create-layout">
+      <aside className="admin-channel-presets">
+        <strong>接入模板</strong>
+        <span>先选能力类型，再补 URL、Key 和模型池。</span>
+        {presets.map((preset) => (
+          <button type="button" key={preset.label} className={draft.modality === preset.modality ? "active" : ""} onClick={() => applyPreset(preset)}>
+            <b>{preset.label}</b>
+            <small>{preset.models}</small>
+          </button>
+        ))}
+      </aside>
+      <div className="admin-channel-create-main">
+        <div className="admin-channel-create-note">
+          <strong>手动接入模型渠道</strong>
+          <span>保存后会自动给每个模型生成基础价格策略；密钥仅服务端保存，后台列表只展示配置状态。</span>
+        </div>
+        <section className="admin-channel-create-card">
+          <h3>基础信息</h3>
+          <div className="admin-channel-field-grid">
+            <label><span>渠道 ID</span><input value={draft.id} onChange={(event) => setDraft({ ...draft, id: event.target.value })} placeholder="例如：zml-text，可选" /></label>
+            <label><span>渠道名称</span><input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder="例如：ZML 中转文本" /></label>
+            <label><span>模型类型</span><select value={draft.modality} onChange={(event) => setDraft({ ...draft, modality: event.target.value })}>
+              <option value="text">文本</option>
+              <option value="image">生图</option>
+              <option value="video">视频</option>
+              <option value="tts">配音</option>
+              <option value="embedding">向量</option>
+            </select></label>
+            <label><span>模型图标</span><input value={draft.iconUrl} onChange={(event) => setDraft({ ...draft, iconUrl: event.target.value })} placeholder="图片 URL，可选" /></label>
+          </div>
+        </section>
+        <section className="admin-channel-create-card">
+          <h3>接入配置</h3>
+          <div className="admin-channel-field-grid">
+            <label className="wide"><span>Base URL</span><input value={draft.baseUrl} onChange={(event) => setDraft({ ...draft, baseUrl: event.target.value })} placeholder="例如：https://api.example.com/v1" /></label>
+            <label><span>API Key</span><input type="password" value={draft.apiKey} onChange={(event) => setDraft({ ...draft, apiKey: event.target.value })} placeholder="留空则使用环境变量" /></label>
+            <label className="wide"><span>模型池</span><textarea value={draft.models} onChange={(event) => setDraft({ ...draft, models: event.target.value })} placeholder="每行或逗号一个模型，例如 gpt-5.5, qwen-image" /></label>
+          </div>
+        </section>
+        <section className="admin-channel-create-card">
+          <h3>计费联动</h3>
+          <div className="admin-channel-field-grid">
+            <label><span>默认积分单价</span><input type="number" value={draft.unitCredits} onChange={(event) => setDraft({ ...draft, unitCredits: event.target.value })} placeholder="例如：8" /></label>
+            <label><span>供应商成本</span><input type="number" step="0.001" value={draft.vendorCostCny} onChange={(event) => setDraft({ ...draft, vendorCostCny: event.target.value })} placeholder="例如：0.02" /></label>
+            <label className="wide"><span>渠道说明</span><textarea value={draft.costHint} onChange={(event) => setDraft({ ...draft, costHint: event.target.value })} /></label>
+          </div>
+        </section>
       <button
         className="admin-primary-btn"
         disabled={!draft.name.trim() || !splitModelText(draft.models).length}
@@ -2967,6 +4878,7 @@ function ProviderCreator({
       >
         <SlidersHorizontal size={18} />新增渠道
       </button>
+      </div>
     </div>
   );
 }
@@ -3346,16 +5258,16 @@ function feedbackUsabilityLabel(value: UserFeedback["usability"]) {
 
 const feedbackStatusOptions: UserFeedback["status"][] = ["open", "triaged", "processing", "resolved", "converted", "ignored"];
 const feedbackPriorityOptions: UserFeedback["priority"][] = ["p0", "p1", "p2", "p3"];
-const feedbackRootCauseOptions = ["角色漂移", "参考图未锁定", "提示词约束弱", "模型失败", "视频生成失败", "导出下载失败", "扣费/退费争议", "UI 不可用", "评测字段噪声", "其他"];
+const feedbackRootCauseOptions = ["模型失败", "提示词问题", "工作流问题", "UI误导", "成本异常", "用户误操作", "数据缺失", "角色一致性", "素材/参考图问题", "导出问题", "其他"];
 
 function feedbackStatusLabel(value: UserFeedback["status"]) {
   const labels: Record<UserFeedback["status"], string> = {
-    open: "待处理",
-    triaged: "已分诊",
-    processing: "处理中",
+    open: "待分析",
+    triaged: "已归因",
+    processing: "复核中",
     resolved: "已解决",
-    ignored: "已忽略",
-    converted: "已转样本"
+    ignored: "已关闭",
+    converted: "已沉淀"
   };
   return labels[value] ?? value;
 }
@@ -3372,12 +5284,16 @@ function feedbackPriorityLabel(value: UserFeedback["priority"]) {
 
 function inferRootCause(feedback: UserFeedback) {
   const text = `${feedback.content} ${feedback.tags.join(" ")}`;
-  if (/角色|三视图|参考图|换脸|串到|不像/.test(text)) return "角色漂移";
-  if (/视频|Failed to fetch|生成失败/.test(text)) return "视频生成失败";
-  if (/导出|下载|MP4|字幕|配音|FFmpeg/i.test(text)) return "导出下载失败";
-  if (/扣费|退费|充值|积分/.test(text)) return "扣费/退费争议";
-  if (/Excel|乱码|评测|字段/.test(text)) return "评测字段噪声";
-  if (/按钮|点击|UI|样式|页面/.test(text)) return "UI 不可用";
+  if (/模型|通道|接口|失败|报错|timeout|Failed to fetch/i.test(text)) return "模型失败";
+  if (/提示词|prompt|约束|不按|跑偏|剧本/.test(text)) return "提示词问题";
+  if (/流程|步骤|生成顺序|继续|上次|卡住|状态/.test(text)) return "工作流问题";
+  if (/按钮|点击|UI|样式|页面|看不清|错位|颜色/.test(text)) return "UI误导";
+  if (/扣费|退费|充值|积分|价格|成本|余额/.test(text)) return "成本异常";
+  if (/不会用|误操作|选错|删除|上传错/.test(text)) return "用户误操作";
+  if (/Excel|乱码|评测|字段|表头|数据|缺失/.test(text)) return "数据缺失";
+  if (/角色|三视图|参考图|换脸|串到|不像|一致/.test(text)) return "角色一致性";
+  if (/素材|图片|参考图|上传|封面|资产/.test(text)) return "素材/参考图问题";
+  if (/导出|下载|MP4|字幕|配音|FFmpeg/i.test(text)) return "导出问题";
   return "其他";
 }
 
@@ -3506,10 +5422,6 @@ function splitModelText(value: string) {
 }
 
 function toggleString(values: string[], value: string, setter: (values: string[]) => void) {
-  setter(values.includes(value) ? values.filter((item) => item !== value) : [...values, value]);
-}
-
-function toggleStage(values: EvaluationStage[], value: EvaluationStage, setter: (values: EvaluationStage[]) => void) {
   setter(values.includes(value) ? values.filter((item) => item !== value) : [...values, value]);
 }
 

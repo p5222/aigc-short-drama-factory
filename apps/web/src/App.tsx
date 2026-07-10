@@ -1,5 +1,5 @@
 ﻿import { useCallback, useEffect, useMemo, useState } from "react";
-import { Bell, ChartNoAxesCombined, ChevronDown, CircleDollarSign, FilePenLine, Gift, LayoutDashboard, Layers3, MessageSquareText, Moon, ReceiptText, SlidersHorizontal, UserRound } from "lucide-react";
+import { Bell, ChartNoAxesCombined, ChevronDown, CircleDollarSign, FilePenLine, Gift, LayoutDashboard, Layers3, Megaphone, Moon, ReceiptText, SlidersHorizontal, UserRound, Video } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type {
   AdminUserRow,
@@ -8,14 +8,17 @@ import type {
   CreditTransaction,
   EvaluationOverview,
   GenerationTask,
+  HelpArticle,
   MembershipPlan,
   ModelPrice,
   ModelProvider,
   Plan,
+  PlatformAnnouncement,
   Project,
   PromptTemplate,
   ProjectWorkflow,
   QualityProjectRow,
+  RechargeOrder,
   RedeemCode,
   WorkbenchSummary
 } from "@aifilm/shared";
@@ -27,22 +30,24 @@ import { LedgerPage, RechargePage } from "./pages/CreditsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { ScriptsPage } from "./pages/ScriptsPage";
 import { ProjectWorkbenchPage } from "./pages/ProjectWorkbenchPage";
-import { HelpPage, ProfilePage, SettingsPage, StudioPage } from "./pages/StaticPages";
+import { HelpPage, ProfilePage, SettingsPage } from "./pages/StaticPages";
+import { StudioPage } from "./pages/StudioPage";
 import { TaskCenterPage } from "./pages/TaskCenterPage";
 import { WizardPage } from "./pages/WizardPage";
 import { WorkbenchPage } from "./pages/WorkbenchPage";
 
 export function App() {
   const isAdminRoute = window.location.pathname.startsWith("/admin");
-  const adminRoles = useMemo(() => new Set(["admin", "operator", "finance", "support"]), []);
+  const adminRoles = useMemo(() => new Set(["admin"]), []);
   const adminNavGroups = useMemo<Array<{ label: string; items: Array<{ name: string; icon: LucideIcon }> }>>(() => [
     {
       label: "核心运营",
       items: [
         { name: "运营总览", icon: LayoutDashboard },
         { name: "用户管理", icon: UserRound },
-        { name: "用户反馈", icon: MessageSquareText },
-        { name: "评测闭环", icon: ChartNoAxesCombined }
+        { name: "平台公告", icon: Megaphone },
+        { name: "创作现场管理", icon: Video },
+        { name: "创作质量中心", icon: ChartNoAxesCombined }
       ]
     },
     {
@@ -63,7 +68,7 @@ export function App() {
     }
   ], []);
   const [activePage, setActivePage] = useState<PageKey>("workbench");
-  const [adminHash, setAdminHash] = useState(() => decodeURIComponent(window.location.hash.replace(/^#/, "")) || "运营总览");
+  const [adminHash, setAdminHash] = useState(() => normalizeAdminHash(decodeURIComponent(window.location.hash.replace(/^#/, "")) || "运营总览"));
   const [tourOpen, setTourOpen] = useState(false);
   const [tourIndex, setTourIndex] = useState(0);
   const [user, setUser] = useState<AuthUser | null>(null);
@@ -73,10 +78,13 @@ export function App() {
   const [tasks, setTasks] = useState<GenerationTask[]>([]);
   const [account, setAccount] = useState<CreditAccount>();
   const [transactions, setTransactions] = useState<CreditTransaction[]>([]);
+  const [orders, setOrders] = useState<RechargeOrder[]>([]);
   const [plans, setPlans] = useState<Plan[]>([]);
   const [adminPlans, setAdminPlans] = useState<Plan[]>([]);
   const [membershipPlans, setMembershipPlans] = useState<MembershipPlan[]>([]);
   const [redeemCodes, setRedeemCodes] = useState<RedeemCode[]>([]);
+  const [announcements, setAnnouncements] = useState<PlatformAnnouncement[]>([]);
+  const [helpArticles, setHelpArticles] = useState<HelpArticle[]>([]);
   const [adminUsers, setAdminUsers] = useState<AdminUserRow[]>([]);
   const [providers, setProviders] = useState<ModelProvider[]>([]);
   const [modelPrices, setModelPrices] = useState<ModelPrice[]>([]);
@@ -94,7 +102,7 @@ export function App() {
 
   useEffect(() => {
     if (!isAdminRoute) return;
-    const syncAdminHash = () => setAdminHash(decodeURIComponent(window.location.hash.replace(/^#/, "")) || "运营总览");
+    const syncAdminHash = () => setAdminHash(normalizeAdminHash(decodeURIComponent(window.location.hash.replace(/^#/, "")) || "运营总览"));
     window.addEventListener("hashchange", syncAdminHash);
     syncAdminHash();
     return () => window.removeEventListener("hashchange", syncAdminHash);
@@ -120,6 +128,8 @@ export function App() {
         adminPlansRes,
         adminMembershipPlansRes,
         redeemCodesRes,
+        announcementsRes,
+        helpArticlesRes,
         adminUsersRes,
         providersRes,
         modelPricesRes,
@@ -132,6 +142,8 @@ export function App() {
           api.adminPlans(),
           api.adminMembershipPlans(),
           api.adminRedeemCodes(),
+          api.adminAnnouncements(),
+          api.adminHelpArticles(),
           api.adminUsers(),
           api.providers(),
           api.modelPrices(),
@@ -145,6 +157,8 @@ export function App() {
       if (adminPlansRes.status === "fulfilled") setAdminPlans(adminPlansRes.value);
       if (adminMembershipPlansRes.status === "fulfilled") setMembershipPlans(adminMembershipPlansRes.value);
       if (redeemCodesRes.status === "fulfilled") setRedeemCodes(redeemCodesRes.value);
+      if (announcementsRes.status === "fulfilled") setAnnouncements(announcementsRes.value);
+      if (helpArticlesRes.status === "fulfilled") setHelpArticles(helpArticlesRes.value);
       if (adminUsersRes.status === "fulfilled") setAdminUsers(adminUsersRes.value);
       if (providersRes.status === "fulfilled") setProviders(providersRes.value);
       if (modelPricesRes.status === "fulfilled") setModelPrices(modelPricesRes.value);
@@ -153,7 +167,7 @@ export function App() {
       if (evaluationRes.status === "fulfilled") setEvaluationOverview(evaluationRes.value);
       if (qualityProjectsRes.status === "fulfilled") setQualityProjects(qualityProjectsRes.value);
 
-      const failures = [adminPlansRes, adminMembershipPlansRes, redeemCodesRes, adminUsersRes, providersRes, modelPricesRes, templatesRes, adminRes, evaluationRes, qualityProjectsRes]
+      const failures = [adminPlansRes, adminMembershipPlansRes, redeemCodesRes, announcementsRes, helpArticlesRes, adminUsersRes, providersRes, modelPricesRes, templatesRes, adminRes, evaluationRes, qualityProjectsRes]
         .filter((result) => result.status === "rejected")
         .map((result) => (result as PromiseRejectedResult).reason)
         .filter((reason) => reason instanceof Error && !reason.message.includes("没有此模块权限"));
@@ -171,17 +185,19 @@ export function App() {
     }
 
     try {
-      const [summaryRes, projectsRes, tasksRes, accountRes, txRes, plansRes, membershipPlansRes, providersRes, modelPricesRes] =
+      const [summaryRes, projectsRes, tasksRes, accountRes, txRes, ordersRes, plansRes, membershipPlansRes, providersRes, modelPricesRes, helpArticlesRes] =
         await Promise.all([
           api.workbench(),
           api.projects(),
           api.tasks(),
           api.creditAccount(),
           api.transactions(),
+          api.orders(),
           api.plans(),
           api.membershipPlans(),
           api.providers(),
-          api.modelPrices()
+          api.modelPrices(),
+          api.helpArticles()
         ]);
 
       setSummary(summaryRes);
@@ -189,10 +205,12 @@ export function App() {
       setTasks(tasksRes);
       setAccount(accountRes);
       setTransactions(txRes);
+      setOrders(ordersRes);
       setPlans(plansRes);
       setMembershipPlans(membershipPlansRes);
       setProviders(providersRes);
       setModelPrices(modelPricesRes);
+      setHelpArticles(helpArticlesRes);
       setError("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "API 连接异常");
@@ -223,10 +241,13 @@ export function App() {
     setTasks([]);
     setAccount(undefined);
     setTransactions([]);
+    setOrders([]);
     setPlans([]);
     setAdminPlans([]);
     setMembershipPlans([]);
     setRedeemCodes([]);
+    setAnnouncements([]);
+    setHelpArticles([]);
     setAdminUsers([]);
     setProviders([]);
     setModelPrices([]);
@@ -285,7 +306,7 @@ export function App() {
           />
         );
       case "studio":
-        return <StudioPage />;
+        return <StudioPage projects={projects} tasks={tasks} onOpenProject={(projectId) => void openProject(projectId)} onRefresh={() => void load()} />;
       case "tasks":
         return (
           <TaskCenterPage
@@ -296,7 +317,7 @@ export function App() {
           />
         );
       case "profile":
-        return <ProfilePage />;
+        return user ? <ProfilePage user={user} account={account} summary={summary} transactions={transactions} orders={orders} onNavigate={setActivePage} onLogout={logout} onUserUpdate={setUser} /> : null;
       case "recharge":
         return <RechargePage plans={plans} membershipPlans={membershipPlans} modelPrices={modelPrices} onRefresh={() => void load()} />;
       case "ledger":
@@ -304,7 +325,7 @@ export function App() {
       case "settings":
         return <SettingsPage />;
       case "help":
-        return <HelpPage />;
+        return <HelpPage articles={helpArticles} />;
       case "admin":
         return (
           <AdminPage
@@ -315,6 +336,8 @@ export function App() {
             plans={adminPlans}
             membershipPlans={membershipPlans}
             redeemCodes={redeemCodes}
+            announcements={announcements}
+            helpArticles={helpArticles}
             users={adminUsers}
             evaluation={evaluationOverview}
             qualityProjects={qualityProjects}
@@ -324,7 +347,7 @@ export function App() {
       default:
         return null;
     }
-  }, [account, activePage, adminPlans, adminSummary, adminUsers, membershipPlans, modelPrices, plans, projects, providers, redeemCodes, summary, tasks, templates, transactions, workflow, load]);
+  }, [account, activePage, adminPlans, adminSummary, adminUsers, announcements, helpArticles, membershipPlans, modelPrices, orders, plans, projects, providers, redeemCodes, summary, tasks, templates, transactions, workflow, load, user]);
 
   if (!authReady) {
     return <div className="app-loading">正在连接 AI 漫剧工作台...</div>;
@@ -385,8 +408,13 @@ export function App() {
             <div className="top-actions">
               <button className="admin-top-icon" aria-label="通知"><Bell size={18} /></button>
               <span className="admin-top-lang">CN&nbsp;ZH</span>
-              <span className="admin-top-balance"><CircleDollarSign size={18} />¥{(adminSummary?.providerCost ?? 0).toFixed(2)}</span>
-              <div className="admin-top-user"><span>{user.name.slice(0, 2)}</span><div><strong>{user.name}</strong><small>{user.role}</small></div><ChevronDown size={16} /></div>
+              <details className="admin-top-user-menu">
+                <summary className="admin-top-user"><span>{user.name.slice(0, 2)}</span><div><strong>{user.name}</strong><small>{user.role}</small></div><ChevronDown size={16} /></summary>
+                <div className="admin-top-menu-panel">
+                  <button type="button" onClick={() => { window.location.href = "/"; }}>返回前台</button>
+                  <button type="button" onClick={logout}>退出登录</button>
+                </div>
+              </details>
               <button className="admin-top-logout" onClick={logout} aria-label="退出登录">退出</button>
             </div>
           </header>
@@ -399,6 +427,8 @@ export function App() {
             plans={adminPlans}
             membershipPlans={membershipPlans}
             redeemCodes={redeemCodes}
+            announcements={announcements}
+            helpArticles={helpArticles}
             users={adminUsers}
             evaluation={evaluationOverview}
             qualityProjects={qualityProjects}
@@ -437,6 +467,13 @@ export function App() {
       ) : null}
     </Shell>
   );
+}
+
+function normalizeAdminHash(hash: string) {
+  if (["用户反馈", "评测闭环", "质量总览", "事件与VOC", "质量数据集", "实验评测", "模型与成本", "发布与溯源", "优化回流"].includes(hash)) return "创作质量中心";
+  if (hash === "用户积分") return "用户管理";
+  if (hash === "智能体接入") return "提示词评分";
+  return hash;
 }
 
 const creatorTourSteps: ProductTourStep[] = [

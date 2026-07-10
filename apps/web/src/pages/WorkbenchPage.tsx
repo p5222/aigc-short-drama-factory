@@ -11,6 +11,8 @@ interface WorkbenchPageProps {
 const pipeline = ["内容输入", "AI 编剧", "角色一致性", "镜头分镜", "分镜图", "图生视频", "配音字幕", "合成导出"];
 
 export function WorkbenchPage({ summary, onStart, onOpen }: WorkbenchPageProps) {
+  const latestProject = summary?.recentProjects[0];
+
   return (
     <div className="page-stack dashboard-page">
       <section className="dashboard-hero">
@@ -23,10 +25,12 @@ export function WorkbenchPage({ summary, onStart, onOpen }: WorkbenchPageProps) 
               <WandSparkles size={19} />
               新建漫剧内容
             </button>
-            <button className="ghost-button large">
-              <BookOpen size={19} />
-              继续上次创作
-            </button>
+            {latestProject ? (
+              <button className="ghost-button large" onClick={() => onOpen(latestProject.id)}>
+                <BookOpen size={19} />
+                继续上次创作
+              </button>
+            ) : null}
           </div>
         </div>
         <div className="hero-production-preview" aria-hidden="true">
@@ -76,6 +80,7 @@ export function WorkbenchPage({ summary, onStart, onOpen }: WorkbenchPageProps) 
                 <small>{project.storyboards} 分镜</small>
               </button>
             ))}
+            {summary && !summary.recentProjects.length ? <div className="empty-state">还没有创作记录，先新建一个漫剧内容。</div> : null}
           </div>
         </section>
 

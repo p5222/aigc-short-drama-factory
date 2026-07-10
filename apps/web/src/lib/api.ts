@@ -12,12 +12,15 @@
   DirectorStoryboardRow,
   EvaluationDataset,
   EvaluationDatasetInput,
+  ExperimentRun,
   EvaluationOverview,
+  QualityCenterOverview,
   EvaluationRun,
   EvaluationRunDetail,
   FeedbackInput,
   ExportJob,
   GenerationTask,
+  HelpArticle,
   ImageModelTestResult,
   InvoiceRecord,
   MembershipPlan,
@@ -25,10 +28,13 @@
   ModelProvider,
   ModelTestResult,
   PaymentRecord,
+  PagedResult,
+  PlatformAnnouncement,
   Plan,
   Project,
   ProjectWorkflow,
   PromptTemplate,
+  PromptVersion,
   QualityEvaluationRunInput,
   QualityEvaluationRunResult,
   QualityProjectRow,
@@ -39,6 +45,8 @@
   StoryboardExportRow,
   StoryboardProductionPackage,
   StoryboardShot,
+  ShowcaseWork,
+  ShowcaseWorkInput,
   UserFeedback,
   VideoModelTestResult,
   OpenSourceAdapterInfo,
@@ -68,6 +76,7 @@ export interface AuthUser {
   name: string;
   email?: string;
   phone?: string;
+  avatarUrl?: string;
   role: string;
   status: string;
 }
@@ -173,6 +182,16 @@ export const api = {
       body: JSON.stringify(input)
     }),
   me: () => request<{ user: AuthUser }>("/auth/me"),
+  updateProfile: (input: { name?: string; email?: string; avatarUrl?: string | null; currentPassword?: string }) =>
+    request<{ user: AuthUser }>("/auth/profile", {
+      method: "PATCH",
+      body: JSON.stringify(input)
+    }),
+  changePassword: (input: { currentPassword: string; newPassword: string }) =>
+    request<{ ok: boolean }>("/auth/password", {
+      method: "POST",
+      body: JSON.stringify(input)
+    }),
   logout: () =>
     request<{ ok: boolean }>("/auth/logout", {
       method: "POST"
@@ -215,6 +234,14 @@ export const api = {
   providers: () => request<ModelProvider[]>("/providers"),
   modelPrices: () => request<ModelPrice[]>("/model-prices"),
   templates: () => request<PromptTemplate[]>("/templates"),
+  helpArticles: () => request<HelpArticle[]>("/help/articles"),
+  publicShowcaseWorks: (page = 1, pageSize = 20, category = "全部", keyword = "") =>
+    request<PagedResult<ShowcaseWork>>(`/showcase/works?page=${page}&pageSize=${pageSize}&category=${encodeURIComponent(category)}&keyword=${encodeURIComponent(keyword)}`),
+  myShowcaseWorks: () => request<ShowcaseWork[]>("/showcase/mine"),
+  createShowcaseWork: (input: ShowcaseWorkInput) =>
+    request<ShowcaseWork>("/showcase/works", { method: "POST", body: JSON.stringify(input) }),
+  resubmitShowcaseWork: (id: string) =>
+    request<ShowcaseWork>(`/showcase/works/${id}/submit`, { method: "POST" }),
   trackEvent: (input: AnalyticsEventInput) =>
     request<{ ok: boolean }>("/analytics/events", {
       method: "POST",
@@ -226,9 +253,57 @@ export const api = {
       body: JSON.stringify(input)
     }),
   adminSummary: () => request<AdminSummary>("/admin/summary"),
+  adminShowcaseWorks: (page = 1, pageSize = 20, status = "all", keyword = "") =>
+    request<PagedResult<ShowcaseWork>>(`/admin/showcase/works?page=${page}&pageSize=${pageSize}&status=${encodeURIComponent(status)}&keyword=${encodeURIComponent(keyword)}`),
+  updateAdminShowcaseWork: (id: string, input: Partial<Pick<ShowcaseWork, "title" | "description" | "category" | "creatorName" | "coverUrl" | "videoUrl" | "durationLabel" | "featured" | "sortOrder">>) =>
+    request<ShowcaseWork>(`/admin/showcase/works/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ ...input, authorName: input.creatorName })
+    }),
+  reviewAdminShowcaseWork: (id: string, input: { decision: "approve" | "reject"; note?: string }) =>
+    request<ShowcaseWork>(`/admin/showcase/works/${id}/review`, { method: "POST", body: JSON.stringify(input) }),
+  adminAnnouncements: () => request<PlatformAnnouncement[]>("/admin/announcements"),
+  adminHelpArticles: () => request<HelpArticle[]>("/admin/help-articles"),
+  createAnnouncement: (input: Pick<PlatformAnnouncement, "title" | "body" | "type" | "enabled" | "pinned"> & { startsAt?: string | null; endsAt?: string | null }) =>
+    request<PlatformAnnouncement>("/admin/announcements", {
+      method: "POST",
+      body: JSON.stringify(input)
+    }),
+  updateAnnouncement: (
+    id: string,
+    input: Partial<Pick<PlatformAnnouncement, "title" | "body" | "type" | "enabled" | "pinned">> & { startsAt?: string | null; endsAt?: string | null }
+  ) =>
+    request<PlatformAnnouncement>(`/admin/announcements/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(input)
+    }),
+  deleteAnnouncement: (id: string) =>
+    request<{ id: string; deleted: boolean }>(`/admin/announcements/${id}`, {
+      method: "DELETE"
+    }),
+  createHelpArticle: (input: Pick<HelpArticle, "title" | "content" | "category" | "tags" | "enabled" | "pinned" | "sortOrder"> & { summary?: string }) =>
+    request<HelpArticle>("/admin/help-articles", {
+      method: "POST",
+      body: JSON.stringify(input)
+    }),
+  updateHelpArticle: (
+    id: string,
+    input: Partial<Pick<HelpArticle, "title" | "summary" | "content" | "category" | "tags" | "enabled" | "pinned" | "sortOrder">>
+  ) =>
+    request<HelpArticle>(`/admin/help-articles/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(input)
+    }),
+  deleteHelpArticle: (id: string) =>
+    request<{ id: string; deleted: boolean }>(`/admin/help-articles/${id}`, {
+      method: "DELETE"
+    }),
   adminEvaluationOverview: () => request<EvaluationOverview>("/admin/evaluation/overview"),
+  adminQualityCenter: () => request<QualityCenterOverview>("/admin/quality-center"),
   adminQualityProjects: () => request<QualityProjectRow[]>("/admin/evaluation/projects"),
   adminEvaluationDatasets: () => request<EvaluationDataset[]>("/admin/evaluation/datasets"),
+  adminEvaluationDatasetsPage: (page = 1, pageSize = 20, keyword = "") =>
+    request<PagedResult<EvaluationDataset>>(`/admin/evaluation/datasets/page?page=${page}&pageSize=${pageSize}&keyword=${encodeURIComponent(keyword)}`),
   createEvaluationDataset: (input: EvaluationDatasetInput) =>
     request<EvaluationDataset>("/admin/evaluation/datasets", {
       method: "POST",
@@ -239,8 +314,22 @@ export const api = {
       method: "DELETE"
     }),
   adminEvaluationRuns: () => request<EvaluationRun[]>("/admin/evaluation/runs"),
+  adminEvaluationRunsPage: (page = 1, pageSize = 20, keyword = "", status = "all") =>
+    request<PagedResult<EvaluationRun>>(`/admin/evaluation/runs/page?page=${page}&pageSize=${pageSize}&keyword=${encodeURIComponent(keyword)}&status=${encodeURIComponent(status)}`),
   adminEvaluationRunDetail: (id: string) => request<EvaluationRunDetail>(`/admin/evaluation/runs/${id}`),
   adminFeedback: (limit = 200) => request<UserFeedback[]>(`/admin/feedback?limit=${limit}`),
+  adminFeedbackPage: (page = 1, pageSize = 20, keyword = "", stage = "all", status = "all") =>
+    request<PagedResult<UserFeedback>>(`/admin/feedback/page?page=${page}&pageSize=${pageSize}&keyword=${encodeURIComponent(keyword)}&stage=${encodeURIComponent(stage)}&status=${encodeURIComponent(status)}`),
+  adminPromptVersions: (page = 1, pageSize = 50, stage = "all", purpose = "all") =>
+    request<PagedResult<PromptVersion>>(`/admin/evaluation/prompt-versions?page=${page}&pageSize=${pageSize}&stage=${encodeURIComponent(stage)}&purpose=${encodeURIComponent(purpose)}`),
+  createPromptVersion: (input: Pick<PromptVersion, "key" | "name" | "stage" | "purpose" | "version" | "content"> & Partial<Pick<PromptVersion, "status" | "owner" | "notes">>) =>
+    request<PromptVersion>("/admin/evaluation/prompt-versions", { method: "POST", body: JSON.stringify(input) }),
+  updatePromptVersion: (id: string, input: Partial<Pick<PromptVersion, "name" | "content" | "status" | "owner" | "notes">>) =>
+    request<PromptVersion>(`/admin/evaluation/prompt-versions/${id}`, { method: "PATCH", body: JSON.stringify(input) }),
+  adminExperiments: (page = 1, pageSize = 20, stage = "all") =>
+    request<PagedResult<ExperimentRun>>(`/admin/evaluation/experiments?page=${page}&pageSize=${pageSize}&stage=${encodeURIComponent(stage)}`),
+  createExperiment: (input: Pick<ExperimentRun, "name" | "stage" | "hypothesis" | "experimentType"> & { baselineRunId: string; candidateRunId: string; successMetric?: string }) =>
+    request<ExperimentRun>("/admin/evaluation/experiments", { method: "POST", body: JSON.stringify(input) }),
   updateAdminFeedback: (
     id: string,
     input: Partial<Pick<UserFeedback, "status" | "priority" | "rootCause" | "assignee" | "resolution" | "convertedDatasetId">>
@@ -258,14 +347,14 @@ export const api = {
       method: "DELETE"
     }),
   exportEvaluationRunCsv: (id: string) => requestBlob(`/admin/evaluation/runs/${id}/export.csv`),
-  exportEvaluationRunExcel: (id: string) => requestBlob(`/admin/evaluation/runs/${id}/export-excel.tsv`),
+  exportEvaluationRunExcel: (id: string) => requestBlob(`/admin/evaluation/runs/${id}/export-excel.xlsx`),
   exportEvaluationRunsCsv: (ids?: string[]) => {
     const query = ids?.length ? `?ids=${encodeURIComponent(ids.join(","))}` : "";
     return requestBlob(`/admin/evaluation/runs/export.csv${query}`);
   },
   exportEvaluationRunsExcel: (ids?: string[]) => {
     const query = ids?.length ? `?ids=${encodeURIComponent(ids.join(","))}` : "";
-    return requestBlob(`/admin/evaluation/runs/export-excel.tsv${query}`);
+    return requestBlob(`/admin/evaluation/runs/export-excel.xlsx${query}`);
   },
   runQualityEvaluation: (input: QualityEvaluationRunInput) =>
     request<QualityEvaluationRunResult>("/admin/evaluation/run", {

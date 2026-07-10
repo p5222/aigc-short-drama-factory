@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { CheckCircle2, ChevronDown, ClipboardList, Coins, CreditCard, Gift, ReceiptText, WalletCards } from "lucide-react";
 import type { CreditAccount, CreditTransaction, MembershipPlan, ModelPrice, Plan } from "@aifilm/shared";
 import { api } from "../lib/api";
 import { MetricCard } from "../components/MetricCard";
@@ -7,6 +8,7 @@ export function RechargePage({ plans, membershipPlans, modelPrices, onRefresh }:
   const [message, setMessage] = useState("");
   const [redeemCode, setRedeemCode] = useState("");
   const [error, setError] = useState("");
+  const [showModelDetails, setShowModelDetails] = useState(false);
   const defaultShopUrl = "https://pay.ldxp.cn/shop/ZHP28OV1";
   const enabledModelPrices = modelPrices.filter((price) => price.enabled);
   const modelPriceStats = {
@@ -14,6 +16,7 @@ export function RechargePage({ plans, membershipPlans, modelPrices, onRefresh }:
     models: enabledModelPrices.length,
     avgCredits: enabledModelPrices.length ? Math.round(enabledModelPrices.reduce((sum, price) => sum + price.unitCredits, 0) / enabledModelPrices.length) : 0
   };
+  const usageReferences = useMemo(() => buildCreditUsageReferences(enabledModelPrices), [enabledModelPrices]);
 
   async function redeem() {
     setMessage("");
@@ -45,12 +48,17 @@ export function RechargePage({ plans, membershipPlans, modelPrices, onRefresh }:
   }
 
   return (
-    <div className="page-stack">
+    <div className="page-stack recharge-page">
       <div className="page-title">
         <h1>积分充值</h1>
-        <p>采用充值积分 + 兑换码体验额度 + 后台可调模型单价。充值积分永久有效，会员是每月额度和权益折扣，不做无限量。</p>
+        <p>充值即获积分，用于 AI 生成，永久有效；消费参考会按后台价格策略同步展示。</p>
       </div>
-      <div className="plan-grid" data-tour-id="recharge-plans">
+      <section className="panel recharge-plan-panel">
+        <div className="panel-head">
+          <div><h2>选择充值金额</h2><small>购买后请在店铺获取卡密，再回到本页兑换入账。</small></div>
+          <span className="recharge-validity">积分永久有效 · 可用于所有 AI 生成能力</span>
+        </div>
+        <div className="plan-grid recharge-plan-grid" data-tour-id="recharge-plans">
         {plans.map((plan) => (
           <article className="plan-card" key={plan.id}>
             {plan.badge ? <span className="badge">{plan.badge}</span> : null}
@@ -69,7 +77,43 @@ export function RechargePage({ plans, membershipPlans, modelPrices, onRefresh }:
             </button>
           </article>
         ))}
-      </div>
+        </div>
+      </section>
+      <section className="panel credit-usage-panel">
+        <div className="panel-head">
+          <div><h2>积分消费参考</h2><small>实际消耗以生成时选择的模型、画质、时长和后台价格策略为准。</small></div>
+          <button className="ghost-button" type="button" onClick={() => setShowModelDetails((value) => !value)}>
+            <ClipboardList size={18} />{showModelDetails ? "收起模型明细" : "查看模型明细"}<ChevronDown size={16} />
+          </button>
+        </div>
+        <div className="credit-usage-grid">
+          {usageReferences.map((item) => (
+            <article className="credit-usage-card" key={item.title}>
+              <div>
+                {item.icon}
+                <strong>{item.title}</strong>
+                <span>{item.desc}</span>
+              </div>
+              <b>{item.credits}</b>
+            </article>
+          ))}
+        </div>
+        {showModelDetails ? (
+          <div className="model-price-table compact-model-price-table">
+            <div className="model-price-row header"><span>渠道</span><span>模型</span><span>类型</span><span>计费单位</span><span>积分</span></div>
+            {enabledModelPrices.slice(0, 16).map((price) => (
+              <div className="model-price-row" key={price.id}>
+                <strong>{price.providerName}</strong>
+                <span>{price.model}</span>
+                <span className={`model-price-chip modality-${price.modality}`}>{priceModalityText(price.modality)}</span>
+                <span className="model-price-unit">{priceUnitText(price.unit)}</span>
+                <b>{price.unitCredits}</b>
+              </div>
+            ))}
+            {!enabledModelPrices.length ? <div className="empty-state">后台还没有启用的模型价格策略。</div> : null}
+          </div>
+        ) : null}
+      </section>
       {message ? <p className="success-text">{message}</p> : null}
       {error ? <p className="danger-text">{error}</p> : null}
       <section className="panel">
@@ -105,27 +149,16 @@ export function RechargePage({ plans, membershipPlans, modelPrices, onRefresh }:
           ))}
         </div>
       </section>
-      <section className="panel model-price-panel">
+      <section className="panel payment-method-panel">
         <div className="panel-head">
-          <div><h2>模型价格表</h2><small>后台价格策略实时同步到前台，方便估算一次剧本、分镜图或视频生成的积分成本。</small></div>
-          <div className="model-price-summary">
-            <span><b>{modelPriceStats.providers}</b> 渠道</span>
-            <span><b>{modelPriceStats.models}</b> 模型</span>
-            <span><b>{modelPriceStats.avgCredits || "-"}</b> 平均积分</span>
-          </div>
+          <div><h2>支付方式</h2><small>当前使用店铺下单 + 卡密兑换入账，后续可接入原生支付回调。</small></div>
         </div>
-        <div className="model-price-table">
-          <div className="model-price-row header"><span>渠道</span><span>模型</span><span>类型</span><span>计费单位</span><span>积分</span></div>
-          {enabledModelPrices.slice(0, 16).map((price) => (
-            <div className="model-price-row" key={price.id}>
-              <strong>{price.providerName}</strong>
-              <span>{price.model}</span>
-              <span className={`model-price-chip modality-${price.modality}`}>{priceModalityText(price.modality)}</span>
-              <span className="model-price-unit">{priceUnitText(price.unit)}</span>
-              <b>{price.unitCredits}</b>
-            </div>
-          ))}
-          {!enabledModelPrices.length ? <div className="empty-state">后台还没有启用的模型价格策略。</div> : null}
+        <div className="payment-method-row">
+          <button type="button" className="payment-method-card" onClick={() => window.open(defaultShopUrl, "_blank", "noopener,noreferrer")}>
+            <WalletCards size={22} />
+            <span><strong>支付宝 / 店铺卡密</strong><small>安全可靠，购买后回到本页兑换</small></span>
+            <CheckCircle2 size={20} />
+          </button>
         </div>
       </section>
     </div>
@@ -142,38 +175,130 @@ function priceUnitText(value: ModelPrice["unit"]) {
   return labels[value] ?? value;
 }
 
+function buildCreditUsageReferences(prices: ModelPrice[]) {
+  const textRun = creditFor(prices, (price) => price.unit === "text_run" || price.modality === "text", 50);
+  const image = creditFor(prices, (price) => price.modality === "image", 100);
+  const videoSecond = creditFor(prices, (price) => price.unit === "video_second" || price.modality === "video", 80);
+  return [
+    { title: "角色生成", desc: "角色设定 · 文本生成", credits: `${textRun} 积分 / 次`, icon: <Coins size={19} /> },
+    { title: "提炼核心剧情", desc: "剧情梳理 · 文本生成", credits: `${textRun} 积分 / 次`, icon: <FileIconFallback /> },
+    { title: "生成剧本", desc: "分集脚本 · 文本生成", credits: `${textRun} 积分 / 次`, icon: <ReceiptText size={19} /> },
+    { title: "剧本转分镜 JSON", desc: "结构化分镜 · 文本生成", credits: `${textRun} 积分 / 次`, icon: <ClipboardList size={19} /> },
+    { title: "九宫格 · 生成剧本", desc: "短流程脚本生成", credits: `${textRun} 积分 / 次`, icon: <Gift size={19} /> },
+    { title: "9宫格 · 生成剧本", desc: "中文模板脚本生成", credits: `${textRun} 积分 / 次`, icon: <Gift size={19} /> },
+    { title: "25宫格 · 生成剧本", desc: "长流程脚本生成", credits: `${textRun} 积分 / 次`, icon: <ReceiptText size={19} /> },
+    { title: "25宫格 · 剧本转分镜 JSON", desc: "长流程分镜结构化", credits: `${textRun} 积分 / 次`, icon: <ClipboardList size={19} /> },
+    { title: "场景图", desc: "场景图 · 图片生成", credits: `${image} 积分 / 张`, icon: <CreditCard size={19} /> },
+    { title: "镜头视频", desc: "图生视频 · 按秒计费", credits: `${videoSecond} 积分 / 秒`, icon: <WalletCards size={19} /> }
+  ];
+}
+
+function FileIconFallback() {
+  return <ReceiptText size={19} />;
+}
+
+function creditFor(prices: ModelPrice[], predicate: (price: ModelPrice) => boolean, fallback: number) {
+  return prices.find(predicate)?.unitCredits ?? fallback;
+}
+
 export function LedgerPage({ account, transactions }: { account?: CreditAccount; transactions: CreditTransaction[] }) {
+  const [filter, setFilter] = useState<CreditTransaction["type"] | "all">("all");
+  const filteredTransactions = filter === "all" ? transactions : transactions.filter((tx) => tx.type === filter);
+  const recharged = transactions.filter((tx) => tx.amount > 0).reduce((sum, tx) => sum + tx.amount, 0);
+  const consumed = Math.abs(transactions.filter((tx) => tx.amount < 0).reduce((sum, tx) => sum + tx.amount, 0));
+
   return (
-    <div className="page-stack">
+    <div className="page-stack ledger-page">
       <div className="page-title">
         <h1>积分明细</h1>
-        <p>消费记录、充值记录、冻结和退款都会永久保存，便于后台核账和用户解释。</p>
+        <p>中文化展示消费、充值、冻结、退款和后台调整记录，方便你核对每一次生成成本。</p>
       </div>
-      <div className="metric-grid three">
-        <MetricCard label="当前可用积分" value={account?.balance ?? 0} />
-        <MetricCard label="累计充值" value={account?.totalRecharge ?? 0} tone="success" />
-        <MetricCard label="累计消费" value={account?.totalConsume ?? 0} tone="danger" />
+      <div className="ledger-summary-grid">
+        <article>
+          <WalletCards size={22} />
+          <span>当前可用积分</span>
+          <strong>{(account?.balance ?? 0).toLocaleString()}</strong>
+        </article>
+        <article>
+          <Gift size={22} />
+          <span>累计充值</span>
+          <strong>{(account?.totalRecharge ?? recharged).toLocaleString()}</strong>
+        </article>
+        <article>
+          <ReceiptText size={22} />
+          <span>累计消费</span>
+          <strong>{(account?.totalConsume ?? consumed).toLocaleString()}</strong>
+        </article>
       </div>
-      <section className="panel">
-        <div className="task-table ledger">
+      <section className="panel ledger-table-panel">
+        <div className="panel-head">
+          <div><h2>流水记录</h2><small>共 {transactions.length} 条，当前显示 {filteredTransactions.length} 条。</small></div>
+        </div>
+        <div className="ledger-filter-tabs">
+          {ledgerFilters.map((item) => (
+            <button className={filter === item.id ? "active" : undefined} key={item.id} type="button" onClick={() => setFilter(item.id)}>
+              {item.label}
+            </button>
+          ))}
+        </div>
+        <div className="task-table ledger ledger-table-cn">
           <div className="task-row header">
             <span>类型</span>
-            <span>金额</span>
+            <span>积分变动</span>
             <span>余额</span>
             <span>说明</span>
             <span>时间</span>
           </div>
-          {transactions.map((tx) => (
+          {filteredTransactions.map((tx) => (
             <div className="task-row" key={tx.id}>
-              <span>{tx.type}</span>
-              <strong>{tx.amount}</strong>
+              <span className={`ledger-type-chip ${tx.type}`}>{transactionTypeLabel(tx.type)}</span>
+              <strong className={tx.amount >= 0 ? "ledger-positive" : "ledger-negative"}>{tx.amount >= 0 ? "+" : ""}{tx.amount}</strong>
               <span>{tx.balanceAfter}</span>
-              <span>{tx.description}</span>
-              <span>{new Date(tx.createdAt).toLocaleString()}</span>
+              <span>{transactionDescriptionText(tx.description)}</span>
+              <span>{formatLedgerDate(tx.createdAt)}</span>
             </div>
           ))}
+          {!filteredTransactions.length ? <div className="empty-state">暂无匹配的积分流水。</div> : null}
         </div>
       </section>
     </div>
   );
+}
+
+const ledgerFilters: Array<{ id: CreditTransaction["type"] | "all"; label: string }> = [
+  { id: "all", label: "全部" },
+  { id: "recharge", label: "充值" },
+  { id: "consume", label: "消费" },
+  { id: "freeze", label: "冻结" },
+  { id: "refund", label: "退款" },
+  { id: "adjust", label: "调整" }
+];
+
+function transactionTypeLabel(value: CreditTransaction["type"]) {
+  const labels: Record<CreditTransaction["type"], string> = {
+    recharge: "充值入账",
+    freeze: "冻结积分",
+    consume: "消费扣费",
+    refund: "退款退回",
+    adjust: "后台调整"
+  };
+  return labels[value] ?? value;
+}
+
+function transactionDescriptionText(value: string) {
+  const dictionary: Record<string, string> = {
+    "Storyboard generation credits": "分镜生成扣费",
+    "Single shot image regeneration credits": "单镜头图片重生成扣费",
+    "Character reference image credits": "角色参考图生成扣费",
+    "Image generation credits": "图片生成扣费",
+    "Video generation credits": "视频生成扣费",
+    "Recharge order paid": "充值订单入账",
+    "Redeem code": "兑换码入账"
+  };
+  if (value.startsWith("Redeemed code")) return "兑换码入账";
+  return dictionary[value] ?? value;
+}
+
+function formatLedgerDate(value: string) {
+  return new Date(value).toLocaleString("zh-CN", { hour12: false });
 }

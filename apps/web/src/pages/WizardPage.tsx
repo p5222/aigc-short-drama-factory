@@ -1,5 +1,5 @@
-import { ChevronRight, FileUp, Loader2, Save, Sparkles, WandSparkles } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { BookOpenCheck, BrainCircuit, ChevronRight, FileText, FileUp, Gauge, Layers3, Loader2, Route, Save, Sparkles, UsersRound, WandSparkles } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 import type { CreateProjectInput, CreationEstimate, ModelProvider } from "@aifilm/shared";
 import { imageOutputQualityOptions, imageOutputSizeOptions, imageParameterMultiplier, normalizeImageOutputQuality, normalizeImageOutputSize } from "@aifilm/shared";
 import { api } from "../lib/api";
@@ -15,6 +15,7 @@ type RouteTestState = { loading: boolean; ok?: boolean; message?: string };
 const stepOrder: WizardStep[] = ["story", "settings", "script", "assets"];
 const preferredTextProviderIds = ["dashscope-text", "deepseek", "zml-text"];
 const preferredImageProviderIds = ["dashscope-image", "zml-image", "doubao-seedream"];
+const failedImageModels = new Set(["wanx-v1", "wan2.5-t2i-preview"]);
 
 const defaultForm: CreateProjectInput = {
   title: "",
@@ -28,7 +29,7 @@ const defaultForm: CreateProjectInput = {
   textProvider: "dashscope-text",
   textModel: "qwen3.7-plus",
   imageProvider: "dashscope-image",
-  imageModel: "qwen-image-2.0-pro-2026-04-22",
+  imageModel: "wan2.6-t2i",
   imageSize: "2048x1152",
   imageQuality: "medium",
   videoProvider: "dashscope-video",
@@ -40,8 +41,8 @@ const stylePresets = [
   "真人电影感",
   "真人古装",
   "真人复古港片",
-  "真人古武",
-  "真实光晕",
+  "真人国风武侠",
+  "真实光影",
   "第一人称 POV",
   "纪录片",
   "广告宣传片",
@@ -74,7 +75,10 @@ export function WizardPage({ providers, onCreated }: WizardPageProps) {
   const selectedTextProvider = textProviders.find((provider) => provider.id === form.textProvider) ?? textProviders[0];
   const selectedImageProvider = imageProviders.find((provider) => provider.id === form.imageProvider) ?? imageProviders[0];
   const currentTextModels = selectedTextProvider?.models.length ? selectedTextProvider.models : ["deepseek-v4-pro"];
-  const currentImageModels = selectedImageProvider?.models.length ? selectedImageProvider.models : ["qwen-image"];
+  const currentImageModels = useMemo(() => {
+    const models = (selectedImageProvider?.models.length ? selectedImageProvider.models : ["wan2.6-t2i"]).filter((model) => !failedImageModels.has(model));
+    return models.length ? models : ["wan2.6-t2i"];
+  }, [selectedImageProvider]);
   const activeStepIndex = stepOrder.indexOf(step);
 
   useEffect(() => {
@@ -88,9 +92,15 @@ export function WizardPage({ providers, onCreated }: WizardPageProps) {
       setForm((draft) => ({ ...draft, textProvider: selectedTextProvider.id, textModel: selectedTextProvider.models[0] ?? draft.textModel }));
     }
     if (selectedImageProvider && form.imageProvider !== selectedImageProvider.id) {
-      setForm((draft) => ({ ...draft, imageProvider: selectedImageProvider.id, imageModel: selectedImageProvider.models[0] ?? draft.imageModel }));
+      setForm((draft) => ({ ...draft, imageProvider: selectedImageProvider.id, imageModel: selectedImageProvider.models.find((model) => !failedImageModels.has(model)) ?? "wan2.6-t2i" }));
     }
   }, [selectedTextProvider, selectedImageProvider, form.textProvider, form.imageProvider]);
+
+  useEffect(() => {
+    if (!currentImageModels.includes(form.imageModel || "")) {
+      setForm((draft) => ({ ...draft, imageModel: currentImageModels[0] }));
+    }
+  }, [currentImageModels, form.imageModel]);
 
   useEffect(() => {
     const current = form.targetEpisodes ?? 1;
@@ -231,7 +241,7 @@ export function WizardPage({ providers, onCreated }: WizardPageProps) {
         <div>
           <span className="section-kicker">AI 漫剧 / 创作向导</span>
           <h1>新建漫剧</h1>
-          <p>跟着步骤走，10 分钟生成第一集。不知道怎么选时，直接选推荐。</p>
+          <p>按故事输入、全局设定、剧本生成和资产生产四步跑通第一版项目。</p>
         </div>
         <button className="ghost-button" onClick={saveDraft}>
           <Save size={18} />保存草稿
@@ -343,14 +353,14 @@ function StoryStep({
   onNext: () => void;
 }) {
   return (
-    <div className="u-wizard-grid">
+    <div className="u-wizard-grid story-step-redesign">
       <section className="u-card story-input-card" data-tour-id="story-input">
         <div className="u-card-head">
           <div>
+            <span className="section-kicker">STEP 1</span>
             <h2>导入你的小说或故事</h2>
-            <p>粘贴正文、章节片段或故事大纲，AI 会自动拆成剧本内容。</p>
+            <p>粘贴正文、章节片段、故事大纲或已有剧本，系统会先整理成可生产的剧本资产。</p>
           </div>
-          <span>第 1 步</span>
         </div>
 
         <label className="field">
@@ -363,7 +373,7 @@ function StoryStep({
           <textarea
             value={form.content}
             onChange={(event) => onChange({ ...form, content: event.target.value, sourceType: inferSourceType(event.target.value) })}
-            placeholder="在这里粘贴小说原文 / 故事大纲 / 已有剧本。建议至少 2,000 字，系统会按 2,000 字拆分集数。"
+            placeholder="在这里粘贴小说原文 / 故事大纲 / 已有剧本。建议至少 2,000 字，系统会按正文长度估算集数。"
           />
         </label>
 
@@ -382,9 +392,9 @@ function StoryStep({
 
         <div className="mode-picker" data-tour-id="generation-mode">
           <span>选择生成模式</span>
-          <ModeOption active={form.mode === "nine_grid"} title="9宫格模式" desc="一集一张 3x3 总图，裁切后每格自动匹配 1-5 秒。" badge="推荐" onClick={() => onChange({ ...form, mode: "nine_grid" })} />
-          <ModeOption active={form.mode === "twenty_five_grid"} title="25宫格模式" desc="一集一张 5x5 总图，适合更细的镜头拆分。" onClick={() => onChange({ ...form, mode: "twenty_five_grid" })} />
-          <ModeOption active={form.mode === "director"} title="导演模式（维护中）" desc="强化运镜、动作承接和视频提示词。" disabled onClick={() => undefined} />
+          <ModeOption active={form.mode === "nine_grid"} title="9 宫格模式" desc="一集生成 3x3 总图，适合先跑通剧情到视频的完整闭环。" badge="推荐" onClick={() => onChange({ ...form, mode: "nine_grid" })} />
+          <ModeOption active={form.mode === "twenty_five_grid"} title="25 宫格模式" desc="一集生成 5x5 总图，适合更细的镜头拆分和后期剪辑。" onClick={() => onChange({ ...form, mode: "twenty_five_grid" })} />
+          <ModeOption active={form.mode === "director"} title="导演模式" desc="强化运镜、动作承接和视频提示词，后续开放。" disabled onClick={() => undefined} />
         </div>
       </section>
 
@@ -392,7 +402,7 @@ function StoryStep({
         <section className="u-card import-stats-card">
           <h3>当前导入</h3>
           <div className="mini-metrics import-metrics">
-            <div><strong>{words.toLocaleString()}</strong><span>字数（自动统计）</span></div>
+            <div><strong>{words.toLocaleString()}</strong><span>字数</span></div>
             <div><strong>{suggestedEpisodes}</strong><span>最多可生成集数</span></div>
           </div>
           <label className="field episode-select-field">
@@ -407,16 +417,16 @@ function StoryStep({
               })}
             </select>
           </label>
-          <small>每 2,000 字约等于 1 集，选项会按当前字数自动限制。</small>
-          {form.mode === "nine_grid" && words < 2000 ? <p className="warning-text">9宫格模式建议每集至少 2,000 字，否则剧情节点会偏少。</p> : null}
+          <small>约每 2,000 字估算为 1 集，选项会按当前字数自动限制。</small>
+          {form.mode === "nine_grid" && words < 2000 ? <p className="warning-text">9 宫格模式建议每集至少 2,000 字，否则剧情节点会偏少。</p> : null}
         </section>
 
         <section className="u-card ai-plan-card">
           <div className="u-card-head compact">
-            <h3>接下来 AI 会为你做什么</h3>
-            <small>全程可编辑，每一步都可单独重生。</small>
+            <h3>接下来会生成什么</h3>
+            <small>每一步都可以在项目工作台继续编辑、重生和质检。</small>
           </div>
-          {["提炼核心剧情", "按你选定的集数写脚本", "生成每集分镜剧本", "拆出场景 / 角色 / 道具", "一键生成画面与视频"].map((item, index) => (
+          {["提炼核心剧情", "按集数写剧本", "生成分镜拆解", "拆出场景 / 角色 / 道具", "进入角色图与视频生产"].map((item, index) => (
             <div className="ai-step-line" key={item}>
               <span>{index + 1}</span>
               <strong>{item}</strong>
@@ -430,7 +440,6 @@ function StoryStep({
     </div>
   );
 }
-
 function SettingsStep({
   form,
   onChange,
@@ -441,24 +450,25 @@ function SettingsStep({
   onNext: () => void;
 }) {
   return (
-    <section className="u-card u-settings-card">
+    <section className="u-card settings-card settings-step-redesign">
       <div className="u-card-head">
         <div>
-          <h2>按步骤完成基础设置</h2>
-          <p>不知道怎么选时，直接使用带“推荐”的选项，后续仍可修改。</p>
+          <span className="section-kicker">STEP 2</span>
+          <h2>完成基础生产设置</h2>
+          <p>先确认画面比例、视觉风格和题材倾向，后续角色、分镜图和视频会沿用这组设定。</p>
         </div>
       </div>
 
       <div className="setting-block" data-tour-id="style-picker">
-        <div className="setting-title"><span>1</span><div><h3>视频发布在哪个平台？</h3><p>选择画面比例，影响最终视频尺寸。</p></div></div>
+        <div className="setting-title"><span>1</span><div><h3>视频发布在哪个平台？</h3><p>画面比例会影响分镜构图、首帧图和后续视频裁切。</p></div></div>
         <div className="choice-grid two">
-          <ChoiceCard active={form.videoRatio === "9:16"} title="竖屏 9:16" desc="抖音、视频号、小红书常用" badge="推荐" onClick={() => onChange({ ...form, videoRatio: "9:16" })} />
-          <ChoiceCard active={form.videoRatio === "16:9"} title="横屏 16:9" desc="B 站、横版视频、网页播放" onClick={() => onChange({ ...form, videoRatio: "16:9" })} />
+          <ChoiceCard active={form.videoRatio === "9:16"} title="竖屏 9:16" desc="适合抖音、视频号、小红书等短视频平台" badge="推荐" onClick={() => onChange({ ...form, videoRatio: "9:16" })} />
+          <ChoiceCard active={form.videoRatio === "16:9"} title="横屏 16:9" desc="适合 B 站、横版视频和网页播放" onClick={() => onChange({ ...form, videoRatio: "16:9" })} />
         </div>
       </div>
 
       <div className="setting-block">
-        <div className="setting-title"><span>2</span><div><h3>想要什么画面风格？</h3><p>风格会影响角色、场景、分镜图和视频画面。</p></div></div>
+        <div className="setting-title"><span>2</span><div><h3>想要什么画面风格？</h3><p>风格会贯穿角色、场景、分镜图和视频画面。</p></div></div>
         <div className="style-chip-grid">
           {stylePresets.map((style) => (
             <button className={form.artStyle === style ? "active" : ""} key={style} onClick={() => onChange({ ...form, artStyle: style })} type="button">
@@ -484,7 +494,6 @@ function SettingsStep({
     </section>
   );
 }
-
 function ScriptStep({
   form,
   textProviders,
@@ -494,10 +503,8 @@ function ScriptStep({
   currentTextModels,
   currentImageModels,
   estimate,
-  modelMessage,
   textRouteTest,
   imageRouteTest,
-  imageModelMessage,
   isTestingModel,
   isTestingImageModel,
   onChange,
@@ -530,21 +537,39 @@ function ScriptStep({
   onEstimate: () => void;
   onNext: () => void;
 }) {
+  const imageMultiplier = imageParameterMultiplier(form.imageSize, form.imageQuality).toFixed(2);
+  const scriptAssets = [
+    { title: "全局设定", text: "世界观、题材、人设关系、主角动机和投流钩子。", icon: <BrainCircuit size={18} />, meta: form.genre || "AI 自动识别" },
+    { title: "核心剧情", text: "按集数梳理关键事件、情绪弧光、反转点和每集结尾钩子。", icon: <BookOpenCheck size={18} />, meta: `${form.targetEpisodes ?? 1} 集` },
+    { title: "剧本文本", text: "生成可继续拆镜的场景、动作、台词、旁白和节奏。", icon: <FileText size={18} />, meta: form.textModel || "待选择" },
+    { title: "角色卡", text: "固定外貌、服装、性格、声线和一致性提示词。", icon: <UsersRound size={18} />, meta: form.videoRatio }
+  ];
+  const routeReady = Boolean(form.textProvider && form.textModel && form.imageProvider && form.imageModel);
+
   return (
-    <div className="u-wizard-grid wizard-balance-grid">
+    <div className="u-wizard-grid wizard-balance-grid wizard-script-redesign">
       <section className="u-card script-plan-card wizard-script-card">
-        <div className="u-card-head">
+        <div className="u-card-head wizard-script-title">
           <div>
+            <span className="section-kicker">SCRIPT ENGINE</span>
             <h2>核心剧情·剧本生成</h2>
+            <p>先产出全局设定、核心剧情、剧本文本和角色卡，再进入角色定稿与分镜生产。</p>
           </div>
         </div>
 
-        <div className="script-preview-list">
-          <PreviewLine title="全局设定" text="世界观、题材、主角动机、人物关系、投流钩子。" />
-          <PreviewLine title="核心剧情" text="按集数拆出关键事件、情绪弧光和每集结尾钩子。" />
-          <PreviewLine title="剧本文本" text="生成可继续拆镜的场景、动作、台词、旁白和节奏。" />
-          <PreviewLine title="角色卡" text="固定外貌、服装、性格、声线和角色一致性提示词。" />
+        <div className="script-runway-strip">
+          <article className="ready"><Gauge size={16} /><span>脚本引擎</span><strong>{form.textModel || "未选择"}</strong></article>
+          <article className={routeReady ? "ready" : ""}><Route size={16} /><span>模型路由</span><strong>{routeReady ? "已配置" : "待配置"}</strong></article>
+          <article><Layers3 size={16} /><span>生图参数</span><strong>x{imageMultiplier}</strong></article>
         </div>
+
+        <div className="script-preview-list script-output-map">
+          {scriptAssets.map((asset) => (
+            <PreviewLine key={asset.title} title={asset.title} text={asset.text} icon={asset.icon} meta={asset.meta} />
+          ))}
+        </div>
+
+        <EstimatePanel estimate={estimate} form={form} onEstimate={onEstimate} />
 
         <div className="inline-actions stretch wizard-script-actions">
           <button className="ghost-button" onClick={onEstimate} type="button">按当前模型估算积分</button>
@@ -552,34 +577,41 @@ function ScriptStep({
             下一步：分镜/资产生成 <ChevronRight size={18} />
           </button>
         </div>
-
-        <EstimatePanel estimate={estimate} form={form} onEstimate={onEstimate} />
       </section>
 
       <aside className="u-side-stack">
-        <section className="u-card route-card-clean">
+        <section className="u-card route-card-clean route-card-polished">
           <div className="u-card-head compact">
-            <h3>模型路由</h3>
+            <div>
+              <span className="section-kicker">MODEL ROUTE</span>
+              <h3>模型路由</h3>
+            </div>
             <small>选择文本和生图模型后，左侧积分会按后台价格策略重新估算。</small>
           </div>
 
-          <div className="route-clean-block">
+          <div className="model-route-status-grid">
+            <article className={form.textModel ? "ready" : ""}><span>TEXT</span><strong>{form.textModel || "未选择"}</strong></article>
+            <article className={form.imageModel ? "ready" : ""}><span>IMAGE</span><strong>{form.imageModel || "未选择"}</strong></article>
+            <article><span>倍率</span><strong>x{imageMultiplier}</strong></article>
+          </div>
+
+          <div className="route-clean-block route-block-polished">
             <strong>1. 文本生成</strong>
             <label className="field"><span>供应商</span><select value={form.textProvider} onChange={(event) => onTextProvider(event.target.value)}>{textProviders.map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}</select></label>
             <label className="field"><span>模型</span><select value={form.textModel} onChange={(event) => onChange({ ...form, textModel: event.target.value })}>{currentTextModels.map((model) => <option key={model} value={model}>{model}</option>)}</select></label>
-            <p>{selectedTextProvider?.costHint ?? "用于剧本解析、角色卡和分镜拆解。"}</p>
+            <p>{cleanProviderHint(selectedTextProvider?.costHint, "用于剧本解析、角色卡和分镜拆解。")}</p>
             <button className="ghost-button full-button" onClick={onTestModel} disabled={isTestingModel} type="button">{isTestingModel ? "测试中..." : "测试文本模型"}</button>
             <RouteTestMessage state={textRouteTest} />
           </div>
 
-          <div className="route-clean-block">
+          <div className="route-clean-block route-block-polished">
             <strong>2. 分镜生图</strong>
             <label className="field"><span>供应商</span><select value={form.imageProvider} onChange={(event) => onImageProvider(event.target.value)}>{imageProviders.map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}</select></label>
             <label className="field"><span>模型</span><select value={form.imageModel} onChange={(event) => onChange({ ...form, imageModel: event.target.value })}>{currentImageModels.map((model) => <option key={model} value={model}>{model}</option>)}</select></label>
             <label className="field"><span>分辨率</span><select value={normalizeImageOutputSize(form.imageSize)} onChange={(event) => onChange({ ...form, imageSize: event.target.value })}>{imageOutputSizeOptions.map((item) => <option key={item.value} value={item.value}>{item.label} · x{item.multiplier}</option>)}</select></label>
             <label className="field"><span>质量</span><select value={normalizeImageOutputQuality(form.imageQuality)} onChange={(event) => onChange({ ...form, imageQuality: event.target.value })}>{imageOutputQualityOptions.map((item) => <option key={item.value} value={item.value}>{item.label} · x{item.multiplier}</option>)}</select></label>
-            <small className="route-param-hint">当前参数倍率 x{imageParameterMultiplier(form.imageSize, form.imageQuality).toFixed(2)}，最终单价 = 模型基准价 × 参数倍率。</small>
-            <p>{selectedImageProvider?.costHint ?? "用于角色多视图和分镜图首帧。"}</p>
+            <small className="route-param-hint">当前参数倍率 x{imageMultiplier}，预估已按分辨率与质量折算。</small>
+            <p>{cleanProviderHint(selectedImageProvider?.costHint, "用于角色三视图、分镜首帧和项目风格统一。")}</p>
             <button className="ghost-button full-button" onClick={onTestImageModel} disabled={isTestingImageModel} type="button">{isTestingImageModel ? "测试中..." : "测试生图模型"}</button>
             <RouteTestMessage state={imageRouteTest} />
           </div>
@@ -588,7 +620,6 @@ function ScriptStep({
     </div>
   );
 }
-
 function AssetsStep({
   form,
   isGenerating,
@@ -607,11 +638,12 @@ function AssetsStep({
   onStart: () => void;
 }) {
   return (
-    <section className="u-card asset-launch-card">
+    <section className="u-card asset-launch-card asset-step-redesign">
       <div className="u-card-head">
         <div>
+          <span className="section-kicker">STEP 4</span>
           <h2>分镜 / 资产生成</h2>
-          <p>点击后先生成全局设定、剧情剧本和角色卡；进入项目工作台后再按顺序生成分镜表、角色参考图、分镜图和视频草稿。</p>
+          <p>先生成全局设定、核心剧情、剧本文本和角色卡。进入项目生产台后，再按主流程完成角色定稿、分镜图、视频和导出。</p>
         </div>
       </div>
 
@@ -619,9 +651,9 @@ function AssetsStep({
         {[
           ["全局设定", form.videoRatio + " · " + (form.artStyle || "AI 自动匹配")],
           ["核心剧情·剧本", form.textProvider + " / " + form.textModel],
-          ["分镜表", form.mode === "nine_grid" ? "9 宫格模式" : "25 宫格模式"],
+          ["角色卡", "先形成角色身份、外貌、服装和一致性提示词"],
           ["分镜图", form.imageProvider + " / " + form.imageModel],
-          ["视频资产", "项目工作台继续生成"]
+          ["视频资产", "进入项目生产台继续生成与剪辑"]
         ].map(([title, desc], index) => (
           <article key={title}>
             <span>{index + 1}</span>
@@ -643,23 +675,22 @@ function AssetsStep({
     </section>
   );
 }
-
 function EstimatePanel({ estimate, form, onEstimate }: { estimate: CreationEstimate | null; form: CreateProjectInput; onEstimate: () => void }) {
   if (!estimate) {
     return (
-      <div className="estimate u-estimate wizard-estimate-dock">
+      <div className="estimate u-estimate wizard-estimate-dock estimate-panel-polished">
         <div className="wizard-estimate-total">
           <span>预估积分</span>
           <strong>待计算</strong>
         </div>
-        <p>点击后会按右侧当前文本、生图、视频模型和后台价格策略估算，不会产生真实扣费。</p>
+        <p>点击后会按当前文本、生图、视频模型和后台价格策略估算，不会产生真实扣费。</p>
         <button className="ghost-button" onClick={onEstimate} type="button">立即估算</button>
       </div>
     );
   }
 
   return (
-    <div className="estimate u-estimate wizard-estimate-dock">
+    <div className="estimate u-estimate wizard-estimate-dock estimate-panel-polished ready">
       <div className="wizard-estimate-total">
         <span>预估积分</span>
         <strong>{estimate.estimatedCredits}</strong>
@@ -674,11 +705,10 @@ function EstimatePanel({ estimate, form, onEstimate }: { estimate: CreationEstim
         ))}
       </div>
       <p>当前模型：{form.textProvider}/{form.textModel}，{form.imageProvider}/{form.imageModel}，生图参数 {normalizeImageOutputSize(form.imageSize)} / {normalizeImageOutputQuality(form.imageQuality)}。{estimate.assumptions ? `预计 ${estimate.assumptions.totalShots} 个镜头。` : ""}</p>
-      {estimate.notes.slice(1).map((note) => <p key={note}>{note}</p>)}
+      {estimate.notes.slice(1).filter((note) => !note.includes("最终单价") && !note.includes("模型基准价")).map((note) => <p key={note}>{note}</p>)}
     </div>
   );
 }
-
 function OperationProgress({ title, elapsed, detail }: { title: string; elapsed: number; detail: string }) {
   const percent = Math.min(92, 16 + elapsed * 3);
   return (
@@ -702,14 +732,27 @@ function ChoiceCard({ active, title, desc, badge, onClick }: { active: boolean; 
   return <button className={active ? "choice-card active" : "choice-card"} onClick={onClick} type="button"><strong>{title}</strong><span>{desc}</span>{badge ? <em>{badge}</em> : null}</button>;
 }
 
-function PreviewLine({ title, text }: { title: string; text: string }) {
-  return <div className="preview-line"><strong>{title}</strong><span>{text}</span></div>;
+function PreviewLine({ title, text, icon, meta }: { title: string; text: string; icon?: ReactNode; meta?: string }) {
+  return (
+    <div className="preview-line">
+      {icon ? <i>{icon}</i> : null}
+      <strong>{title}</strong>
+      <span>{text}</span>
+      {meta ? <em>{meta}</em> : null}
+    </div>
+  );
 }
 
 function RouteTestMessage({ state }: { state: RouteTestState }) {
   if (state.loading) return <small className="route-test-message loading">测试中，请等待模型返回...</small>;
   if (!state.message) return null;
   return <small className={state.ok ? "route-test-message success" : "route-test-message failed"}>{state.message}</small>;
+}
+
+function cleanProviderHint(hint: string | undefined, fallback: string) {
+  if (!hint) return fallback;
+  const blocked = ["MVP 优先", "优先接百炼免费额度", "最终单价", "模型基准价 × 参数倍率"];
+  return blocked.some((item) => hint.includes(item)) ? fallback : hint;
 }
 
 function filterProviders(providers: ModelProvider[], modality: ModelProvider["modality"], preferredIds: string[]) {
@@ -725,15 +768,16 @@ function filterProviders(providers: ModelProvider[], modality: ModelProvider["mo
 }
 
 function normalizeDraft(form: CreateProjectInput): CreateProjectInput {
-  const imageProvider = form.imageProvider || "zml-image";
+  const imageProvider = form.imageProvider || "dashscope-image";
+  const imageModel = !form.imageModel || failedImageModels.has(form.imageModel) ? "wan2.6-t2i" : form.imageModel;
   return {
     ...defaultForm,
     ...form,
     targetEpisodes: Math.max(1, form.targetEpisodes ?? 1),
-    textProvider: form.textProvider || "deepseek",
-    textModel: form.textModel || "deepseek-v4-pro",
+    textProvider: form.textProvider || defaultForm.textProvider,
+    textModel: form.textModel || defaultForm.textModel,
     imageProvider,
-    imageModel: form.imageModel || "gpt-image-2",
+    imageModel,
     imageSize: normalizeImageOutputSize(form.imageSize),
     imageQuality: normalizeImageOutputQuality(form.imageQuality)
   };
@@ -754,7 +798,7 @@ function buildGenerationInput(form: CreateProjectInput): CreateProjectInput {
 
 function inferSourceType(content: string): CreateProjectInput["sourceType"] {
   const text = content.trim();
-  if (/[第][一二三四五六七八九十0-9]+[场幕]|旁白|台词|INT\.|EXT\./i.test(text)) return "script";
+  if (/(第[一二三四五六七八九十0-9]+[场幕]|旁白|台词|INT\.|EXT\.)/i.test(text)) return "script";
   if (text.length > 8000) return "novel";
   if (text.length < 80) return "idea";
   return "short_story";
