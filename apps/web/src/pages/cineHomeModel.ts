@@ -44,7 +44,7 @@ export function getCardPose(index: number, activeIndex: number, expanded: boolea
       x,
       y: isActive ? -20 : depth === 1 ? 14 : 34,
       z: isActive ? 120 : -depth * 18,
-      rotateY: offset * -5,
+      rotateY: isActive ? 0 : offset * -5,
       rotateZ: offset * 7,
       scale: isActive ? 1.04 : depth === 1 ? 0.94 : 0.88,
       opacity: isActive ? 1 : depth === 1 ? 0.9 : 0.78,

@@ -45,7 +45,10 @@ test("returns the approved B1 collapsed geometry", () => {
   assert.equal(getCardPose(4, 0, false, 5).x, -20);
 });
 
-test("spreads all cards in expanded geometry", () => {
+test("returns the approved expanded geometry", () => {
+  assert.deepEqual(getCardPose(0, 0, true, 5), {
+    x: 0, y: -20, z: 120, rotateY: 0, rotateZ: 0, scale: 1.04, opacity: 1, zIndex: 90
+  });
   assert.equal(getCardPose(1, 0, true, 5).x, 124);
   assert.equal(getCardPose(2, 0, true, 5).x, 220);
   assert.equal(getCardPose(3, 0, true, 5).x, -220);
