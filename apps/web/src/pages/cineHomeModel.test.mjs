@@ -31,6 +31,14 @@ test("builds ordered fallback candidates", () => {
   ]);
 });
 
+test("keeps each scene fallback list independent", () => {
+  const desert = buildMediaCandidates("desert", "4k", "");
+  const bicycle = buildMediaCandidates("bicycle-smile", "4k", "");
+  assert.equal(desert[0], "/media/cineart-home/desert_4k.mp4");
+  assert.equal(bicycle[0], "/media/cineart-home/bicycle-smile_4k.mp4");
+  assert.notEqual(desert[1], bicycle[1]);
+});
+
 test("wraps five-card offsets around the active card", () => {
   assert.deepEqual([0, 1, 2, 3, 4].map((index) => relativeCardOffset(index, 0, 5)), [0, 1, 2, -2, -1]);
   assert.deepEqual([0, 1, 2, 3, 4].map((index) => relativeCardOffset(index, 3, 5)), [2, -2, -1, 0, 1]);
