@@ -24,7 +24,7 @@ const initialCredits = Number(process.env.PRODUCT_ADMIN_INITIAL_CREDITS ?? 10000
 const userId = process.env.PRODUCT_ADMIN_USER_ID || `user_${phone}`;
 
 if (!/^1[3-9]\d{9}$/.test(phone)) throw new Error("PRODUCT_ADMIN_PHONE must be a mainland China mobile number.");
-if (password.length < 6) throw new Error("PRODUCT_ADMIN_PASSWORD must be at least 6 chars.");
+if (password.length < 12) throw new Error("PRODUCT_ADMIN_PASSWORD must be at least 12 chars.");
 
 const preservedUsers = new Set([userId]);
 

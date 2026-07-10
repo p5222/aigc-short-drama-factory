@@ -12,6 +12,7 @@ model User {
   name         String
   email        String?       @unique
   phone        String?       @unique
+  avatarUrl    String?
   passwordHash String?
   role         String        @default("creator")
   status       String        @default("active")
@@ -26,6 +27,7 @@ model User {
   exportJobs   ExportJob[]
   analyticsEvents AnalyticsEvent[]
   feedbacks    UserFeedback[]
+  showcaseWorks ShowcaseWork[]
   lastLoginAt  DateTime?
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
@@ -82,6 +84,7 @@ model Project {
   evaluationRuns EvaluationRun[]
   feedbacks    UserFeedback[]
   analyticsEvents AnalyticsEvent[]
+  showcaseWorks ShowcaseWork[]
   createdAt    DateTime         @default(now())
   updatedAt    DateTime         @updatedAt
 }
@@ -131,6 +134,34 @@ model Asset {
   feedbacks          UserFeedback[]
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
+}
+
+model ShowcaseWork {
+  id             String    @id
+  creatorId      String?
+  creator        User?     @relation(fields: [creatorId], references: [id], onDelete: SetNull)
+  projectId      String?
+  project        Project?  @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  sourceAssetId  String?
+  title          String
+  description    String    @default("")
+  category       String    @default("AI短剧")
+  authorName     String    @default("")
+  coverUrl       String
+  videoUrl       String
+  durationLabel  String    @default("00:00")
+  status         String    @default("pending")
+  featured       Boolean   @default(false)
+  sortOrder      Int       @default(0)
+  reviewNote     String    @default("")
+  submittedAt    DateTime?
+  publishedAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([status, featured, sortOrder])
+  @@index([creatorId, createdAt])
+  @@index([projectId])
 }
 
 model Storyboard {
@@ -268,6 +299,27 @@ model PlatformAnnouncement {
   @@index([endsAt])
   @@index([createdAt])
 }
+
+model HelpArticle {
+  id        String   @id
+  title     String
+  summary   String   @default("")
+  content   String
+  category  String   @default("getting_started")
+  tags      String[]
+  enabled   Boolean  @default(true)
+  pinned    Boolean  @default(false)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([category])
+  @@index([enabled])
+  @@index([pinned])
+  @@index([sortOrder])
+  @@index([createdAt])
+}
+
 model QualityReport {
   id                String          @id
   projectId         String
@@ -312,6 +364,7 @@ model EvaluationDataset {
   sampleCount Int             @default(0)
   owner       String?
   runs        EvaluationRun[]
+  experiments ExperimentRun[]
   createdAt   DateTime        @default(now())
   updatedAt   DateTime        @updatedAt
 
@@ -329,6 +382,11 @@ model EvaluationRun {
   stages              String[]
   mode                String
   evaluatorModels     Json               @default("[]")
+  promptVersionId     String?
+  promptVersion       PromptVersion?     @relation(fields: [promptVersionId], references: [id], onDelete: SetNull)
+  promptSnapshot      Json               @default("{}")
+  generationPromptVersionId String?
+  generationPromptSnapshot  Json          @default("{}")
   maxLlmCalls         Int                @default(0)
   maxShotsPerPrompt   Int                @default(8)
   includeFeedback     Boolean            @default(true)
@@ -340,6 +398,8 @@ model EvaluationRun {
   project             Project?           @relation(fields: [primaryProjectId], references: [id], onDelete: SetNull)
   primaryProjectId    String?
   reports             QualityReport[]
+  baselineExperiments ExperimentRun[]    @relation("ExperimentBaselineRun")
+  candidateExperiments ExperimentRun[]   @relation("ExperimentCandidateRun")
   startedAt           DateTime           @default(now())
   finishedAt          DateTime?
   createdAt           DateTime           @default(now())
@@ -348,6 +408,8 @@ model EvaluationRun {
   @@index([datasetId])
   @@index([primaryProjectId])
   @@index([mode])
+  @@index([promptVersionId])
+  @@index([generationPromptVersionId])
   @@index([status])
   @@index([startedAt])
 }
@@ -357,16 +419,19 @@ model PromptVersion {
   key       String
   name      String
   stage     String
+  purpose   String   @default("evaluation")
   version   String
   content   String
   status    String   @default("draft")
   owner     String?
   notes     String   @default("")
+  runs      EvaluationRun[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@unique([key, version])
   @@index([stage])
+  @@index([purpose])
   @@index([status])
 }
 
@@ -377,6 +442,17 @@ model ExperimentRun {
   hypothesis       String
   baselineVersion  String
   candidateVersion String
+  experimentType   String    @default("model")
+  datasetId        String?
+  dataset          EvaluationDataset? @relation(fields: [datasetId], references: [id], onDelete: SetNull)
+  baselineRunId    String?
+  baselineRun      EvaluationRun? @relation("ExperimentBaselineRun", fields: [baselineRunId], references: [id], onDelete: SetNull)
+  candidateRunId   String?
+  candidateRun     EvaluationRun? @relation("ExperimentCandidateRun", fields: [candidateRunId], references: [id], onDelete: SetNull)
+  baselineConfig   Json      @default("{}")
+  candidateConfig  Json      @default("{}")
+  metrics          Json      @default("{}")
+  winner           String    @default("pending")
   trafficRatio     Int       @default(0)
   successMetric    String
   resultSummary    String    @default("")
@@ -388,6 +464,9 @@ model ExperimentRun {
 
   @@index([stage])
   @@index([status])
+  @@index([datasetId])
+  @@index([baselineRunId])
+  @@index([candidateRunId])
 }
 
 model CampaignCode {

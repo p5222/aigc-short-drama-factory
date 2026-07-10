@@ -24,11 +24,7 @@ E:\AI漫剧\start_admin_server.bat
 - API 健康检查：`http://localhost:4000/health`
 - 依赖检查：`http://localhost:4000/api/system/health/dependencies`
 
-默认账号：
-
-- 前台演示：`demo@aifilm.local` / `demo123456`
-- 也可用手机号：`13900000002` / `demo123456`
-- 后台管理员：`admin@aifilm.local` / `admin123456`
+本地开发可按 `.env` 中的种子账号调试；生产环境不要启用默认演示账号，管理员账号应使用 `deploy/reset_production_data.mjs` 或后台用户管理创建，并设置 12 位以上强密码。
 
 ## 3. 服务器安装基础环境
 

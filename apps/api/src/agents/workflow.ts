@@ -1,5 +1,5 @@
-import type { CreateProjectInput, CreationEstimate, Project, StoryboardShot } from "@aifilm/shared";
-import { estimateImageCredits, imageParameterMultiplier, normalizeImageOutputQuality, normalizeImageOutputSize } from "@aifilm/shared";
+﻿import type { CreateProjectInput, CreationEstimate, Project, StoryboardShot } from "@aifilm/shared";
+import { estimateImageCredits, normalizeImageOutputQuality, normalizeImageOutputSize } from "@aifilm/shared";
 
 export function estimateCreation(input: Pick<CreateProjectInput, "content" | "mode" | "targetEpisodes"> & Partial<Pick<CreateProjectInput, "textProvider" | "textModel" | "imageProvider" | "imageModel" | "imageSize" | "imageQuality" | "videoProvider" | "videoModel">> & { pricing?: Array<{ providerId?: string; model: string; modality: string; unitCredits: number; enabled?: boolean }> }): CreationEstimate {
   const words = input.content.trim().length;
@@ -29,9 +29,9 @@ export function estimateCreation(input: Pick<CreateProjectInput, "content" | "mo
     notes: [
       "每 2,000 字约估算为 1 集，短脑洞按 1 集计算。",
       `当前可生成上限为 ${maxEpisodes} 集，本次选择 ${suggestedEpisodes} 集。`,
-      `预计拆为 ${totalShots} 个镜头。文本、分镜图和视频会按右侧当前选择的模型价格表估算。`,
-      `生图参数按 ${imageSize} / ${imageQuality} 估算，参数倍率 ${imageParameterMultiplier(imageSize, imageQuality).toFixed(2)}，基准单价 ${imageBaseUnitCredits} 积分。`,
-      includeVideo ? "视频按每镜头约 4 秒预估；真实扣费以任务完成后的供应商返回和后台价格策略为准。" : "当前视频模型未配置启用价格，暂不计入视频预估；后续生成视频时会按后台价格策略单独扣费。"
+      `预计拆为 ${totalShots} 个镜头，文本、分镜图和视频会按当前模型价格表估算。`,
+      `生图参数按 ${imageSize} / ${imageQuality} 估算，已按当前参数折算。`,
+      includeVideo ? "视频按每镜头约 4 秒预估；实际扣费以任务完成后的后台价格策略为准。" : "当前视频模型未配置启用价格，暂不计入视频预估；后续生成视频时会按后台价格策略单独扣费。"
     ],
     breakdown: [
       {
@@ -50,7 +50,7 @@ export function estimateCreation(input: Pick<CreateProjectInput, "content" | "mo
         quantity: totalShots,
         unitCredits: imageUnitCredits,
         totalCredits: imageTotal,
-        hint: `按镜头数预估。当前参数 ${imageSize} / ${imageQuality}，基准 ${imageBaseUnitCredits} 积分，最终单价按参数倍率取整。`
+        hint: `按镜头数预估。当前参数 ${imageSize} / ${imageQuality}，已按后台价格策略折算。`
       },
       ...(includeVideo
         ? [{
@@ -140,8 +140,8 @@ export function buildDemoStoryboard(projectId: string): StoryboardShot[] {
       referenceAssetIds: ["role_main", "role_rival", "scene_rooftop"],
       status: "pending",
       action: "主角回头，对手向前一步",
-      orientation: "主角-3/4正面朝右；对手-3/4正面朝左",
-      spatialRelation: "主角(左前)、对手(右后)",
+      orientation: "主角 3/4 正面朝右；对手 3/4 正面朝左",
+      spatialRelation: "主角在左前方，对手在右后方",
       emotion: "压抑对峙"
     }
   ];

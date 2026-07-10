@@ -546,6 +546,13 @@ async function synthesizeNarrationWav(
       return fallbackAfterOpenSourceTtsFailure(session, workflow, cues, `VibeVoice 自托管适配失败：${formatError(error)}`);
     }
   }
+  if (requestedProvider === "longcat-audiodit") {
+    try {
+      return await createLongCatAudioDitNarration(session, cues);
+    } catch (error) {
+      return fallbackAfterOpenSourceTtsFailure(session, workflow, cues, `LongCat-AudioDiT 配音失败：${formatError(error)}`);
+    }
+  }
   const canUseWindowsSapi = process.platform === "win32" && (!requestedProvider || requestedProvider === "windows-sapi" || requestedProvider === "local-tts");
   if (canUseWindowsSapi && cues.some((cue) => cue.text)) {
     try {
@@ -619,6 +626,203 @@ async function createVibeVoiceNarration(cues: ReturnType<typeof buildVoiceCues>)
   };
   const audio = await postJsonForAudio(endpoint, payload, "vibevoice");
   return { ...audio, provider: "vibevoice", warnings: [] };
+}
+
+async function createLongCatAudioDitNarration(session: ExportSession, cues: ReturnType<typeof buildVoiceCues>) {
+  const runtime = resolveLongCatAudioDitRuntime();
+  const voicedCues = cues.filter((cue) => cue.text);
+  if (!voicedCues.length) {
+    return {
+      buffer: pcm16Wav(new Array(24_000).fill(0), 24_000),
+      provider: "longcat-audiodit",
+      ext: "wav" as const,
+      warnings: ["当前项目没有可配音台词，LongCat-AudioDiT 已生成 1 秒静音音轨用于保持导出链路完整。"]
+    };
+  }
+
+  const payload = {
+    provider: "longcat-audiodit",
+    model: runtime.model,
+    sampleRate: 24_000,
+    nfe: runtime.nfe,
+    guidanceMethod: runtime.guidanceMethod,
+    guidanceStrength: runtime.guidanceStrength,
+    seed: runtime.seed,
+    dtype: runtime.dtype,
+    device: runtime.device,
+    tokenizerModel: runtime.tokenizerModel,
+    segments: cues.map((cue, index) => buildLongCatSegmentPayload(cue, index, runtime.mode))
+  };
+
+  if (runtime.mode === "http") {
+    await writeSessionText(session, "longcat-audiodit-request.json", JSON.stringify({
+      mode: "http",
+      endpoint: runtime.endpoint,
+      payload: redactPayload(payload)
+    }, null, 2));
+    const audio = await postJsonForAudio(runtime.endpoint, payload, "longcat-audiodit", {
+      apiKey: runtime.apiKey,
+      timeoutMs: runtime.timeoutMs
+    });
+    return { ...audio, provider: "longcat-audiodit", warnings: [] };
+  }
+
+  const cueFile = fileInSession(session, "longcat-audiodit-cues.json");
+  const outputFile = fileInSession(session, "longcat-audiodit.wav");
+  await writeFile(cueFile.path, JSON.stringify({ ...payload, outputAudio: outputFile.path }, null, 2), "utf8");
+  const args = [runtime.bridge, "--input", cueFile.path, "--output", outputFile.path];
+  if (runtime.repoDir) args.push("--repo_dir", runtime.repoDir);
+  const result = await runProcess(runtime.python, args, runtime.timeoutMs);
+  await writeSessionText(session, "longcat-audiodit-result.json", JSON.stringify({
+    mode: "bridge",
+    bridge: runtime.bridge,
+    repoDir: runtime.repoDir,
+    exitCode: result.exitCode,
+    timedOut: result.timedOut,
+    stdout: result.stdout,
+    stderr: result.stderr,
+    errorMessage: result.errorMessage
+  }, null, 2));
+  if (result.exitCode !== 0) {
+    const tail = (result.stderr || result.stdout || result.errorMessage || "unknown error").slice(-1200);
+    throw new Error(`LongCat-AudioDiT bridge failed: ${tail}`);
+  }
+  const buffer = await readFile(outputFile.path);
+  if (buffer.toString("ascii", 0, 4) !== "RIFF") throw new Error("LongCat-AudioDiT bridge did not create WAV audio");
+  return { buffer, provider: "longcat-audiodit", ext: "wav" as const, warnings: [] };
+}
+
+type LongCatTransport = "http" | "bridge";
+
+interface LongCatAudioDitRuntime {
+  mode: LongCatTransport;
+  model: string;
+  nfe: number;
+  guidanceMethod: "cfg" | "apg";
+  guidanceStrength: number;
+  seed: number;
+  dtype?: string;
+  device?: string;
+  tokenizerModel?: string;
+  timeoutMs: number;
+  endpoint: string;
+  apiKey?: string;
+  python: string;
+  bridge: string;
+  repoDir?: string;
+}
+
+function resolveLongCatAudioDitRuntime(): LongCatAudioDitRuntime {
+  const baseUrl = process.env.LONGCAT_AUDIODIT_BASE_URL || process.env.LONGCAT_BASE_URL || process.env.TTS_BASE_URL;
+  const allowLocalBridge = truthyEnv("LONGCAT_AUDIODIT_ALLOW_LOCAL_BRIDGE");
+  if (!baseUrl && !allowLocalBridge) {
+    throw new Error("LongCat-AudioDiT is cloud/server-side by default. Configure LONGCAT_AUDIODIT_BASE_URL to a GPU sidecar, or set LONGCAT_AUDIODIT_ALLOW_LOCAL_BRIDGE=true only for explicit local development.");
+  }
+  const mode: LongCatTransport = baseUrl ? "http" : "bridge";
+  const model = process.env.LONGCAT_AUDIODIT_MODEL || process.env.LONGCAT_MODEL || process.env.TTS_MODEL || "meituan-longcat/LongCat-AudioDiT-1B";
+  const guidanceMethod = (process.env.LONGCAT_AUDIODIT_GUIDANCE_METHOD || "apg").toLowerCase() === "cfg" ? "cfg" : "apg";
+  return {
+    mode,
+    model,
+    nfe: positiveNumberEnv("LONGCAT_AUDIODIT_NFE", 16),
+    guidanceMethod,
+    guidanceStrength: positiveNumberEnv("LONGCAT_AUDIODIT_GUIDANCE_STRENGTH", 4),
+    seed: positiveNumberEnv("LONGCAT_AUDIODIT_SEED", 1024),
+    dtype: process.env.LONGCAT_AUDIODIT_DTYPE,
+    device: process.env.LONGCAT_AUDIODIT_DEVICE,
+    tokenizerModel: process.env.LONGCAT_AUDIODIT_TOKENIZER_MODEL,
+    timeoutMs: positiveNumberEnv("LONGCAT_AUDIODIT_TIMEOUT_MS", positiveNumberEnv("TTS_REQUEST_TIMEOUT_MS", 900_000)),
+    endpoint: baseUrl ? endpointFromBase(baseUrl, process.env.LONGCAT_AUDIODIT_TTS_PATH || "/tts") : "",
+    apiKey: process.env.LONGCAT_AUDIODIT_API_KEY || process.env.LONGCAT_API_KEY || process.env.TTS_API_KEY,
+    python: process.env.LONGCAT_AUDIODIT_PYTHON || process.env.PYTHON_BIN || "python",
+    bridge: process.env.LONGCAT_AUDIODIT_BRIDGE || resolve(projectRootPath(), "tools/longcat-audiodit/longcat_tts_bridge.py"),
+    repoDir: process.env.LONGCAT_AUDIODIT_REPO_DIR
+  };
+}
+
+function buildLongCatSegmentPayload(cue: ReturnType<typeof buildVoiceCues>[number], index: number, transport: LongCatTransport) {
+  const prompt = resolveLongCatPrompt(cue, transport);
+  return {
+    id: cue.shotId,
+    index: index + 1,
+    shotId: cue.shotId,
+    speaker: cue.speaker,
+    role: cue.speaker,
+    voice: cue.voice,
+    text: cue.text,
+    duration: cue.duration,
+    promptText: prompt.promptText,
+    promptAudio: prompt.promptAudio
+  };
+}
+
+function resolveLongCatPrompt(cue: ReturnType<typeof buildVoiceCues>[number], transport: LongCatTransport) {
+  const map = parseLongCatPromptMap(process.env.LONGCAT_AUDIODIT_PROMPT_MAP || process.env.LONGCAT_PROMPT_MAP || process.env.TTS_PROMPT_MAP);
+  const profile = map[cue.speaker] || (cue.voice ? map[cue.voice] : undefined) || map.default || {};
+  const promptText = profile.promptText || process.env.LONGCAT_AUDIODIT_PROMPT_TEXT || process.env.TTS_PROMPT_TEXT;
+  const promptAudio = profile.promptAudio || process.env.LONGCAT_AUDIODIT_PROMPT_AUDIO || process.env.TTS_PROMPT_AUDIO;
+  return {
+    promptText,
+    promptAudio: resolveLongCatPromptAudio(promptAudio, transport)
+  };
+}
+
+function resolveLongCatPromptAudio(value: string | undefined, transport: LongCatTransport) {
+  if (!value) return undefined;
+  if (transport === "bridge") {
+    if (value.startsWith("/storage/")) return localStoragePath(value) || value;
+    return value.replace(/^file:\/\//, "");
+  }
+  if (value.startsWith("/storage/") && process.env.PUBLIC_API_BASE_URL) {
+    return endpointFromBase(process.env.PUBLIC_API_BASE_URL, value);
+  }
+  return value;
+}
+
+function parseLongCatPromptMap(value?: string) {
+  if (!value) return {} as Record<string, { promptText?: string; promptAudio?: string }>;
+  try {
+    const parsed = JSON.parse(value) as Record<string, unknown>;
+    return Object.fromEntries(Object.entries(parsed).map(([speaker, entry]) => [speaker, normalizeLongCatPromptProfile(entry)]));
+  } catch {
+    const entries: Array<[string, { promptAudio?: string; promptText?: string }]> = [];
+    value.split(/[;,]/).forEach((item) => {
+      const match = item.match(/^([^:=]+)[:=](.+)$/);
+      if (!match) return;
+      const speaker = match[1]?.trim();
+      if (!speaker) return;
+      const [audio, promptText] = (match[2] || "").split("|").map((part) => part.trim());
+      entries.push([speaker, { promptAudio: audio || undefined, promptText: promptText || undefined }]);
+    });
+    return Object.fromEntries(entries);
+  }
+}
+
+function normalizeLongCatPromptProfile(value: unknown): { promptText?: string; promptAudio?: string } {
+  if (typeof value === "string") return { promptAudio: value };
+  if (!value || typeof value !== "object") return {};
+  const profile = value as Record<string, unknown>;
+  return {
+    promptText: stringField(profile.promptText) || stringField(profile.prompt_text) || stringField(profile.text) || stringField(profile.transcript),
+    promptAudio: stringField(profile.promptAudio) || stringField(profile.prompt_audio) || stringField(profile.audio) || stringField(profile.audioPath) || stringField(profile.referenceAudio)
+  };
+}
+
+function stringField(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function positiveNumberEnv(key: string, fallback: number) {
+  const value = Number(process.env[key]);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function truthyEnv(key: string) {
+  return /^(1|true|yes|on)$/i.test(process.env[key] || "");
+}
+
+function projectRootPath() {
+  return resolve(dirname(fileURLToPath(import.meta.url)), "../../../../");
 }
 
 async function createDashScopeTtsNarration(session: ExportSession, cues: ReturnType<typeof buildVoiceCues>) {
@@ -756,15 +960,21 @@ async function fallbackAfterOpenSourceTtsFailure(
   return { buffer: createScratchNarrationWav(workflow, cues), provider: "scratch-local-wav", ext: "wav", warnings: [warning] };
 }
 
-async function postJsonForAudio(endpoint: string, payload: unknown, provider: string): Promise<{ buffer: Buffer; ext: "wav" | "mp3" }> {
+async function postJsonForAudio(
+  endpoint: string,
+  payload: unknown,
+  provider: string,
+  options: { apiKey?: string; timeoutMs?: number } = {}
+): Promise<{ buffer: Buffer; ext: "wav" | "mp3" }> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), Number(process.env.TTS_REQUEST_TIMEOUT_MS ?? 300_000));
+  const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? Number(process.env.TTS_REQUEST_TIMEOUT_MS ?? 300_000));
+  const apiKey = options.apiKey || process.env.TTS_API_KEY;
   try {
     const response = await fetch(endpoint, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        ...(process.env.TTS_API_KEY ? { Authorization: `Bearer ${process.env.TTS_API_KEY}` } : {})
+        ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {})
       },
       body: JSON.stringify(payload),
       signal: controller.signal
@@ -773,14 +983,14 @@ async function postJsonForAudio(endpoint: string, payload: unknown, provider: st
     const bytes = Buffer.from(await response.arrayBuffer());
     if (!response.ok) throw new Error(`${provider} HTTP ${response.status}: ${bytes.toString("utf8").slice(0, 500)}`);
     return contentType.includes("json") || looksLikeJson(bytes)
-      ? await audioFromJsonResponse(bytes, endpoint)
+      ? await audioFromJsonResponse(bytes, endpoint, apiKey)
       : { buffer: bytes, ext: audioExtFromMime(contentType, bytes) };
   } finally {
     clearTimeout(timeout);
   }
 }
 
-async function audioFromJsonResponse(bytes: Buffer, endpoint: string): Promise<{ buffer: Buffer; ext: "wav" | "mp3" }> {
+async function audioFromJsonResponse(bytes: Buffer, endpoint: string, apiKey?: string): Promise<{ buffer: Buffer; ext: "wav" | "mp3" }> {
   const data = JSON.parse(bytes.toString("utf8")) as any;
   const base64Audio = data.audio || data.audioBase64 || data.data?.audio || data.data?.audioBase64 || data.result?.audio;
   if (typeof base64Audio === "string" && base64Audio.length > 32) {
@@ -791,7 +1001,7 @@ async function audioFromJsonResponse(bytes: Buffer, endpoint: string): Promise<{
   const audioUrl = findAudioUrl(data);
   if (!audioUrl) throw new Error(`TTS 服务返回 JSON，但未找到 audio/url 字段：${JSON.stringify(data).slice(0, 500)}`);
   const resolvedUrl = new URL(audioUrl, endpoint).toString();
-  const response = await fetch(resolvedUrl, { headers: process.env.TTS_API_KEY ? { Authorization: `Bearer ${process.env.TTS_API_KEY}` } : {} });
+  const response = await fetch(resolvedUrl, { headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {} });
   const contentType = response.headers.get("content-type") || "";
   const audioBytes = Buffer.from(await response.arrayBuffer());
   if (!response.ok) throw new Error(`下载 TTS 音频失败 ${response.status}: ${audioBytes.toString("utf8").slice(0, 300)}`);
@@ -831,11 +1041,14 @@ function normalizeTtsProvider(value: string) {
   if (normalized === "easyvoice") return "easyvoice";
   if (normalized === "voicebox") return "voicebox";
   if (normalized === "vibevoice" || normalized === "vibevoicetts") return "vibevoice";
+  if (normalized === "longcataudiodit" || normalized === "longcattts" || normalized === "audiodit") return "longcat-audiodit";
   if (normalized === "windowssapi" || normalized === "sapi" || normalized === "localtts") return "windows-sapi";
   return value.trim().toLowerCase();
 }
 
 function inferConfiguredTtsProvider() {
+  if (process.env.LONGCAT_AUDIODIT_BASE_URL || process.env.LONGCAT_BASE_URL) return "longcat-audiodit";
+  if (truthyEnv("LONGCAT_AUDIODIT_ALLOW_LOCAL_BRIDGE") && (process.env.LONGCAT_AUDIODIT_REPO_DIR || process.env.LONGCAT_AUDIODIT_BRIDGE)) return "longcat-audiodit";
   if (process.env.DASHSCOPE_TTS_API_KEY || process.env.DASHSCOPE_API_KEY) return "dashscope-tts";
   if (process.env.EASYVOICE_BASE_URL) return "easyvoice";
   if (process.env.VOICEBOX_BASE_URL) return "voicebox";
@@ -852,10 +1065,10 @@ function inferCueSpeaker(shot: StoryboardShot, rawText: string) {
 
 function resolveCueVoice(workflow: ProjectWorkflow, shot: StoryboardShot, rawText: string) {
   const speaker = inferCueSpeaker(shot, rawText);
-  const map = parseVoiceMap(process.env.DASHSCOPE_TTS_VOICE_MAP || process.env.EASYVOICE_VOICE_MAP || process.env.VOICEBOX_PROFILE_MAP || process.env.TTS_VOICE_MAP);
+  const map = parseVoiceMap(process.env.LONGCAT_AUDIODIT_VOICE_MAP || process.env.DASHSCOPE_TTS_VOICE_MAP || process.env.EASYVOICE_VOICE_MAP || process.env.VOICEBOX_PROFILE_MAP || process.env.TTS_VOICE_MAP);
   if (map[speaker]) return map[speaker];
   const character = workflow.characters.find((item) => item.name === speaker) ?? workflow.characters.find((item) => shot.characters.includes(item.name));
-  return character?.voiceId || process.env.DASHSCOPE_TTS_DEFAULT_VOICE || process.env.EASYVOICE_DEFAULT_VOICE || process.env.TTS_VOICE;
+  return character?.voiceId || process.env.LONGCAT_AUDIODIT_DEFAULT_VOICE || process.env.DASHSCOPE_TTS_DEFAULT_VOICE || process.env.EASYVOICE_DEFAULT_VOICE || process.env.TTS_VOICE;
 }
 
 function parseVoiceMap(value?: string) {
@@ -877,6 +1090,7 @@ function ttsProviderNote(provider: string) {
   if (provider === "easyvoice") return "当前使用 easyVoice 开源 TTS 服务生成多角色/长文本配音，输出音频会进入最终 MP4 合成。";
   if (provider === "voicebox") return "当前使用 Voicebox 开源本地语音服务生成配音；多角色可通过 profile map 在环境变量中配置。";
   if (provider === "vibevoice") return "当前使用自托管 VibeVoice-TTS 兼容服务生成长文本多说话人配音。";
+  if (provider === "longcat-audiodit") return "当前使用 LongCat-AudioDiT 开源扩散式 TTS 生成角色台词配音；可通过 prompt map 为角色绑定参考音频和文本。";
   if (provider === "windows-sapi") return "当前使用 Windows 系统语音合成生成与镜头时长对齐的 WAV；生产部署可切换到开源 TTS 服务。";
   return "当前内置 scratch-local-wav 会生成与镜头时长对齐的占位配音 WAV；接入开源 TTS 服务后可复用同一 cue 清单替换音频。";
 }

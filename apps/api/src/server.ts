@@ -20,6 +20,8 @@ import {
   createMembershipPlan,
   createModelPrice,
   createPlan,
+  createPlatformAnnouncement,
+  createHelpArticle,
   createProvider,
   createProjectExportJob,
   createPromptTemplate,
@@ -31,6 +33,8 @@ import {
   deleteMembershipPlan,
   deleteModelPrice,
   deletePlan,
+  deletePlatformAnnouncement,
+  deleteHelpArticle,
   deletePromptTemplate,
   deleteProvider,
   deleteRedeemCode,
@@ -52,7 +56,10 @@ import {
   listModelPrices,
   listPaymentRecords,
   listPlans,
+  listAdminAnnouncements,
+  listAdminHelpArticles,
   listProjects,
+  listPublicHelpArticles,
   listProviders,
   listRechargeOrders,
   pruneUserProjectsToLatest,
@@ -70,30 +77,50 @@ import {
   updateMembershipPlan,
   updateModelPrice,
   updatePlan,
+  updatePlatformAnnouncement,
+  updateHelpArticle,
   updateProvider,
   updatePromptTemplate,
   updateRedeemCode
 } from "./db/repository.js";
 import { prisma } from "./db/client.js";
-import { deleteCharacterReferenceImage, generateCharacterReferenceImages, regenerateStoryboardShotImage, runProjectStoryboardTasks, setCharacterReferenceImage, updateStoryboardShot } from "./db/storyboardActions.js";
+import { deleteCharacterReferenceImageV2, generateCharacterReferenceImages, regenerateStoryboardShotImage, runProjectStoryboardTasks, setCharacterReferenceImageV2, updateStoryboardShot } from "./db/storyboardActions.js";
 import {
   createEvaluationDataset,
+  createExperimentRun,
+  createPromptVersion,
   createUserFeedback,
   deleteEvaluationDataset,
   deleteEvaluationRun,
   deleteProjectQualityData,
   generateProjectQualityReports,
+  getAdminQualityCenter,
   getAdminEvaluationOverview,
   getEvaluationRun,
   getProjectQualityReports,
   listAdminFeedback,
+  listAdminFeedbackPage,
   listEvaluationDatasets,
+  listEvaluationDatasetsPage,
   listEvaluationRuns,
+  listEvaluationRunsPage,
+  listExperimentRunsPage,
+  listPromptVersionsPage,
   listAdminQualityProjects,
   recordAnalyticsEvent,
   runQualityEvaluation,
-  updateAdminFeedback
+  updateAdminFeedback,
+  updatePromptVersion
 } from "./db/evaluation.js";
+import {
+  createCreatorShowcaseWork,
+  listAdminShowcaseWorks,
+  listCreatorShowcaseWorks,
+  listPublicShowcaseWorks,
+  resubmitCreatorShowcaseWork,
+  reviewAdminShowcaseWork,
+  updateAdminShowcaseWork
+} from "./db/showcase.js";
 import { testImageModelConnection } from "./providers/dashscopeImage.js";
 import { testVideoModelConnection } from "./providers/video.js";
 import { listVisualPipelines, testVisualPipeline } from "./providers/visualPipelineRegistry.js";
@@ -106,7 +133,26 @@ const authSessionTtlDays = Number(process.env.AUTH_SESSION_TTL_DAYS ?? 30);
 const rateLimitWindowMs = Number(process.env.API_RATE_LIMIT_WINDOW_MS ?? 60_000);
 const rateLimitMax = Number(process.env.API_RATE_LIMIT_MAX ?? 180);
 const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
+const isProduction = process.env.NODE_ENV === "production";
+const mockPaymentEnabled = process.env.ENABLE_MOCK_PAYMENT === "true" || !isProduction;
+const publicStorageBuckets = new Set(
+  (process.env.PUBLIC_STORAGE_BUCKETS ?? "images,videos,audio,exports")
+    .split(",")
+    .map((bucket) => bucket.trim())
+    .filter(Boolean)
+);
 
+app.disable("x-powered-by");
+app.use((req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  res.setHeader("X-Frame-Options", "DENY");
+  if (isProduction) {
+    res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  }
+  next();
+});
 app.use(
   cors({
     origin: process.env.WEB_ORIGIN ?? ["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -114,7 +160,18 @@ app.use(
   })
 );
 app.use(express.json({ limit: "12mb" }));
-app.use("/storage", express.static(storageRoot));
+app.use(
+  "/storage",
+  (req, res, next) => {
+    const bucket = req.path.split(/[\\/]/).filter(Boolean)[0] ?? "";
+    if (!publicStorageBuckets.has(bucket)) {
+      return res.status(404).json({ message: "Storage object is not public." });
+    }
+    res.setHeader("Cache-Control", "public, max-age=604800, immutable");
+    next();
+  },
+  express.static(storageRoot, { fallthrough: false, index: false, maxAge: "7d" })
+);
 app.use((req, res, next) => {
   const key = `${req.ip}:${req.path.startsWith("/api/auth") ? "auth" : "api"}`;
   const now = Date.now();
@@ -181,6 +238,18 @@ const registerSchema = z.object({
 const loginSchema = z.object({
   account: z.string().min(1),
   password: z.string().min(6)
+});
+
+const profileUpdateSchema = z.object({
+  name: z.string().trim().min(1, "用户名不能为空").max(40, "用户名最多 40 个字符").optional(),
+  email: z.string().trim().email("请输入有效邮箱").max(120, "邮箱最多 120 个字符").optional(),
+  avatarUrl: z.string().max(120_000, "头像文件过大").nullable().optional(),
+  currentPassword: z.string().min(1, "请输入当前密码").optional()
+});
+
+const passwordChangeSchema = z.object({
+  currentPassword: z.string().min(1, "请输入当前密码"),
+  newPassword: z.string().min(8, "新密码至少 8 个字符").max(72, "新密码最多 72 个字符")
 });
 
 const modelPriceUpdateSchema = z.object({
@@ -329,7 +398,7 @@ const exportJobCreateSchema = z.object({
 
 const adminUserUpdateSchema = z.object({
   name: z.string().min(1).optional(),
-  role: z.enum(["creator", "admin", "operator", "finance", "support"]).optional(),
+  role: z.enum(["creator", "admin"]).optional(),
   status: z.enum(["active", "disabled"]).optional()
 });
 
@@ -337,14 +406,14 @@ const adminUserCreateSchema = z.object({
   name: z.string().min(1),
   email: z.string().email().optional(),
   phone: z.string().regex(/^1[3-9]\d{9}$/, "请输入 11 位中国大陆手机号").optional(),
-  password: z.string().min(6),
-  role: z.enum(["creator", "admin", "operator", "finance", "support"]).optional(),
+  password: z.string().min(12),
+  role: z.enum(["creator", "admin"]).optional(),
   status: z.enum(["active", "disabled"]).optional(),
   initialCredits: z.coerce.number().int().min(0).optional()
 });
 
 const resetPasswordSchema = z.object({
-  password: z.string().min(6)
+  password: z.string().min(12)
 });
 
 const promptTemplateUpdateSchema = z.object({
@@ -412,6 +481,10 @@ const imageGenerateSchema = z.object({
 
 const evaluationStageSchema = z.enum(["script", "character", "storyboard", "image", "video"]);
 
+const qualityReportGenerateSchema = z.object({
+  stages: z.array(evaluationStageSchema).optional()
+});
+
 const analyticsEventSchema = z.object({
   sessionId: z.string().max(120).optional(),
   eventName: z.string().min(1).max(120),
@@ -445,6 +518,35 @@ const feedbackUpdateSchema = z.object({
   convertedDatasetId: z.string().max(120).nullable().optional()
 });
 
+const announcementTypeSchema = z.enum(["info", "guide", "update", "warning"]);
+
+const announcementCreateSchema = z.object({
+  title: z.string().min(1).max(80),
+  body: z.string().min(1).max(600),
+  type: announcementTypeSchema.default("info"),
+  enabled: z.boolean().optional(),
+  pinned: z.boolean().optional(),
+  startsAt: z.string().datetime().nullable().optional(),
+  endsAt: z.string().datetime().nullable().optional()
+});
+
+const announcementUpdateSchema = announcementCreateSchema.partial();
+
+const helpArticleCategorySchema = z.enum(["getting_started", "workflow", "billing", "account", "troubleshooting", "community"]);
+
+const helpArticleCreateSchema = z.object({
+  title: z.string().min(1).max(80),
+  summary: z.string().max(160).optional(),
+  content: z.string().min(1).max(3000),
+  category: helpArticleCategorySchema.default("getting_started"),
+  tags: z.array(z.string().max(24)).max(8).optional(),
+  enabled: z.boolean().optional(),
+  pinned: z.boolean().optional(),
+  sortOrder: z.coerce.number().int().min(0).max(9999).optional()
+});
+
+const helpArticleUpdateSchema = helpArticleCreateSchema.partial();
+
 const evaluationDatasetCreateSchema = z.object({
   name: z.string().min(1).max(80),
   description: z.string().max(500).optional(),
@@ -466,9 +568,41 @@ const evaluationRunSchema = z.object({
     model: z.string().min(1),
     name: z.string().optional()
   })).max(6).optional(),
+  promptVersionId: z.string().max(120).optional(),
+  generationPromptVersionId: z.string().max(120).optional(),
   maxLlmCalls: z.coerce.number().int().min(0).max(50).optional(),
   maxShotsPerPrompt: z.coerce.number().int().min(1).max(25).optional(),
   includeFeedback: z.boolean().optional()
+});
+
+const promptVersionCreateSchema = z.object({
+  key: z.string().trim().min(1).max(80),
+  name: z.string().trim().min(1).max(100),
+  stage: evaluationStageSchema,
+  purpose: z.enum(["generation", "evaluation"]),
+  version: z.string().trim().min(1).max(40),
+  content: z.string().trim().min(1).max(20_000),
+  status: z.enum(["draft", "active", "archived"]).optional(),
+  owner: z.string().max(80).optional(),
+  notes: z.string().max(800).optional()
+});
+
+const promptVersionUpdateSchema = z.object({
+  name: z.string().trim().min(1).max(100).optional(),
+  content: z.string().trim().min(1).max(20_000).optional(),
+  status: z.enum(["draft", "active", "archived"]).optional(),
+  owner: z.string().max(80).nullable().optional(),
+  notes: z.string().max(800).optional()
+});
+
+const experimentRunCreateSchema = z.object({
+  name: z.string().trim().min(1).max(100),
+  stage: evaluationStageSchema,
+  hypothesis: z.string().trim().min(1).max(1000),
+  experimentType: z.enum(["model", "prompt", "combined"]),
+  baselineRunId: z.string().min(1).max(120),
+  candidateRunId: z.string().min(1).max(120),
+  successMetric: z.string().max(200).optional()
 });
 
 const writingAgentSchema = z.object({
@@ -502,7 +636,51 @@ const visualPipelineTestSchema = z.object({
   pipelineId: z.string().min(1)
 });
 
+const showcaseCreateSchema = z.object({
+  projectId: z.string().min(1),
+  sourceAssetId: z.string().min(1).optional(),
+  videoUrl: z.string().min(1).max(2048).optional(),
+  title: z.string().trim().min(1).max(120),
+  description: z.string().trim().max(1200).optional(),
+  category: z.string().trim().min(1).max(40).optional(),
+  coverUrl: z.string().trim().max(2048).optional(),
+  durationLabel: z.string().trim().max(20).optional()
+}).refine((data) => Boolean(data.sourceAssetId || data.videoUrl), { message: "请选择视频资产或 MP4 导出文件。" });
+
+const showcaseAdminUpdateSchema = z.object({
+  title: z.string().trim().min(1).max(120).optional(),
+  description: z.string().trim().max(1200).optional(),
+  category: z.string().trim().min(1).max(40).optional(),
+  authorName: z.string().trim().max(80).optional(),
+  coverUrl: z.string().trim().min(1).max(2048).optional(),
+  videoUrl: z.string().trim().min(1).max(2048).optional(),
+  durationLabel: z.string().trim().max(20).optional(),
+  featured: z.boolean().optional(),
+  sortOrder: z.coerce.number().int().min(0).max(100000).optional()
+});
+
+const showcaseReviewSchema = z.object({
+  decision: z.enum(["approve", "reject"]),
+  note: z.string().trim().max(1000).optional()
+});
+
 const paramId = (value: string | string[] | undefined) => (Array.isArray(value) ? value[0] : value ?? "");
+
+function toAnnouncementPayload(data: z.infer<typeof announcementCreateSchema>) {
+  return {
+    ...data,
+    startsAt: data.startsAt === undefined ? undefined : data.startsAt ? new Date(data.startsAt) : null,
+    endsAt: data.endsAt === undefined ? undefined : data.endsAt ? new Date(data.endsAt) : null
+  };
+}
+
+function toAnnouncementUpdatePayload(data: z.infer<typeof announcementUpdateSchema>) {
+  return {
+    ...data,
+    startsAt: data.startsAt === undefined ? undefined : data.startsAt ? new Date(data.startsAt) : null,
+    endsAt: data.endsAt === undefined ? undefined : data.endsAt ? new Date(data.endsAt) : null
+  };
+}
 
 function localStorageDownloadPath(storageUrl: string) {
   if (!storageUrl.startsWith("/storage/")) return undefined;
@@ -557,12 +735,13 @@ function bearerToken(req: express.Request) {
   return header?.startsWith("Bearer ") ? header.slice("Bearer ".length).trim() : "";
 }
 
-function publicUser(user: { id: string; name: string; email?: string | null; phone?: string | null; role: string; status: string }) {
+function publicUser(user: { id: string; name: string; email?: string | null; phone?: string | null; avatarUrl?: string | null; role: string; status: string }) {
   return {
     id: user.id,
     name: user.name,
     email: user.email ?? undefined,
     phone: user.phone ?? undefined,
+    avatarUrl: user.avatarUrl ?? undefined,
     role: user.role,
     status: user.status
   };
@@ -578,9 +757,6 @@ function requestAuthUser(req: express.Request) {
 
 const adminRolePermissions: Record<string, string[]> = {
   admin: ["*"],
-  operator: ["dashboard:read", "models:manage", "redeem:manage", "templates:read", "templates:manage", "users:read", "users:manage", "credits:adjust"],
-  finance: ["dashboard:read", "billing:manage", "credits:adjust", "users:read"],
-  support: ["dashboard:read", "users:read", "credits:adjust"],
   creator: []
 };
 
@@ -670,7 +846,8 @@ app.get(
     }
 
     const ok = checks.database && checks.redis;
-    res.status(ok ? 200 : 503).json({ ok, checks, errors });
+    const includeDetails = process.env.API_HEALTH_DETAILS === "true" || !isProduction;
+    res.status(ok ? 200 : 503).json(includeDetails ? { ok, checks, errors } : { ok, checks });
   })
 );
 
@@ -741,6 +918,77 @@ app.get(
   })
 );
 
+app.patch(
+  "/api/auth/profile",
+  asyncRoute(async (req, res) => {
+    const authUser = await resolveAuthUser(req);
+    if (!authUser) return res.status(401).json({ message: "登录已过期，请重新登录。" });
+    const parsed = profileUpdateSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json(parsed.error.flatten());
+
+    const data: { name?: string; email?: string; avatarUrl?: string | null } = {};
+    if (parsed.data.name !== undefined) data.name = parsed.data.name;
+    if (parsed.data.avatarUrl !== undefined) data.avatarUrl = parsed.data.avatarUrl || null;
+
+    if (parsed.data.email !== undefined) {
+      const nextEmail = parsed.data.email.trim().toLowerCase();
+      if (!parsed.data.currentPassword) return res.status(400).json({ message: "修改邮箱需要输入当前密码。" });
+
+      const currentUser = await prisma.user.findUnique({ where: { id: authUser.id } });
+      if (!currentUser) return res.status(401).json({ message: "用户不存在，请重新登录。" });
+      const validPassword = await verifyPassword(parsed.data.currentPassword, currentUser.passwordHash);
+      if (!validPassword) return res.status(400).json({ message: "当前密码不正确，无法修改邮箱。" });
+
+      const existingEmail = await prisma.user.findFirst({
+        where: { email: nextEmail, id: { not: authUser.id } },
+        select: { id: true }
+      });
+      if (existingEmail) return res.status(409).json({ message: "该邮箱已绑定其他账号。" });
+      data.email = nextEmail;
+    }
+
+    const user = await prisma.user.update({
+      where: { id: authUser.id },
+      data
+    });
+
+    res.json({ user: publicUser(user) });
+  })
+);
+
+app.post(
+  "/api/auth/password",
+  asyncRoute(async (req, res) => {
+    const authUser = await resolveAuthUser(req);
+    if (!authUser) return res.status(401).json({ message: "登录已过期，请重新登录。" });
+    const parsed = passwordChangeSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json(parsed.error.flatten());
+
+    const user = await prisma.user.findUnique({ where: { id: authUser.id } });
+    if (!user) return res.status(401).json({ message: "用户不存在，请重新登录。" });
+    const validPassword = await verifyPassword(parsed.data.currentPassword, user.passwordHash);
+    if (!validPassword) return res.status(400).json({ message: "当前密码不正确。" });
+
+    const token = bearerToken(req);
+    await prisma.$transaction([
+      prisma.user.update({
+        where: { id: user.id },
+        data: { passwordHash: await hashPassword(parsed.data.newPassword) }
+      }),
+      prisma.authSession.updateMany({
+        where: {
+          userId: user.id,
+          revokedAt: null,
+          ...(token ? { tokenHash: { not: hashAuthToken(token) } } : {})
+        },
+        data: { revokedAt: new Date() }
+      })
+    ]);
+
+    res.json({ ok: true });
+  })
+);
+
 app.post(
   "/api/auth/logout",
   asyncRoute(async (req, res) => {
@@ -752,6 +1000,25 @@ app.post(
       });
     }
     res.json({ ok: true });
+  })
+);
+
+app.get(
+  "/api/help/articles",
+  asyncRoute(async (_req, res) => {
+    res.json(await listPublicHelpArticles());
+  })
+);
+
+app.get(
+  "/api/showcase/works",
+  asyncRoute(async (req, res) => {
+    res.json(await listPublicShowcaseWorks({
+      page: Number(req.query.page ?? 1),
+      pageSize: Number(req.query.pageSize ?? 20),
+      keyword: String(req.query.keyword ?? ""),
+      category: String(req.query.category ?? "全部")
+    }));
   })
 );
 
@@ -773,6 +1040,62 @@ app.use("/api/admin", (req, res, next) => {
   }
   next();
 });
+
+app.get(
+  "/api/showcase/mine",
+  asyncRoute(async (req, res) => {
+    res.json(await listCreatorShowcaseWorks(requestUserId(req)!));
+  })
+);
+
+app.post(
+  "/api/showcase/works",
+  asyncRoute(async (req, res) => {
+    const parsed = showcaseCreateSchema.safeParse(req.body ?? {});
+    if (!parsed.success) return res.status(400).json(parsed.error.flatten());
+    res.status(201).json(await createCreatorShowcaseWork(requestUserId(req)!, parsed.data));
+  })
+);
+
+app.post(
+  "/api/showcase/works/:id/submit",
+  asyncRoute(async (req, res) => {
+    res.json(await resubmitCreatorShowcaseWork(requestUserId(req)!, paramId(req.params.id)));
+  })
+);
+
+app.get(
+  "/api/admin/showcase/works",
+  requireAdminPermission("dashboard:read"),
+  asyncRoute(async (req, res) => {
+    res.json(await listAdminShowcaseWorks({
+      page: Number(req.query.page ?? 1),
+      pageSize: Number(req.query.pageSize ?? 20),
+      keyword: String(req.query.keyword ?? ""),
+      status: String(req.query.status ?? "all")
+    }));
+  })
+);
+
+app.patch(
+  "/api/admin/showcase/works/:id",
+  requireAdminPermission("dashboard:read"),
+  asyncRoute(async (req, res) => {
+    const parsed = showcaseAdminUpdateSchema.safeParse(req.body ?? {});
+    if (!parsed.success) return res.status(400).json(parsed.error.flatten());
+    res.json(await updateAdminShowcaseWork(paramId(req.params.id), parsed.data));
+  })
+);
+
+app.post(
+  "/api/admin/showcase/works/:id/review",
+  requireAdminPermission("dashboard:read"),
+  asyncRoute(async (req, res) => {
+    const parsed = showcaseReviewSchema.safeParse(req.body ?? {});
+    if (!parsed.success) return res.status(400).json(parsed.error.flatten());
+    res.json(await reviewAdminShowcaseWork(paramId(req.params.id), parsed.data.decision, parsed.data.note));
+  })
+);
 
 app.get(
   "/api/workbench/summary",
@@ -841,7 +1164,9 @@ app.get(
 app.post(
   "/api/projects/:id/quality-reports/generate",
   asyncRoute(async (req, res) => {
-    res.status(201).json(await generateProjectQualityReports(paramId(req.params.id), requestUserId(req)));
+    const parsed = qualityReportGenerateSchema.safeParse(req.body ?? {});
+    if (!parsed.success) return res.status(400).json(parsed.error.flatten());
+    res.status(201).json(await generateProjectQualityReports(paramId(req.params.id), requestUserId(req), parsed.data.stages));
   })
 );
 
@@ -911,14 +1236,14 @@ app.post(
   asyncRoute(async (req, res) => {
     const parsed = characterReferenceSchema.safeParse(req.body ?? {});
     if (!parsed.success) return res.status(400).json(parsed.error.flatten());
-    res.json(await setCharacterReferenceImage(paramId(req.params.id), paramId(req.params.characterId), requestUserId(req), parsed.data));
+    res.json(await setCharacterReferenceImageV2(paramId(req.params.id), paramId(req.params.characterId), requestUserId(req), parsed.data));
   })
 );
 
 app.delete(
   "/api/projects/:id/characters/:characterId/reference",
   asyncRoute(async (req, res) => {
-    res.json(await deleteCharacterReferenceImage(paramId(req.params.id), paramId(req.params.characterId), requestUserId(req)));
+    res.json(await deleteCharacterReferenceImageV2(paramId(req.params.id), paramId(req.params.characterId), requestUserId(req)));
   })
 );
 
@@ -1188,9 +1513,10 @@ app.post(
 app.post(
   "/api/billing/mock-callback",
   asyncRoute(async (req, res) => {
+    if (!mockPaymentEnabled) return res.status(404).json({ message: "Mock payment callback is disabled." });
     const parsed = rechargeCallbackSchema.safeParse(req.body ?? {});
     if (!parsed.success) return res.status(400).json(parsed.error.flatten());
-    res.json(await handleRechargeCallback({ ...parsed.data, payload: parsed.data.payload ?? req.body }));
+    res.json(await handleRechargeCallback({ ...parsed.data, userId: requestUserId(req), payload: parsed.data.payload ?? req.body }));
   })
 );
 
@@ -1391,10 +1717,90 @@ app.get(
 );
 
 app.get(
+  "/api/admin/announcements",
+  requireAdminPermission("dashboard:read"),
+  asyncRoute(async (_req, res) => {
+    res.json(await listAdminAnnouncements());
+  })
+);
+
+app.post(
+  "/api/admin/announcements",
+  requireAdminPermission("announcements:manage"),
+  asyncRoute(async (req, res) => {
+    const parsed = announcementCreateSchema.safeParse(req.body ?? {});
+    if (!parsed.success) return res.status(400).json(parsed.error.flatten());
+    res.status(201).json(await createPlatformAnnouncement(toAnnouncementPayload(parsed.data)));
+  })
+);
+
+app.patch(
+  "/api/admin/announcements/:id",
+  requireAdminPermission("announcements:manage"),
+  asyncRoute(async (req, res) => {
+    const parsed = announcementUpdateSchema.safeParse(req.body ?? {});
+    if (!parsed.success) return res.status(400).json(parsed.error.flatten());
+    res.json(await updatePlatformAnnouncement(paramId(req.params.id), toAnnouncementUpdatePayload(parsed.data)));
+  })
+);
+
+app.delete(
+  "/api/admin/announcements/:id",
+  requireAdminPermission("announcements:manage"),
+  asyncRoute(async (req, res) => {
+    res.json(await deletePlatformAnnouncement(paramId(req.params.id)));
+  })
+);
+
+app.get(
+  "/api/admin/help-articles",
+  requireAdminPermission("dashboard:read"),
+  asyncRoute(async (_req, res) => {
+    res.json(await listAdminHelpArticles());
+  })
+);
+
+app.post(
+  "/api/admin/help-articles",
+  requireAdminPermission("announcements:manage"),
+  asyncRoute(async (req, res) => {
+    const parsed = helpArticleCreateSchema.safeParse(req.body ?? {});
+    if (!parsed.success) return res.status(400).json(parsed.error.flatten());
+    res.status(201).json(await createHelpArticle(parsed.data));
+  })
+);
+
+app.patch(
+  "/api/admin/help-articles/:id",
+  requireAdminPermission("announcements:manage"),
+  asyncRoute(async (req, res) => {
+    const parsed = helpArticleUpdateSchema.safeParse(req.body ?? {});
+    if (!parsed.success) return res.status(400).json(parsed.error.flatten());
+    res.json(await updateHelpArticle(paramId(req.params.id), parsed.data));
+  })
+);
+
+app.delete(
+  "/api/admin/help-articles/:id",
+  requireAdminPermission("announcements:manage"),
+  asyncRoute(async (req, res) => {
+    res.json(await deleteHelpArticle(paramId(req.params.id)));
+  })
+);
+
+app.get(
   "/api/admin/evaluation/overview",
   requireAdminPermission("dashboard:read"),
   asyncRoute(async (_req, res) => {
     res.json(await getAdminEvaluationOverview());
+  })
+);
+
+app.get(
+  "/api/admin/quality-center",
+  requireAdminPermission("dashboard:read"),
+  asyncRoute(async (_req, res) => {
+    res.json(await getAdminQualityCenter());
   })
 );
 
@@ -1411,6 +1817,18 @@ app.get(
   requireAdminPermission("dashboard:read"),
   asyncRoute(async (_req, res) => {
     res.json(await listEvaluationDatasets());
+  })
+);
+
+app.get(
+  "/api/admin/evaluation/datasets/page",
+  requireAdminPermission("dashboard:read"),
+  asyncRoute(async (req, res) => {
+    res.json(await listEvaluationDatasetsPage({
+      page: Number(req.query.page ?? 1),
+      pageSize: Number(req.query.pageSize ?? 20),
+      keyword: String(req.query.keyword ?? "")
+    }));
   })
 );
 
@@ -1437,6 +1855,77 @@ app.get(
   requireAdminPermission("dashboard:read"),
   asyncRoute(async (_req, res) => {
     res.json(await listEvaluationRuns());
+  })
+);
+
+app.get(
+  "/api/admin/evaluation/runs/page",
+  requireAdminPermission("dashboard:read"),
+  asyncRoute(async (req, res) => {
+    res.json(await listEvaluationRunsPage({
+      page: Number(req.query.page ?? 1),
+      pageSize: Number(req.query.pageSize ?? 20),
+      keyword: String(req.query.keyword ?? ""),
+      status: String(req.query.status ?? "all")
+    }));
+  })
+);
+
+app.get(
+  "/api/admin/evaluation/prompt-versions",
+  requireAdminPermission("dashboard:read"),
+  asyncRoute(async (req, res) => {
+    res.json(await listPromptVersionsPage({
+      page: Number(req.query.page ?? 1),
+      pageSize: Number(req.query.pageSize ?? 20),
+      keyword: String(req.query.keyword ?? ""),
+      stage: String(req.query.stage ?? "all"),
+      status: String(req.query.status ?? "all"),
+      purpose: String(req.query.purpose ?? "all")
+    }));
+  })
+);
+
+app.post(
+  "/api/admin/evaluation/prompt-versions",
+  requireAdminPermission("dashboard:read"),
+  asyncRoute(async (req, res) => {
+    const parsed = promptVersionCreateSchema.safeParse(req.body ?? {});
+    if (!parsed.success) return res.status(400).json(parsed.error.flatten());
+    res.status(201).json(await createPromptVersion(parsed.data));
+  })
+);
+
+app.patch(
+  "/api/admin/evaluation/prompt-versions/:id",
+  requireAdminPermission("dashboard:read"),
+  asyncRoute(async (req, res) => {
+    const parsed = promptVersionUpdateSchema.safeParse(req.body ?? {});
+    if (!parsed.success) return res.status(400).json(parsed.error.flatten());
+    res.json(await updatePromptVersion(paramId(req.params.id), parsed.data));
+  })
+);
+
+app.get(
+  "/api/admin/evaluation/experiments",
+  requireAdminPermission("dashboard:read"),
+  asyncRoute(async (req, res) => {
+    res.json(await listExperimentRunsPage({
+      page: Number(req.query.page ?? 1),
+      pageSize: Number(req.query.pageSize ?? 20),
+      keyword: String(req.query.keyword ?? ""),
+      stage: String(req.query.stage ?? "all")
+    }));
+  })
+);
+
+app.post(
+  "/api/admin/evaluation/experiments",
+  requireAdminPermission("dashboard:read"),
+  asyncRoute(async (req, res) => {
+    const parsed = experimentRunCreateSchema.safeParse(req.body ?? {});
+    if (!parsed.success) return res.status(400).json(parsed.error.flatten());
+    res.status(201).json(await createExperimentRun(parsed.data));
   })
 );
 
@@ -1470,11 +1959,30 @@ app.get(
     const runs = await listEvaluationRuns();
     const selectedRuns = ids.length ? runs.filter((run) => ids.includes(run.id)) : runs;
     const details = (await Promise.all(selectedRuns.map((run) => getEvaluationRun(run.id)))).filter(Boolean) as NonNullable<Awaited<ReturnType<typeof getEvaluationRun>>>[];
-    const tsv = await buildEvaluationRunsTsv(details);
+    const xlsx = await buildEvaluationRunsXlsx(details);
     const fileName = ids.length ? `evaluation-runs-${ids.length}` : "evaluation-runs-all";
-    res.type("application/vnd.ms-excel; charset=utf-8");
-    res.setHeader("Content-Disposition", contentDisposition(`${fileName}.xls`));
-    res.send(Buffer.from("\uFEFF" + tsv, "utf8"));
+    res.type("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", contentDisposition(`${fileName}.xlsx`));
+    res.send(xlsx);
+  })
+);
+
+app.get(
+  "/api/admin/evaluation/runs/export-excel.xlsx",
+  requireAdminPermission("dashboard:read"),
+  asyncRoute(async (req, res) => {
+    const ids = String(req.query.ids ?? "")
+      .split(",")
+      .map((id) => id.trim())
+      .filter(Boolean);
+    const runs = await listEvaluationRuns();
+    const selectedRuns = ids.length ? runs.filter((run) => ids.includes(run.id)) : runs;
+    const details = (await Promise.all(selectedRuns.map((run) => getEvaluationRun(run.id)))).filter(Boolean) as NonNullable<Awaited<ReturnType<typeof getEvaluationRun>>>[];
+    const xlsx = await buildEvaluationRunsXlsx(details);
+    const fileName = ids.length ? `evaluation-runs-${ids.length}` : "evaluation-runs-all";
+    res.type("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", contentDisposition(`${fileName}.xlsx`));
+    res.send(xlsx);
   })
 );
 
@@ -1497,10 +2005,23 @@ app.get(
   asyncRoute(async (req, res) => {
     const detail = await getEvaluationRun(paramId(req.params.id));
     if (!detail) return res.status(404).json({ message: "评测运行记录不存在。" });
-    const tsv = await buildEvaluationRunsTsv([detail]);
-    res.type("application/vnd.ms-excel; charset=utf-8");
-    res.setHeader("Content-Disposition", contentDisposition(`${safeDownloadName(detail.run.name || detail.run.id)}.xls`));
-    res.send(Buffer.from("\uFEFF" + tsv, "utf8"));
+    const xlsx = await buildEvaluationRunsXlsx([detail]);
+    res.type("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", contentDisposition(`${safeDownloadName(detail.run.name || detail.run.id)}.xlsx`));
+    res.send(xlsx);
+  })
+);
+
+app.get(
+  "/api/admin/evaluation/runs/:id/export-excel.xlsx",
+  requireAdminPermission("dashboard:read"),
+  asyncRoute(async (req, res) => {
+    const detail = await getEvaluationRun(paramId(req.params.id));
+    if (!detail) return res.status(404).json({ message: "评测运行记录不存在。" });
+    const xlsx = await buildEvaluationRunsXlsx([detail]);
+    res.type("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", contentDisposition(`${safeDownloadName(detail.run.name || detail.run.id)}.xlsx`));
+    res.send(xlsx);
   })
 );
 
@@ -1519,6 +2040,20 @@ app.get(
   requireAdminPermission("dashboard:read"),
   asyncRoute(async (req, res) => {
     res.json(await listAdminFeedback(Number(req.query.limit ?? 200)));
+  })
+);
+
+app.get(
+  "/api/admin/feedback/page",
+  requireAdminPermission("dashboard:read"),
+  asyncRoute(async (req, res) => {
+    res.json(await listAdminFeedbackPage({
+      page: Number(req.query.page ?? 1),
+      pageSize: Number(req.query.pageSize ?? 20),
+      keyword: String(req.query.keyword ?? ""),
+      stage: String(req.query.stage ?? "all"),
+      status: String(req.query.status ?? "all")
+    }));
   })
 );
 
@@ -1809,11 +2344,18 @@ app.post(
   })
 );
 
-app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+app.use((error: unknown, req: express.Request, res: express.Response, _next: express.NextFunction) => {
   const message = error instanceof Error ? error.message : "服务器异常";
   const cause = error instanceof Error && "cause" in error ? (error as Error & { cause?: unknown }).cause : undefined;
   const causeMessage = cause instanceof Error ? `${cause.name}: ${cause.message}` : typeof cause === "object" && cause ? JSON.stringify(cause).slice(0, 240) : "";
   const code = typeof error === "object" && error && "code" in error ? String((error as { code?: unknown }).code) : "";
+  const operationalError = classifyOperationalError(message, causeMessage);
+
+  console.error(`[api] ${req.method} ${req.path} failed`, {
+    code: code || undefined,
+    message,
+    detail: causeMessage || undefined
+  });
 
   if (
     code === "P1001" ||
@@ -1832,9 +2374,36 @@ app.use((error: unknown, _req: express.Request, res: express.Response, _next: ex
   if (code === "P2025") {
     return res.status(404).json({ message: "要操作的数据不存在或已被删除。" });
   }
+  if (operationalError) {
+    return res.status(operationalError.status).json({ message: operationalError.message });
+  }
 
+  if (isProduction) {
+    return res.status(500).json({ message: "Internal server error." });
+  }
   res.status(500).json({ message, detail: causeMessage || undefined });
 });
+
+function classifyOperationalError(message: string, detail: string) {
+  const safeMessage = redactSensitiveText(message || detail || "请求处理失败");
+  if (!safeMessage) return null;
+  const clientErrorPatterns = [
+    /积分|余额|额度|未定稿|请先|请选择|不存在|not found|Insufficient credits/i,
+    /没有可用于|暂无|可播放|无法重试|不能取消|已成功任务/i,
+    /模型|供应商|上游|渠道|未返回|超时|配置|prompt|URL|生成失败|测试失败/i
+  ];
+  if (!clientErrorPatterns.some((pattern) => pattern.test(safeMessage))) return null;
+  const isUpstream = /模型|供应商|上游|渠道|未返回|超时|配置|URL|生成失败|测试失败/i.test(safeMessage);
+  return { status: isUpstream ? 502 : 400, message: safeMessage };
+}
+
+function redactSensitiveText(value: string) {
+  return value
+    .replace(/(api[_-]?key\s*[:=]\s*)[^\s,;&]+/gi, "$1***")
+    .replace(/(authorization\s*[:=]\s*bearer\s+)[^\s,;&]+/gi, "$1***")
+    .replace(/sk-[A-Za-z0-9_-]{12,}/g, "sk-***")
+    .slice(0, 360);
+}
 
 function createRedisHealthClient() {
   const client = new RedisClient({
@@ -1911,6 +2480,8 @@ async function buildEvaluationRunTable(details: Array<NonNullable<Awaited<Return
     "根因分类",
     "建议动作",
     "样本价值",
+    "问题摘要",
+    "修复建议",
     "下一步",
     "创建时间"
   ];
@@ -1927,15 +2498,16 @@ async function buildEvaluationRunTable(details: Array<NonNullable<Awaited<Return
           projectId,
           project?.name ?? "",
           project?.user?.name ?? "",
-          stage,
+          evaluationStageLabel(stage),
           "",
           "",
           "",
           "未生成",
           detail.run.errorReason ? "运行失败" : "等待结果",
           detail.run.errorReason ? "评测运行失败" : "待评测",
-          detail.run.errorReason ? "检查失败原因" : "等待评测结果",
           "中",
+          detail.run.errorReason ?? detail.run.skipped.map((item) => item.reason).join("；"),
+          detail.run.errorReason ? "检查失败原因" : "等待评测结果",
           detail.run.skipped.map((item) => item.reason).join("；") || "重新运行评测",
           detail.run.createdAt
         ]);
@@ -1953,7 +2525,7 @@ async function buildEvaluationRunTable(details: Array<NonNullable<Awaited<Return
         report.projectId,
         project?.name ?? "",
         project?.user?.name ?? "",
-        report.stage,
+        evaluationStageLabel(report.stage),
         report.provider ?? "",
         report.model ?? "",
         String(report.totalScore),
@@ -1961,6 +2533,8 @@ async function buildEvaluationRunTable(details: Array<NonNullable<Awaited<Return
         rootCause,
         report.recommendedAction,
         evaluationSampleValue(report),
+        report.problems.join("；"),
+        report.suggestions.join("；"),
         report.suggestions[0] || report.problems[0] || "继续观察",
         report.createdAt
       ];
@@ -1996,6 +2570,185 @@ async function buildEvaluationRunsCsv(details: Array<NonNullable<Awaited<ReturnT
 async function buildEvaluationRunsTsv(details: Array<NonNullable<Awaited<ReturnType<typeof getEvaluationRun>>>>) {
   const { header, rows } = await buildEvaluationRunTable(details);
   return [header, ...rows].map((row) => row.map(tsvCell).join("\t")).join("\r\n") + "\r\n";
+}
+
+async function buildEvaluationRunsXlsx(details: Array<NonNullable<Awaited<ReturnType<typeof getEvaluationRun>>>>) {
+  const { header, rows } = await buildEvaluationRunTable(details);
+  return buildSimpleXlsx("评测情况", [header, ...rows]);
+}
+
+function buildSimpleXlsx(sheetName: string, rows: unknown[][]) {
+  const safeSheetName = escapeXml(sheetName.slice(0, 31) || "Sheet1");
+  const maxCols = rows.reduce((max, row) => Math.max(max, row.length), 0);
+  const lastCell = `${columnName(Math.max(1, maxCols))}${Math.max(1, rows.length)}`;
+  const sheetRows = rows
+    .map((row, rowIndex) => {
+      const cells = row.map((value, colIndex) => {
+        const ref = `${columnName(colIndex + 1)}${rowIndex + 1}`;
+        const style = rowIndex === 0 ? ' s="1"' : "";
+        return `<c r="${ref}" t="inlineStr"${style}><is><t>${escapeXml(String(value ?? ""))}</t></is></c>`;
+      }).join("");
+      return `<row r="${rowIndex + 1}">${cells}</row>`;
+    })
+    .join("");
+  const cols = Array.from({ length: maxCols }, (_, index) => {
+    const width = index <= 1 ? 24 : index === 15 || index === 16 || index === 17 ? 34 : 16;
+    return `<col min="${index + 1}" max="${index + 1}" width="${width}" customWidth="1"/>`;
+  }).join("");
+  const files = [
+    {
+      name: "[Content_Types].xml",
+      data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+  <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+  <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
+</Types>`
+    },
+    {
+      name: "_rels/.rels",
+      data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>`
+    },
+    {
+      name: "xl/workbook.xml",
+      data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets><sheet name="${safeSheetName}" sheetId="1" r:id="rId1"/></sheets>
+</workbook>`
+    },
+    {
+      name: "xl/_rels/workbook.xml.rels",
+      data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+</Relationships>`
+    },
+    {
+      name: "xl/styles.xml",
+      data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <fonts count="2"><font><sz val="11"/><name val="Microsoft YaHei"/></font><font><b/><sz val="11"/><name val="Microsoft YaHei"/><color rgb="FFFFFFFF"/></font></fonts>
+  <fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF0F766E"/><bgColor indexed="64"/></patternFill></fill></fills>
+  <borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>
+  <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+  <cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/></cellXfs>
+</styleSheet>`
+    },
+    {
+      name: "xl/worksheets/sheet1.xml",
+      data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>
+  <cols>${cols}</cols>
+  <sheetData>${sheetRows}</sheetData>
+  <autoFilter ref="A1:${lastCell}"/>
+</worksheet>`
+    }
+  ];
+  return createZip(files.map((file) => ({ name: file.name, data: Buffer.from(file.data, "utf8") })));
+}
+
+function columnName(index: number) {
+  let current = index;
+  let name = "";
+  while (current > 0) {
+    current -= 1;
+    name = String.fromCharCode(65 + (current % 26)) + name;
+    current = Math.floor(current / 26);
+  }
+  return name;
+}
+
+function escapeXml(value: string) {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+function createZip(files: Array<{ name: string; data: Buffer }>) {
+  const locals: Buffer[] = [];
+  const centrals: Buffer[] = [];
+  let offset = 0;
+  for (const file of files) {
+    const name = Buffer.from(file.name, "utf8");
+    const crc = crc32(file.data);
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt16LE(0x0800, 6);
+    local.writeUInt16LE(0, 8);
+    local.writeUInt16LE(0, 10);
+    local.writeUInt16LE(0, 12);
+    local.writeUInt32LE(crc, 14);
+    local.writeUInt32LE(file.data.length, 18);
+    local.writeUInt32LE(file.data.length, 22);
+    local.writeUInt16LE(name.length, 26);
+    local.writeUInt16LE(0, 28);
+    locals.push(local, name, file.data);
+
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0);
+    central.writeUInt16LE(20, 4);
+    central.writeUInt16LE(20, 6);
+    central.writeUInt16LE(0x0800, 8);
+    central.writeUInt16LE(0, 10);
+    central.writeUInt16LE(0, 12);
+    central.writeUInt16LE(0, 14);
+    central.writeUInt32LE(crc, 16);
+    central.writeUInt32LE(file.data.length, 20);
+    central.writeUInt32LE(file.data.length, 24);
+    central.writeUInt16LE(name.length, 28);
+    central.writeUInt16LE(0, 30);
+    central.writeUInt16LE(0, 32);
+    central.writeUInt16LE(0, 34);
+    central.writeUInt16LE(0, 36);
+    central.writeUInt32LE(0, 38);
+    central.writeUInt32LE(offset, 42);
+    centrals.push(central, name);
+    offset += local.length + name.length + file.data.length;
+  }
+  const centralSize = centrals.reduce((sum, item) => sum + item.length, 0);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(0, 4);
+  end.writeUInt16LE(0, 6);
+  end.writeUInt16LE(files.length, 8);
+  end.writeUInt16LE(files.length, 10);
+  end.writeUInt32LE(centralSize, 12);
+  end.writeUInt32LE(offset, 16);
+  end.writeUInt16LE(0, 20);
+  return Buffer.concat([...locals, ...centrals, end]);
+}
+
+const crcTable = new Uint32Array(256).map((_, index) => {
+  let c = index;
+  for (let k = 0; k < 8; k += 1) {
+    c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+  }
+  return c >>> 0;
+});
+
+function crc32(buffer: Buffer) {
+  let crc = 0xffffffff;
+  for (const byte of buffer) {
+    crc = crcTable[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function evaluationStageLabel(stage: string) {
+  const labels: Record<string, string> = {
+    script: "剧本",
+    character: "角色",
+    storyboard: "分镜",
+    image: "图片",
+    video: "视频"
+  };
+  return labels[stage] ?? stage;
 }
 
 function safeDownloadName(value: string) {

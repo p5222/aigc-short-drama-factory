@@ -7,6 +7,14 @@ dist
 coverage
 *.log
 outputs
+tmp
+tmp/
+hf-models
+hf-models/
+LongCat-AudioDiT
+LongCat-AudioDiT-main
+longcat-audiodit-venv
+.venv
 .codex_artifacts
 uploads
 storage

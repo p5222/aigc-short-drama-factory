@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import type { BatchGenerationResult, CreateProjectInput, StoryboardShot } from "@aifilm/shared";
 import { estimateImageCredits, normalizeImageOutputQuality, normalizeImageOutputSize } from "@aifilm/shared";
 import { generateProjectStoryboards, textModelName, textProviderName } from "../agents/generator.js";
@@ -357,10 +358,14 @@ export async function generateCharacterReferenceImages(projectId: string, userId
   const imageResults: ImageGenerationResult[] = [];
   for (const [index, { asset, mode }] of selectedJobs.entries()) {
     const identityReferenceUrl = asset.referenceUrl;
+    const uploadedReferenceUrls = workflow.assets
+      .filter((item) => item.type === "role_reference" && item.relatedCharacterId === asset.relatedCharacterId && item.referenceUrl)
+      .map((item) => item.referenceUrl!)
+      .slice(0, 4);
     const result = await generateImage({
       prompt: buildCharacterReferencePrompt(asset.prompt, mode, identityReferenceUrl, asset.name),
       negativePrompt: "text, labels, watermark, logo, three different people, face drift, different identity, different outfit, duplicate character, deformed hands, extra fingers, low quality, dark lighting, blurry, cropped body",
-      referenceImageUrls: identityReferenceUrl ? [identityReferenceUrl] : undefined,
+      referenceImageUrls: [...(identityReferenceUrl ? [identityReferenceUrl] : []), ...uploadedReferenceUrls].slice(0, 5),
       ratio: "16:9",
       seed: 52000 + index,
       provider: workflow.project.imageProvider,
@@ -561,6 +566,79 @@ export async function deleteCharacterReferenceImage(
   });
 
   return { ok: true, characterId, deletedAssets: derivativeIds.length };
+}
+
+export async function setCharacterReferenceImageV2(
+  projectId: string,
+  characterId: string,
+  userId = DEMO_USER_ID,
+  input: { referenceUrl: string; description?: string }
+) {
+  const workflow = await getProjectWorkflow(projectId, userId);
+  if (!workflow) throw new Error("Project not found");
+  const character = workflow.characters.find((item) => item.id === characterId);
+  if (!character) throw new Error("Character not found");
+
+  const referenceUrl = input.referenceUrl.trim();
+  const storedReferenceUrl = await persistImageReference(referenceUrl, `character-reference-${projectId}-${character.name}`);
+  const primaryRoleAsset = workflow.assets.find((item) => item.type === "role" && item.relatedCharacterId === character.id);
+  const relatedRoleAssetIds = new Set(
+    workflow.assets
+      .filter((item) => item.relatedCharacterId === character.id && (item.type === "role" || item.type === "role_derivative"))
+      .map((item) => item.id)
+  );
+  const assetId = `asset_${character.id}_user_ref_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
+
+  return prisma.$transaction(async (tx) => {
+    const asset = await tx.asset.create({
+      data: {
+        id: assetId,
+        projectId,
+        type: "role_reference",
+        name: `${character.name} 用户参考设定`,
+        description: input.description?.trim() || `${character.name} 用户上传的角色参考设定图，不覆盖 AI 三视图身份板。`,
+        prompt: [
+          character.prompt,
+          "用户上传参考图只作为生产参考，不覆盖 AI 生成的角色身份板；后续角色三视图和分镜图可引用此图保持脸型、服装和风格一致。"
+        ].join("\n"),
+        referenceUrl: storedReferenceUrl || referenceUrl,
+        status: "succeeded",
+        relatedCharacterId: character.id
+      }
+    });
+
+    const relatedShots = workflow.storyboards.filter((shot) =>
+      shot.characters.includes(character.name) ||
+      (primaryRoleAsset ? shot.referenceAssetIds.includes(primaryRoleAsset.id) : false) ||
+      shot.referenceAssetIds.some((id) => relatedRoleAssetIds.has(id))
+    );
+    await Promise.all(relatedShots.map((shot) => tx.storyboard.update({
+      where: { id: shot.id },
+      data: { referenceAssetIds: [...new Set([...shot.referenceAssetIds, asset.id])] }
+    })));
+
+    return asset;
+  });
+}
+
+export async function deleteCharacterReferenceImageV2(
+  projectId: string,
+  characterId: string,
+  userId = DEMO_USER_ID
+) {
+  const workflow = await getProjectWorkflow(projectId, userId);
+  if (!workflow) throw new Error("Project not found");
+  const character = workflow.characters.find((item) => item.id === characterId);
+  if (!character) throw new Error("Character not found");
+
+  const referenceIds = workflow.assets
+    .filter((item) => item.type === "role_reference" && item.relatedCharacterId === character.id)
+    .map((item) => item.id);
+
+  if (referenceIds.length) await removeAssetReferencesFromStoryboards(projectId, referenceIds);
+  await prisma.asset.deleteMany({ where: { projectId, type: "role_reference", relatedCharacterId: character.id } });
+
+  return { ok: true, characterId, deletedAssets: referenceIds.length };
 }
 
 async function removeAssetReferencesFromStoryboards(projectId: string, assetIds: string[]) {

@@ -4,8 +4,10 @@ import type {
   CreditAccount,
   CreditTransaction,
   EvaluationDataset,
+  ExperimentRun,
   EvaluationRun,
   ExportJob,
+  HelpArticle,
   InvoiceRecord,
   GenerationTask,
   MembershipPlan,
@@ -13,10 +15,12 @@ import type {
   ModelProvider,
   PaymentRecord,
   Plan,
+  PlatformAnnouncement,
   Project,
   RechargeOrder,
   RedeemCode,
   PromptTemplate,
+  PromptVersion,
   QualityReport,
   ScriptDraft,
   StoryboardShot,
@@ -180,6 +184,37 @@ export function mapInvoice(row: any): InvoiceRecord {
     status: row.status,
     issuedAt: row.issuedAt?.toISOString(),
     createdAt: row.createdAt.toISOString()
+  };
+}
+
+export function mapPlatformAnnouncement(row: any): PlatformAnnouncement {
+  return {
+    id: row.id,
+    title: row.title,
+    body: row.body,
+    type: row.type,
+    enabled: row.enabled,
+    pinned: row.pinned,
+    startsAt: row.startsAt?.toISOString(),
+    endsAt: row.endsAt?.toISOString(),
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString()
+  };
+}
+
+export function mapHelpArticle(row: any): HelpArticle {
+  return {
+    id: row.id,
+    title: row.title,
+    summary: row.summary ?? "",
+    content: row.content,
+    category: row.category,
+    tags: Array.isArray(row.tags) ? row.tags : [],
+    enabled: row.enabled,
+    pinned: row.pinned,
+    sortOrder: row.sortOrder,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString()
   };
 }
 
@@ -548,6 +583,8 @@ export function mapEvaluationDataset(row: any): EvaluationDataset {
 
 export function mapEvaluationRun(row: any): EvaluationRun {
   const datasetSnapshot = normalizeObject(row.datasetSnapshot) as Partial<EvaluationDataset>;
+  const promptSnapshot = normalizeObject(row.promptSnapshot) as Partial<PromptVersion>;
+  const generationPromptSnapshot = normalizeObject(row.generationPromptSnapshot) as Partial<PromptVersion>;
   return {
     id: row.id,
     name: row.name,
@@ -558,6 +595,12 @@ export function mapEvaluationRun(row: any): EvaluationRun {
     stages: normalizeStringArray(row.stages).filter(isEvaluationStage) as EvaluationRun["stages"],
     mode: isEvaluationMode(row.mode) ? row.mode : "rules",
     evaluatorModels: normalizeEvaluatorModels(row.evaluatorModels),
+    promptVersionId: row.promptVersionId ?? undefined,
+    promptVersionName: row.promptVersion?.name ?? promptSnapshot.name,
+    promptSnapshot,
+    generationPromptVersionId: row.generationPromptVersionId ?? undefined,
+    generationPromptVersionName: generationPromptSnapshot.name,
+    generationPromptSnapshot,
     maxLlmCalls: row.maxLlmCalls,
     maxShotsPerPrompt: row.maxShotsPerPrompt,
     includeFeedback: Boolean(row.includeFeedback),
@@ -572,6 +615,82 @@ export function mapEvaluationRun(row: any): EvaluationRun {
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString()
   };
+}
+
+export function mapPromptVersion(row: any): PromptVersion {
+  return {
+    id: row.id,
+    key: row.key,
+    name: row.name,
+    stage: row.stage,
+    purpose: ["generation", "evaluation"].includes(row.purpose) ? row.purpose : "evaluation",
+    version: row.version,
+    content: row.content,
+    status: ["draft", "active", "archived"].includes(row.status) ? row.status : "draft",
+    owner: row.owner ?? undefined,
+    notes: row.notes,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString()
+  } as PromptVersion;
+}
+
+export function mapExperimentRun(row: any): ExperimentRun {
+  const metrics = normalizeObject(row.metrics);
+  const stageDeltas = Array.isArray(metrics.stageDeltas)
+    ? metrics.stageDeltas.map((item: any) => ({
+        stage: item.stage,
+        baseline: Number(item.baseline) || 0,
+        candidate: Number(item.candidate) || 0,
+        delta: Number(item.delta) || 0
+      }))
+    : [];
+  const sampleDeltas = Array.isArray(metrics.sampleDeltas)
+    ? metrics.sampleDeltas.map((item: any) => ({
+        projectId: String(item.projectId ?? ""),
+        projectName: item.projectName ? String(item.projectName) : undefined,
+        stage: item.stage,
+        baseline: item.baseline === undefined ? undefined : Number(item.baseline) || 0,
+        candidate: item.candidate === undefined ? undefined : Number(item.candidate) || 0,
+        delta: item.delta === undefined ? undefined : Number(item.delta) || 0,
+        status: item.status
+      }))
+    : [];
+  return {
+    id: row.id,
+    name: row.name,
+    stage: row.stage,
+    hypothesis: row.hypothesis,
+    baselineVersion: row.baselineVersion,
+    candidateVersion: row.candidateVersion,
+    experimentType: ["model", "prompt", "combined"].includes(row.experimentType) ? row.experimentType : "model",
+    datasetId: row.datasetId ?? undefined,
+    datasetName: row.dataset?.name ?? undefined,
+    baselineRunId: row.baselineRunId ?? undefined,
+    candidateRunId: row.candidateRunId ?? undefined,
+    baselineConfig: normalizeObject(row.baselineConfig),
+    candidateConfig: normalizeObject(row.candidateConfig),
+    metrics: {
+      baselineScore: Number(metrics.baselineScore) || 0,
+      candidateScore: Number(metrics.candidateScore) || 0,
+      scoreDelta: Number(metrics.scoreDelta) || 0,
+      baselinePassRate: Number(metrics.baselinePassRate) || 0,
+      candidatePassRate: Number(metrics.candidatePassRate) || 0,
+      passRateDelta: Number(metrics.passRateDelta) || 0,
+      baselineReports: Number(metrics.baselineReports) || 0,
+      candidateReports: Number(metrics.candidateReports) || 0,
+      stageDeltas,
+      sampleDeltas
+    },
+    winner: ["baseline", "candidate", "tie", "pending"].includes(row.winner) ? row.winner : "pending",
+    trafficRatio: row.trafficRatio,
+    successMetric: row.successMetric,
+    resultSummary: row.resultSummary,
+    status: ["draft", "running", "completed", "paused"].includes(row.status) ? row.status : "draft",
+    startAt: row.startAt?.toISOString(),
+    endAt: row.endAt?.toISOString(),
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString()
+  } as ExperimentRun;
 }
 
 function normalizeObject(value: unknown): Record<string, unknown> {

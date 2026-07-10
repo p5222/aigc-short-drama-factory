@@ -2,6 +2,8 @@ services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     env_file:
       - .env.production
     volumes:
@@ -15,6 +17,8 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     volumes:
       - redis_data:/data
     healthcheck:
@@ -26,6 +30,8 @@ services:
   api:
     image: node:24-alpine
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     working_dir: /app
     env_file:
       - .env.production
@@ -53,6 +59,8 @@ services:
   web:
     image: node:24-alpine
     restart: "no"
+    security_opt:
+      - no-new-privileges:true
     working_dir: /app
     env_file:
       - .env.production
@@ -70,6 +78,8 @@ services:
   nginx:
     image: nginx:1.27-alpine
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     depends_on:
       - api
       - web

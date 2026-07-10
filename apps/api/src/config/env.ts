@@ -14,14 +14,17 @@ function findWorkspaceRoot(start = process.cwd()) {
 }
 
 const workspaceRoot = findWorkspaceRoot();
-const envFiles = [
-  resolve(workspaceRoot, ".env"),
-  resolve(process.cwd(), ".env"),
-  resolve(workspaceRoot, ".env.local"),
-  resolve(process.cwd(), ".env.local")
-];
+const isProduction = process.env.NODE_ENV === "production";
+const envFiles = isProduction
+  ? [resolve(workspaceRoot, ".env.production"), resolve(process.cwd(), ".env.production")]
+  : [
+      resolve(workspaceRoot, ".env"),
+      resolve(process.cwd(), ".env"),
+      resolve(workspaceRoot, ".env.local"),
+      resolve(process.cwd(), ".env.local")
+    ];
 
 for (const envFile of envFiles) {
-  if (existsSync(envFile)) dotenv.config({ path: envFile, override: true });
+  if (existsSync(envFile)) dotenv.config({ path: envFile, override: !isProduction });
 }
 

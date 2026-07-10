@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import sharp from "sharp";
-import type { AdminUserRow, AssetItem, BatchGenerationResult, CreateProjectInput, GenerationTask, ProjectWorkflow, StoryboardExportRow, StoryboardShot, WorkbenchSummary } from "@aifilm/shared";
+import type { AdminUserRow, AssetItem, BatchGenerationResult, CreateProjectInput, GenerationTask, HelpArticle, PlatformAnnouncement, ProjectWorkflow, StoryboardExportRow, StoryboardShot, WorkbenchSummary } from "@aifilm/shared";
 import { textModelName, textProviderName } from "../agents/generator.js";
 import { buildSeedanceVideoPrompt, buildStoryboardFirstFramePrompt, createStoryboardProductionPackage } from "../agents/storyboardProduction.js";
 import { estimateCreation } from "../agents/workflow.js";
@@ -22,8 +22,10 @@ import {
   mapMembershipPlan,
   mapModelPrice,
   mapExportJob,
+  mapHelpArticle,
   mapInvoice,
   mapPaymentRecord,
+  mapPlatformAnnouncement,
   mapPlan,
   mapProject,
   mapProvider,
@@ -39,11 +41,12 @@ import {
 } from "./mappers.js";
 
 export async function getWorkbenchSummary(userId = DEMO_USER_ID): Promise<WorkbenchSummary> {
-  const [user, projects, tasks, account] = await Promise.all([
+  const [user, projects, tasks, account, announcements] = await Promise.all([
     prisma.user.findUniqueOrThrow({ where: { id: userId } }),
     prisma.project.findMany({ where: { userId }, orderBy: { updatedAt: "desc" }, take: 6 }),
     prisma.generationTask.findMany({ where: { userId }, orderBy: { updatedAt: "desc" }, take: 8 }),
-    prisma.creditAccount.findUniqueOrThrow({ where: { userId } })
+    prisma.creditAccount.findUniqueOrThrow({ where: { userId } }),
+    listPublicAnnouncements()
   ]);
 
   return {
@@ -54,27 +57,165 @@ export async function getWorkbenchSummary(userId = DEMO_USER_ID): Promise<Workbe
     credits: account.balance,
     recentProjects: projects.map(mapProject),
     recentTasks: tasks.map(mapTask),
-    announcements: [
-      {
-        id: "ann_db_001",
-        title: "数据持久化已启用",
-        body: "项目、任务、积分、剧本、角色和分镜都会写入 PostgreSQL。",
-        type: "update"
-      },
-      {
-        id: "ann_queue_001",
-        title: "生成队列已接入",
-        body: "创作任务通过 Redis + BullMQ 调度，后续可以扩展并发、重试和成本控制。",
-        type: "guide"
-      },
-      {
-        id: "ann_theme_001",
-        title: "浅绿色柔和主题上线",
-        body: "工作台视觉已调整为更温和的浅绿、米白和低饱和色。",
-        type: "info"
-      }
-    ]
+    announcements: announcements.map((item) => ({
+      id: item.id,
+      title: item.title,
+      body: item.body,
+      type: item.type
+    }))
   };
+}
+
+export async function listPublicAnnouncements(): Promise<PlatformAnnouncement[]> {
+  const now = new Date();
+  return (
+    await prisma.platformAnnouncement.findMany({
+      where: {
+        enabled: true,
+        OR: [{ startsAt: null }, { startsAt: { lte: now } }],
+        AND: [{ OR: [{ endsAt: null }, { endsAt: { gte: now } }] }]
+      },
+      orderBy: [{ pinned: "desc" }, { createdAt: "desc" }],
+      take: 5
+    })
+  ).map(mapPlatformAnnouncement);
+}
+
+export async function listAdminAnnouncements(): Promise<PlatformAnnouncement[]> {
+  return (await prisma.platformAnnouncement.findMany({ orderBy: [{ pinned: "desc" }, { createdAt: "desc" }] })).map(mapPlatformAnnouncement);
+}
+
+export async function createPlatformAnnouncement(input: {
+  title: string;
+  body: string;
+  type?: string;
+  enabled?: boolean;
+  pinned?: boolean;
+  startsAt?: Date | null;
+  endsAt?: Date | null;
+}) {
+  const announcement = await prisma.platformAnnouncement.create({
+    data: {
+      id: `ann_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`,
+      title: input.title.trim(),
+      body: input.body.trim(),
+      type: normalizeAnnouncementType(input.type),
+      enabled: input.enabled ?? true,
+      pinned: input.pinned ?? false,
+      startsAt: input.startsAt ?? null,
+      endsAt: input.endsAt ?? null
+    }
+  });
+  return mapPlatformAnnouncement(announcement);
+}
+
+export async function updatePlatformAnnouncement(
+  id: string,
+  input: Partial<{
+    title: string;
+    body: string;
+    type: string;
+    enabled: boolean;
+    pinned: boolean;
+    startsAt: Date | null;
+    endsAt: Date | null;
+  }>
+) {
+  const data: Record<string, unknown> = {};
+  if (input.title !== undefined) data.title = input.title.trim();
+  if (input.body !== undefined) data.body = input.body.trim();
+  if (input.type !== undefined) data.type = normalizeAnnouncementType(input.type);
+  if (input.enabled !== undefined) data.enabled = input.enabled;
+  if (input.pinned !== undefined) data.pinned = input.pinned;
+  if (input.startsAt !== undefined) data.startsAt = input.startsAt;
+  if (input.endsAt !== undefined) data.endsAt = input.endsAt;
+  if (data.title === "") throw new Error("公告标题不能为空");
+  if (data.body === "") throw new Error("公告内容不能为空");
+  return mapPlatformAnnouncement(await prisma.platformAnnouncement.update({ where: { id }, data }));
+}
+
+export async function deletePlatformAnnouncement(id: string) {
+  await prisma.platformAnnouncement.delete({ where: { id } });
+  return { id, deleted: true };
+}
+
+export async function listPublicHelpArticles(): Promise<HelpArticle[]> {
+  return (
+    await prisma.helpArticle.findMany({
+      where: { enabled: true },
+      orderBy: [{ pinned: "desc" }, { sortOrder: "asc" }, { createdAt: "desc" }]
+    })
+  ).map(mapHelpArticle);
+}
+
+export async function listAdminHelpArticles(): Promise<HelpArticle[]> {
+  return (
+    await prisma.helpArticle.findMany({
+      orderBy: [{ enabled: "desc" }, { pinned: "desc" }, { sortOrder: "asc" }, { createdAt: "desc" }]
+    })
+  ).map(mapHelpArticle);
+}
+
+export async function createHelpArticle(input: {
+  title: string;
+  summary?: string;
+  content: string;
+  category?: string;
+  tags?: string[];
+  enabled?: boolean;
+  pinned?: boolean;
+  sortOrder?: number;
+}) {
+  const title = input.title.trim();
+  const content = input.content.trim();
+  if (!title) throw new Error("帮助标题不能为空");
+  if (!content) throw new Error("帮助内容不能为空");
+  const article = await prisma.helpArticle.create({
+    data: {
+      id: `help_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`,
+      title,
+      summary: (input.summary ?? "").trim() || content.slice(0, 80),
+      content,
+      category: normalizeHelpCategory(input.category),
+      tags: normalizeTextList(input.tags ?? []),
+      enabled: input.enabled ?? true,
+      pinned: input.pinned ?? false,
+      sortOrder: Math.max(0, Math.floor(input.sortOrder ?? 0))
+    }
+  });
+  return mapHelpArticle(article);
+}
+
+export async function updateHelpArticle(
+  id: string,
+  input: Partial<{
+    title: string;
+    summary: string;
+    content: string;
+    category: string;
+    tags: string[];
+    enabled: boolean;
+    pinned: boolean;
+    sortOrder: number;
+  }>
+) {
+  const data: Record<string, unknown> = {};
+  if (input.title !== undefined) data.title = input.title.trim();
+  if (input.summary !== undefined) data.summary = input.summary.trim();
+  if (input.content !== undefined) data.content = input.content.trim();
+  if (input.category !== undefined) data.category = normalizeHelpCategory(input.category);
+  if (input.tags !== undefined) data.tags = normalizeTextList(input.tags);
+  if (input.enabled !== undefined) data.enabled = input.enabled;
+  if (input.pinned !== undefined) data.pinned = input.pinned;
+  if (input.sortOrder !== undefined) data.sortOrder = Math.max(0, Math.floor(input.sortOrder));
+  if (data.title === "") throw new Error("帮助标题不能为空");
+  if (data.content === "") throw new Error("帮助内容不能为空");
+  return mapHelpArticle(await prisma.helpArticle.update({ where: { id }, data }));
+}
+
+export async function deleteHelpArticle(id: string) {
+  await prisma.helpArticle.delete({ where: { id } });
+  return { id, deleted: true };
 }
 
 export async function listProjects(userId = DEMO_USER_ID) {
@@ -237,6 +378,7 @@ export async function createRechargeOrder(userId = DEMO_USER_ID, input: { planId
 
 export async function handleRechargeCallback(input: {
   orderId: string;
+  userId?: string;
   channel?: string;
   providerTradeNo?: string;
   amountCny?: number;
@@ -244,8 +386,15 @@ export async function handleRechargeCallback(input: {
 }) {
   const now = new Date();
   return prisma.$transaction(async (tx) => {
-    const order = await tx.rechargeOrder.findUnique({ where: { id: input.orderId } });
+    const order = input.userId
+      ? await tx.rechargeOrder.findFirst({ where: { id: input.orderId, userId: input.userId } })
+      : await tx.rechargeOrder.findUnique({ where: { id: input.orderId } });
     if (!order) throw new Error("充值订单不存在");
+
+    if (input.channel && input.channel !== order.channel) throw new Error("Payment channel mismatch");
+    if (input.amountCny !== undefined && Math.abs(input.amountCny - order.amountCny) > 0.01) {
+      throw new Error("Payment amount mismatch");
+    }
 
     const payment = await tx.paymentRecord.create({
       data: {
@@ -427,8 +576,8 @@ export async function createAdminUser(input: {
   const email = input.email?.trim().toLowerCase() || undefined;
   const phone = input.phone?.trim() || undefined;
   if (!email && !phone) throw new Error("邮箱和手机号至少填写一个");
-  if (input.password.length < 6) throw new Error("密码至少 6 位");
-  if (input.role && !["creator", "admin", "operator", "finance", "support"].includes(input.role)) throw new Error("用户角色不在允许范围内");
+  if (input.password.length < 12) throw new Error("Password must be at least 12 characters");
+  if (input.role && !["creator", "admin"].includes(input.role)) throw new Error("用户角色不在允许范围内");
   if (input.status && !["active", "disabled"].includes(input.status)) throw new Error("用户状态只能是 active 或 disabled");
 
   const initialCredits = Math.max(0, Math.floor(input.initialCredits ?? 0));
@@ -495,7 +644,7 @@ export async function updateAdminUser(
   const cleanData: Partial<{ name: string; role: string; status: string }> = {};
   if (data.name !== undefined) cleanData.name = data.name.trim();
   if (data.role !== undefined) {
-    if (!["creator", "admin", "operator", "finance", "support"].includes(data.role)) throw new Error("用户角色不在允许范围内");
+    if (!["creator", "admin"].includes(data.role)) throw new Error("用户角色不在允许范围内");
     cleanData.role = data.role;
   }
   if (data.status !== undefined) {
@@ -516,7 +665,7 @@ export async function updateAdminUser(
 }
 
 export async function resetAdminUserPassword(id: string, password: string) {
-  if (password.length < 6) throw new Error("密码至少 6 位");
+  if (password.length < 12) throw new Error("Password must be at least 12 characters");
   const passwordHash = await hashPassword(password);
   await prisma.authSession.updateMany({ where: { userId: id, revokedAt: null }, data: { revokedAt: new Date() } });
   const user = await prisma.user.update({ where: { id }, data: { passwordHash } });
@@ -2055,6 +2204,9 @@ async function resolveImageCreditPerShot(provider: string, model: string, size?:
 
 function assertCharacterGateForStoryboardImages(workflow: ProjectWorkflow, scopedRegeneration: boolean) {
   if (process.env.CHARACTER_GATE_BYPASS === "true") return { pass: true, message: "" };
+  const enforceGate = process.env.CHARACTER_GATE_ENFORCE === "true";
+  if (!enforceGate) return { pass: true, message: "" };
+  if (scopedRegeneration) return { pass: true, message: "" };
   const threshold = Number(process.env.CHARACTER_GATE_MIN_SCORE ?? 80);
   const latestCharacterReport = (workflow.qualityReports ?? [])
     .filter((report) => report.stage === "character")
@@ -2065,10 +2217,13 @@ function assertCharacterGateForStoryboardImages(workflow: ProjectWorkflow, scope
       message: `角色一致性评测未达标（${latestCharacterReport.totalScore}/${threshold}），请先在“角色定稿”修复参考图/多视图/负面提示词，再批量生成分镜图。`
     };
   }
-  if (scopedRegeneration) return { pass: true, message: "" };
-  const roleAssets = workflow.assets.filter((asset) => asset.type === "role" && asset.status === "succeeded" && asset.referenceUrl);
+  const lockedRoleAssets = workflow.assets.filter((asset) =>
+    (asset.type === "role" || asset.type === "role_derivative" || asset.type === "role_reference") &&
+    asset.status === "succeeded" &&
+    asset.referenceUrl
+  );
   const missingCharacters = workflow.characters
-    .filter((character) => !roleAssets.some((asset) => asset.relatedCharacterId === character.id || asset.name.includes(character.name)))
+    .filter((character) => !characterHasLockedReference(character, lockedRoleAssets))
     .map((character) => character.name);
   if (workflow.characters.length && missingCharacters.length) {
     return {
@@ -2077,6 +2232,14 @@ function assertCharacterGateForStoryboardImages(workflow: ProjectWorkflow, scope
     };
   }
   return { pass: true, message: "" };
+}
+
+function characterHasLockedReference(
+  character: ProjectWorkflow["characters"][number],
+  lockedAssets: Array<Pick<AssetItem, "id" | "name" | "relatedCharacterId" | "referenceUrl" | "status" | "type">>
+) {
+  if (character.referenceAssetId && lockedAssets.some((asset) => asset.id === character.referenceAssetId)) return true;
+  return lockedAssets.some((asset) => asset.relatedCharacterId === character.id || asset.name.includes(character.name));
 }
 
 function imageProviderId(provider: string) {
@@ -2176,6 +2339,20 @@ function normalizeRedeemPrefix(value: string) {
     .replace(/[^A-Z0-9]/g, "")
     .slice(0, 16);
   return normalized || "GIFT";
+}
+
+function normalizeAnnouncementType(value?: string) {
+  if (value === "guide" || value === "update" || value === "warning") return value;
+  return "info";
+}
+
+function normalizeHelpCategory(value?: string) {
+  if (value === "workflow" || value === "billing" || value === "account" || value === "troubleshooting" || value === "community") return value;
+  return "getting_started";
+}
+
+function normalizeTextList(values: string[]) {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))].slice(0, 8);
 }
 
 function uniqueModelPool(models: string[]) {

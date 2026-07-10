@@ -19,6 +19,51 @@ export type FeedbackHandlingStatus = "open" | "triaged" | "processing" | "resolv
 export type FeedbackPriority = "p0" | "p1" | "p2" | "p3";
 export type QualityEvaluationMode = "rules" | "hybrid" | "llm";
 export type EvaluationRunStatus = "running" | "completed" | "failed";
+export type AnnouncementType = "info" | "guide" | "update" | "warning";
+export type HelpArticleCategory = "getting_started" | "workflow" | "billing" | "account" | "troubleshooting" | "community";
+
+export interface PagedResult<T> {
+  items: T[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
+
+export type ShowcaseWorkStatus = "draft" | "pending" | "approved" | "rejected";
+
+export interface ShowcaseWork {
+  id: string;
+  creatorId?: string;
+  projectId?: string;
+  sourceAssetId?: string;
+  title: string;
+  description: string;
+  category: string;
+  creatorName: string;
+  coverUrl: string;
+  videoUrl: string;
+  durationLabel: string;
+  status: ShowcaseWorkStatus;
+  featured: boolean;
+  sortOrder: number;
+  reviewNote?: string;
+  submittedAt?: string;
+  publishedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ShowcaseWorkInput {
+  projectId: string;
+  sourceAssetId?: string;
+  videoUrl?: string;
+  title: string;
+  description?: string;
+  category?: string;
+  coverUrl?: string;
+  durationLabel?: string;
+}
 
 export interface Project {
   id: string;
@@ -361,6 +406,33 @@ export interface AnalyticsEvent {
   createdAt: string;
 }
 
+export interface PlatformAnnouncement {
+  id: string;
+  title: string;
+  body: string;
+  type: AnnouncementType;
+  enabled: boolean;
+  pinned: boolean;
+  startsAt?: string;
+  endsAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface HelpArticle {
+  id: string;
+  title: string;
+  summary: string;
+  content: string;
+  category: HelpArticleCategory;
+  tags: string[];
+  enabled: boolean;
+  pinned: boolean;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface UserFeedback {
   id: string;
   userId: string;
@@ -410,12 +482,14 @@ export interface PromptVersion {
   key: string;
   name: string;
   stage: EvaluationStage;
+  purpose: "generation" | "evaluation";
   version: string;
   content: string;
   status: "draft" | "active" | "archived";
   owner?: string;
   notes: string;
   createdAt: string;
+  updatedAt: string;
 }
 
 export interface ExperimentRun {
@@ -425,12 +499,42 @@ export interface ExperimentRun {
   hypothesis: string;
   baselineVersion: string;
   candidateVersion: string;
+  experimentType: "model" | "prompt" | "combined";
+  datasetId?: string;
+  datasetName?: string;
+  baselineRunId?: string;
+  candidateRunId?: string;
+  baselineConfig: Record<string, unknown>;
+  candidateConfig: Record<string, unknown>;
+  metrics: {
+    baselineScore: number;
+    candidateScore: number;
+    scoreDelta: number;
+    baselinePassRate: number;
+    candidatePassRate: number;
+    passRateDelta: number;
+    baselineReports: number;
+    candidateReports: number;
+    stageDeltas: Array<{ stage: EvaluationStage; baseline: number; candidate: number; delta: number }>;
+    sampleDeltas: Array<{
+      projectId: string;
+      projectName?: string;
+      stage: EvaluationStage;
+      baseline?: number;
+      candidate?: number;
+      delta?: number;
+      status: "improved" | "regressed" | "same" | "new" | "missing";
+    }>;
+  };
+  winner: "baseline" | "candidate" | "tie" | "pending";
   trafficRatio: number;
   successMetric: string;
   resultSummary: string;
   status: "draft" | "running" | "completed" | "paused";
   startAt?: string;
   endAt?: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface EvaluationDataset {
@@ -484,6 +588,12 @@ export interface EvaluationRun {
   stages: EvaluationStage[];
   mode: QualityEvaluationMode;
   evaluatorModels: QualityEvaluatorModel[];
+  promptVersionId?: string;
+  promptVersionName?: string;
+  promptSnapshot: Partial<PromptVersion>;
+  generationPromptVersionId?: string;
+  generationPromptVersionName?: string;
+  generationPromptSnapshot: Partial<PromptVersion>;
   maxLlmCalls: number;
   maxShotsPerPrompt: number;
   includeFeedback: boolean;
@@ -543,6 +653,217 @@ export interface EvaluationOverview {
   recentFeedback: UserFeedback[];
 }
 
+export type QualityEventSource = "user_feedback" | "task_failure" | "model_error" | "evaluation_failure" | "manual_review";
+export type QualityGateStatus = "pass" | "warning" | "blocked";
+
+export interface QualityEventRow {
+  id: string;
+  source: QualityEventSource;
+  sourceLabel: string;
+  title: string;
+  description: string;
+  stage: string;
+  priority: FeedbackPriority;
+  status: FeedbackHandlingStatus | "detected" | "queued";
+  rootCause: string;
+  projectId?: string;
+  projectName?: string;
+  userName?: string;
+  taskId?: string;
+  taskTitle?: string;
+  assetId?: string;
+  provider?: string;
+  model?: string;
+  score?: number;
+  latencyMs?: number;
+  costCredits?: number;
+  actionLabel: string;
+  createdAt: string;
+}
+
+export interface QualityVocRow extends UserFeedback {
+  projectName?: string;
+  userName?: string;
+  taskTitle?: string;
+  compensationNeeded: boolean;
+  customerAction: string;
+}
+
+export interface QualityModelMonitorRow {
+  provider: string;
+  model: string;
+  modality: string;
+  stage: string;
+  tasks: number;
+  successRate: number;
+  failureRate: number;
+  averageScore: number;
+  averageLatencyMs: number;
+  p95LatencyMs: number;
+  credits: number;
+  costCny: number;
+  errorCount: number;
+  topErrors: Array<{ reason: string; count: number }>;
+  healthStatus: QualityGateStatus;
+}
+
+export interface QualitySampleRow {
+  id: string;
+  name: string;
+  description: string;
+  source: string;
+  sampleType: "golden" | "badcase" | "regression" | "boundary" | "manual";
+  sampleCount: number;
+  stages: EvaluationStage[];
+  projectIds: string[];
+  owner?: string;
+  latestRunName?: string;
+  latestRunScore?: number;
+  latestRunPassRate?: number;
+  readiness: QualityGateStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface QualityAttributionRow {
+  rootCause: string;
+  count: number;
+  open: number;
+  resolved: number;
+  averageScore: number;
+  stages: string[];
+  recommendation: string;
+  recentEvents: QualityEventRow[];
+}
+
+export interface QualityReleaseGateRow {
+  id: string;
+  name: string;
+  target: string;
+  status: QualityGateStatus;
+  metric: string;
+  threshold: string;
+  current: string;
+  owner: string;
+  action: string;
+  updatedAt: string;
+}
+
+export interface QualityAssetLineageStage {
+  stage: string;
+  provider?: string;
+  model?: string;
+  promptVersion?: string;
+  tasks: number;
+  assets: number;
+  reports: number;
+  feedbacks: number;
+  score: number;
+  costCredits: number;
+  status: QualityGateStatus;
+  generatedAt?: string;
+}
+
+export interface QualityAssetLineageRow {
+  projectId: string;
+  projectName: string;
+  userName: string;
+  userEmail?: string;
+  artStyle: string;
+  videoRatio: string;
+  modelRoutes: {
+    text?: string;
+    image?: string;
+    video?: string;
+  };
+  roleThumbs: Array<{
+    assetId: string;
+    name: string;
+    type: string;
+    url?: string;
+    status: string;
+    characterId?: string;
+  }>;
+  storyboardThumbs: Array<{
+    assetId: string;
+    name: string;
+    url?: string;
+    status: string;
+    shotNo?: string;
+  }>;
+  latestTasks: Array<{
+    id: string;
+    type: string;
+    title: string;
+    provider: string;
+    model: string;
+    status: TaskStatus;
+    credits: number;
+    errorReason?: string;
+  }>;
+  latestReports: Array<{
+    id: string;
+    stage: EvaluationStage;
+    score: number;
+    pass: boolean;
+    action: string;
+  }>;
+  feedbackSummary: {
+    total: number;
+    unusable: number;
+    topTags: string[];
+  };
+  totalCredits: number;
+  safetyStatus: QualityGateStatus;
+  stages: QualityAssetLineageStage[];
+  updatedAt: string;
+}
+
+export interface QualityCenterOverview {
+  summary: {
+    successRate: number;
+    failureRate: number;
+    averageScore: number;
+    p95LatencyMs: number;
+    costAnomalies: number;
+    modelHealth: number;
+    openEvents: number;
+    sampleCount: number;
+  };
+  events: QualityEventRow[];
+  voc: QualityVocRow[];
+  modelMonitoring: QualityModelMonitorRow[];
+  lab: {
+    datasets: EvaluationDataset[];
+    runs: EvaluationRun[];
+    recentReports: QualityReport[];
+  };
+  samples: QualitySampleRow[];
+  attribution: QualityAttributionRow[];
+  releaseGates: QualityReleaseGateRow[];
+  lineage: QualityAssetLineageRow[];
+  stageOptimization: {
+    windowDays: number;
+    bottleneck?: "content" | "assets" | "storyboard" | "final";
+    rows: Array<{
+      key: "content" | "assets" | "storyboard" | "final";
+      label: string;
+      stages: EvaluationStage[];
+      reportCount: number;
+      averageScore: number;
+      passRate: number;
+      openFeedback: number;
+      unusableFeedback: number;
+      failedTasks: number;
+      topProblems: string[];
+      topRootCauses: string[];
+      recommendation: string;
+      health: QualityGateStatus;
+    }>;
+  };
+  generatedAt: string;
+}
+
 export interface QualityProjectRow {
   project: Project;
   userName: string;
@@ -567,6 +888,8 @@ export interface QualityEvaluationRunInput {
   stages?: EvaluationStage[];
   mode: QualityEvaluationMode;
   evaluatorModels?: QualityEvaluatorModel[];
+  promptVersionId?: string;
+  generationPromptVersionId?: string;
   maxLlmCalls?: number;
   maxShotsPerPrompt?: number;
   includeFeedback?: boolean;
@@ -618,7 +941,7 @@ export interface WorkbenchSummary {
     id: string;
     title: string;
     body: string;
-    type: "info" | "guide" | "update";
+    type: AnnouncementType;
   }>;
 }
 

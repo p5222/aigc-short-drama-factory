@@ -126,6 +126,18 @@ const pipelineCatalog: Array<Omit<VisualPipelineDescriptor, "status" | "message"
     capability: ["长音频生成", "最多 4 说话人", "中英文多语", "自托管推理服务适配"]
   },
   {
+    id: "longcat-audiodit",
+    name: "LongCat-AudioDiT / 开源扩散式角色配音",
+    kind: "tts",
+    providerAliases: ["longcat-audiodit", "longcat-tts", "audiodit"],
+    defaultBaseUrl: "http://127.0.0.1:7868",
+    defaultModel: "meituan-longcat/LongCat-AudioDiT-1B",
+    envKeys: ["TTS_PROVIDER=longcat-audiodit", "LONGCAT_AUDIODIT_BASE_URL", "LONGCAT_AUDIODIT_MODEL", "LONGCAT_AUDIODIT_PROMPT_MAP"],
+    baseUrlEnv: "LONGCAT_AUDIODIT_BASE_URL",
+    modelEnv: "LONGCAT_AUDIODIT_MODEL",
+    capability: ["角色台词 TTS", "参考音频零样本克隆", "分镜时长对齐", "Python/GPU sidecar"]
+  },
+  {
     id: "dashscope-tts",
     name: "阿里云百炼 / Qwen TTS",
     kind: "tts",
@@ -158,7 +170,7 @@ export function listVisualPipelines(providers: ModelProvider[] = []): VisualPipe
     const hasProviderConfig = Boolean(provider?.enabled && (provider.apiKeyConfigured || provider.baseUrl));
     const hasEnvKey = Boolean(item.keyEnv && process.env[item.keyEnv]);
     const hasLocalBaseUrl = Boolean(item.baseUrlEnv && process.env[item.baseUrlEnv]);
-    const noKeyRequired = ["edge-tts", "easyvoice", "voicebox", "vibevoice", "comfyui", "svd", "wav2lip", "sadtalker"].includes(item.id);
+    const noKeyRequired = ["edge-tts", "easyvoice", "voicebox", "vibevoice", "longcat-audiodit", "comfyui", "svd", "wav2lip", "sadtalker"].includes(item.id);
     const status: VisualPipelineDescriptor["status"] = provider?.enabled === false
       ? "disabled"
       : hasProviderConfig || hasEnvKey || (noKeyRequired && hasLocalBaseUrl)
