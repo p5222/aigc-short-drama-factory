@@ -1,5 +1,5 @@
 import type { PublicScene } from "./PublicShowcase";
-import { buildMediaCandidates, normalizeMediaTier } from "./cineHomeModel";
+import { buildMediaCandidates, normalizeMediaTier, resolveMediaTier } from "./cineHomeModel";
 
 export interface CineScene extends PublicScene {
   mediaName: string;
@@ -7,7 +7,14 @@ export interface CineScene extends PublicScene {
 }
 
 const baseUrl = (import.meta.env.VITE_CINE_ASSET_BASE_URL ?? "").replace(/\/+$/, "");
-const preferredTier = normalizeMediaTier(import.meta.env.VITE_CINE_MEDIA_TIER);
+const connection = typeof navigator === "undefined"
+  ? undefined
+  : (navigator as Navigator & { connection?: { saveData?: boolean; effectiveType?: string } }).connection;
+const preferredTier = resolveMediaTier(
+  normalizeMediaTier(import.meta.env.VITE_CINE_MEDIA_TIER),
+  connection?.saveData === true,
+  connection?.effectiveType
+);
 
 function createScene(input: Omit<CineScene, "videoUrl" | "videoCandidates">): CineScene {
   const videoCandidates = buildMediaCandidates(input.mediaName, preferredTier, baseUrl);

@@ -16,9 +16,12 @@ import {
 } from "lucide-react";
 import gsap from "gsap";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { FormEvent } from "react";
+import type { FormEvent, KeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
 import { api, type AuthUser } from "../lib/api";
 import "./CineHome.css";
+import { PublicShowcase, type PublicLocale, type PublicView } from "./PublicShowcase";
+import { cineScenes as scenes } from "./cineScenes";
+import { getCardPose, nextCardIndex, relativeCardOffset, shouldCorrectDrift, shouldReleasePreparedSlot } from "./cineHomeModel";
 
 interface LoginPageProps {
   onAuthed: (token: string, user: AuthUser) => void;
@@ -26,91 +29,16 @@ interface LoginPageProps {
 }
 
 type AuthMode = "login" | "register";
-type Locale = "cn" | "en";
-
-interface HomeScene {
-  id: string;
-  videoUrl: string;
-  posterUrl: string;
-  eyebrow: string;
-  meta: string;
-  title: {
-    cn: string;
-    en: string;
-  };
-  scanLabel: {
-    cn: string;
-    en: string;
-  };
-  activeLabel?: string;
-}
+type Locale = PublicLocale;
 
 const phonePattern = /^1[3-9]\d{9}$/;
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const CARD_VIDEO_DELAY_MS = 950;
-const BG_FRAME_TIMEOUT_MS = 3200;
-const WARMUP_DELAY_MS = 1200;
-const cineAssetBaseUrl = (import.meta.env.VITE_CINE_ASSET_BASE_URL ?? "").replace(/\/+$/, "");
-
-function cineAsset(path: string) {
-  return `${cineAssetBaseUrl}${path}`;
-}
-
-const scenes: HomeScene[] = [
-  {
-    id: "01",
-    videoUrl: cineAsset("/media/cineart-home/desert_fast.mp4"),
-    posterUrl: cineAsset("/media/cineart-home/desert_poster.jpg"),
-    eyebrow: "CINE·CAM 01",
-    meta: "SHOT-LEVEL PRECISION",
-    title: { cn: "分镜级精准控制", en: "Shot-level precision" },
-    scanLabel: { cn: "[ 分镜级精准控制 ]", en: "[ SHOT LOCKED ]" },
-    activeLabel: "REC"
-  },
-  {
-    id: "02",
-    videoUrl: cineAsset("/media/cineart-home/photo-w_fast.mp4"),
-    posterUrl: cineAsset("/media/cineart-home/photo-w_poster.jpg"),
-    eyebrow: "CINE·CAM 02",
-    meta: "CHARACTER CONSISTENCY",
-    title: { cn: "角色跨镜头一致", en: "Character consistency" },
-    scanLabel: { cn: "[ 角色一致设定 ]", en: "[ CHARACTER LOCK ]" }
-  },
-  {
-    id: "03",
-    videoUrl: cineAsset("/media/cineart-home/punk-future_fast.mp4"),
-    posterUrl: cineAsset("/media/cineart-home/punk-future_poster.jpg"),
-    eyebrow: "CINE·CAM 03",
-    meta: "STYLE, LOCKED",
-    title: { cn: "风格一键锁定", en: "Style, locked" },
-    scanLabel: { cn: "[ 风格一致设定 ]", en: "[ STYLE LOCKED ]" }
-  },
-  {
-    id: "04",
-    videoUrl: cineAsset("/media/cineart-home/girl-booth_fast.mp4"),
-    posterUrl: cineAsset("/media/cineart-home/girl-booth_poster.jpg"),
-    eyebrow: "CINE·CAM 04",
-    meta: "ASSETS THAT COMPOUND",
-    title: { cn: "资产沉淀复用", en: "Reusable assets" },
-    scanLabel: { cn: "[ 资产沉淀复用 ]", en: "[ ASSET MEMORY ]" }
-  },
-  {
-    id: "05",
-    videoUrl: cineAsset("/media/cineart-home/bicycle-smile_fast.mp4"),
-    posterUrl: cineAsset("/media/cineart-home/bicycle-smile_poster.jpg"),
-    eyebrow: "CINE·CAM 05",
-    meta: "QUEUE IT, SHIP IT",
-    title: { cn: "极速出片", en: "Queue it, ship it" },
-    scanLabel: { cn: "[ 极速生产闭环 ]", en: "[ FAST PIPELINE ]" }
-  }
-];
+const BG_FRAME_TIMEOUT_MS = 8000;
 
 const copy = {
   cn: {
     navHome: "首页",
-    navProduct: "产品",
     navStudio: "创作现场",
-    navEvents: "活动",
     login: "登录",
     register: "注册",
     heroKicker: "BRAND MANIFESTO",
@@ -156,9 +84,7 @@ const copy = {
   },
   en: {
     navHome: "Home",
-    navProduct: "Product",
     navStudio: "Live Studio",
-    navEvents: "Events",
     login: "Log in",
     register: "Sign up",
     heroKicker: "BRAND MANIFESTO",
@@ -251,50 +177,17 @@ function waitForDrawableFrame(video: HTMLVideoElement, timeoutMs = BG_FRAME_TIME
   });
 }
 
-function shouldUseCardVideo() {
-  const motionQuery = window.matchMedia?.("(prefers-reduced-motion: reduce)");
-  const navigatorWithConnection = navigator as Navigator & {
-    connection?: { saveData?: boolean; effectiveType?: string };
-  };
-  const connection = navigatorWithConnection.connection;
-  return !motionQuery?.matches && !connection?.saveData && connection?.effectiveType !== "2g";
-}
-
-function ManagedSceneVideo({ posterUrl, videoUrl }: { posterUrl: string; videoUrl: string }) {
-  const ref = useRef<HTMLVideoElement | null>(null);
-
-  useEffect(() => {
-    const video = ref.current;
-    if (!video) return undefined;
-    video.src = videoUrl;
-    video.load();
-    void video.play().catch(() => undefined);
-    return () => stopAndReleaseVideo(video);
-  }, [videoUrl]);
-
-  return (
-    <video
-      ref={ref}
-      className="cine-card-media"
-      muted
-      playsInline
-      preload="auto"
-      poster={posterUrl}
-      autoPlay
-      disablePictureInPicture
-    />
-  );
-}
-
 export function LoginPage({ onAuthed, variant = "creator" }: LoginPageProps) {
   const [authOpen, setAuthOpen] = useState(variant === "admin");
   const [mode, setMode] = useState<AuthMode>("login");
   const [locale, setLocale] = useState<Locale>("cn");
+  const [publicView, setPublicView] = useState<PublicView>("home");
   const [languageOpen, setLanguageOpen] = useState(false);
   const [requestedScene, setRequestedScene] = useState(0);
   const [activeScene, setActiveScene] = useState(0);
-  const [cardVideoScene, setCardVideoScene] = useState<number | null>(null);
-  const [allowCardVideo, setAllowCardVideo] = useState(true);
+  const [visibleScene, setVisibleScene] = useState(0);
+  const [sceneSourceIndexes, setSceneSourceIndexes] = useState(() => scenes.map(() => 0));
+  const [stackExpanded, setStackExpanded] = useState(false);
   const [account, setAccount] = useState("");
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
@@ -307,51 +200,153 @@ export function LoginPage({ onAuthed, variant = "creator" }: LoginPageProps) {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   const bgRefs = useRef<Array<HTMLVideoElement | null>>([]);
-  const warmupVideoRef = useRef<HTMLVideoElement | null>(null);
-  const visibleBgSlot = useRef(0);
+  const visibleBgSlot = useRef<0 | 1>(0);
+  const slotSceneIndexes = useRef<[number, number]>([0, 1]);
   const lastBgScene = useRef(0);
   const bgRequestId = useRef(0);
-  const stackRef = useRef<HTMLDivElement | null>(null);
-  const cardRefs = useRef<Array<HTMLButtonElement | null>>([]);
-  const activeSceneRef = useRef(activeScene);
+  const visualCardRefs = useRef<Array<HTMLDivElement | null>>([]);
+  const hitCardRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const cardVideoRefs = useRef<Array<HTMLVideoElement | null>>([]);
+  const stackHoverTimer = useRef<number | null>(null);
+  const stackTransitionTimer = useRef<number | null>(null);
+  const stackTransitioning = useRef(false);
+  const hoveredCardScene = useRef<number | null>(null);
+  const pointerCardScene = useRef<number | null>(null);
+  const manualSceneHoldUntil = useRef(0);
 
   const isAdmin = variant === "admin";
   const activeMode = isAdmin ? "login" : mode;
   const t = copy[locale];
+  const sceneUrls = useMemo(
+    () => scenes.map((scene, index) => {
+      const sourceIndex = sceneSourceIndexes[index] ?? 0;
+      return scene.videoCandidates[Math.min(sourceIndex, scene.videoCandidates.length - 1)] ?? scene.videoUrl;
+    }),
+    [sceneSourceIndexes]
+  );
+  const sceneUrlsRef = useRef(sceneUrls);
+  sceneUrlsRef.current = sceneUrls;
+
+  const fallbackScene = useCallback((sceneIndex: number, failedSource: string) => {
+    setSceneSourceIndexes((current) => {
+      const scene = scenes[sceneIndex];
+      const currentIndex = current[sceneIndex] ?? 0;
+      if (!scene || currentIndex >= scene.videoCandidates.length - 1) return current;
+      if (scene.videoCandidates[currentIndex] !== failedSource) return current;
+      const next = [...current];
+      next[sceneIndex] = currentIndex + 1;
+      return next;
+    });
+  }, []);
+
+  const primeHiddenSlot = useCallback((sceneIndex: number) => {
+    const slot = (1 - visibleBgSlot.current) as 0 | 1;
+    const video = bgRefs.current[slot];
+    const source = sceneUrlsRef.current[sceneIndex];
+    if (!video || !source) return;
+    slotSceneIndexes.current[slot] = sceneIndex;
+    video.poster = scenes[sceneIndex].posterUrl;
+    video.preload = "auto";
+    if (video.getAttribute("src") !== source) {
+      video.src = source;
+      video.load();
+    }
+    video.pause();
+  }, []);
 
   const selectScene = useCallback((index: number) => {
     const nextScene = (index + scenes.length) % scenes.length;
+    manualSceneHoldUntil.current = Date.now() + 12000;
+    setActiveScene(nextScene);
     setRequestedScene((current) => (current === nextScene ? current : nextScene));
   }, []);
 
-  useEffect(() => {
-    activeSceneRef.current = activeScene;
-  }, [activeScene]);
+  function handleCardKeyDown(event: KeyboardEvent<HTMLButtonElement>, index: number) {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    const nextIndex = nextCardIndex(index, event.key === "ArrowRight" ? 1 : -1, scenes.length);
+    selectScene(nextIndex);
+    hitCardRefs.current[nextIndex]?.focus();
+  }
+
+  function handleCardClick(event: ReactMouseEvent<HTMLButtonElement>, index: number) {
+    const nextScene = event.detail === 0 ? index : (pointerCardScene.current ?? hoveredCardScene.current ?? index);
+    pointerCardScene.current = null;
+    selectScene(nextScene);
+  }
+
+  function handleCardHoverEnter(index: number) {
+    if (!stackTransitioning.current || hoveredCardScene.current === null) {
+      hoveredCardScene.current = index;
+    }
+    expandStackWithIntent();
+  }
+
+  function handleCardHoverLeave(relatedTarget: EventTarget | null) {
+    const next = relatedTarget instanceof HTMLElement
+      ? relatedTarget.closest(".cine-card-hit")
+      : null;
+    if (next) return;
+    hoveredCardScene.current = null;
+    pointerCardScene.current = null;
+    collapseStack();
+  }
+
+  function handleHeroHoverTarget(target: EventTarget) {
+    if (target instanceof HTMLElement && target.closest(".cine-card-hit")) return;
+    if (stackExpanded) collapseStack();
+  }
+
+  const expandStackWithIntent = useCallback(() => {
+    if (stackHoverTimer.current !== null) window.clearTimeout(stackHoverTimer.current);
+    stackHoverTimer.current = window.setTimeout(() => {
+      stackHoverTimer.current = null;
+      stackTransitioning.current = true;
+      setStackExpanded(true);
+      if (stackTransitionTimer.current !== null) window.clearTimeout(stackTransitionTimer.current);
+      stackTransitionTimer.current = window.setTimeout(() => {
+        stackTransitioning.current = false;
+        stackTransitionTimer.current = null;
+      }, 550);
+    }, 180);
+  }, []);
+
+  const collapseStack = useCallback(() => {
+    if (stackHoverTimer.current !== null) window.clearTimeout(stackHoverTimer.current);
+    if (stackTransitionTimer.current !== null) window.clearTimeout(stackTransitionTimer.current);
+    stackHoverTimer.current = null;
+    stackTransitionTimer.current = null;
+    stackTransitioning.current = false;
+    setStackExpanded(false);
+  }, []);
 
   useEffect(() => {
     document.body.classList.add("auth-surface");
-    return () => document.body.classList.remove("auth-surface");
+    return () => {
+      document.body.classList.remove("auth-surface");
+      if (stackHoverTimer.current !== null) window.clearTimeout(stackHoverTimer.current);
+      if (stackTransitionTimer.current !== null) window.clearTimeout(stackTransitionTimer.current);
+    };
   }, []);
 
   useEffect(() => {
-    setAllowCardVideo(shouldUseCardVideo());
-  }, []);
-
-  useEffect(() => {
-    setCardVideoScene(null);
-    if (!allowCardVideo) return undefined;
-    const timer = window.setTimeout(() => setCardVideoScene(activeScene), CARD_VIDEO_DELAY_MS);
-    return () => window.clearTimeout(timer);
-  }, [activeScene, allowCardVideo]);
-
-  useEffect(() => {
+    if (publicView !== "home") return undefined;
     const primary = bgRefs.current[0];
     const secondary = bgRefs.current[1];
     if (!primary) return undefined;
 
-    primary.poster = scenes[0].posterUrl;
+    const sceneIndex = lastBgScene.current;
+    const source = sceneUrlsRef.current[sceneIndex];
+    let canceled = false;
+    const requestId = ++bgRequestId.current;
+    const requestStartedAt = performance.now();
+
+    visibleBgSlot.current = 0;
+    slotSceneIndexes.current[0] = sceneIndex;
+    setVisibleScene(sceneIndex);
+    primary.poster = scenes[sceneIndex].posterUrl;
     primary.preload = "auto";
-    primary.src = scenes[0].videoUrl;
+    primary.src = source;
     primary.load();
     void primary.play().catch(() => undefined);
     gsap.set(primary, { autoAlpha: 1, scale: 1 });
@@ -360,31 +355,54 @@ export function LoginPage({ onAuthed, variant = "creator" }: LoginPageProps) {
       stopAndReleaseVideo(secondary);
     }
 
+    void waitForDrawableFrame(primary).then((ready) => {
+      if (canceled || bgRequestId.current !== requestId) return;
+      if (!ready) {
+        console.warn("[cine-media]", { event: "fallback", scene: scenes[sceneIndex].mediaName, source });
+        fallbackScene(sceneIndex, source);
+        return;
+      }
+      console.info("[cine-media]", {
+        event: "first-frame",
+        scene: scenes[sceneIndex].mediaName,
+        source,
+        waitMs: Math.round(performance.now() - requestStartedAt)
+      });
+      primeHiddenSlot((sceneIndex + 1) % scenes.length);
+    });
+
     return () => {
+      canceled = true;
+      bgRequestId.current += 1;
+      gsap.killTweensOf(bgRefs.current.filter(Boolean));
       bgRefs.current.forEach((video) => stopAndReleaseVideo(video));
-      stopAndReleaseVideo(warmupVideoRef.current);
-      warmupVideoRef.current = null;
     };
-  }, []);
+  }, [fallbackScene, primeHiddenSlot, publicView]);
 
   useEffect(() => {
+    if (publicView !== "home") return;
     if (lastBgScene.current === requestedScene) return;
 
     const sceneIndex = requestedScene;
     const nextScene = scenes[sceneIndex];
     const fromSlot = visibleBgSlot.current;
-    const toSlot = 1 - fromSlot;
+    const toSlot = (1 - fromSlot) as 0 | 1;
     const fromVideo = bgRefs.current[fromSlot];
     const toVideo = bgRefs.current[toSlot];
-    if (!toVideo) return;
+    const source = sceneUrls[sceneIndex];
+    if (!toVideo || !source) return;
 
     let canceled = false;
     const requestId = ++bgRequestId.current;
+    const requestStartedAt = performance.now();
     gsap.killTweensOf([fromVideo, toVideo].filter(Boolean));
+    slotSceneIndexes.current[toSlot] = sceneIndex;
     toVideo.poster = nextScene.posterUrl;
     toVideo.preload = "auto";
-    toVideo.src = nextScene.videoUrl;
-    toVideo.load();
+    if (toVideo.getAttribute("src") !== source) {
+      toVideo.src = source;
+      toVideo.load();
+    }
     void toVideo.play().catch(() => undefined);
     gsap.set(toVideo, { autoAlpha: 0, scale: 1.006 });
 
@@ -392,12 +410,26 @@ export function LoginPage({ onAuthed, variant = "creator" }: LoginPageProps) {
       if (canceled || bgRequestId.current !== requestId) return;
       if (!ready) {
         stopAndReleaseVideo(toVideo);
-        setRequestedScene(lastBgScene.current);
+        console.warn("[cine-media]", { event: "fallback", scene: nextScene.mediaName, source });
+        const sourceIndex = nextScene.videoCandidates.indexOf(source);
+        if (sourceIndex >= 0 && sourceIndex < nextScene.videoCandidates.length - 1) {
+          fallbackScene(sceneIndex, source);
+        } else {
+          setRequestedScene(lastBgScene.current);
+          setActiveScene(lastBgScene.current);
+        }
         return;
       }
       visibleBgSlot.current = toSlot;
       lastBgScene.current = sceneIndex;
+      setVisibleScene(sceneIndex);
       setActiveScene(sceneIndex);
+      console.info("[cine-media]", {
+        event: "first-frame",
+        scene: nextScene.mediaName,
+        source,
+        waitMs: Math.round(performance.now() - requestStartedAt)
+      });
       gsap.to(toVideo, {
         autoAlpha: 1,
         scale: 1,
@@ -409,129 +441,171 @@ export function LoginPage({ onAuthed, variant = "creator" }: LoginPageProps) {
           autoAlpha: 0,
           duration: 0.72,
           ease: "power2.out",
-          onComplete: () => stopAndReleaseVideo(fromVideo)
+          onComplete: () => {
+            stopAndReleaseVideo(fromVideo);
+            primeHiddenSlot((sceneIndex + 1) % scenes.length);
+          }
         });
-      }
-    });
-
-    return () => {
-      canceled = true;
-    };
-  }, [requestedScene]);
-
-  useEffect(() => {
-    const warmupIndex = (activeScene + 1) % scenes.length;
-    const nextScene = scenes[warmupIndex];
-    let canceled = false;
-    const idleWindow = window as Window & {
-      requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
-      cancelIdleCallback?: (handle: number) => void;
-    };
-    const warmup = () => {
-      if (canceled) return;
-      let video = warmupVideoRef.current;
-      if (!video) {
-        video = document.createElement("video");
-        video.muted = true;
-        video.playsInline = true;
-        warmupVideoRef.current = video;
-      }
-      video.preload = "metadata";
-      video.poster = nextScene.posterUrl;
-      video.src = nextScene.videoUrl;
-      video.load();
-    };
-    const handle = idleWindow.requestIdleCallback
-      ? idleWindow.requestIdleCallback(warmup, { timeout: WARMUP_DELAY_MS })
-      : window.setTimeout(warmup, WARMUP_DELAY_MS);
-
-    return () => {
-      canceled = true;
-      if (idleWindow.cancelIdleCallback && typeof handle === "number") {
-        idleWindow.cancelIdleCallback(handle);
       } else {
-        window.clearTimeout(handle);
+        primeHiddenSlot((sceneIndex + 1) % scenes.length);
       }
-      stopAndReleaseVideo(warmupVideoRef.current);
-    };
-  }, [activeScene]);
-
-  useEffect(() => {
-    const stack = stackRef.current;
-    if (!stack) return undefined;
-    const stackElement = stack;
-
-    let targetX = 0;
-    let smoothX = 0;
-    let frame = 0;
-    const cards = cardRefs.current.slice(0, scenes.length).filter(Boolean) as HTMLButtonElement[];
-    const setters = cards.map((card) => ({
-      x: gsap.quickTo(card, "x", { duration: 0.42, ease: "power3.out" }),
-      y: gsap.quickTo(card, "y", { duration: 0.42, ease: "power3.out" }),
-      z: gsap.quickTo(card, "z", { duration: 0.42, ease: "power3.out" }),
-      rotateY: gsap.quickTo(card, "rotateY", { duration: 0.42, ease: "power3.out" }),
-      rotateZ: gsap.quickTo(card, "rotateZ", { duration: 0.42, ease: "power3.out" }),
-      scale: gsap.quickTo(card, "scale", { duration: 0.42, ease: "power3.out" }),
-      opacity: gsap.quickTo(card, "opacity", { duration: 0.32, ease: "power2.out" })
-    }));
-
-    gsap.set(cards, {
-      force3D: true,
-      transformPerspective: 1180,
-      transformStyle: "preserve-3d"
     });
 
-    function render() {
-      smoothX += (targetX - smoothX) * 0.12;
-      const active = activeSceneRef.current;
-      const total = scenes.length;
-      setters.forEach((setter, index) => {
-        let offset = index - active;
-        if (offset > total / 2) offset -= total;
-        if (offset < -total / 2) offset += total;
-        const depth = Math.abs(offset);
-        const isActive = index === active;
-        const side = offset === 0 ? 0 : Math.sign(offset);
-        const fanSpread = 1 + Math.abs(smoothX) * 0.18;
-        const x = offset * (78 + depth * 14) * fanSpread + side * smoothX * 28;
-        const y = isActive ? -26 - Math.abs(smoothX) * 10 : depth * 22 + (depth > 1 ? 14 : 0);
-        const z = isActive ? 150 : -depth * 78;
-        const rotateY = offset * -8 + side * smoothX * -7;
-        const rotateZ = offset * 8.5 + side * smoothX * 5;
-        const scale = isActive ? 1.12 : depth === 1 ? 0.94 : 0.82;
-        const opacity = isActive ? 1 : depth === 1 ? 0.82 : 0.58;
-        setter.x(x);
-        setter.y(y);
-        setter.z(z);
-        setter.rotateY(rotateY);
-        setter.rotateZ(rotateZ);
-        setter.scale(scale);
-        setter.opacity(opacity);
-        cards[index].style.zIndex = String(isActive ? 80 : 60 - depth * 10);
+    return () => {
+      canceled = true;
+      if (shouldReleasePreparedSlot(visibleBgSlot.current, toSlot)) {
+        gsap.killTweensOf(toVideo);
+        stopAndReleaseVideo(toVideo);
+      }
+    };
+  }, [fallbackScene, primeHiddenSlot, publicView, requestedScene, sceneUrls]);
+
+  useEffect(() => {
+    if (publicView !== "home") return;
+    const video = bgRefs.current[visibleBgSlot.current];
+    const source = sceneUrls[visibleScene];
+    if (!video || !source || video.getAttribute("src") === source) return;
+
+    let canceled = false;
+    const requestId = ++bgRequestId.current;
+    const requestStartedAt = performance.now();
+    slotSceneIndexes.current[visibleBgSlot.current] = visibleScene;
+    video.poster = scenes[visibleScene].posterUrl;
+    video.preload = "auto";
+    video.src = source;
+    video.load();
+    void video.play().catch(() => undefined);
+
+    void waitForDrawableFrame(video).then((ready) => {
+      if (canceled || bgRequestId.current !== requestId) return;
+      if (!ready) {
+        console.warn("[cine-media]", { event: "fallback", scene: scenes[visibleScene].mediaName, source });
+        fallbackScene(visibleScene, source);
+        return;
+      }
+      console.info("[cine-media]", {
+        event: "first-frame",
+        scene: scenes[visibleScene].mediaName,
+        source,
+        waitMs: Math.round(performance.now() - requestStartedAt)
       });
-      frame = window.requestAnimationFrame(render);
-    }
-
-    function onPointerMove(event: PointerEvent) {
-      const rect = stackElement.getBoundingClientRect();
-      targetX = Math.max(-1, Math.min(1, ((event.clientX - rect.left) / rect.width - 0.5) * 2));
-    }
-
-    function onPointerLeave() {
-      targetX = 0;
-    }
-
-    stackElement.addEventListener("pointermove", onPointerMove);
-    stackElement.addEventListener("pointerleave", onPointerLeave);
-    render();
+      primeHiddenSlot((visibleScene + 1) % scenes.length);
+    });
 
     return () => {
-      stackElement.removeEventListener("pointermove", onPointerMove);
-      stackElement.removeEventListener("pointerleave", onPointerLeave);
-      window.cancelAnimationFrame(frame);
-      gsap.killTweensOf(cards);
+      canceled = true;
     };
-  }, []);
+  }, [fallbackScene, primeHiddenSlot, publicView, sceneUrls, visibleScene]);
+
+  useEffect(() => {
+    if (publicView !== "home") return undefined;
+    const animated: Element[] = [];
+
+    scenes.forEach((_scene, index) => {
+      const pose = getCardPose(index, activeScene, stackExpanded, scenes.length);
+      const visual = visualCardRefs.current[index];
+      const hit = hitCardRefs.current[index];
+      const targets: HTMLElement[] = [];
+      if (visual) targets.push(visual);
+      if (hit) targets.push(hit);
+      animated.push(...targets);
+      gsap.to(targets, {
+        x: pose.x,
+        y: pose.y,
+        z: pose.z,
+        rotateY: pose.rotateY,
+        rotateZ: pose.rotateZ,
+        scale: pose.scale,
+        opacity: pose.opacity,
+        force3D: true,
+        transformPerspective: 1180,
+        duration: stackExpanded ? 0.5 : 0.38,
+        ease: "power3.out",
+        overwrite: true
+      });
+      if (visual) visual.style.zIndex = String(pose.zIndex);
+      if (hit) hit.style.zIndex = String(200 + pose.zIndex);
+    });
+
+    return () => gsap.killTweensOf(animated);
+  }, [activeScene, publicView, stackExpanded]);
+
+  useEffect(() => {
+    if (publicView !== "home") return undefined;
+    const background = bgRefs.current[visibleBgSlot.current];
+    const card = cardVideoRefs.current[visibleScene];
+    if (!background || !card) return undefined;
+
+    let canceled = false;
+    let frameHandle: number | null = null;
+    const frameVideo = background as HTMLVideoElement & {
+      requestVideoFrameCallback?: (callback: () => void) => number;
+      cancelVideoFrameCallback?: (handle: number) => void;
+    };
+
+    const align = () => {
+      card.playbackRate = background.playbackRate;
+      if (card.readyState < HTMLMediaElement.HAVE_METADATA) return;
+      if (shouldCorrectDrift(background.currentTime, card.currentTime)) {
+        card.currentTime = background.currentTime;
+      }
+    };
+    const play = () => {
+      align();
+      void card.play().catch(() => undefined);
+    };
+    const pause = () => card.pause();
+    const tick = () => {
+      if (canceled) return;
+      align();
+      frameHandle = frameVideo.requestVideoFrameCallback?.(tick) ?? null;
+    };
+
+    card.muted = true;
+    align();
+    if (background.paused) card.pause();
+    else void card.play().catch(() => undefined);
+    frameHandle = frameVideo.requestVideoFrameCallback?.(tick) ?? null;
+    background.addEventListener("play", play);
+    background.addEventListener("pause", pause);
+    background.addEventListener("seeking", align);
+    background.addEventListener("ratechange", align);
+    background.addEventListener("timeupdate", align);
+
+    return () => {
+      canceled = true;
+      background.removeEventListener("play", play);
+      background.removeEventListener("pause", pause);
+      background.removeEventListener("seeking", align);
+      background.removeEventListener("ratechange", align);
+      background.removeEventListener("timeupdate", align);
+      if (frameHandle !== null) frameVideo.cancelVideoFrameCallback?.(frameHandle);
+      card.pause();
+    };
+  }, [publicView, sceneUrls, visibleScene]);
+
+  useEffect(() => {
+    cardVideoRefs.current.forEach((video, index) => {
+      if (!video || index === visibleScene) return;
+      video.pause();
+    });
+  }, [visibleScene]);
+
+  useEffect(() => {
+    if (publicView !== "home") return undefined;
+    const handleVisibility = () => {
+      if (document.hidden) {
+        bgRefs.current.forEach((video) => video?.pause());
+        cardVideoRefs.current.forEach((video) => video?.pause());
+        return;
+      }
+      const visible = bgRefs.current[visibleBgSlot.current];
+      if (visible) void visible.play().catch(() => undefined);
+    };
+
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, [publicView]);
 
   const switchMode = useCallback((nextMode: AuthMode) => {
     setMode(nextMode);
@@ -555,7 +629,16 @@ export function LoginPage({ onAuthed, variant = "creator" }: LoginPageProps) {
 
   function handleBackgroundEnded(slot: number) {
     if (slot !== visibleBgSlot.current) return;
-    selectScene(lastBgScene.current + 1);
+    if (Date.now() < manualSceneHoldUntil.current) {
+      const video = bgRefs.current[slot];
+      if (video) {
+        video.currentTime = 0;
+        void video.play().catch(() => undefined);
+      }
+      return;
+    }
+    const next = (lastBgScene.current + 1) % scenes.length;
+    setRequestedScene((current) => current === next ? current : next);
   }
 
   async function submit() {
@@ -822,8 +905,52 @@ export function LoginPage({ onAuthed, variant = "creator" }: LoginPageProps) {
   }
 
   return (
-    <main className="cine-home-page relative w-screen h-screen overflow-hidden bg-black text-white">
-      <section className="cine-hero relative h-screen w-screen overflow-hidden" aria-label="漫角电影感首页">
+    <main className={`cine-home-page relative w-screen h-screen bg-black text-white ${publicView === "home" ? "overflow-hidden" : "cine-scroll-page"}`}>
+      <nav className={`cine-top-nav ${publicView === "home" ? "" : "solid"}`} aria-label="首页导航">
+        <button className="cine-logo-text nav-logo" type="button" onClick={() => setPublicView("home")}>
+          <span>漫角</span>
+          <small>MANJIAO.CLOUD</small>
+        </button>
+        <div className="cine-nav-links">
+          <button className={publicView === "home" ? "active" : ""} type="button" onClick={() => setPublicView("home")}>{t.navHome}</button>
+          <button className={publicView === "studio" ? "active" : ""} type="button" onClick={() => setPublicView("studio")}>{t.navStudio}</button>
+        </div>
+        <div className="cine-nav-actions">
+          <div className="cine-language">
+            <button
+              className={languageOpen ? "open" : undefined}
+              type="button"
+              onClick={() => setLanguageOpen((value) => !value)}
+            >
+              <Globe2 size={15} />
+              {locale === "cn" ? "CN" : "EN"}
+              <ChevronDown size={14} />
+            </button>
+            {languageOpen ? (
+              <div className="cine-language-menu">
+                <button className={locale === "cn" ? "active" : undefined} type="button" onClick={() => { setLocale("cn"); setLanguageOpen(false); }}>
+                  <span />
+                  中文
+                </button>
+                <button className={locale === "en" ? "active" : undefined} type="button" onClick={() => { setLocale("en"); setLanguageOpen(false); }}>
+                  <span />
+                  English
+                </button>
+              </div>
+            ) : null}
+          </div>
+          <button className="cine-login-pill" type="button" onClick={() => openAuth("login")}>
+            {t.login}
+          </button>
+        </div>
+      </nav>
+
+      {publicView === "home" ? <section
+        className="cine-hero relative h-screen w-screen overflow-hidden"
+        aria-label="漫角电影感首页"
+        onMouseMove={(event) => handleHeroHoverTarget(event.target)}
+        onPointerMove={(event) => handleHeroHoverTarget(event.target)}
+      >
         <div className="cine-video-layer absolute inset-0" aria-hidden="true">
           {[0, 1].map((slot) => (
             <video
@@ -835,6 +962,11 @@ export function LoginPage({ onAuthed, variant = "creator" }: LoginPageProps) {
               poster={slot === 0 ? scenes[0].posterUrl : undefined}
               disablePictureInPicture
               onEnded={() => handleBackgroundEnded(slot)}
+              onError={(event) => {
+                const sceneIndex = slotSceneIndexes.current[slot];
+                const failedSource = event.currentTarget.getAttribute("src") ?? event.currentTarget.currentSrc;
+                if (failedSource) fallbackScene(sceneIndex, failedSource);
+              }}
               ref={(node) => {
                 bgRefs.current[slot] = node;
               }}
@@ -845,93 +977,121 @@ export function LoginPage({ onAuthed, variant = "creator" }: LoginPageProps) {
           <div className="cine-left-gradient" />
         </div>
 
-        <nav className="cine-top-nav" aria-label="首页导航">
-          <button className="cine-logo-text nav-logo" type="button" onClick={() => selectScene(0)}>
-            <span>漫角</span>
-            <small>MANJIAO.CLOUD</small>
-          </button>
-          <div className="cine-nav-links">
-            <button className="active" type="button" onClick={() => selectScene(0)}>{t.navHome}</button>
-            <button type="button" onClick={() => openAuth("login")}>{t.navProduct}</button>
-            <button type="button" onClick={() => openAuth("login")}>{t.navStudio}</button>
-            <button type="button" onClick={() => openAuth("login")}>{t.navEvents}</button>
-          </div>
-          <div className="cine-nav-actions">
-            <div className="cine-language">
-              <button
-                className={languageOpen ? "open" : undefined}
-                type="button"
-                onClick={() => setLanguageOpen((value) => !value)}
-              >
-                <Globe2 size={15} />
-                {locale === "cn" ? "CN" : "EN"}
-                <ChevronDown size={14} />
-              </button>
-              {languageOpen ? (
-                <div className="cine-language-menu">
-                  <button className={locale === "cn" ? "active" : undefined} type="button" onClick={() => { setLocale("cn"); setLanguageOpen(false); }}>
-                    <span />
-                    中文
-                  </button>
-                  <button className={locale === "en" ? "active" : undefined} type="button" onClick={() => { setLocale("en"); setLanguageOpen(false); }}>
-                    <span />
-                    English
-                  </button>
-                </div>
-              ) : null}
-            </div>
-            <button className="cine-login-pill" type="button" onClick={() => openAuth("login")}>
-              {t.login}
-            </button>
-          </div>
-        </nav>
-
         <div className="cine-center-copy">
           <p>{t.heroKicker}</p>
           <h1>{t.heroTitle}</h1>
           <span>{t.heroSubtitle}</span>
         </div>
 
-        <div className="cine-card-stack transform-gpu" ref={stackRef} aria-label="CINE CAM 3D 视频卡片堆叠">
-          {scenes.map((scene, index) => {
-            const isActive = index === activeScene;
-            const shouldPlayActiveVideo = isActive && cardVideoScene === index;
-            return (
-              <button
-                className={isActive ? "cine-film-card active will-change-transform transform-gpu" : "cine-film-card will-change-transform transform-gpu"}
-                key={scene.id}
-                onClick={() => selectScene(index)}
-                ref={(node) => {
-                  cardRefs.current[index] = node;
-                }}
-                type="button"
-              >
-                {shouldPlayActiveVideo ? (
-                  <ManagedSceneVideo posterUrl={scene.posterUrl} videoUrl={scene.videoUrl} />
-                ) : (
-                  <img className="cine-card-media" src={scene.posterUrl} alt={scene.title[locale]} decoding="async" draggable={false} loading={index === activeScene ? "eager" : "lazy"} />
-                )}
-                <div className="cine-card-overlay" />
-                <div className="cine-card-sheen" />
-                <div className="cine-card-corners" />
-                <div className="cine-card-head">
-                  <span>{scene.eyebrow}</span>
-                  {isActive ? <b>{scene.activeLabel ?? "REC"}</b> : null}
-                </div>
-                <div className="cine-card-body">
-                  <p>{scene.meta}</p>
-                  <strong>{scene.title[locale]}</strong>
-                  {isActive ? <small>00:00:00:00</small> : null}
-                </div>
-                {isActive ? (
-                  <div className="cine-active-scan-ui" aria-hidden="true">
-                    <i />
-                    <span>{scene.scanLabel[locale]}</span>
+        <div
+          className={`cine-card-stack ${stackExpanded ? "expanded" : "collapsed"}`}
+          aria-label="CINE CAM 3D 视频卡片堆叠"
+          onPointerEnter={expandStackWithIntent}
+          onPointerMove={(event) => {
+            const hit = (event.target as HTMLElement).closest<HTMLButtonElement>(".cine-card-hit");
+            if (!hit) return;
+            const index = Number(hit.dataset.sceneIndex);
+            if (Number.isInteger(index)) hoveredCardScene.current = index;
+          }}
+          onPointerDownCapture={() => {
+            pointerCardScene.current = hoveredCardScene.current;
+          }}
+          onPointerLeave={() => {
+            hoveredCardScene.current = null;
+            pointerCardScene.current = null;
+            collapseStack();
+          }}
+          onFocusCapture={() => {
+            if (stackHoverTimer.current !== null) window.clearTimeout(stackHoverTimer.current);
+            stackHoverTimer.current = null;
+            stackTransitioning.current = true;
+            setStackExpanded(true);
+            if (stackTransitionTimer.current !== null) window.clearTimeout(stackTransitionTimer.current);
+            stackTransitionTimer.current = window.setTimeout(() => {
+              stackTransitioning.current = false;
+              stackTransitionTimer.current = null;
+            }, 550);
+          }}
+          onBlurCapture={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) collapseStack();
+          }}
+        >
+          <div className="cine-card-visual-layer" aria-hidden="true">
+            {scenes.map((scene, index) => {
+              const isActive = index === activeScene;
+              return (
+                <div
+                  className={isActive ? "cine-film-card cine-card-visual active" : "cine-film-card cine-card-visual"}
+                  key={`visual-${scene.id}`}
+                  ref={(node) => {
+                    visualCardRefs.current[index] = node;
+                  }}
+                >
+                  <video
+                    className="cine-card-media"
+                    src={sceneUrls[index]}
+                    poster={scene.posterUrl}
+                    muted
+                    playsInline
+                    loop
+                    preload={isActive ? "auto" : "metadata"}
+                    disablePictureInPicture
+                    onError={(event) => {
+                      const failedSource = event.currentTarget.getAttribute("src") ?? event.currentTarget.currentSrc;
+                      if (failedSource) fallbackScene(index, failedSource);
+                    }}
+                    ref={(node) => {
+                      cardVideoRefs.current[index] = node;
+                    }}
+                  />
+                  <div className="cine-card-overlay" />
+                  <div className="cine-card-sheen" />
+                  <div className="cine-card-corners" />
+                  <div className="cine-card-head">
+                    <span>{scene.eyebrow}</span>
+                    {isActive ? <b>{scene.activeLabel ?? "REC"}</b> : null}
                   </div>
-                ) : null}
-              </button>
-            );
-          })}
+                  <div className="cine-card-body">
+                    <p>{scene.meta}</p>
+                    <strong>{scene.title[locale]}</strong>
+                    {isActive ? <small>00:00:00:00</small> : null}
+                  </div>
+                  {isActive ? (
+                    <div className="cine-active-scan-ui">
+                      <i />
+                      <span>{scene.scanLabel[locale]}</span>
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+          <div className="cine-card-hit-layer">
+            {scenes.map((scene, index) => {
+              const offset = relativeCardOffset(index, activeScene, scenes.length);
+              return (
+                <button
+                  className="cine-card-hit"
+                  data-offset={offset}
+                  data-scene-index={index}
+                  key={`hit-${scene.id}`}
+                  type="button"
+                  aria-label={`切换到${scene.title[locale]}`}
+                  aria-pressed={index === activeScene}
+                  onClick={(event) => handleCardClick(event, index)}
+                  onPointerEnter={() => handleCardHoverEnter(index)}
+                  onPointerLeave={(event) => handleCardHoverLeave(event.relatedTarget)}
+                  onMouseEnter={() => handleCardHoverEnter(index)}
+                  onMouseMove={() => handleCardHoverEnter(index)}
+                  onMouseLeave={(event) => handleCardHoverLeave(event.relatedTarget)}
+                  onKeyDown={(event) => handleCardKeyDown(event, index)}
+                  ref={(node) => {
+                    hitCardRefs.current[index] = node;
+                  }}
+                />
+              );
+            })}
+          </div>
         </div>
 
         <div className="cine-side-control">
@@ -945,7 +1105,7 @@ export function LoginPage({ onAuthed, variant = "creator" }: LoginPageProps) {
           <Sparkles size={16} />
           {t.start}
         </button>
-      </section>
+      </section> : <PublicShowcase locale={locale} scenes={scenes} view={publicView} onStart={() => openAuth("login")} />}
 
       {authOpen ? (
         <div className="cine-auth-modal" role="dialog" aria-modal="true" aria-label={activeMode === "login" ? t.login : t.register}>

@@ -1,0 +1,259 @@
+:root[data-theme="light"] {
+  color-scheme: light;
+  --light-page: #f6f9fb;
+  --light-surface: #ffffff;
+  --light-subtle: #f8fbfd;
+  --light-text: #101828;
+  --light-muted: #667085;
+  --light-border: #e4ebf2;
+  --light-border-strong: #d7e3ec;
+  --light-accent: #009b8f;
+  --light-accent-ink: #04786f;
+  --light-selected: #eaf9f6;
+  --light-disabled: #98a2b3;
+  --light-success: #15803d;
+  --light-warning: #b45309;
+  --light-danger: #b42318;
+  --light-info: #1d4ed8;
+  --light-shadow: 0 4px 12px rgba(31, 64, 91, 0.06);
+}
+
+:root[data-theme="light"] .app-shell,
+:root[data-theme="light"] .app-shell > .main,
+:root[data-theme="light"] .app-shell .main-content,
+:root[data-theme="light"] .app-shell .page-stack,
+:root[data-theme="light"] .app-shell .dashboard-page,
+:root[data-theme="light"] .app-shell .creation-workbench,
+:root[data-theme="light"] .app-shell .project-workbench,
+:root[data-theme="light"] .app-shell .studio-page,
+:root[data-theme="light"] .app-shell .generation-queue-page {
+  color: var(--light-text) !important;
+  background: var(--light-page) !important;
+}
+
+:root[data-theme="light"] .app-shell .sidebar,
+:root[data-theme="light"] .app-shell .topbar {
+  border-color: var(--light-border) !important;
+  background: var(--light-surface) !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+}
+
+:root[data-theme="light"] .app-shell .brand-mark {
+  color: #ffffff !important;
+  background: var(--light-accent) !important;
+  box-shadow: none !important;
+}
+
+:root[data-theme="light"] .app-shell .search-box,
+:root[data-theme="light"] .app-shell .user-pill,
+:root[data-theme="light"] .app-shell .panel,
+:root[data-theme="light"] .app-shell .u-card,
+:root[data-theme="light"] .app-shell .metric-card,
+:root[data-theme="light"] .app-shell .project-card,
+:root[data-theme="light"] .app-shell .plan-card,
+:root[data-theme="light"] .app-shell .announcement,
+:root[data-theme="light"] .app-shell .task-row,
+:root[data-theme="light"] .app-shell .list-row,
+:root[data-theme="light"] .app-shell .credit-card,
+:root[data-theme="light"] .app-shell .profile-hero,
+:root[data-theme="light"] .app-shell .profile-section,
+:root[data-theme="light"] .app-shell .profile-stat-card,
+:root[data-theme="light"] .app-shell .queue-list-card,
+:root[data-theme="light"] .app-shell .queue-detail-card,
+:root[data-theme="light"] .app-shell .queue-stat-card,
+:root[data-theme="light"] .app-shell .queue-stage-card,
+:root[data-theme="light"] .app-shell .queue-progress-card,
+:root[data-theme="light"] .app-shell .generation-cost-preview,
+:root[data-theme="light"] .app-shell .generation-confirm-dialog,
+:root[data-theme="light"] .app-shell .project-route-drawer,
+:root[data-theme="light"] .app-shell .production-console,
+:root[data-theme="light"] .app-shell .production-console-polished,
+:root[data-theme="light"] .app-shell .stage-feedback-panel,
+:root[data-theme="light"] .app-shell .optional-settings {
+  border-color: var(--light-border) !important;
+  border-radius: 8px !important;
+  color: var(--light-text) !important;
+  background: var(--light-surface) !important;
+  box-shadow: var(--light-shadow) !important;
+}
+
+:root[data-theme="light"] .app-shell .brand,
+:root[data-theme="light"] .app-shell .brand strong,
+:root[data-theme="light"] .app-shell .crumb,
+:root[data-theme="light"] .app-shell .page-title h1,
+:root[data-theme="light"] .app-shell .workbench-hero-title h1,
+:root[data-theme="light"] .app-shell .u-wizard-heading h1,
+:root[data-theme="light"] .app-shell h1,
+:root[data-theme="light"] .app-shell h2,
+:root[data-theme="light"] .app-shell h3 {
+  color: var(--light-text) !important;
+}
+
+:root[data-theme="light"] .app-shell .brand span,
+:root[data-theme="light"] .app-shell .nav-section > p,
+:root[data-theme="light"] .app-shell .topbar small,
+:root[data-theme="light"] .app-shell .page-title p,
+:root[data-theme="light"] .app-shell .panel p,
+:root[data-theme="light"] .app-shell .panel small,
+:root[data-theme="light"] .app-shell .u-card-head p,
+:root[data-theme="light"] .app-shell .u-card-head small,
+:root[data-theme="light"] .app-shell .metric-card small,
+:root[data-theme="light"] .app-shell .project-card p,
+:root[data-theme="light"] .app-shell .plan-card p,
+:root[data-theme="light"] .app-shell .list-row span,
+:root[data-theme="light"] .app-shell .task-row span,
+:root[data-theme="light"] .app-shell .muted {
+  color: var(--light-muted) !important;
+}
+
+:root[data-theme="light"] .app-shell input,
+:root[data-theme="light"] .app-shell textarea,
+:root[data-theme="light"] .app-shell select {
+  border-color: var(--light-border-strong) !important;
+  color: var(--light-text) !important;
+  background: var(--light-subtle) !important;
+  box-shadow: none !important;
+}
+
+:root[data-theme="light"] .app-shell input::placeholder,
+:root[data-theme="light"] .app-shell textarea::placeholder {
+  color: var(--light-disabled) !important;
+}
+
+:root[data-theme="light"] .app-shell input:focus,
+:root[data-theme="light"] .app-shell textarea:focus,
+:root[data-theme="light"] .app-shell select:focus {
+  border-color: var(--light-accent) !important;
+  outline: 0;
+  box-shadow: 0 0 0 3px rgba(0, 155, 143, 0.12) !important;
+}
+
+:root[data-theme="light"] .app-shell .nav-item,
+:root[data-theme="light"] .app-shell .ghost-button,
+:root[data-theme="light"] .app-shell .guide-button,
+:root[data-theme="light"] .app-shell .icon-button,
+:root[data-theme="light"] .app-shell .tabs button,
+:root[data-theme="light"] .app-shell .step-tabs button,
+:root[data-theme="light"] .app-shell .filter-row button,
+:root[data-theme="light"] .app-shell .queue-filter-row button,
+:root[data-theme="light"] .app-shell .choice-pill,
+:root[data-theme="light"] .app-shell .choice-card,
+:root[data-theme="light"] .app-shell .mode-option {
+  border-color: var(--light-border) !important;
+  color: #344054 !important;
+  background: var(--light-surface) !important;
+  box-shadow: none !important;
+}
+
+:root[data-theme="light"] .app-shell .nav-item:hover,
+:root[data-theme="light"] .app-shell .nav-item.active,
+:root[data-theme="light"] .app-shell .tabs button.active,
+:root[data-theme="light"] .app-shell .step-tabs button.active,
+:root[data-theme="light"] .app-shell .filter-row button.active,
+:root[data-theme="light"] .app-shell .queue-filter-row button.active,
+:root[data-theme="light"] .app-shell .choice-pill.active,
+:root[data-theme="light"] .app-shell .choice-card.active,
+:root[data-theme="light"] .app-shell .mode-option.active {
+  border-color: #8adbd3 !important;
+  color: var(--light-accent-ink) !important;
+  background: var(--light-selected) !important;
+}
+
+:root[data-theme="light"] .app-shell .primary-button,
+:root[data-theme="light"] .app-shell .guide-button:hover,
+:root[data-theme="light"] .app-shell .production-action:not(.secondary) {
+  border-color: var(--light-accent) !important;
+  color: #ffffff !important;
+  background: var(--light-accent) !important;
+  box-shadow: none !important;
+}
+
+:root[data-theme="light"] .app-shell :focus-visible {
+  outline-color: var(--light-accent) !important;
+}
+
+:root[data-theme="light"] .app-shell :disabled,
+:root[data-theme="light"] .app-shell [aria-disabled="true"] {
+  color: var(--light-disabled) !important;
+  background: #f2f4f7 !important;
+  opacity: 1;
+}
+
+:root[data-theme="light"] .app-shell .status.success,
+:root[data-theme="light"] .app-shell .stage-pill.done {
+  color: var(--light-success) !important;
+  background: #ecfdf3 !important;
+}
+
+:root[data-theme="light"] .app-shell .status.warning {
+  color: var(--light-warning) !important;
+  background: #fffaeb !important;
+}
+
+:root[data-theme="light"] .app-shell .status.danger,
+:root[data-theme="light"] .app-shell .danger-text {
+  color: var(--light-danger) !important;
+  background: #fef3f2 !important;
+}
+
+:root[data-theme="light"] .app-shell .status.info {
+  color: var(--light-info) !important;
+  background: #eff6ff !important;
+}
+
+:root[data-theme="light"] .app-shell .project-workbench .workbench-hero,
+:root[data-theme="light"] .app-shell .project-workbench .workbench-hero-title,
+:root[data-theme="light"] .app-shell .script-runway-strip,
+:root[data-theme="light"] .app-shell .model-route-status-grid,
+:root[data-theme="light"] .app-shell .project-workbench .script-story-structure-strip article,
+:root[data-theme="light"] .app-shell .project-workbench .design-stage-strip article,
+:root[data-theme="light"] .app-shell .project-workbench .video-loop-progress-strip article,
+:root[data-theme="light"] .app-shell .project-workbench .canvas-workflow-steps article,
+:root[data-theme="light"] .app-shell .project-workbench .storyboard-global-preview-panel,
+:root[data-theme="light"] .app-shell .project-workbench .script-scene-layout > *,
+:root[data-theme="light"] .app-shell .project-workbench .design-desk-layout > *,
+:root[data-theme="light"] .app-shell .project-workbench .director-desk-layout > *,
+:root[data-theme="light"] .app-shell .project-workbench .video-loop-layout > * {
+  border-color: var(--light-border) !important;
+  border-radius: 8px !important;
+  color: var(--light-text) !important;
+  background: var(--light-surface) !important;
+  box-shadow: var(--light-shadow) !important;
+}
+
+:root[data-theme="light"] .app-shell .project-workbench .script-scene-list button,
+:root[data-theme="light"] .app-shell .project-workbench .design-shot-card,
+:root[data-theme="light"] .app-shell .project-workbench .video-clip-list button,
+:root[data-theme="light"] .app-shell .project-workbench .canvas-beat-grid button,
+:root[data-theme="light"] .app-shell .project-workbench .asset-flow-grid article,
+:root[data-theme="light"] .app-shell .task-monitor,
+:root[data-theme="light"] .app-shell .shot-card,
+:root[data-theme="light"] .app-shell .director-shot-card,
+:root[data-theme="light"] .app-shell .video-draft-card {
+  border-color: var(--light-border) !important;
+  color: var(--light-text) !important;
+  background: var(--light-subtle) !important;
+}
+
+:root[data-theme="light"] .app-shell .project-workbench .script-scene-list button.active,
+:root[data-theme="light"] .app-shell .project-workbench .design-shot-card.active,
+:root[data-theme="light"] .app-shell .project-workbench .video-clip-list button.active,
+:root[data-theme="light"] .app-shell .project-workbench .canvas-beat-grid button.active {
+  border-color: #8adbd3 !important;
+  color: var(--light-text) !important;
+  background: var(--light-selected) !important;
+  box-shadow: inset 3px 0 0 var(--light-accent) !important;
+}
+
+:root[data-theme="light"] .app-shell .shot-preview,
+:root[data-theme="light"] .app-shell .shot-frame,
+:root[data-theme="light"] .app-shell .timeline-frame,
+:root[data-theme="light"] .app-shell .design-shot-thumb,
+:root[data-theme="light"] .app-shell .canvas-beat-thumb,
+:root[data-theme="light"] .app-shell .video-player-frame,
+:root[data-theme="light"] .app-shell .identity-preview,
+:root[data-theme="light"] .app-shell .director-preview-frame {
+  border-color: var(--light-border) !important;
+  background: #eef3f6 !important;
+}

@@ -10,6 +10,11 @@ body.auth-surface {
     "Microsoft YaHei", "Geist Sans", ui-sans-serif, system-ui, sans-serif;
 }
 
+.cine-home-page.cine-scroll-page {
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
 .cine-home-page button,
 .cine-admin-login-page button {
   font: inherit;
@@ -70,6 +75,12 @@ body.auth-surface {
   background: transparent;
 }
 
+.cine-top-nav.solid {
+  background: rgba(2, 5, 5, 0.86);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(18px);
+}
+
 .cine-logo-text {
   display: grid;
   gap: 2px;
@@ -118,6 +129,12 @@ body.auth-surface {
   display: flex;
   align-items: center;
   gap: 40px;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.cine-nav-links::-webkit-scrollbar {
+  display: none;
 }
 
 .cine-nav-links button,
@@ -305,33 +322,70 @@ body.auth-surface {
 
 .cine-card-stack {
   position: absolute;
-  left: clamp(38px, 4.4vw, 70px);
-  bottom: clamp(42px, 5.8vh, 72px);
+  left: clamp(24px, 2.6vw, 40px);
+  bottom: clamp(24px, 4vh, 40px);
   z-index: 34;
-  width: 520px;
-  height: 350px;
+  width: 500px;
+  height: 290px;
   perspective: 1180px;
   transform-style: preserve-3d;
-  contain: layout paint;
+  contain: layout;
+  pointer-events: none;
+  transition: left 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.cine-card-stack.expanded {
+  left: clamp(84px, 7vw, 108px);
+}
+
+.cine-card-visual-layer,
+.cine-card-hit-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  transform-style: preserve-3d;
+}
+
+.cine-film-card,
+.cine-card-hit {
+  position: absolute;
+  left: 144px;
+  bottom: 32px;
+  width: 132px;
+  height: 176px;
+  transform-origin: bottom center;
 }
 
 .cine-film-card {
-  position: absolute;
-  left: 178px;
-  bottom: 56px;
-  width: 164px;
-  height: 220px;
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.2);
   border-radius: 8px;
   padding: 0;
   background: #080808;
   box-shadow: 0 26px 62px rgba(0, 0, 0, 0.38);
-  cursor: pointer;
   transform-style: preserve-3d;
-  transform-origin: bottom center;
   will-change: transform, opacity;
   backface-visibility: hidden;
+}
+
+.cine-card-visual {
+  pointer-events: none;
+}
+
+.cine-card-hit {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  clip-path: inset(0);
+  cursor: pointer;
+  pointer-events: auto;
+  transform-style: preserve-3d;
+  will-change: transform, opacity;
+}
+
+.cine-card-hit:focus-visible {
+  outline: 2px solid #00fba6;
+  outline-offset: 4px;
 }
 
 .cine-film-card.active,
@@ -348,8 +402,18 @@ body.auth-surface {
 .cine-card-media,
 .cine-card-overlay,
 .cine-card-sheen,
-.cine-card-corners {
+.cine-card-corners,
+.cine-card-head,
+.cine-card-body,
+.cine-active-scan-ui {
   position: absolute;
+  pointer-events: none;
+}
+
+.cine-card-media,
+.cine-card-overlay,
+.cine-card-sheen,
+.cine-card-corners {
   inset: 0;
 }
 
@@ -1022,10 +1086,14 @@ body.auth-surface {
   }
 
   .cine-card-stack {
-    left: 4px;
-    bottom: 102px;
-    transform: scale(0.64);
+    left: -8px;
+    bottom: 94px;
+    transform: scale(0.72);
     transform-origin: left bottom;
+  }
+
+  .cine-card-stack.expanded {
+    left: 40px;
   }
 
   .cine-side-control {
@@ -1078,9 +1146,13 @@ body.auth-surface {
   }
 
   .cine-card-stack {
-    left: -48px;
-    bottom: 108px;
-    transform: scale(0.54);
+    left: -22px;
+    bottom: 104px;
+    transform: scale(0.62);
+  }
+
+  .cine-card-stack.expanded {
+    left: 24px;
   }
 
   .cine-side-control {

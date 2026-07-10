@@ -3,8 +3,11 @@ import test from "node:test";
 import {
   buildMediaCandidates,
   getCardPose,
+  nextCardIndex,
   normalizeMediaTier,
   relativeCardOffset,
+  resolveMediaTier,
+  shouldReleasePreparedSlot,
   shouldCorrectDrift
 } from "./cineHomeModel.ts";
 
@@ -14,6 +17,15 @@ test("normalizes configured media tiers", () => {
   assert.equal(normalizeMediaTier("fast"), "fast");
   assert.equal(normalizeMediaTier("unknown"), "4k");
   assert.equal(normalizeMediaTier(undefined), "4k");
+});
+
+test("reduces media tiers on constrained connections", () => {
+  assert.equal(resolveMediaTier("4k", false, "4g"), "4k");
+  assert.equal(resolveMediaTier("4k", false, "3g"), "2k");
+  assert.equal(resolveMediaTier("4k", false, "2g"), "fast");
+  assert.equal(resolveMediaTier("4k", true, "4g"), "fast");
+  assert.equal(resolveMediaTier("2k", false, "4g"), "2k");
+  assert.equal(resolveMediaTier("fast", false, "4g"), "fast");
 });
 
 test("builds ordered fallback candidates", () => {
@@ -46,24 +58,35 @@ test("wraps five-card offsets around the active card", () => {
 
 test("returns the approved B1 collapsed geometry", () => {
   assert.deepEqual(getCardPose(0, 0, false, 5), {
-    x: 0, y: -6, z: 120, rotateY: 0, rotateZ: 0, scale: 1, opacity: 1, zIndex: 90
+    x: 0, y: -6, z: 0, rotateY: 0, rotateZ: 0, scale: 1, opacity: 1, zIndex: 90
   });
-  assert.equal(getCardPose(1, 0, false, 5).x, 20);
-  assert.equal(getCardPose(2, 0, false, 5).x, 40);
-  assert.equal(getCardPose(4, 0, false, 5).x, -20);
+  assert.equal(getCardPose(1, 0, false, 5).x, 22);
+  assert.equal(getCardPose(2, 0, false, 5).x, 44);
+  assert.equal(getCardPose(4, 0, false, 5).x, -22);
 });
 
 test("returns the approved expanded geometry", () => {
   assert.deepEqual(getCardPose(0, 0, true, 5), {
-    x: 0, y: -20, z: 120, rotateY: 0, rotateZ: 0, scale: 1.04, opacity: 1, zIndex: 90
+    x: 0, y: -20, z: 0, rotateY: 0, rotateZ: 0, scale: 1.04, opacity: 1, zIndex: 90
   });
-  assert.equal(getCardPose(1, 0, true, 5).x, 124);
-  assert.equal(getCardPose(2, 0, true, 5).x, 220);
-  assert.equal(getCardPose(3, 0, true, 5).x, -220);
+  assert.equal(getCardPose(1, 0, true, 5).x, 110);
+  assert.equal(getCardPose(2, 0, true, 5).x, 180);
+  assert.equal(getCardPose(3, 0, true, 5).x, -180);
 });
 
 test("only corrects visible playback drift beyond 120ms", () => {
   assert.equal(shouldCorrectDrift(4, 4.1), false);
   assert.equal(shouldCorrectDrift(4, 4.121), true);
   assert.equal(shouldCorrectDrift(4.2, 4), true);
+});
+
+test("wraps keyboard card navigation in both directions", () => {
+  assert.equal(nextCardIndex(4, 1, 5), 0);
+  assert.equal(nextCardIndex(0, -1, 5), 4);
+  assert.equal(nextCardIndex(2, 1, 5), 3);
+});
+
+test("releases only a prepared slot that never became visible", () => {
+  assert.equal(shouldReleasePreparedSlot(0, 1), true);
+  assert.equal(shouldReleasePreparedSlot(1, 1), false);
 });

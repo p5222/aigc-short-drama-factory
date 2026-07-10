@@ -21,6 +21,13 @@ export function normalizeMediaTier(value: string | undefined): CineMediaTier {
   return value === "2k" || value === "fast" || value === "4k" ? value : "4k";
 }
 
+export function resolveMediaTier(preferredTier: CineMediaTier, saveData: boolean, effectiveType?: string): CineMediaTier {
+  if (preferredTier === "fast") return "fast";
+  if (saveData || effectiveType === "slow-2g" || effectiveType === "2g") return "fast";
+  if (preferredTier === "4k" && effectiveType === "3g") return "2k";
+  return preferredTier;
+}
+
 export function buildMediaCandidates(name: string, preferredTier: CineMediaTier, baseUrl: string): string[] {
   const cleanBaseUrl = baseUrl.replace(/\/+$/, "");
   return fallbackOrder[preferredTier].map((tier) => `${cleanBaseUrl}/media/cineart-home/${name}_${tier}.mp4`);
@@ -33,17 +40,25 @@ export function relativeCardOffset(index: number, activeIndex: number, total: nu
   return offset;
 }
 
+export function nextCardIndex(index: number, direction: -1 | 1, total: number): number {
+  return (index + direction + total) % total;
+}
+
+export function shouldReleasePreparedSlot(visibleSlot: number, preparedSlot: number): boolean {
+  return visibleSlot !== preparedSlot;
+}
+
 export function getCardPose(index: number, activeIndex: number, expanded: boolean, total: number): CineCardPose {
   const offset = relativeCardOffset(index, activeIndex, total);
   const depth = Math.abs(offset);
   const isActive = depth === 0;
 
   if (expanded) {
-    const x = offset === 0 ? 0 : Math.sign(offset) * (depth === 1 ? 124 : 220);
+    const x = offset === 0 ? 0 : Math.sign(offset) * (depth === 1 ? 110 : 180);
     return {
       x,
       y: isActive ? -20 : depth === 1 ? 14 : 34,
-      z: isActive ? 120 : -depth * 18,
+      z: isActive ? 0 : -depth * 18,
       rotateY: isActive ? 0 : offset * -5,
       rotateZ: offset * 7,
       scale: isActive ? 1.04 : depth === 1 ? 0.94 : 0.88,
@@ -53,9 +68,9 @@ export function getCardPose(index: number, activeIndex: number, expanded: boolea
   }
 
   return {
-    x: offset * 20,
+    x: offset * 22,
     y: isActive ? -6 : depth === 1 ? 4 : 10,
-    z: isActive ? 120 : -depth * 24,
+    z: isActive ? 0 : -depth * 24,
     rotateY: isActive ? 0 : offset * -2,
     rotateZ: offset * 3,
     scale: isActive ? 1 : depth === 1 ? 0.94 : 0.88,
