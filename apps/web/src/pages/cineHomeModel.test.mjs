@@ -15,8 +15,8 @@ test("normalizes configured media tiers", () => {
   assert.equal(normalizeMediaTier("4k"), "4k");
   assert.equal(normalizeMediaTier("2k"), "2k");
   assert.equal(normalizeMediaTier("fast"), "fast");
-  assert.equal(normalizeMediaTier("unknown"), "4k");
-  assert.equal(normalizeMediaTier(undefined), "4k");
+  assert.equal(normalizeMediaTier("unknown"), "fast");
+  assert.equal(normalizeMediaTier(undefined), "fast");
 });
 
 test("reduces media tiers on constrained connections", () => {

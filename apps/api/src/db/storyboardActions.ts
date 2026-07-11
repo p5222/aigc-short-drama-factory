@@ -245,7 +245,7 @@ export async function regenerateStoryboardShotImage(projectId: string, shotId: s
     referenceImageUrls: shot.referenceAssetIds.map((assetId) => assetById.get(assetId)?.referenceUrl).filter(Boolean) as string[],
     ratio: workflow.project.videoRatio,
     seed: 41000 + shot.shotNo,
-    provider: workflow.project.imageProvider,
+    provider: imageProvider,
     model: imageModel,
     size: imageSize,
     quality: imageQuality,
@@ -307,6 +307,96 @@ export async function regenerateStoryboardShotImage(projectId: string, shotId: s
     await tx.project.update({ where: { id: projectId }, data: { status: "asseting", imageAssets: totalImageAssets, creditsSpent: { increment: credits } } });
     await tx.creditAccount.update({ where: { userId }, data: { balance: { decrement: credits }, totalConsume: { increment: credits } } });
     await tx.creditTransaction.create({ data: { id: "tx_" + Date.now() + "_image_one", userId, projectId, taskId, type: "consume", amount: -credits, balanceAfter: account.balance - credits, description: "Single shot image regeneration credits" } });
+    return { task };
+  });
+
+  const project = await prisma.project.findFirstOrThrow({ where: { id: projectId, userId } });
+  return { project: mapProject(project), task: mapTask(result.task), assetsCreated: 1 };
+}
+
+export async function generateSceneEnvironmentImage(projectId: string, assetId: string, userId = DEMO_USER_ID): Promise<BatchGenerationResult> {
+  const workflow = await getProjectWorkflow(projectId, userId);
+  if (!workflow) throw new Error("Project not found");
+  const asset = workflow.assets.find((item) => item.id === assetId && (item.type === "scene" || item.type === "prop"));
+  if (!asset) throw new Error("Scene asset not found");
+
+  const imageProvider = workflow.project.imageProvider || process.env.IMAGE_PROVIDER || "mock";
+  const imageModel = workflow.project.imageModel || currentImageModelName(imageProvider);
+  const imageSize = normalizeImageOutputSize(workflow.project.imageSize);
+  const imageQuality = normalizeImageOutputQuality(workflow.project.imageQuality);
+  const imageProviderConfig = await prisma.modelProvider.findUnique({ where: { id: imageProvider } });
+  const credits = await resolveImageCredits(imageProvider, imageModel, imageSize, imageQuality);
+  const account = await prisma.creditAccount.findUniqueOrThrow({ where: { userId } });
+  if (account.balance - account.frozenBalance < credits) throw new Error("Insufficient credits");
+
+  const prompt = [
+    "为 AI 漫剧生产生成一张 16:9 场景环境概念图。",
+    `场景：${asset.name}。`,
+    asset.description || asset.prompt,
+    `美术风格：${workflow.project.artStyle}。`,
+    "只表现环境、空间层次、材质、光线、天气和可持续复用的机位方向；不要出现人物、字幕、Logo、水印或拼贴分格。"
+  ].filter(Boolean).join("\n");
+  const imageResult = await generateImage({
+    prompt,
+    negativePrompt: "people, person, character, portrait, subtitle, text, watermark, logo, collage, split screen, low quality, blurry",
+    referenceImageUrls: asset.referenceUrl ? [asset.referenceUrl] : [],
+    ratio: "16:9",
+    seed: 63000 + Math.abs(asset.id.split("").reduce((sum, char) => sum + char.charCodeAt(0), 0)) % 1000,
+    provider: imageProvider,
+    model: imageModel,
+    size: imageSize,
+    quality: imageQuality,
+    baseUrl: imageProviderConfig?.baseUrl ?? undefined,
+    apiKey: imageProviderConfig?.apiKey ?? undefined
+  }).catch((error) => {
+    if (isMockImageProvider(imageProvider)) {
+      console.warn("[image] scene environment mock fallback:", error);
+      return { taskId: "mock_scene_" + Date.now(), status: "succeeded" as const, imageUrl: undefined, provider: "Mock Image Adapter", model: "mock-image-v1" };
+    }
+    throw error;
+  });
+  if (!imageResult.imageUrl && !isMockImageProvider(imageProvider)) {
+    throw new Error(`真实场景生图渠道未返回图片 URL：${imageResult.provider || imageProvider} / ${imageResult.model || imageModel}。`);
+  }
+  const storedImageUrl = await persistImageReference(imageResult.imageUrl, `scene-${projectId}-${asset.id}`);
+  const referenceUrl = storedImageUrl || imageResult.imageUrl || createSvgDataUrl(asset.name, asset.description || "场景环境资产", workflow.project.artStyle);
+  const taskId = "task_scene_image_" + Date.now();
+
+  const result = await prisma.$transaction(async (tx) => {
+    const task = await tx.generationTask.create({
+      data: {
+        id: taskId,
+        userId,
+        projectId,
+        projectName: workflow.project.name,
+        type: "image",
+        title: `Scene environment image: ${asset.name}`,
+        provider: imageResult.provider || currentImageProviderName(imageProvider),
+        model: imageResult.model || currentImageModelName(imageProvider, imageModel),
+        status: "succeeded",
+        progress: 100,
+        estimatedCredits: credits,
+        finalCredits: credits
+      }
+    });
+    await tx.asset.update({
+      where: { id: asset.id },
+      data: { prompt, referenceUrl, status: "succeeded" }
+    });
+    await tx.project.update({ where: { id: projectId }, data: { status: "asseting", creditsSpent: { increment: credits } } });
+    await tx.creditAccount.update({ where: { userId }, data: { balance: { decrement: credits }, totalConsume: { increment: credits } } });
+    await tx.creditTransaction.create({
+      data: {
+        id: "tx_" + Date.now() + "_scene_image",
+        userId,
+        projectId,
+        taskId,
+        type: "consume",
+        amount: -credits,
+        balanceAfter: account.balance - credits,
+        description: "Scene environment image credits"
+      }
+    });
     return { task };
   });
 

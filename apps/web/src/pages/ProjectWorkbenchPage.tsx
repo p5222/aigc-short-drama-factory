@@ -50,6 +50,13 @@ import {
   normalizeImageOutputSize
 } from "@aifilm/shared";
 import { api } from "../lib/api";
+import {
+  buildTimelineClipLayout,
+  collectEpisodeNumbers,
+  filterSceneRows,
+  resolveSceneSelection,
+  type SceneListFilter
+} from "./projectWorkbenchModel";
 import "./ProjectStudioV4.css";
 
 interface ProjectWorkbenchPageProps {
@@ -186,6 +193,7 @@ export function ProjectWorkbenchPage({ workflow, providers, modelPrices, onBack,
       await refreshProject();
     } catch (err) {
       setError(err instanceof Error ? err.message : "模型路由保存失败");
+      throw err;
     } finally {
       setIsBusy(false);
     }
@@ -253,8 +261,8 @@ export function ProjectWorkbenchPage({ workflow, providers, modelPrices, onBack,
       {message ? <p className="success-text studio-v4-message">{message}</p> : null}
       {error ? <p className="danger-text studio-v4-message">{error}</p> : null}
 
-      {activeTab === "content" ? <ScriptBoard script={script} characters={characters} storyboards={storyboards} isBusy={isBusy} onOpenCharacters={() => setActiveTab("assets")} onGenerateStoryboards={() => void runWorkflowAction("storyboard")} /> : null}
-      {activeTab === "assets" ? <CreatorCharacterBoard projectId={project.id} characters={characters} roleAssets={roleAssets} sceneAssets={sceneAssets} qualityReports={qualityReports} feedbacks={feedbacks} isBusy={isBusy} onRefresh={refreshProject} onGenerate={() => void runWorkflowAction("character")} onPreview={setPreviewImage} /> : null}
+      {activeTab === "content" ? <ScriptBoard script={script} characters={characters} storyboards={storyboards} episodeCount={project.episodes} isBusy={isBusy} onOpenCharacters={() => setActiveTab("assets")} onGenerateStoryboards={() => void runWorkflowAction("storyboard")} /> : null}
+      {activeTab === "assets" ? <CreatorCharacterBoard project={project} providers={providers} modelPrices={modelPrices} characters={characters} roleAssets={roleAssets} sceneAssets={sceneAssets} qualityReports={qualityReports} feedbacks={feedbacks} isBusy={isBusy} onRefresh={refreshProject} onSaveModelRoutes={saveModelRoutes} onPreview={setPreviewImage} /> : null}
       {activeTab === "shots" ? (
         <div className="studio-v4-shots-stage">
           <div className="studio-v4-view-switch" role="tablist" aria-label="分镜视图">
@@ -263,39 +271,44 @@ export function ProjectWorkbenchPage({ workflow, providers, modelPrices, onBack,
             <span>在同一阶段完成脚本、首帧、候选版本与视频检查</span>
           </div>
           {shotWorkspaceView === "director"
-            ? <CreatorImagesBoard projectId={project.id} storyboards={storyboards} characters={characters} roleAssets={roleAssets} sceneAssets={sceneAssets} imageAssets={imageAssets} qualityReports={qualityReports} feedbacks={feedbacks} isBusy={isBusy} onRefresh={refreshProject} onPreview={setPreviewImage} />
+            ? <CreatorImagesBoard project={project} providers={providers} modelPrices={modelPrices} storyboards={storyboards} characters={characters} roleAssets={roleAssets} sceneAssets={sceneAssets} imageAssets={imageAssets} qualityReports={qualityReports} feedbacks={feedbacks} isBusy={isBusy} onRefresh={refreshProject} onSaveModelRoutes={saveModelRoutes} onPreview={setPreviewImage} />
             : <DesignDeskBoard storyboards={storyboards} characters={characters} roleAssets={roleAssets} sceneAssets={sceneAssets} imageAssets={imageAssets} videoAssets={videoAssets} productionPackage={productionPackage} isBusy={isBusy} onGenerate={() => void runWorkflowAction("storyboard")} onOpenDirector={() => setShotWorkspaceView("director")} onOpenVideo={() => setActiveTab("assembly")} onPreview={setPreviewImage} />}
         </div>
       ) : null}
-      {activeTab === "assembly" ? <VideoBoard projectId={project.id} storyboards={storyboards} characters={characters} roleAssets={roleAssets} imageAssets={imageAssets} videoAssets={videoAssets} exportJobs={exportJobs} isBusy={isBusy} onGenerate={() => void runWorkflowAction("video")} onCreateExport={createExport} onRefresh={refreshProject} onPublish={() => setPublishOpen(true)} /> : null}
+      {activeTab === "assembly" ? <VideoBoard project={project} providers={providers} modelPrices={modelPrices} storyboards={storyboards} characters={characters} roleAssets={roleAssets} imageAssets={imageAssets} videoAssets={videoAssets} exportJobs={exportJobs} isBusy={isBusy} onGenerate={() => void runWorkflowAction("video")} onCreateExport={createExport} onRefresh={refreshProject} onSaveModelRoutes={saveModelRoutes} onPublish={() => setPublishOpen(true)} /> : null}
       {publishOpen ? <ShowcasePublishModal project={project} storyboards={storyboards} imageAssets={imageAssets} videoAssets={videoAssets} exportJobs={exportJobs} onClose={() => setPublishOpen(false)} /> : null}
       {previewImage ? <ImagePreviewModal preview={previewImage} onClose={() => setPreviewImage(null)} /> : null}
     </div>
   );
 }
 
-function ScriptBoard({ script, characters, storyboards, isBusy, onOpenCharacters, onGenerateStoryboards }: { script?: ScriptDraft; characters: CharacterProfile[]; storyboards: StoryboardShot[]; isBusy: boolean; onOpenCharacters: () => void; onGenerateStoryboards: () => void }) {
-  const [sceneFilter, setSceneFilter] = useState<"all" | "risk" | "ready" | "draft">("all");
+function ScriptBoard({ script, characters, storyboards, episodeCount, isBusy, onOpenCharacters, onGenerateStoryboards }: { script?: ScriptDraft; characters: CharacterProfile[]; storyboards: StoryboardShot[]; episodeCount: number; isBusy: boolean; onOpenCharacters: () => void; onGenerateStoryboards: () => void }) {
+  const [sceneFilter, setSceneFilter] = useState<SceneListFilter>("all");
   const [selectedSceneId, setSelectedSceneId] = useState("");
   const sceneRows = useMemo(() => buildScriptSceneRows(script, storyboards), [script, storyboards]);
-  const structureBeats = useMemo(() => buildSixPartStoryBeats(script, sceneRows), [script, sceneRows]);
-  const sceneNames = uniqueSceneNames(storyboards);
-  const selectedScene = sceneRows.find((scene) => scene.id === selectedSceneId) ?? sceneRows[0];
-  const filteredScenes = sceneRows.filter((scene) => {
-    if (sceneFilter === "risk") return Boolean(scene.risk);
-    if (sceneFilter === "ready") return scene.status === "ready" || scene.status === "locked";
-    if (sceneFilter === "draft") return scene.status === "draft" || scene.status === "blocked";
-    return true;
-  });
-  const longDialogueCount = sceneRows.filter((scene) => scene.risk?.includes("台词")).length;
-  const readySceneCount = sceneRows.filter((scene) => scene.status === "ready" || scene.status === "locked").length;
-  const totalDuration = sceneRows.reduce((sum, scene) => sum + scene.duration, 0);
+  const episodeNumbers = useMemo(() => collectEpisodeNumbers(storyboards, episodeCount), [episodeCount, storyboards]);
+  const [activeEpisode, setActiveEpisode] = useState(episodeNumbers[0] ?? 1);
+  const episodeScenes = sceneRows.filter((scene) => scene.episodeNo === activeEpisode);
+  const { visibleRows: filteredScenes, selectedId: resolvedSceneId } = resolveSceneSelection(sceneRows, activeEpisode, sceneFilter, selectedSceneId);
+  const selectedScene = sceneRows.find((scene) => scene.id === resolvedSceneId);
+  const longDialogueCount = episodeScenes.filter((scene) => scene.risk?.includes("台词")).length;
+  const readySceneCount = episodeScenes.filter((scene) => scene.status === "ready" || scene.status === "locked").length;
+  const totalDuration = episodeScenes.reduce((sum, scene) => sum + scene.duration, 0);
+  const riskSceneCount = episodeScenes.filter((scene) => scene.risk).length;
   const preflightItems = [
     { label: "剧本可读", done: Boolean(script), detail: script ? "正文与梗概已生成" : "等待剧本生成" },
-    { label: "场次清晰", done: sceneRows.length > 0, detail: sceneRows.length ? `${sceneRows.length} 个场次候选` : "尚未拆出场次" },
+    { label: "场次清晰", done: episodeScenes.length > 0, detail: episodeScenes.length ? `本集 ${episodeScenes.length} 个场次` : "尚未拆出场次" },
     { label: "角色已抽取", done: characters.length > 0, detail: `${characters.length} 个角色候选` },
     { label: "台词可拆镜", done: longDialogueCount === 0, detail: longDialogueCount ? `${longDialogueCount} 场疑似长台词` : "无明显长台词风险" }
   ];
+
+  useEffect(() => {
+    if (!episodeNumbers.includes(activeEpisode)) setActiveEpisode(episodeNumbers[0] ?? 1);
+  }, [activeEpisode, episodeNumbers]);
+
+  useEffect(() => {
+    if (selectedSceneId !== resolvedSceneId) setSelectedSceneId(resolvedSceneId);
+  }, [resolvedSceneId, selectedSceneId]);
 
   function requestStoryboardGeneration() {
     if (storyboards.length > 0 && !window.confirm("重建分镜表会覆盖现有分镜、分镜图和视频草稿，确认继续？")) return;
@@ -317,23 +330,14 @@ function ScriptBoard({ script, characters, storyboards, isBusy, onOpenCharacters
         </div>
       </div>
 
-      <div className="script-scene-status-strip">
-        <article className={script ? "ready" : ""}><strong>{script ? "已就绪" : "待生成"}</strong><span>剧本正文</span></article>
-        <article className={sceneRows.length ? "ready" : ""}><strong>{sceneRows.length || "-"}</strong><span>场次候选</span></article>
-        <article className={characters.length ? "ready" : ""}><strong>{characters.length}</strong><span>角色候选</span></article>
-        <article className={readySceneCount ? "ready" : ""}><strong>{readySceneCount}/{Math.max(sceneRows.length, 1)}</strong><span>可拆镜场次</span></article>
-        <article className={storyboards.length ? "ready" : ""}><strong>{storyboards.length}</strong><span>镜头草案</span></article>
-      </div>
-
-      <div className="script-story-structure-strip">
-        {structureBeats.map((beat, index) => (
-          <article className={beat.ready ? "ready" : ""} key={beat.title}>
-            <span>{String(index + 1).padStart(2, "0")}</span>
-            <strong>{beat.title}</strong>
-            <p>{beat.summary}</p>
-            <small>{beat.source}</small>
-          </article>
-        ))}
+      <div className="script-episode-bar" aria-label="剧集选择">
+        <div><strong>剧集</strong><span>先选集，再处理该集场次</span></div>
+        <div>
+          {episodeNumbers.map((episodeNo) => {
+            const count = sceneRows.filter((scene) => scene.episodeNo === episodeNo).length;
+            return <button className={activeEpisode === episodeNo ? "active" : ""} key={episodeNo} onClick={() => { setActiveEpisode(episodeNo); setSelectedSceneId(""); }} type="button"><strong>第 {episodeNo} 集</strong><small>{count} 场</small></button>;
+          })}
+        </div>
       </div>
 
       <div className="script-scene-layout">
@@ -341,15 +345,15 @@ function ScriptBoard({ script, characters, storyboards, isBusy, onOpenCharacters
           <div className="script-scene-section-head">
             <div>
               <h3>剧集与场次</h3>
-              <small>{sceneRows.length ? `预计 ${Math.max(totalDuration, 1)} 秒 · ${storyboards.length || "待生成"} 镜头` : "等待剧本生成后拆场"}</small>
+              <small>第 {activeEpisode} 集 · {episodeScenes.length} 场 · 预计 {Math.max(totalDuration, 1)} 秒</small>
             </div>
             <ListChecks size={17} />
           </div>
           <div className="script-scene-filter-row">
             {[
-              ["all", "全部", sceneRows.length],
-              ["draft", "未确认", sceneRows.filter((scene) => scene.status === "draft" || scene.status === "blocked").length],
-              ["risk", "有风险", sceneRows.filter((scene) => scene.risk).length],
+              ["all", "全部", episodeScenes.length],
+              ["draft", "未确认", filterSceneRows(sceneRows, activeEpisode, "draft").length],
+              ["risk", "有风险", riskSceneCount],
               ["ready", "可拆镜", readySceneCount]
             ].map(([key, label, count]) => (
               <button className={sceneFilter === key ? "active" : ""} key={key} onClick={() => setSceneFilter(key as typeof sceneFilter)} type="button">{label}<span>{count}</span></button>
@@ -370,11 +374,9 @@ function ScriptBoard({ script, characters, storyboards, isBusy, onOpenCharacters
         </aside>
 
         <main className="script-scene-editor">
-          <div className="script-editor-tabs">
-            <button className="active" type="button"><FileText size={15} />剧本编辑</button>
-            <button type="button">大纲视图</button>
-            <button type="button">卡片视图</button>
-            <span>已自动保存 · 生产草稿</span>
+          <div className="script-editor-heading">
+            <div><FileText size={16} /><strong>第 {activeEpisode} 集剧本</strong></div>
+            <span>{selectedScene ? `场 ${selectedScene.sceneNo}` : "未选择场次"}</span>
           </div>
           <section className="script-synopsis-panel">
             <div>
@@ -382,8 +384,8 @@ function ScriptBoard({ script, characters, storyboards, isBusy, onOpenCharacters
               <p>{script?.synopsis || "暂无梗概，请先等待剧本生成任务完成。"}</p>
             </div>
             <dl>
-              <div><dt>集数</dt><dd>第 1 集</dd></div>
-              <div><dt>场次</dt><dd>{sceneRows.length || "-"}</dd></div>
+              <div><dt>当前集</dt><dd>第 {activeEpisode} 集</dd></div>
+              <div><dt>场次</dt><dd>{episodeScenes.length || "-"}</dd></div>
               <div><dt>预计时长</dt><dd>{totalDuration || "-"}s</dd></div>
             </dl>
           </section>
@@ -407,22 +409,13 @@ function ScriptBoard({ script, characters, storyboards, isBusy, onOpenCharacters
                 <div><MessageSquareText size={16} /><strong>台词 / 旁白</strong><span>{selectedScene.dialogue.length || 0} 条</span></div>
                 {selectedScene.dialogue.length ? selectedScene.dialogue.map((line, index) => <p key={`${line}-${index}`}>{line}</p>) : <p>本场暂无明确台词，后续分镜会以动作和旁白承接。</p>}
               </div>
-              <div className="script-breakdown-elements">
-                <strong>生产元素标注</strong>
-                <div>
-                  <span>角色 {selectedScene.characters.length}</span>
-                  <span>地点 {selectedScene.location}</span>
-                  <span>镜头 {selectedScene.shots || "待拆"}</span>
-                  <span>{selectedScene.risk ? "需复核" : "可继续"}</span>
-                </div>
-              </div>
             </section>
           ) : (
             <div className="empty-state">暂无剧本内容，请先完成剧本生成。</div>
           )}
         </main>
 
-        <aside className="script-preflight-panel">
+        <aside className="script-preflight-panel script-context-panel">
           <section className="script-quality-gates">
             <div className="script-scene-section-head">
               <div>
@@ -439,30 +432,15 @@ function ScriptBoard({ script, characters, storyboards, isBusy, onOpenCharacters
               </div>
             ))}
           </section>
-          <section>
-            <h3>角色候选</h3>
-            <div className="script-candidate-list">
-              {characters.slice(0, 5).map((character) => (
-                <article key={character.id}>
-                  <strong>{character.name}</strong>
-                  <span>{character.identity}</span>
-                  <small>{character.consistencyLevel === "high" ? "高一致性" : character.consistencyLevel === "medium" ? "中一致性" : "待定稿"}</small>
-                </article>
-              ))}
-              {!characters.length ? <em>等待剧本生成角色卡</em> : null}
-            </div>
-          </section>
-          <section>
-            <h3>场景候选</h3>
-            <div className="script-scene-chip-list">
-              {(sceneNames.length ? sceneNames : sceneRows.map((scene) => scene.location)).slice(0, 8).map((scene) => <span key={scene}>{scene}</span>)}
-              {!sceneRows.length ? <em>等待分场生成</em> : null}
-            </div>
-          </section>
-          <section className="script-risk-panel">
-            <h3><AlertTriangle size={15} />风险与提示</h3>
-            {sceneRows.filter((scene) => scene.risk).slice(0, 3).map((scene) => <p key={scene.id}>{scene.title}：{scene.risk}</p>)}
-            {!sceneRows.some((scene) => scene.risk) ? <p>暂无明显台词、场次或角色连续性风险。</p> : null}
+          <section className="script-episode-summary">
+            <h3>本集概览</h3>
+            <dl>
+              <div><dt>角色</dt><dd>{characters.length}</dd></div>
+              <div><dt>场次</dt><dd>{episodeScenes.length}</dd></div>
+              <div><dt>风险</dt><dd>{riskSceneCount}</dd></div>
+              <div><dt>镜头</dt><dd>{episodeScenes.reduce((sum, scene) => sum + scene.shots, 0) || "待拆"}</dd></div>
+            </dl>
+            {episodeScenes.find((scene) => scene.risk) ? <p><AlertTriangle size={14} />{episodeScenes.find((scene) => scene.risk)?.title}：{episodeScenes.find((scene) => scene.risk)?.risk}</p> : <p><CheckCircle2 size={14} />当前集暂无明显连续性风险。</p>}
           </section>
           <button className="primary-button full-button" onClick={requestStoryboardGeneration} disabled={!script || isBusy} type="button">
             <WandSparkles size={18} />{storyboards.length > 0 ? "重建分镜表" : "生成分镜表"}
@@ -470,21 +448,6 @@ function ScriptBoard({ script, characters, storyboards, isBusy, onOpenCharacters
         </aside>
       </div>
 
-      <div className="script-production-runway">
-        {["剧本可读", "角色已抽取", "场次就绪", "分镜表生成", "进入导演台"].map((item, index) => {
-          const done = index === 0 ? Boolean(script)
-            : index === 1 ? characters.length > 0
-            : index === 2 ? sceneRows.length > 0
-            : index === 3 ? storyboards.length > 0
-            : storyboards.length > 0;
-          return (
-            <div className={done ? "ready" : ""} key={item}>
-              <span>{index + 1}</span>
-              <strong>{item}</strong>
-            </div>
-          );
-        })}
-      </div>
     </section>
   );
 }
@@ -498,169 +461,56 @@ function ScriptSceneField({ label, value }: { label: string; value: string }) {
   );
 }
 
-function buildSixPartStoryBeats(script: ScriptDraft | undefined, sceneRows: ScriptSceneRow[]) {
-  const labels = [
-    { title: "开局钩子", source: "吸引用户停留" },
-    { title: "主角困境", source: "建立目标和阻力" },
-    { title: "转折升级", source: "推动冲突升级" },
-    { title: "中段爆点", source: "制造核心爽点" },
-    { title: "高潮反杀", source: "承接最强动作" },
-    { title: "结局收束", source: "保留续集钩子" }
-  ];
-  const synopsisParts = splitReadableParts(script?.synopsis || script?.content || "");
-  return labels.map((item, index) => {
-    const scene = sceneRows.length ? sceneRows[Math.min(sceneRows.length - 1, Math.floor((index / labels.length) * sceneRows.length))] : undefined;
-    const summary = scene
-      ? `${scene.title}: ${scene.hook || scene.action || scene.lines[0] || "待补充关键戏剧动作"}`
-      : synopsisParts[index] || "待剧本生成后自动抽取对应段落。";
-    return {
-      ...item,
-      summary: compactPreviewText(summary, 58),
-      ready: Boolean(scene || synopsisParts[index])
-    };
-  });
-}
-
-function splitReadableParts(value: string) {
-  return value
-    .replace(/\r/g, "\n")
-    .split(/[\n。！？!?；;]+/)
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .slice(0, 8);
-}
-
-function compactPreviewText(value: string, maxLength = 64) {
-  const normalized = value.replace(/\s+/g, " ").trim();
-  return normalized.length > maxLength ? `${normalized.slice(0, maxLength)}...` : normalized;
-}
-
-function CharacterBoard({ projectId, characters, roleAssets, isBusy, onGenerate, onRefresh, onPreview }: { projectId: string; characters: CharacterProfile[]; roleAssets: AssetItem[]; isBusy: boolean; onGenerate: () => void; onRefresh: () => void | Promise<void>; onPreview: (preview: { url: string; title: string }) => void }) {
-  const [referenceInputs, setReferenceInputs] = useState<Record<string, string>>({});
-  const [savingId, setSavingId] = useState<string | null>(null);
-  const roleAssetByCharacterId = useMemo(
-    () => new Map(characters.map((character) => [character.id, resolveCharacterDisplayAsset(character, roleAssets)])),
-    [characters, roleAssets]
-  );
-  const lockedCount = countCompletedCharacterSheets(characters, roleAssets);
-
-  async function saveReference(character: CharacterProfile, referenceUrl: string) {
-    if (!referenceUrl.trim()) return;
-    setSavingId(character.id);
-    try {
-      await api.setCharacterReferenceImage(projectId, character.id, { referenceUrl: referenceUrl.trim(), description: `${character.name} 用户提供的角色参考图` });
-      setReferenceInputs((current) => ({ ...current, [character.id]: "" }));
-      await onRefresh();
-    } finally {
-      setSavingId(null);
-    }
-  }
-
-  async function uploadReference(character: CharacterProfile, event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (!file) return;
-    const referenceUrl = await fileToDataUrl(file);
-    await saveReference(character, referenceUrl);
-  }
-
-  async function deleteReference(character: CharacterProfile) {
-    if (!window.confirm(`确认删除「${character.name}」的上传参考图？`)) return;
-    setSavingId(character.id);
-    try {
-      await api.deleteCharacterReferenceImage(projectId, character.id);
-      await onRefresh();
-    } finally {
-      setSavingId(null);
-    }
-  }
-
-  return (
-    <section className="panel character-lock-board character-turnaround-board">
-      <div className="panel-head">
-        <div><h2>角色定稿工作台</h2><small>每个角色先锁定一张浅色占位或三视图参考，再进入分镜图生产。</small></div>
-        <button className="primary-button" onClick={onGenerate} disabled={isBusy || characters.length === 0}><UserRound size={18} />补齐未定稿角色</button>
-      </div>
-      <div className="character-lock-summary compact"><strong>{lockedCount}/{characters.length}</strong><span>已定稿</span></div>
-      <div className="character-card-grid">
-        {characters.map((character) => {
-          const asset = roleAssetByCharacterId.get(character.id);
-          const locked = Boolean(asset?.referenceUrl && asset.status === "succeeded");
-          return (
-            <article className={locked ? "character-lock-card locked" : "character-lock-card"} key={character.id}>
-              <button className={asset?.referenceUrl ? "character-light-placeholder ready" : "character-light-placeholder"} type="button" onClick={() => asset?.referenceUrl && onPreview({ url: asset.referenceUrl, title: character.name })}>
-                {asset?.referenceUrl ? <img src={asset.referenceUrl} alt={character.name} /> : <><UserRound size={32} /><span>待生成</span></>}
-              </button>
-              <div className="character-lock-copy">
-                <span className={locked ? "status succeeded" : "status pending"}>{locked ? "已定稿" : "待生成"}</span>
-                <h3>{character.name}</h3>
-                <p>{character.identity}</p>
-                <small>{character.appearance}</small>
-              </div>
-              <div className="reference-url-row compact">
-                <input value={referenceInputs[character.id] ?? ""} onChange={(event) => setReferenceInputs((current) => ({ ...current, [character.id]: event.target.value }))} placeholder="粘贴角色图片 URL / data-url" />
-                <button className="ghost-button" type="button" onClick={() => void saveReference(character, referenceInputs[character.id] ?? "")} disabled={savingId === character.id || !referenceInputs[character.id]?.trim()}>{savingId === character.id ? "保存中" : "设为参考"}</button>
-              </div>
-              <div className="inline-actions">
-                <label className="ghost-button avatar-upload-button"><Upload size={16} />上传<input type="file" accept="image/*" onChange={(event) => void uploadReference(character, event)} disabled={savingId === character.id} /></label>
-                <button className="ghost-button danger-ghost" onClick={() => void deleteReference(character)} disabled={savingId === character.id || !asset?.referenceUrl}><Trash2 size={16} />删除</button>
-              </div>
-            </article>
-          );
-        })}
-        {!characters.length ? <div className="empty-state">暂无角色卡，请先生成剧本。</div> : null}
-      </div>
-    </section>
-  );
-}
-
 function CreatorCharacterBoard({
-  projectId,
+  project,
+  providers,
+  modelPrices,
   characters,
   roleAssets,
   sceneAssets,
   qualityReports,
   feedbacks,
   isBusy,
-  onGenerate,
   onRefresh,
+  onSaveModelRoutes,
   onPreview
 }: {
-  projectId: string;
+  project: Project;
+  providers: ModelProvider[];
+  modelPrices: ModelPrice[];
   characters: CharacterProfile[];
   roleAssets: AssetItem[];
   sceneAssets: AssetItem[];
   qualityReports: QualityReport[];
   feedbacks: UserFeedback[];
   isBusy: boolean;
-  onGenerate: () => void;
   onRefresh: () => void | Promise<void>;
+  onSaveModelRoutes: (routes: Partial<Pick<Project, "textProvider" | "textModel" | "imageProvider" | "imageModel" | "imageSize" | "imageQuality" | "videoProvider" | "videoModel">>) => void | Promise<void>;
   onPreview: (preview: { url: string; title: string }) => void;
 }) {
+  const projectId = project.id;
   const [referenceInputs, setReferenceInputs] = useState<Record<string, string>>({});
   const [savingId, setSavingId] = useState<string | null>(null);
   const [evaluating, setEvaluating] = useState(false);
   const [localMessage, setLocalMessage] = useState("");
+  const [assetMode, setAssetMode] = useState<"character" | "scene">(characters.length ? "character" : "scene");
+  const [activeCharacterId, setActiveCharacterId] = useState(characters[0]?.id ?? "");
+  const [activeSceneId, setActiveSceneId] = useState(sceneAssets[0]?.id ?? "");
+  const [generatingId, setGeneratingId] = useState("");
   const latestReport = latestStageReport(qualityReports, "character");
   const characterFeedback = feedbacks.filter((item) => item.stage === "character");
   const lockedRoleCount = countCompletedCharacterSheets(characters, roleAssets);
-  const lockedSceneCount = sceneAssets.filter((asset) => asset.referenceUrl || asset.status === "succeeded").length;
-  const [canvasCharacterId, setCanvasCharacterId] = useState(characters[0]?.id ?? "");
-  const canvasCharacter = characters.find((character) => character.id === canvasCharacterId) ?? characters[0];
-  const canvasIdentityAsset = canvasCharacter ? resolveCharacterIdentityAsset(canvasCharacter, roleAssets) : undefined;
-  const canvasReferenceAssets = canvasCharacter ? roleAssets.filter((asset) => asset.type === "role_reference" && asset.relatedCharacterId === canvasCharacter.id && asset.referenceUrl) : [];
-  const characterBoardPrompt = canvasCharacter ? buildCanvasCharacterBoardPrompt(canvasCharacter, canvasIdentityAsset, canvasReferenceAssets) : "";
-  const characterCanvasSteps = [
-    { label: "输入参考图", value: `${canvasReferenceAssets.length + (canvasIdentityAsset?.referenceUrl ? 1 : 0)} 张`, ready: Boolean(canvasReferenceAssets.length || canvasIdentityAsset?.referenceUrl) },
-    { label: "生成角色身份板", value: "16:9", ready: Boolean(canvasIdentityAsset?.referenceUrl) },
-    { label: "锁定一致性", value: `${lockedRoleCount}/${characters.length}`, ready: characters.length > 0 && lockedRoleCount >= characters.length },
-    { label: "进入故事板", value: `${lockedSceneCount} 场景`, ready: lockedRoleCount > 0 }
-  ];
+  const lockedSceneCount = sceneAssets.filter((asset) => Boolean(asset.referenceUrl)).length;
+  const activeCharacter = characters.find((character) => character.id === activeCharacterId) ?? characters[0];
+  const activeIdentityAsset = activeCharacter ? resolveCharacterIdentityAsset(activeCharacter, roleAssets) : undefined;
+  const activeReferenceAssets = activeCharacter ? roleAssets.filter((asset) => asset.type === "role_reference" && asset.relatedCharacterId === activeCharacter.id && asset.referenceUrl) : [];
+  const activeSceneAsset = sceneAssets.find((asset) => asset.id === activeSceneId) ?? sceneAssets[0];
 
   useEffect(() => {
-    if (!characters.length) return;
-    setCanvasCharacterId((current) => current && characters.some((character) => character.id === current) ? current : characters[0].id);
-  }, [characters]);
+    setActiveCharacterId((current) => current && characters.some((character) => character.id === current) ? current : characters[0]?.id ?? "");
+    setActiveSceneId((current) => current && sceneAssets.some((asset) => asset.id === current) ? current : sceneAssets[0]?.id ?? "");
+    if (!characters.length && sceneAssets.length) setAssetMode("scene");
+  }, [characters, sceneAssets]);
 
   async function runEvaluation() {
     setEvaluating(true);
@@ -710,117 +560,98 @@ function CreatorCharacterBoard({
     }
   }
 
+  async function generateCharacter(character: CharacterProfile) {
+    setGeneratingId(character.id);
+    setLocalMessage("");
+    try {
+      const result = await api.generateCharacterImages(projectId, { characterIds: [character.id], forceRegenerate: Boolean(resolveCharacterIdentityAsset(character, roleAssets)?.referenceUrl) });
+      setLocalMessage(result.assetsCreated ? `${character.name} 身份板已生成。` : `${character.name} 已有可用身份板。`);
+      await onRefresh();
+    } finally {
+      setGeneratingId("");
+    }
+  }
+
+  async function generateScene(asset: AssetItem) {
+    setGeneratingId(asset.id);
+    setLocalMessage("");
+    try {
+      await api.generateSceneImage(projectId, asset.id);
+      setLocalMessage(`${asset.name} 场景图已生成，并会自动进入分镜参考。`);
+      await onRefresh();
+    } finally {
+      setGeneratingId("");
+    }
+  }
+
   return (
     <section className="panel creator-character-workbench asset-lock-workbench preworkbench-board">
       <div className="panel-head">
         <div>
-          <h2>角色与场景资产工作台</h2>
-          <small>先锁定角色三视图、创作者参考图和场景卡；这些资产会被最终分镜总台自动继承。</small>
+          <h2>角色与场景资产</h2>
+          <small>左侧选择资产，中间检查定稿，右侧完成模型选择、参考图与生成。</small>
         </div>
         <div className="inline-actions">
           <button className="ghost-button" onClick={() => void runEvaluation()} disabled={evaluating || !characters.length}>{evaluating ? <Loader2 size={16} className="spin-icon" /> : <BookOpenCheck size={16} />}离线评测</button>
-          <button className="primary-button" onClick={onGenerate} disabled={isBusy || characters.length === 0}><UserRound size={18} />生成角色三视图</button>
+          <span className="asset-ready-count">角色 {lockedRoleCount}/{characters.length} · 场景 {lockedSceneCount}/{sceneAssets.length}</span>
         </div>
       </div>
 
-      <div className="asset-lock-summary-strip">
-        <article className={lockedRoleCount >= characters.length && characters.length ? "ready" : ""}><strong>{lockedRoleCount}/{characters.length}</strong><span>角色定稿</span></article>
-        <article className={lockedSceneCount >= sceneAssets.length && sceneAssets.length ? "ready" : ""}><strong>{lockedSceneCount}/{sceneAssets.length}</strong><span>场景卡</span></article>
-        <article><strong>{roleAssets.filter((asset) => asset.type === "role_reference").length}</strong><span>创作者参考</span></article>
-        <article><strong>{latestReport?.totalScore ?? "-"}</strong><span>离线评分</span></article>
-      </div>
-
-      <CanvasWorkflowPanel
-        tone="character"
-        eyebrow="CANVAS WORKFLOW 01"
-        title="角色身份板生成协议"
-        description="用参考图和角色卡生成 16:9 角色身份板，先锁脸、服装、姿态语言和表情范围，再交给故事板与视频节点复用。"
-        steps={characterCanvasSteps}
-        promptTitle={canvasCharacter ? `${canvasCharacter.name} 角色板提示词` : "角色板提示词"}
-        promptHint="输入：参考图 + 角色卡。输出：白底电影身份板，不生成环境、道具、Logo、水印。"
-        prompt={characterBoardPrompt}
-      >
-        <div className="canvas-character-selector">
-          {characters.map((character) => {
-            const identityAsset = resolveCharacterIdentityAsset(character, roleAssets);
-            return (
-              <button className={canvasCharacter?.id === character.id ? "active" : ""} key={character.id} onClick={() => setCanvasCharacterId(character.id)} type="button">
-                <span>{identityAsset?.referenceUrl ? <StableImage src={identityAsset.referenceUrl} alt={character.name} /> : <UserRound size={16} />}</span>
-                <strong>{character.name}</strong>
-                <small>{identityAsset?.referenceUrl ? "身份板已锁定" : "待生成身份板"}</small>
-              </button>
-            );
-          })}
-        </div>
-      </CanvasWorkflowPanel>
-
-      <QualityReportCard report={latestReport} emptyTitle="角色尚未离线评测" emptyText="生成或上传参考图后，可手动点击离线评测，结果会回流后台质量中心。" />
       {localMessage ? <p className="success-text">{localMessage}</p> : null}
 
-      <div className="asset-lock-layout">
-        <div className="creator-character-grid">
-          {characters.map((character) => {
-            const identityAsset = resolveCharacterIdentityAsset(character, roleAssets);
-            const referenceAssets = roleAssets.filter((asset) => asset.type === "role_reference" && asset.relatedCharacterId === character.id && asset.referenceUrl);
-            return (
-              <article className="creator-character-card" key={character.id}>
-                <div className="creator-character-media">
-                  <button className={identityAsset?.referenceUrl ? "identity-preview ready" : "identity-preview"} type="button" onClick={() => identityAsset?.referenceUrl && onPreview({ url: identityAsset.referenceUrl, title: `${character.name} AI 身份板` })}>
-                    {identityAsset?.referenceUrl ? <StableImage src={identityAsset.referenceUrl} alt={character.name} /> : <><UserRound size={30} /><span>AI 身份板待生成</span></>}
-                  </button>
-                  <div className="creator-character-meta">
-                    <span className={identityAsset?.referenceUrl ? "status succeeded" : "status pending"}>{identityAsset?.referenceUrl ? "身份板已锁定" : "待生成身份板"}</span>
-                    <h3>{character.name}</h3>
-                    <p>{character.identity}</p>
-                    <small>{character.appearance}</small>
-                  </div>
-                </div>
-
-                <div className="creator-reference-panel">
-                  <strong>创作者参考设定</strong>
-                  <div className="reference-thumb-row">
-                    {referenceAssets.map((asset) => (
-                      <button key={asset.id} type="button" onClick={() => asset.referenceUrl && onPreview({ url: asset.referenceUrl, title: asset.name })}>
-                        <StableImage src={asset.referenceUrl!} alt={asset.name} />
-                      </button>
-                    ))}
-                    {!referenceAssets.length ? <span className="reference-empty">可上传脸型、服装、风格、道具参考</span> : null}
-                  </div>
-                  <div className="reference-url-row compact">
-                    <input value={referenceInputs[character.id] ?? ""} onChange={(event) => setReferenceInputs((current) => ({ ...current, [character.id]: event.target.value }))} placeholder="粘贴图片 URL / data-url" />
-                    <button className="ghost-button" type="button" onClick={() => void saveReference(character, referenceInputs[character.id] ?? "")} disabled={savingId === character.id || !referenceInputs[character.id]?.trim()}>保存参考</button>
-                  </div>
-                  <div className="inline-actions">
-                    <label className="ghost-button avatar-upload-button"><Upload size={16} />上传参考<input type="file" accept="image/*" onChange={(event) => void uploadReference(character, event)} disabled={savingId === character.id} /></label>
-                    <button className="ghost-button danger-ghost" onClick={() => void clearReferences(character)} disabled={savingId === character.id || !referenceAssets.length}><Trash2 size={16} />清空参考</button>
-                  </div>
-                </div>
-              </article>
-            );
-          })}
-          {!characters.length ? <div className="empty-state">暂无角色卡，请先生成剧本。</div> : null}
-        </div>
-
-        <aside className="scene-asset-board">
-          <div>
-            <h3>场景环境资产</h3>
-            <small>分镜表拆解后会沉淀场景卡，后续可扩展为独立场景概念图生成。</small>
+      <div className="asset-library-layout">
+        <aside className="asset-library-rail">
+          <div className="asset-library-tabs">
+            <button className={assetMode === "character" ? "active" : ""} onClick={() => setAssetMode("character")} type="button"><UserRound size={15} />角色 <span>{characters.length}</span></button>
+            <button className={assetMode === "scene" ? "active" : ""} onClick={() => setAssetMode("scene")} type="button"><MapPin size={15} />场景 <span>{sceneAssets.length}</span></button>
           </div>
-          <div className="scene-asset-list">
-            {sceneAssets.map((asset) => (
-              <article key={asset.id} className={asset.referenceUrl ? "ready" : ""}>
-                <button type="button" onClick={() => asset.referenceUrl && onPreview({ url: asset.referenceUrl, title: asset.name })} disabled={!asset.referenceUrl}>
-                  {asset.referenceUrl ? <StableImage src={asset.referenceUrl} alt={asset.name} /> : <Images size={20} />}
-                </button>
-                <div>
-                  <span>{asset.referenceUrl ? "场景图已锁定" : asset.status === "succeeded" ? "文本场景已锁定" : "待锁定"}</span>
-                  <strong>{asset.name}</strong>
-                  <p>{asset.description || asset.prompt}</p>
-                </div>
-              </article>
-            ))}
-            {!sceneAssets.length ? <div className="empty-state">暂无场景卡。先拆分镜表后，系统会自动沉淀场景资产。</div> : null}
+          <div className="asset-library-list">
+            {assetMode === "character" ? characters.map((character) => {
+              const identity = resolveCharacterIdentityAsset(character, roleAssets);
+              return <button className={activeCharacter?.id === character.id ? "active" : ""} key={character.id} onClick={() => setActiveCharacterId(character.id)} type="button"><span>{identity?.referenceUrl ? <StableImage src={identity.referenceUrl} alt={character.name} /> : <UserRound size={18} />}</span><div><strong>{character.name}</strong><small>{character.identity}</small></div><em>{identity?.referenceUrl ? "已定稿" : "待生成"}</em></button>;
+            }) : sceneAssets.map((asset) => <button className={activeSceneAsset?.id === asset.id ? "active" : ""} key={asset.id} onClick={() => setActiveSceneId(asset.id)} type="button"><span>{asset.referenceUrl ? <StableImage src={asset.referenceUrl} alt={asset.name} /> : <Images size={18} />}</span><div><strong>{asset.name}</strong><small>{asset.type === "prop" ? "道具" : "环境场景"}</small></div><em>{asset.referenceUrl ? "已出图" : "待生成"}</em></button>)}
+            {assetMode === "character" && !characters.length ? <div className="empty-state">暂无角色，请先生成剧本。</div> : null}
+            {assetMode === "scene" && !sceneAssets.length ? <div className="empty-state">暂无场景，先生成分镜表。</div> : null}
           </div>
+        </aside>
+
+        <main className="asset-detail-canvas">
+          {assetMode === "character" && activeCharacter ? <>
+            <button className={activeIdentityAsset?.referenceUrl ? "asset-detail-preview ready" : "asset-detail-preview"} type="button" onClick={() => activeIdentityAsset?.referenceUrl && onPreview({ url: activeIdentityAsset.referenceUrl, title: activeCharacter.name })}>
+              {activeIdentityAsset?.referenceUrl ? <StableImage src={activeIdentityAsset.referenceUrl} alt={activeCharacter.name} /> : <><UserRound size={42} /><strong>角色身份板待生成</strong></>}
+            </button>
+            <div className="asset-detail-copy"><span>{activeIdentityAsset?.referenceUrl ? "身份板已锁定" : "待生成身份板"}</span><h3>{activeCharacter.name}</h3><p>{activeCharacter.identity}</p><dl><div><dt>外观</dt><dd>{activeCharacter.appearance}</dd></div><div><dt>服装</dt><dd>{activeCharacter.costume}</dd></div><div><dt>性格</dt><dd>{activeCharacter.personality}</dd></div></dl></div>
+          </> : null}
+          {assetMode === "scene" && activeSceneAsset ? <>
+            <button className={activeSceneAsset.referenceUrl ? "asset-detail-preview ready" : "asset-detail-preview"} type="button" onClick={() => activeSceneAsset.referenceUrl && onPreview({ url: activeSceneAsset.referenceUrl, title: activeSceneAsset.name })}>
+              {activeSceneAsset.referenceUrl ? <StableImage src={activeSceneAsset.referenceUrl} alt={activeSceneAsset.name} /> : <><MapPin size={42} /><strong>场景概念图待生成</strong></>}
+            </button>
+            <div className="asset-detail-copy"><span>{activeSceneAsset.referenceUrl ? "场景图已锁定" : "文本场景已就绪"}</span><h3>{activeSceneAsset.name}</h3><p>{activeSceneAsset.description || "等待场景描述"}</p><dl><div><dt>资产类型</dt><dd>{activeSceneAsset.type === "prop" ? "关键道具" : "环境场景"}</dd></div><div><dt>用途</dt><dd>分镜首帧与视频空间一致性参考</dd></div></dl></div>
+          </> : null}
+          {!activeCharacter && !activeSceneAsset ? <div className="empty-state">暂无可编辑资产。</div> : null}
+        </main>
+
+        <aside className="asset-action-panel">
+          <ImageRoutePicker
+            project={project}
+            providers={providers}
+            modelPrices={modelPrices}
+            onSave={onSaveModelRoutes}
+            actionLabel={assetMode === "character" ? (activeIdentityAsset?.referenceUrl ? "应用模型并重新生成身份板" : "应用模型并生成身份板") : (activeSceneAsset?.referenceUrl ? "应用模型并重新生成场景图" : "应用模型并生成场景图")}
+            onAction={assetMode === "character" && activeCharacter ? () => generateCharacter(activeCharacter) : assetMode === "scene" && activeSceneAsset ? () => generateScene(activeSceneAsset) : undefined}
+            actionDisabled={isBusy || Boolean(generatingId)}
+          />
+          {assetMode === "character" && activeCharacter ? <section>
+            <div className="asset-action-title"><strong>参考与生成</strong><small>{activeReferenceAssets.length} 张参考图</small></div>
+            <div className="reference-thumb-row">{activeReferenceAssets.map((asset) => <button key={asset.id} type="button" onClick={() => asset.referenceUrl && onPreview({ url: asset.referenceUrl, title: asset.name })}><StableImage src={asset.referenceUrl!} alt={asset.name} /></button>)}{!activeReferenceAssets.length ? <span className="reference-empty">上传脸型、服装或风格参考</span> : null}</div>
+            <div className="reference-url-row compact"><input value={referenceInputs[activeCharacter.id] ?? ""} onChange={(event) => setReferenceInputs((current) => ({ ...current, [activeCharacter.id]: event.target.value }))} placeholder="粘贴图片 URL" /><button className="icon-button" title="保存参考" type="button" onClick={() => void saveReference(activeCharacter, referenceInputs[activeCharacter.id] ?? "")} disabled={savingId === activeCharacter.id || !referenceInputs[activeCharacter.id]?.trim()}><Save size={16} /></button></div>
+            <div className="inline-actions"><label className="ghost-button avatar-upload-button"><Upload size={16} />上传参考<input type="file" accept="image/*" onChange={(event) => void uploadReference(activeCharacter, event)} disabled={savingId === activeCharacter.id} /></label><button className="icon-button danger-ghost" title="清空参考" onClick={() => void clearReferences(activeCharacter)} disabled={savingId === activeCharacter.id || !activeReferenceAssets.length}><Trash2 size={16} /></button></div>
+          </section> : null}
+          {assetMode === "scene" && activeSceneAsset ? <section>
+            <div className="asset-action-title"><strong>生成场景环境</strong><small>16:9 · 无人物</small></div>
+            <p className="asset-action-note">使用当前项目模型生成环境概念图，成功后按一张图片计费，并自动提供给后续分镜。</p>
+          </section> : null}
+          <QualityReportCard report={latestReport} emptyTitle="尚未评测" emptyText="生成资产后可运行离线评测。" />
         </aside>
       </div>
 
@@ -830,7 +661,9 @@ function CreatorCharacterBoard({
 }
 
 function CreatorImagesBoard({
-  projectId,
+  project,
+  providers,
+  modelPrices,
   storyboards,
   characters,
   roleAssets,
@@ -840,9 +673,12 @@ function CreatorImagesBoard({
   feedbacks,
   isBusy,
   onRefresh,
+  onSaveModelRoutes,
   onPreview
 }: {
-  projectId: string;
+  project: Project;
+  providers: ModelProvider[];
+  modelPrices: ModelPrice[];
   storyboards: StoryboardShot[];
   characters: CharacterProfile[];
   roleAssets: AssetItem[];
@@ -852,8 +688,10 @@ function CreatorImagesBoard({
   feedbacks: UserFeedback[];
   isBusy: boolean;
   onRefresh: () => void | Promise<void>;
+  onSaveModelRoutes: (routes: Partial<Pick<Project, "textProvider" | "textModel" | "imageProvider" | "imageModel" | "imageSize" | "imageQuality" | "videoProvider" | "videoModel">>) => void | Promise<void>;
   onPreview: (preview: { url: string; title: string }) => void;
 }) {
+  const projectId = project.id;
   const imageAssetByShotId = useMemo(() => new Map(imageAssets.map((asset) => [asset.id.replace(/^image_/, ""), asset])), [imageAssets]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [activeShotId, setActiveShotId] = useState(storyboards[0]?.id ?? "");
@@ -972,17 +810,26 @@ function CreatorImagesBoard({
         </div>
         <div className="inline-actions">
           <button className="ghost-button" onClick={() => void runImageEvaluation()} disabled={working === "evaluate" || !imageAssets.length}>{working === "evaluate" ? <Loader2 size={16} className="spin-icon" /> : <BookOpenCheck size={16} />}离线评测</button>
-          <button className="ghost-button" onClick={() => void generateSelected()} disabled={isBusy || Boolean(working) || (!selectedIds.length && !activeShot)}>生成选中</button>
-          <button className="primary-button" onClick={() => void generatePending()} disabled={isBusy || Boolean(working) || !pendingShotIds.length}><Images size={18} />全部待生成</button>
         </div>
       </div>
 
-      <div className="director-status-strip">
-        <article><span>当前模型</span><strong>Qwen Image / wan2.6-t2i</strong></article>
-        <article><span>图像尺寸</span><strong>按项目路由</strong></article>
-        <article><span>参考图</span><strong>{lockedRoleAssets.length + sceneAssets.length} 个</strong></article>
-        <article><span>预计消耗</span><strong>{activeShot ? "单镜头计费" : "-"}</strong></article>
-        <article className={working ? "running" : ""}><span>当前任务</span><strong>{working ? "生成中" : "空闲"}</strong></article>
+      <div className="director-generation-setup">
+        <ImageRoutePicker
+          project={project}
+          providers={providers}
+          modelPrices={modelPrices}
+          quantity={Math.max(1, selectedIds.length || (activeShot ? 1 : 0))}
+          onSave={onSaveModelRoutes}
+          actionLabel={selectedIds.length ? `应用模型并生成 ${selectedIds.length} 个镜头` : "应用模型并生成当前镜头"}
+          onAction={generateSelected}
+          actionDisabled={isBusy || Boolean(working) || (!selectedIds.length && !activeShot)}
+          secondaryLabel={`应用模型并生成全部待生成（${pendingShotIds.length}）`}
+          onSecondaryAction={generatePending}
+          secondaryDisabled={isBusy || Boolean(working) || !pendingShotIds.length}
+        />
+        <div>
+          <span>{selectedIds.length ? `已选 ${selectedIds.length} 个镜头` : activeShot ? `当前 ${formatShotNo(activeShot, Math.max(0, activeShotIndex))}` : "未选择镜头"}</span>
+        </div>
       </div>
 
       <QualityReportCard report={latestReport} emptyTitle="分镜图尚未离线评测" emptyText="生成首帧后可手动评测，创作者评分和系统评分都会进入后台 badcase 池。" />
@@ -1033,10 +880,6 @@ function CreatorImagesBoard({
               <h3>{activeShot ? formatShotNo(activeShot, Math.max(activeShotIndex, 0)) : "选择镜头"}</h3>
               <small>{activeShot?.pictureDesc || "选择一个镜头后编辑画面。"}</small>
             </div>
-            <div className="segmented-control">
-              <button className="active" type="button">原图</button>
-              <button type="button">对比</button>
-            </div>
           </div>
           <button className={shotFrameClass(activeAsset?.referenceUrl ? "director-preview-frame ready" : "director-preview-frame", activeShot)} type="button" onClick={() => activeAsset?.referenceUrl && onPreview({ url: activeAsset.referenceUrl, title: activeAsset.name })}>
             {activeAsset?.referenceUrl ? <StableImage src={activeAsset.referenceUrl} alt={activeAsset.name} /> : <div><Sparkles size={32} /><strong>{activeShot ? "首帧待生成" : "选择镜头"}</strong><small>先生成单张测试图</small></div>}
@@ -1049,32 +892,10 @@ function CreatorImagesBoard({
             </div>
           ) : null}
 
-          <div className="director-version-strip">
-            <div className="design-section-title">
-              <h3>图片版本</h3>
-              <small>后续可接入强制重绘和版本对比</small>
-            </div>
-            <div>
-              {[0, 1, 2, 3].map((slot) => {
-                const current = slot === 0 ? activeAsset : undefined;
-                return (
-                  <button className={current?.referenceUrl ? "ready" : ""} key={slot} type="button" onClick={() => current?.referenceUrl && onPreview({ url: current.referenceUrl, title: current.name })}>
-                    {current?.referenceUrl ? <StableImage src={current.referenceUrl} alt={current.name} /> : <Sparkles size={18} />}
-                    <span>v{slot + 1} {slot === 0 ? "当前" : slot === 1 ? "重绘" : slot === 2 ? "参考优化" : "空位"}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
         </main>
 
         <aside className="director-settings-panel">
-          <div className="director-settings-tabs">
-            <button className="active" type="button">镜头设置</button>
-            <button type="button">角色</button>
-            <button type="button">场景</button>
-            <button type="button">高级参数</button>
-          </div>
+          <div className="director-settings-heading"><strong>镜头参数</strong><small>修改后保存并重新生成</small></div>
           <CanvasPromptCard
             title="单镜头画布输入"
             hint="输入：角色身份板 + 场景卡 + 当前镜头。用于单镜头重绘、局部精修和后续图生视频。"
@@ -1548,36 +1369,8 @@ function ProductionTimeline({
   );
 }
 
-function ImagesBoard({ storyboards, imageAssets, isBusy, onGenerate, onPreview }: { storyboards: StoryboardShot[]; imageAssets: AssetItem[]; isBusy: boolean; onGenerate: () => void; onPreview: (preview: { url: string; title: string }) => void }) {
-  return (
-    <section className="panel shot-image-gallery">
-      <div className="panel-head">
-        <div><h2>分镜图工作台</h2><small>按已定稿角色生成首帧图。建议先少量测试风格，再批量补齐。</small></div>
-        <button className="primary-button" onClick={onGenerate} disabled={isBusy || !storyboards.length}><Images size={18} />生成待生成分镜图</button>
-      </div>
-      <div className="shot-card-grid">
-        {(storyboards.length ? storyboards : imageAssets).map((item, index) => {
-          const shot = "pictureDesc" in item ? item : undefined;
-          const asset = imageAssets[index];
-          const url = asset?.referenceUrl;
-          return (
-            <article className="shot-image-card" key={item.id}>
-              <button className={url ? "shot-preview ready" : "shot-preview"} onClick={() => url && onPreview({ url, title: asset?.name ?? formatShotNo(shot, index) })} type="button">
-                {url ? <img src={url} alt={asset?.name ?? "分镜图"} /> : <div className="shot-preview-empty"><Sparkles size={26} /><strong>{formatShotNo(shot, index)}</strong><small>待生成</small></div>}
-              </button>
-              <strong>{formatShotNo(shot, index)}</strong>
-              <p>{shot?.pictureDesc ?? asset?.description}</p>
-              <span>{url ? "已出图" : "待出图"}</span>
-            </article>
-          );
-        })}
-        {!storyboards.length && !imageAssets.length ? <div className="empty-state">暂无分镜图。</div> : null}
-      </div>
-    </section>
-  );
-}
-
-function VideoBoard({ projectId, storyboards, characters, roleAssets, imageAssets, videoAssets, exportJobs, isBusy, onGenerate, onCreateExport, onRefresh, onPublish }: { projectId: string; storyboards: StoryboardShot[]; characters: CharacterProfile[]; roleAssets: AssetItem[]; imageAssets: AssetItem[]; videoAssets: AssetItem[]; exportJobs: ExportJob[]; isBusy: boolean; onGenerate: () => void; onCreateExport: (type: "tts" | "subtitle" | "video_export") => void; onRefresh: () => void | Promise<void>; onPublish: () => void }) {
+function VideoBoard({ project, providers, modelPrices, storyboards, characters, roleAssets, imageAssets, videoAssets, exportJobs, isBusy, onGenerate, onCreateExport, onRefresh, onSaveModelRoutes, onPublish }: { project: Project; providers: ModelProvider[]; modelPrices: ModelPrice[]; storyboards: StoryboardShot[]; characters: CharacterProfile[]; roleAssets: AssetItem[]; imageAssets: AssetItem[]; videoAssets: AssetItem[]; exportJobs: ExportJob[]; isBusy: boolean; onGenerate: () => void; onCreateExport: (type: "tts" | "subtitle" | "video_export") => void; onRefresh: () => void | Promise<void>; onSaveModelRoutes: (routes: Partial<Pick<Project, "textProvider" | "textModel" | "imageProvider" | "imageModel" | "imageSize" | "imageQuality" | "videoProvider" | "videoModel">>) => void | Promise<void>; onPublish: () => void }) {
+  const projectId = project.id;
   const imageAssetByShotId = useMemo(() => buildShotAssetMap(imageAssets, "image"), [imageAssets]);
   const videoAssetByShotId = useMemo(() => buildShotAssetMap(videoAssets, "video"), [videoAssets]);
   const [activeShotId, setActiveShotId] = useState(storyboards[0]?.id ?? "");
@@ -1598,6 +1391,9 @@ function VideoBoard({ projectId, storyboards, characters, roleAssets, imageAsset
   const activeVideoUrl = isPlayableVideoUrl(activeVideo?.referenceUrl) ? activeVideo!.referenceUrl! : "";
   const activeSeedancePrompt = activeShot ? buildCanvasSeedanceVideoPrompt(activeShot, storyboards, characters, roleAssets) : "";
   const totalDuration = Math.max(1, storyboards.reduce((sum, shot) => sum + (shot.duration || 0), 0));
+  const pendingVideoSeconds = storyboards
+    .filter((shot) => !isPlayableVideoUrl(videoAssetByShotId.get(shot.id)?.referenceUrl))
+    .reduce((sum, shot) => sum + Math.max(1, shot.duration || 1), 0);
   const hasWarnings = exportJobs.some((job) => job.warnings?.length || job.errorReason);
 
   useEffect(() => {
@@ -1666,16 +1462,15 @@ function VideoBoard({ projectId, storyboards, characters, roleAssets, imageAsset
         <div className="inline-actions">
           <button className="ghost-button" onClick={() => void onRefresh()}><RefreshCw size={18} />刷新状态</button>
           <button className="ghost-button" onClick={onPublish} disabled={!playableVideoCount && !publishableExport}><Upload size={18} />发布到创作现场</button>
-          <button className="primary-button" onClick={onGenerate} disabled={isBusy || !imageAssets.length}><Film size={18} />生成镜头视频</button>
+          <button className="primary-button export-primary-button" onClick={() => void onCreateExport("video_export")} disabled={isBusy || !playableVideoCount}><Download size={18} />导出 MP4</button>
         </div>
       </div>
 
-      <div className="video-loop-progress-strip">
-        <article className={playableVideoCount ? "ready" : ""}><span>片段完成</span><strong>{playableVideoCount}/{storyboards.length}</strong><i><b style={{ width: `${storyboards.length ? Math.round((playableVideoCount / storyboards.length) * 100) : 0}%` }} /></i></article>
-        <article className={audioJob?.status === "succeeded" || Boolean(audioJob?.audioUrl) ? "ready" : ""}><span>TTS 配音</span><strong>{audioJob?.status === "succeeded" || audioJob?.audioUrl ? "正常" : "待生成"}</strong></article>
-        <article className={subtitleJob?.status === "succeeded" || Boolean(subtitleJob?.subtitleUrl) ? "ready" : ""}><span>字幕状态</span><strong>{subtitleJob?.status === "succeeded" || subtitleJob?.subtitleUrl ? "正常" : "待生成"}</strong></article>
-        <article className={latestMp4?.status === "succeeded" ? "ready" : ""}><span>导出就绪</span><strong>{latestMp4?.status === "succeeded" ? "可下载" : "待合成"}</strong></article>
-        <article><span>预计时长</span><strong>{formatClock(totalDuration)}</strong></article>
+      <div className="video-assembly-summary">
+        <span><strong>{playableVideoCount}/{storyboards.length}</strong> 视频片段</span>
+        <span><strong>{audioJob?.status === "succeeded" || audioJob?.audioUrl ? "已完成" : "待生成"}</strong> 配音</span>
+        <span><strong>{subtitleJob?.status === "succeeded" || subtitleJob?.subtitleUrl ? "已完成" : "待生成"}</strong> 字幕</span>
+        <span><strong>{formatClock(totalDuration)}</strong> 总时长</span>
       </div>
 
       <div className="video-loop-layout">
@@ -1745,23 +1540,12 @@ function VideoBoard({ projectId, storyboards, characters, roleAssets, imageAsset
             <span>{formatClock(playbackProgress)} / {formatClock(playbackDuration || activeShot?.duration || totalDuration)}</span>
             <small>{activeShot?.dialogue || activeShot?.voiceOver || "暂无台词"}</small>
           </div>
-          <CanvasPromptCard
-            title="Seedance 2.0 当前视频提示词"
-            hint="输入：@[CHARACTER REF] 角色身份板 + @[STORYBOARD REF] 故事板/首帧参考。按故事板节拍推导动作、机位、灯光和尾帧。"
-            prompt={activeSeedancePrompt}
-            compact
-          />
-          <VideoTimelineTracks storyboards={storyboards} imageAssetByShotId={imageAssetByShotId} videoAssetByShotId={videoAssetByShotId} activeShotId={activeShot?.id} onSelect={setActiveShotId} />
+          <CanvasPromptCard title="Seedance 2.0 当前视频提示词" hint="输入角色身份板、场景和首帧，自动组织动作与机位。" prompt={activeSeedancePrompt} compact />
         </main>
 
         <aside className="video-export-inspector">
-          <section className={hasWarnings ? "export-check-card warn" : "export-check-card ready"}>
-            <div>
-              <AlertTriangle size={17} />
-              <strong>{hasWarnings ? "发现导出问题" : "导出检查通过"}</strong>
-            </div>
-            <p>{hasWarnings ? "仍有失败任务、警告或缺失素材，建议查看底部错误与警告。" : "片段、字幕和配音状态可继续合成。"}</p>
-          </section>
+          <VideoRoutePicker project={project} providers={providers} modelPrices={modelPrices} totalSeconds={pendingVideoSeconds} onSave={onSaveModelRoutes} onGenerate={onGenerate} disabled={isBusy || !imageAssets.length || pendingVideoSeconds <= 0} />
+          <section className={hasWarnings ? "export-check-card warn compact" : "export-check-card ready compact"}><div><AlertTriangle size={17} /><strong>{hasWarnings ? "存在待处理问题" : "导出检查通过"}</strong></div></section>
           <section className="export-settings-card">
             <h3>输出设置</h3>
             <label><span>输出比例</span><select defaultValue="9:16"><option>9:16</option><option>16:9</option><option>1:1</option></select></label>
@@ -1769,19 +1553,22 @@ function VideoBoard({ projectId, storyboards, characters, roleAssets, imageAsset
             <label><span>文件名</span><input defaultValue="manjiao_final_v1.mp4" /></label>
           </section>
           <section className="cover-frame-card">
-            <h3>封面帧</h3>
+            <h3>封面</h3>
             <button type="button">
               {activeImage?.referenceUrl ? <StableImage src={activeImage.referenceUrl} alt={activeImage.name} /> : <Images size={20} />}
             </button>
           </section>
           <section className="export-task-stack">
-            <h3>生成任务</h3>
+            <h3>配音与字幕</h3>
             <button className="ghost-button" onClick={() => void onCreateExport("tts")} disabled={isBusy}><Download size={16} />生成配音</button>
             <button className="ghost-button" onClick={() => void onCreateExport("subtitle")} disabled={isBusy}><Download size={16} />生成字幕</button>
-            <button className="primary-button" onClick={() => void onCreateExport("video_export")} disabled={isBusy}><Download size={16} />合成 MP4</button>
+            <button className="primary-button" onClick={() => void onCreateExport("video_export")} disabled={isBusy || !playableVideoCount}><Download size={16} />合成并导出 MP4</button>
+            {latestMp4?.status === "succeeded" ? <button className="ghost-button" onClick={() => void downloadJob(latestMp4)}><Download size={16} />下载最新成片</button> : null}
           </section>
         </aside>
       </div>
+
+      <VideoTimelineTracks storyboards={storyboards} imageAssetByShotId={imageAssetByShotId} videoAssetByShotId={videoAssetByShotId} activeShotId={activeShot?.id} onSelect={setActiveShotId} />
 
       <div className="video-output-dashboard">
         <section>
@@ -1955,38 +1742,49 @@ function VideoTimelineTracks({
   onSelect: (shotId: string) => void;
 }) {
   const totalDuration = Math.max(1, storyboards.reduce((sum, shot) => sum + (shot.duration || 0), 0));
+  const layout = buildTimelineClipLayout(storyboards);
+  const totalWidth = Math.max(720, layout.reduce((sum, clip) => sum + clip.width, 0));
+  const activeIndex = storyboards.findIndex((shot) => shot.id === activeShotId);
+  const playheadOffset = layout.slice(0, Math.max(0, activeIndex)).reduce((sum, clip) => sum + clip.width, 0);
   const tracks = [
-    { key: "video", label: "视频轨道", ready: (shot: StoryboardShot) => isPlayableVideoUrl(videoAssetByShotId.get(shot.id)?.referenceUrl), text: (shot: StoryboardShot) => videoAssetByShotId.get(shot.id) ? "片段" : "待片段" },
-    { key: "audio", label: "配音轨道", ready: (shot: StoryboardShot) => Boolean(shot.dialogue || shot.voiceOver), text: (shot: StoryboardShot) => shot.dialogue || shot.voiceOver || "待配音" },
-    { key: "caption", label: "字幕轨道", ready: (shot: StoryboardShot) => Boolean(shot.dialogue), text: (shot: StoryboardShot) => shot.dialogue || "待字幕" },
-    { key: "sfx", label: "音效轨道", ready: (shot: StoryboardShot) => Boolean(shot.environmentSound || shot.soundEffect), text: (shot: StoryboardShot) => shot.environmentSound || shot.soundEffect || "环境声" }
+    { key: "video", label: "视频", icon: <Film size={15} />, ready: (shot: StoryboardShot) => isPlayableVideoUrl(videoAssetByShotId.get(shot.id)?.referenceUrl), text: (shot: StoryboardShot) => videoAssetByShotId.get(shot.id) ? "片段" : "待片段" },
+    { key: "audio", label: "配音", icon: <MessageSquareText size={15} />, ready: (shot: StoryboardShot) => Boolean(shot.dialogue || shot.voiceOver), text: (shot: StoryboardShot) => shot.dialogue || shot.voiceOver || "待配音" },
+    { key: "caption", label: "字幕", icon: <FileText size={15} />, ready: (shot: StoryboardShot) => Boolean(shot.dialogue), text: (shot: StoryboardShot) => shot.dialogue || "待字幕" },
+    { key: "sfx", label: "音效", icon: <Sparkles size={15} />, ready: (shot: StoryboardShot) => Boolean(shot.environmentSound || shot.soundEffect), text: (shot: StoryboardShot) => shot.environmentSound || shot.soundEffect || "环境声" }
   ];
 
   return (
     <section className="video-track-timeline">
-      <div className="video-time-ruler">
-        <span>00:00</span>
-        <span>{formatClock(Math.round(totalDuration / 2))}</span>
-        <span>{formatClock(totalDuration)}</span>
-      </div>
-      {tracks.map((track) => (
-        <div className="video-track-row" key={track.key}>
-          <strong>{track.label}</strong>
-          <div>
-            {storyboards.map((shot, index) => {
-              const width = `${Math.max(82, Math.round(((shot.duration || 1) / totalDuration) * 980))}px`;
-              const image = imageAssetByShotId.get(shot.id);
-              return (
-                <button className={`${track.ready(shot) ? "ready" : ""} ${activeShotId === shot.id ? "active" : ""}`} key={`${track.key}-${shot.id}`} onClick={() => onSelect(shot.id)} style={{ width }} type="button">
-                  {track.key === "video" && image?.referenceUrl ? <StableImage src={image.referenceUrl} alt={image.name} /> : null}
-                  <span>{index + 1}</span>
-                  <em>{track.text(shot)}</em>
-                </button>
-              );
-            })}
+      <header><div><strong>轨道编辑</strong><span>按镜头时长自动排列 · 单击片段定位预览</span></div><small>{formatClock(totalDuration)}</small></header>
+      <div className="timeline-editor-scroll">
+        <div className="video-time-ruler-row">
+          <span />
+          <div style={{ width: totalWidth }}>
+            {layout.map((clip) => <i key={clip.id} style={{ width: clip.width }}><b>{formatClock(clip.start)}</b></i>)}
+            <i className="timeline-end-marker"><b>{formatClock(totalDuration)}</b></i>
           </div>
         </div>
-      ))}
+        {tracks.map((track) => (
+          <div className="video-track-row" key={track.key}>
+            <strong>{track.icon}<span>{track.label}</span></strong>
+            <div className="video-track-canvas" style={{ width: totalWidth }}>
+              {track.key === "video" && activeIndex >= 0 ? <span className="timeline-playhead" style={{ left: playheadOffset }} /> : null}
+              {storyboards.map((shot, index) => {
+                const image = imageAssetByShotId.get(shot.id);
+                const clip = layout[index];
+                return (
+                  <button className={`${track.ready(shot) ? "ready" : ""} ${activeShotId === shot.id ? "active" : ""}`} key={`${track.key}-${shot.id}`} onClick={() => onSelect(shot.id)} style={{ width: clip?.width ?? 96 }} type="button">
+                    {track.key === "video" && image?.referenceUrl ? <StableImage src={image.referenceUrl} alt={image.name} /> : null}
+                    <span>{String(index + 1).padStart(2, "0")}</span>
+                    <em>{track.text(shot)}</em>
+                    <small>{shot.duration || 1}s</small>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
     </section>
   );
 }
@@ -2154,27 +1952,133 @@ function RouteSelect({ title, provider, model, providers, models, onProvider, on
   );
 }
 
-function GenerationCostPreview({ estimate, disabled, onConfirm }: { estimate: StageEstimate; disabled: boolean; onConfirm: () => void }) {
+function ImageRoutePicker({
+  project,
+  providers,
+  modelPrices,
+  quantity = 1,
+  onSave,
+  actionLabel = "应用到本项目",
+  onAction,
+  actionDisabled = false,
+  secondaryLabel,
+  onSecondaryAction,
+  secondaryDisabled = false
+}: {
+  project: Project;
+  providers: ModelProvider[];
+  modelPrices: ModelPrice[];
+  quantity?: number;
+  onSave: (routes: Partial<Pick<Project, "imageProvider" | "imageModel" | "imageSize" | "imageQuality">>) => void | Promise<void>;
+  actionLabel?: string;
+  onAction?: () => void | Promise<void>;
+  actionDisabled?: boolean;
+  secondaryLabel?: string;
+  onSecondaryAction?: () => void | Promise<void>;
+  secondaryDisabled?: boolean;
+}) {
+  const imageProviders = providers.filter((provider) => provider.modality === "image" && provider.enabled);
+  const [draft, setDraft] = useState({
+    imageProvider: project.imageProvider ?? imageProviders[0]?.id ?? "",
+    imageModel: project.imageModel && !failedImageModels.has(project.imageModel) ? project.imageModel : "wan2.6-t2i",
+    imageSize: normalizeImageOutputSize(project.imageSize),
+    imageQuality: normalizeImageOutputQuality(project.imageQuality)
+  });
+  const [saving, setSaving] = useState(false);
+  const [actionError, setActionError] = useState("");
+  const models = (imageProviders.find((provider) => provider.id === draft.imageProvider)?.models ?? [draft.imageModel]).filter((model) => !failedImageModels.has(model));
+  const unitPrice = modelPrices.find((price) => price.enabled && price.modality === "image" && price.providerId === draft.imageProvider && price.model === draft.imageModel)?.unitCredits
+    ?? modelPrices.find((price) => price.enabled && price.modality === "image" && price.model === draft.imageModel)?.unitCredits
+    ?? 8;
+  const estimatedCredits = Math.max(0, quantity) * estimateImageCredits(unitPrice, draft.imageSize, draft.imageQuality);
+
+  useEffect(() => {
+    setDraft({
+      imageProvider: project.imageProvider ?? imageProviders[0]?.id ?? "",
+      imageModel: project.imageModel && !failedImageModels.has(project.imageModel) ? project.imageModel : "wan2.6-t2i",
+      imageSize: normalizeImageOutputSize(project.imageSize),
+      imageQuality: normalizeImageOutputQuality(project.imageQuality)
+    });
+  }, [project.id, project.imageProvider, project.imageModel, project.imageSize, project.imageQuality]);
+
+  function selectProvider(providerId: string) {
+    const nextModels = (imageProviders.find((provider) => provider.id === providerId)?.models ?? []).filter((model) => !failedImageModels.has(model));
+    setDraft((current) => ({ ...current, imageProvider: providerId, imageModel: nextModels[0] ?? current.imageModel }));
+  }
+
+  async function applyRoute(action?: () => void | Promise<void>) {
+    setSaving(true);
+    setActionError("");
+    try {
+      await onSave(draft);
+      await action?.();
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "模型应用或生成失败");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
-    <div className="production-action secondary generation-cost-preview">
-      <div><span>生成前确认</span><strong>{estimate.estimatedCredits} 积分</strong></div>
-      <dl>
-        <div><span>模型</span><strong>{estimate.provider} / {estimate.model}</strong></div>
-        <div><span>参数</span><strong>{estimate.parameters}</strong></div>
-        <div><span>数量</span><strong>{estimate.quantity}</strong></div>
-      </dl>
-      <small>{estimate.refundPolicy}</small>
-      <button className="primary-button compact" onClick={onConfirm} disabled={disabled} type="button">确认生成</button>
-    </div>
+    <section className="image-route-picker">
+      <div className="asset-action-title"><strong><SlidersHorizontal size={15} />生成模型</strong><small>预计 {estimatedCredits} 积分</small></div>
+      <label><span>渠道</span><select value={draft.imageProvider} onChange={(event) => selectProvider(event.target.value)}>{imageProviders.map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}</select></label>
+      <label><span>模型</span><select value={draft.imageModel} onChange={(event) => setDraft((current) => ({ ...current, imageModel: event.target.value }))}>{models.map((model) => <option key={model} value={model}>{model}</option>)}</select></label>
+      <div className="image-route-params">
+        <label><span>尺寸</span><select value={draft.imageSize} onChange={(event) => setDraft((current) => ({ ...current, imageSize: normalizeImageOutputSize(event.target.value) }))}>{imageOutputSizeOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
+        <label><span>质量</span><select value={draft.imageQuality} onChange={(event) => setDraft((current) => ({ ...current, imageQuality: normalizeImageOutputQuality(event.target.value) }))}>{imageOutputQualityOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
+      </div>
+      <button className="primary-button full-button" onClick={() => void applyRoute(onAction)} disabled={saving || actionDisabled || !draft.imageProvider || !draft.imageModel} type="button">{saving ? <Loader2 size={15} className="spin-icon" /> : onAction ? <WandSparkles size={15} /> : <Save size={15} />}{actionLabel}</button>
+      {secondaryLabel && onSecondaryAction ? <button className="ghost-button full-button" onClick={() => void applyRoute(onSecondaryAction)} disabled={saving || secondaryDisabled || !draft.imageProvider || !draft.imageModel} type="button">{saving ? <Loader2 size={15} className="spin-icon" /> : <Sparkles size={15} />}{secondaryLabel}</button> : null}
+      {actionError ? <p className="error-text">{actionError}</p> : null}
+    </section>
   );
 }
 
-function StageLine({ label, value, done }: { label: string; value: string; done: boolean }) {
-  return <div className={done ? "stage-line done" : "stage-line"}><span>{label}</span><strong>{value}</strong></div>;
-}
+function VideoRoutePicker({ project, providers, modelPrices, totalSeconds, onSave, onGenerate, disabled = false }: { project: Project; providers: ModelProvider[]; modelPrices: ModelPrice[]; totalSeconds: number; onSave: (routes: Partial<Pick<Project, "videoProvider" | "videoModel">>) => void | Promise<void>; onGenerate: () => void | Promise<void>; disabled?: boolean }) {
+  const videoProviders = providers.filter((provider) => provider.modality === "video" && provider.enabled);
+  const [providerId, setProviderId] = useState(project.videoProvider ?? videoProviders[0]?.id ?? "");
+  const [model, setModel] = useState(project.videoModel ?? videoProviders.find((provider) => provider.id === (project.videoProvider ?? videoProviders[0]?.id))?.models[0] ?? "");
+  const [saving, setSaving] = useState(false);
+  const [actionError, setActionError] = useState("");
+  const models = videoProviders.find((provider) => provider.id === providerId)?.models ?? [];
+  const unitCredits = modelPrices.find((price) => price.enabled && price.modality === "video" && price.providerId === providerId && price.model === model && price.unit === "video_second")?.unitCredits
+    ?? modelPrices.find((price) => price.enabled && price.modality === "video" && price.model === model && price.unit === "video_second")?.unitCredits
+    ?? 2;
 
-function FlowCheck({ done, title, text }: { done: boolean; title: string; text: string }) {
-  return <div className={done ? "flow-check done" : "flow-check"}><span>{done ? "已完成" : "待确认"}</span><strong>{title}</strong><p>{text}</p></div>;
+  useEffect(() => {
+    const nextProvider = project.videoProvider ?? videoProviders[0]?.id ?? "";
+    setProviderId(nextProvider);
+    setModel(project.videoModel ?? videoProviders.find((provider) => provider.id === nextProvider)?.models[0] ?? "");
+  }, [project.id, project.videoProvider, project.videoModel]);
+
+  function updateProvider(nextProvider: string) {
+    setProviderId(nextProvider);
+    setModel(videoProviders.find((provider) => provider.id === nextProvider)?.models[0] ?? "");
+  }
+
+  async function applyRouteAndGenerate() {
+    setSaving(true);
+    setActionError("");
+    try {
+      await onSave({ videoProvider: providerId, videoModel: model });
+      await onGenerate();
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "模型应用或视频生成失败");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="video-route-picker">
+      <div className="asset-action-title"><strong><SlidersHorizontal size={15} />视频模型</strong><small>约 {Math.ceil(totalSeconds * unitCredits)} 积分</small></div>
+      <label><span>渠道</span><select value={providerId} onChange={(event) => updateProvider(event.target.value)}>{videoProviders.map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}</select></label>
+      <label><span>模型</span><select value={model} onChange={(event) => setModel(event.target.value)}>{models.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
+      <button className="primary-button full-button" onClick={() => void applyRouteAndGenerate()} disabled={saving || disabled || !providerId || !model} type="button">{saving ? <Loader2 size={15} className="spin-icon" /> : <WandSparkles size={15} />}应用模型并生成待完成片段</button>
+      {actionError ? <p className="error-text">{actionError}</p> : null}
+    </section>
+  );
 }
 
 function InlineProgress({ operation, elapsed }: { operation: NonNullable<OperationState>; elapsed: number }) {
@@ -2207,44 +2111,6 @@ type NextAction = {
   description: string;
   disabled: boolean;
 };
-
-type StageEstimate = {
-  provider: string;
-  model: string;
-  parameters: string;
-  quantity: number;
-  estimatedCredits: number;
-  refundPolicy: string;
-};
-
-function resolveNextAction(context: { script?: ScriptDraft; characters: CharacterProfile[]; storyboards: StoryboardShot[]; completedRoleRefs: number; completedImages: number; completedVideos: number }): NextAction {
-  if (!context.script) return { id: "script", icon: "script", title: "等待剧本生成完成", description: "剧本和角色卡生成后再进入项目生产。", disabled: true };
-  if (context.characters.length && context.completedRoleRefs < context.characters.length) return { id: "character", icon: "character", title: "下一步：生成角色三视图", description: `${context.completedRoleRefs}/${context.characters.length} 个角色已定稿，先锁定角色身份。`, disabled: false };
-  if (!context.storyboards.length) return { id: "storyboard", icon: "storyboard", title: "下一步：确认剧本并拆分镜", description: "把剧本拆成镜头级清单，再进入首帧图生产。", disabled: false };
-  if (context.completedImages < context.storyboards.length) return { id: "image", icon: "image", title: "下一步：生成分镜图", description: `${context.completedImages}/${context.storyboards.length} 张首帧已完成，继续补齐。`, disabled: false };
-  if (context.completedVideos < context.storyboards.length) return { id: "video", icon: "video", title: "下一步：生成视频片段", description: `${context.completedVideos}/${context.storyboards.length} 条视频片段已有记录。`, disabled: false };
-  return { id: "done", icon: "video", title: "生产链路已闭环", description: "可以进入视频合成、配音、字幕和导出。", disabled: true };
-}
-
-function estimateStage(project: Project, prices: ModelPrice[], stage: NextAction["id"], counts: { characters: number; storyboards: number; pendingImages: number; pendingVideos: number }): StageEstimate {
-  const textUnit = resolveUnitCredits(prices, "text", project.textProvider, project.textModel, 8);
-  const imageBase = resolveUnitCredits(prices, "image", project.imageProvider, project.imageModel, 10);
-  const imageUnit = estimateImageCredits(imageBase, project.imageSize, project.imageQuality);
-  const videoUnit = resolveUnitCredits(prices, "video", project.videoProvider, project.videoModel, 12);
-  if (stage === "storyboard") return { provider: project.textProvider ?? "-", model: project.textModel ?? "-", parameters: "剧本拆分", quantity: Math.max(1, project.episodes), estimatedCredits: Math.max(1, project.episodes) * textUnit, refundPolicy: "失败不扣费，已冻结积分自动退回。" };
-  if (stage === "character") return { provider: project.imageProvider ?? "-", model: project.imageModel ?? "-", parameters: `${normalizeImageOutputSize(project.imageSize)} / ${normalizeImageOutputQuality(project.imageQuality)} / 一图三视图`, quantity: counts.characters, estimatedCredits: counts.characters * imageUnit, refundPolicy: "阶段失败不扣费，成功图片按张扣费。" };
-  if (stage === "image") return { provider: project.imageProvider ?? "-", model: project.imageModel ?? "-", parameters: `${normalizeImageOutputSize(project.imageSize)} / ${normalizeImageOutputQuality(project.imageQuality)}`, quantity: counts.pendingImages, estimatedCredits: counts.pendingImages * imageUnit, refundPolicy: "失败不扣费，成功分镜图按张扣费。" };
-  if (stage === "video") return { provider: project.videoProvider ?? "-", model: project.videoModel ?? "-", parameters: `${project.videoRatio} / 图生视频`, quantity: counts.pendingVideos * 4, estimatedCredits: counts.pendingVideos * 4 * videoUnit, refundPolicy: "上游未返回可播放视频前保持任务状态，失败或取消退回未消耗积分。" };
-  return { provider: "-", model: "-", parameters: "-", quantity: 0, estimatedCredits: 0, refundPolicy: "暂无需要提交的生成任务。" };
-}
-
-function resolveUnitCredits(prices: ModelPrice[], modality: string, providerId: string | undefined, model: string | undefined, fallback: number) {
-  const rows = prices.filter((item) => item.modality === modality && item.enabled !== false);
-  return rows.find((item) => item.providerId === providerId && item.model === model)?.unitCredits
-    ?? rows.find((item) => item.model === model)?.unitCredits
-    ?? rows.find((item) => item.providerId === providerId)?.unitCredits
-    ?? fallback;
-}
 
 function countCompletedCharacterSheets(characters: CharacterProfile[], assets: AssetItem[]) {
   return characters.filter((character) => assets.some((asset) => asset.relatedCharacterId === character.id && asset.referenceUrl && asset.status === "succeeded")).length;
@@ -2447,6 +2313,7 @@ type ScriptSceneStatus = "locked" | "ready" | "risk" | "draft" | "blocked";
 
 type ScriptSceneRow = {
   id: string;
+  episodeNo: number;
   sceneNo: number;
   title: string;
   location: string;
@@ -2486,7 +2353,8 @@ function buildScriptSceneRows(script: ScriptDraft | undefined, storyboards: Stor
               ? "场次偏长，建议加节拍"
               : undefined;
         return {
-          id: `scene-${first.episodeNo}-${first.sceneNo}`,
+          id: `scene-${first.episodeNo}-${first.sceneNo}-${index}`,
+          episodeNo: first.episodeNo || 1,
           sceneNo: first.sceneNo || index + 1,
           title: first.scene || `场次 ${index + 1}`,
           location: inferLocation(first.scene),
@@ -2516,6 +2384,7 @@ function buildScriptSceneRows(script: ScriptDraft | undefined, storyboards: Stor
     const longLine = chunk.lines.find((line) => line.length > 58);
     return {
       id: `script-scene-${index + 1}`,
+      episodeNo: 1,
       sceneNo: index + 1,
       title,
       location: inferLocation(title),

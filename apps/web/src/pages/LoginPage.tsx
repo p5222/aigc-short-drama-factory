@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import gsap from "gsap";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { FormEvent, KeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
+import type { FormEvent, KeyboardEvent } from "react";
 import { api, type AuthUser } from "../lib/api";
 import "./CineHome.css";
 import { PublicShowcase, type PublicLocale, type PublicView } from "./PublicShowcase";
@@ -203,6 +203,7 @@ export function LoginPage({ onAuthed, variant = "creator" }: LoginPageProps) {
   const visibleBgSlot = useRef<0 | 1>(0);
   const slotSceneIndexes = useRef<[number, number]>([0, 1]);
   const lastBgScene = useRef(0);
+  const requestedSceneRef = useRef(0);
   const bgRequestId = useRef(0);
   const visualCardRefs = useRef<Array<HTMLDivElement | null>>([]);
   const hitCardRefs = useRef<Array<HTMLButtonElement | null>>([]);
@@ -211,8 +212,6 @@ export function LoginPage({ onAuthed, variant = "creator" }: LoginPageProps) {
   const stackTransitionTimer = useRef<number | null>(null);
   const stackTransitioning = useRef(false);
   const hoveredCardScene = useRef<number | null>(null);
-  const pointerCardScene = useRef<number | null>(null);
-  const manualSceneHoldUntil = useRef(0);
 
   const isAdmin = variant === "admin";
   const activeMode = isAdmin ? "login" : mode;
@@ -256,7 +255,7 @@ export function LoginPage({ onAuthed, variant = "creator" }: LoginPageProps) {
 
   const selectScene = useCallback((index: number) => {
     const nextScene = (index + scenes.length) % scenes.length;
-    manualSceneHoldUntil.current = Date.now() + 12000;
+    requestedSceneRef.current = nextScene;
     setActiveScene(nextScene);
     setRequestedScene((current) => (current === nextScene ? current : nextScene));
   }, []);
@@ -269,10 +268,8 @@ export function LoginPage({ onAuthed, variant = "creator" }: LoginPageProps) {
     hitCardRefs.current[nextIndex]?.focus();
   }
 
-  function handleCardClick(event: ReactMouseEvent<HTMLButtonElement>, index: number) {
-    const nextScene = event.detail === 0 ? index : (pointerCardScene.current ?? hoveredCardScene.current ?? index);
-    pointerCardScene.current = null;
-    selectScene(nextScene);
+  function handleCardClick(index: number) {
+    selectScene(index);
   }
 
   function handleCardHoverEnter(index: number) {
@@ -288,7 +285,6 @@ export function LoginPage({ onAuthed, variant = "creator" }: LoginPageProps) {
       : null;
     if (next) return;
     hoveredCardScene.current = null;
-    pointerCardScene.current = null;
     collapseStack();
   }
 
@@ -415,6 +411,7 @@ export function LoginPage({ onAuthed, variant = "creator" }: LoginPageProps) {
         if (sourceIndex >= 0 && sourceIndex < nextScene.videoCandidates.length - 1) {
           fallbackScene(sceneIndex, source);
         } else {
+          requestedSceneRef.current = lastBgScene.current;
           setRequestedScene(lastBgScene.current);
           setActiveScene(lastBgScene.current);
         }
@@ -536,53 +533,57 @@ export function LoginPage({ onAuthed, variant = "creator" }: LoginPageProps) {
     const card = cardVideoRefs.current[visibleScene];
     if (!background || !card) return undefined;
 
-    let canceled = false;
-    let frameHandle: number | null = null;
-    const frameVideo = background as HTMLVideoElement & {
-      requestVideoFrameCallback?: (callback: () => void) => number;
-      cancelVideoFrameCallback?: (handle: number) => void;
+    const captureVideo = background as HTMLVideoElement & {
+      captureStream?: () => MediaStream;
+      mozCaptureStream?: () => MediaStream;
     };
+    const capture = captureVideo.captureStream ?? captureVideo.mozCaptureStream;
+    const stream = capture?.call(captureVideo);
 
-    const align = () => {
-      card.playbackRate = background.playbackRate;
-      if (card.readyState < HTMLMediaElement.HAVE_METADATA) return;
-      if (shouldCorrectDrift(background.currentTime, card.currentTime)) {
-        card.currentTime = background.currentTime;
-      }
-    };
-    const play = () => {
-      align();
-      void card.play().catch(() => undefined);
-    };
-    const pause = () => card.pause();
-    const tick = () => {
-      if (canceled) return;
-      align();
-      frameHandle = frameVideo.requestVideoFrameCallback?.(tick) ?? null;
-    };
-
+    card.pause();
     card.muted = true;
-    align();
-    if (background.paused) card.pause();
-    else void card.play().catch(() => undefined);
-    frameHandle = frameVideo.requestVideoFrameCallback?.(tick) ?? null;
-    background.addEventListener("play", play);
-    background.addEventListener("pause", pause);
-    background.addEventListener("seeking", align);
-    background.addEventListener("ratechange", align);
-    background.addEventListener("timeupdate", align);
+    if (stream) {
+      card.removeAttribute("src");
+      card.srcObject = stream;
+      void card.play().catch(() => undefined);
+    } else {
+      card.srcObject = null;
+      card.src = scenes[visibleScene].cardVideoUrl;
+      card.load();
+      const align = () => {
+        card.playbackRate = background.playbackRate;
+        if (card.readyState >= HTMLMediaElement.HAVE_METADATA && shouldCorrectDrift(background.currentTime, card.currentTime)) {
+          card.currentTime = background.currentTime;
+        }
+      };
+      const play = () => {
+        align();
+        void card.play().catch(() => undefined);
+      };
+      const pause = () => card.pause();
+      align();
+      if (!background.paused) void card.play().catch(() => undefined);
+      background.addEventListener("play", play);
+      background.addEventListener("pause", pause);
+      background.addEventListener("seeking", align);
+      background.addEventListener("ratechange", align);
+      background.addEventListener("timeupdate", align);
+
+      return () => {
+        background.removeEventListener("play", play);
+        background.removeEventListener("pause", pause);
+        background.removeEventListener("seeking", align);
+        background.removeEventListener("ratechange", align);
+        background.removeEventListener("timeupdate", align);
+        stopAndReleaseVideo(card);
+      };
+    }
 
     return () => {
-      canceled = true;
-      background.removeEventListener("play", play);
-      background.removeEventListener("pause", pause);
-      background.removeEventListener("seeking", align);
-      background.removeEventListener("ratechange", align);
-      background.removeEventListener("timeupdate", align);
-      if (frameHandle !== null) frameVideo.cancelVideoFrameCallback?.(frameHandle);
       card.pause();
+      card.srcObject = null;
     };
-  }, [publicView, sceneUrls, visibleScene]);
+  }, [publicView, visibleScene]);
 
   useEffect(() => {
     cardVideoRefs.current.forEach((video, index) => {
@@ -629,15 +630,10 @@ export function LoginPage({ onAuthed, variant = "creator" }: LoginPageProps) {
 
   function handleBackgroundEnded(slot: number) {
     if (slot !== visibleBgSlot.current) return;
-    if (Date.now() < manualSceneHoldUntil.current) {
-      const video = bgRefs.current[slot];
-      if (video) {
-        video.currentTime = 0;
-        void video.play().catch(() => undefined);
-      }
-      return;
-    }
-    const next = (lastBgScene.current + 1) % scenes.length;
+    if (requestedSceneRef.current !== lastBgScene.current) return;
+    const next = nextCardIndex(lastBgScene.current, 1, scenes.length);
+    requestedSceneRef.current = next;
+    setActiveScene(next);
     setRequestedScene((current) => current === next ? current : next);
   }
 
@@ -993,12 +989,8 @@ export function LoginPage({ onAuthed, variant = "creator" }: LoginPageProps) {
             const index = Number(hit.dataset.sceneIndex);
             if (Number.isInteger(index)) hoveredCardScene.current = index;
           }}
-          onPointerDownCapture={() => {
-            pointerCardScene.current = hoveredCardScene.current;
-          }}
           onPointerLeave={() => {
             hoveredCardScene.current = null;
-            pointerCardScene.current = null;
             collapseStack();
           }}
           onFocusCapture={() => {
@@ -1029,16 +1021,15 @@ export function LoginPage({ onAuthed, variant = "creator" }: LoginPageProps) {
                 >
                   <video
                     className="cine-card-media"
-                    src={sceneUrls[index]}
                     poster={scene.posterUrl}
                     muted
                     playsInline
-                    loop
-                    preload={isActive ? "auto" : "metadata"}
+                    preload="none"
                     disablePictureInPicture
                     onError={(event) => {
-                      const failedSource = event.currentTarget.getAttribute("src") ?? event.currentTarget.currentSrc;
-                      if (failedSource) fallbackScene(index, failedSource);
+                      event.currentTarget.pause();
+                      event.currentTarget.removeAttribute("src");
+                      event.currentTarget.load();
                     }}
                     ref={(node) => {
                       cardVideoRefs.current[index] = node;
@@ -1078,7 +1069,7 @@ export function LoginPage({ onAuthed, variant = "creator" }: LoginPageProps) {
                   type="button"
                   aria-label={`切换到${scene.title[locale]}`}
                   aria-pressed={index === activeScene}
-                  onClick={(event) => handleCardClick(event, index)}
+                  onClick={() => handleCardClick(index)}
                   onPointerEnter={() => handleCardHoverEnter(index)}
                   onPointerLeave={(event) => handleCardHoverLeave(event.relatedTarget)}
                   onMouseEnter={() => handleCardHoverEnter(index)}

@@ -534,6 +534,10 @@ export const api = {
       method: "POST",
       body: JSON.stringify(input ?? {})
     }),
+  generateSceneImage: (projectId: string, assetId: string) =>
+    request<BatchGenerationResult>(`/projects/${projectId}/scenes/${assetId}/image/generate`, {
+      method: "POST"
+    }),
   setCharacterReferenceImage: (projectId: string, characterId: string, input: { referenceUrl: string; description?: string }) =>
     request<AssetItem>(`/projects/${projectId}/characters/${characterId}/reference`, {
       method: "POST",

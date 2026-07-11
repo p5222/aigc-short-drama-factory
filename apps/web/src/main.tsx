@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import "./styles.css";
 import "./light-theme.css";
+import "./project-workbench-overrides.css";
 
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

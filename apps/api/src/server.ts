@@ -84,7 +84,7 @@ import {
   updateRedeemCode
 } from "./db/repository.js";
 import { prisma } from "./db/client.js";
-import { deleteCharacterReferenceImageV2, generateCharacterReferenceImages, regenerateStoryboardShotImage, runProjectStoryboardTasks, setCharacterReferenceImageV2, updateStoryboardShot } from "./db/storyboardActions.js";
+import { deleteCharacterReferenceImageV2, generateCharacterReferenceImages, generateSceneEnvironmentImage, regenerateStoryboardShotImage, runProjectStoryboardTasks, setCharacterReferenceImageV2, updateStoryboardShot } from "./db/storyboardActions.js";
 import {
   createEvaluationDataset,
   createExperimentRun,
@@ -1228,6 +1228,13 @@ app.post(
     const parsed = characterImageGenerateSchema.safeParse(req.body ?? {});
     if (!parsed.success) return res.status(400).json(parsed.error.flatten());
     res.json(await generateCharacterReferenceImages(paramId(req.params.id), requestUserId(req), parsed.data));
+  })
+);
+
+app.post(
+  "/api/projects/:id/scenes/:assetId/image/generate",
+  asyncRoute(async (req, res) => {
+    res.json(await generateSceneEnvironmentImage(paramId(req.params.id), paramId(req.params.assetId), requestUserId(req)));
   })
 );
 

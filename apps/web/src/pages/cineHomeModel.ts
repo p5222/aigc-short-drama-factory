@@ -18,7 +18,7 @@ const fallbackOrder: Record<CineMediaTier, CineMediaTier[]> = {
 };
 
 export function normalizeMediaTier(value: string | undefined): CineMediaTier {
-  return value === "2k" || value === "fast" || value === "4k" ? value : "4k";
+  return value === "2k" || value === "fast" || value === "4k" ? value : "fast";
 }
 
 export function resolveMediaTier(preferredTier: CineMediaTier, saveData: boolean, effectiveType?: string): CineMediaTier {

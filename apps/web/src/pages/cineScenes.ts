@@ -4,6 +4,7 @@ import { buildMediaCandidates, normalizeMediaTier, resolveMediaTier } from "./ci
 export interface CineScene extends PublicScene {
   mediaName: string;
   videoCandidates: string[];
+  cardVideoUrl: string;
 }
 
 const baseUrl = (import.meta.env.VITE_CINE_ASSET_BASE_URL ?? "").replace(/\/+$/, "");
@@ -16,9 +17,10 @@ const preferredTier = resolveMediaTier(
   connection?.effectiveType
 );
 
-function createScene(input: Omit<CineScene, "videoUrl" | "videoCandidates">): CineScene {
+function createScene(input: Omit<CineScene, "videoUrl" | "videoCandidates" | "cardVideoUrl">): CineScene {
   const videoCandidates = buildMediaCandidates(input.mediaName, preferredTier, baseUrl);
-  return { ...input, videoUrl: videoCandidates[0], videoCandidates };
+  const cardVideoUrl = buildMediaCandidates(input.mediaName, "fast", baseUrl)[0];
+  return { ...input, videoUrl: videoCandidates[0], videoCandidates, cardVideoUrl };
 }
 
 export const cineScenes: CineScene[] = [
