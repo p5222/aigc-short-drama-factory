@@ -3,10 +3,12 @@
 ## 状态
 
 - 日期：2026-07-20
-- 状态：待用户书面确认
+- 状态：用户已确认
 - 浅色视觉基准：`docs/design-previews/manjiao-workbench-theme-systems-20260720/01-porcelain-studio-light.png`
 - 深色视觉基准：`docs/design-previews/manjiao-workbench-theme-systems-20260720/02-graphite-studio-dark.png`
 - 适用范围：创作者项目工作台；不包含首页、登录页和后台管理系统改版
+
+两张视觉基准定义 Release B 完整能力下的最终布局与主题。Release A 必须隐藏剪切、静音、新增镜头和单镜头重生成，并把图中的“已自动保存”替换为第 6 节规定的显式保存状态；隐藏控件后不得保留空槽位。
 
 ## 1. 目标
 
@@ -167,6 +169,20 @@ ProjectWorkbenchPage
 
 `ProjectWorkbenchPage` 只负责加载 workflow、装配阶段和页面级状态。场景分组、媒体映射、阶段完成度、费用和时间线尺寸进入可测试的 selector；异步命令进入 hooks。
 
+Release A/B 共用组件树，并通过后端能力响应控制命令是否存在：
+
+```ts
+export interface WorkbenchCapabilities {
+  autosave: boolean;
+  singleShotVideo: boolean;
+  timelineEdit: boolean;
+  shotCrud: boolean;
+  perRunModelOverride: boolean;
+}
+```
+
+Release A 对上述能力全部返回 `false`。没有后端契约的命令不渲染，禁止使用 disabled 控件预告未来能力；能力开关与主题无关。
+
 工作台样式迁入 `apps/web/src/workbench/styles/`，按 `tokens / shell / components / stages / responsive` 拆分。新工作台样式不得使用 `!important`。每迁移一个组件，只删除确认由 ProjectWorkbenchPage 独占的旧规则，并在同一提交运行视觉回归；不得继续向 `styles.css` 末尾追加覆盖块。
 
 ## 9. 主题系统
@@ -205,6 +221,7 @@ ProjectWorkbenchPage
   --border-2: #C8D2D7;
   --divider: #E7ECEE;
   --accent: #087F75;
+  --on-accent: #FFFFFF;
   --accent-hover: #066A62;
   --accent-soft: #E6F4F1;
   --accent-selected: #D8EEEA;
@@ -213,9 +230,14 @@ ProjectWorkbenchPage
   --info: #255FBE;
   --warning: #9A5A05;
   --danger: #BC3F37;
+  --selection: #BC3F37;
+  --selection-soft: #FCECEA;
   --media-bg: #E9EEF0;
+  --media-border: #DDE4E7;
   --timeline-ruler: #F1F4F5;
   --timeline-track: #F8FAFB;
+  --overlay: rgba(19, 29, 36, .42);
+  --shadow-popover: 0 4px 12px rgba(24, 33, 41, .10);
 }
 ```
 
@@ -237,6 +259,7 @@ ProjectWorkbenchPage
   --border-2: #3A454E;
   --divider: #252C32;
   --accent: #2EC4B6;
+  --on-accent: #072B28;
   --accent-hover: #43D0C3;
   --accent-soft: #153B37;
   --accent-selected: #194943;
@@ -245,9 +268,14 @@ ProjectWorkbenchPage
   --info: #73A6F2;
   --warning: #E7B35C;
   --danger: #ED7972;
+  --selection: #ED7972;
+  --selection-soft: #3A1E1D;
   --media-bg: #13171B;
+  --media-border: #2B333A;
   --timeline-ruler: #151A1E;
   --timeline-track: #1B2025;
+  --overlay: rgba(0, 0, 0, .58);
+  --shadow-popover: 0 6px 16px rgba(0, 0, 0, .30);
 }
 ```
 
@@ -308,6 +336,7 @@ Drawer 打开后焦点进入面板，Tab 被圈闭，Esc 或遮罩关闭并把�
 - 独立场景阶段与 shotId 质量归因；
 - 真实导出比例、帧率、文件名和封面；
 - 时间线排序、剪切和静音。
+- StoryboardShot 新增、删除和排序接口，以及重编号与下游媒体失效规则。
 
 关系字段迁移先新增 nullable 字段并回填，读路径优先新关系、回退旧 ID/名称规则；统计无法回填记录，覆盖率达到 100% 后才移除回退。
 
@@ -322,21 +351,32 @@ Drawer 打开后焦点进入面板，Tab 被圈闭，Esc 或遮罩关闭并把�
 - 刷新后恢复真实批次任务，错误和重试入口贴近对应阶段；
 - 评测反馈归因符合第 7 节，不阻止发布。
 
+### Release B 功能
+
+- 角色或场景资料保存后刷新可恢复；失败保留草稿且不覆盖旧值；
+- 单镜头视频请求实际提交 `shotIds`，强制重生成提交 `forceRegenerate`，失败不清除原视频；
+- 逐对象任务包含 entityType/entityIds，刷新后恢复每个对象的进度和失败原因；
+- 单次模型 override 进入生成 payload，不修改项目默认路由，扣费记录返回实际 provider/model/spec；
+- 场景和镜头反馈持久化独立 stage/shotId，并进入对应数据库聚合；
+- 导出比例、帧率、文件名和封面进入 API payload，任务完成后的实际文件属性与输入一致；
+- 时间线排序、剪切和静音保存后刷新可恢复，修改镜头顺序或入出点后使既有合成 MP4 失效；
+- 镜头新增、删除和排序由 API 持久化，重编号稳定，删除或改序时明确处理关联首帧、视频、字幕和导出产物。
+
 ### 视觉与交互
 
-- 2048x1152 下 Header、三栏和当前阶段主操作无需纵向滚动可见；Canvas 宽度不少于 640px；
-- 实现与两张参考图的区域顺序一致，固定尺寸误差不超过 8px，颜色使用本规范 token；
+- 2048x1152 下 Header、三栏和当前阶段主操作无需纵向滚动可见；Header 为 68±1px、Rail 为 300±1px、Inspector 为 392±1px，Canvas 宽度不少于 640px；
+- 实现与两张参考图的区域顺序一致，颜色使用本规范 token；Playwright 截图差异率低于 0.5%，动态媒体区域加入 mask；
 - 浅色主题没有深色 UI 画布，深色主题没有浅色 UI 断层；真实媒体保持原色；
-- 同一级表面最多一层边框容器，无卡片套卡片、渐变、辉光、玻璃和装饰图标阵列；
-- 1440、1366、1024、768 和 390px 视口无不可达主操作、文字遮挡或非预期横向溢出；
-- 键盘操作、焦点、Drawer、表单标签、错误和 reduced-motion 通过可访问性检查。
+- `ProductionWorkspace` 的三个直接子区域各自最多一个外边框；其内部 section 只使用 divider，不再增加完整四边边框；无渐变、辉光、玻璃和装饰图标阵列；
+- 1440、1366、1024、768 和 390px 视口无不可达主操作和文字遮挡；除 `.timeline-scroll` 与明确标记的横向列表外，`document.documentElement.scrollWidth <= window.innerWidth`；
+- axe serious/critical violations 为 0；键盘脚本覆盖 Header、Rail、模式切换、Inspector、Drawer 和生成对话框；reduced-motion 下无非必要动画。
 
 ### 工程与发布
 
-- `ProjectWorkbenchPage` 不再承担全部 JSX、业务推导和异步命令；
+- `ProjectWorkbenchPage` 不直接调用生成、导出或反馈 API，不包含阶段主体 JSX；所有阶段位于独立组件，业务推导只从 selectors/hooks 导出；
 - 新工作台 CSS 无 `!important`，不向 `styles.css` 追加覆盖；
 - selector 单测覆盖选择、媒体映射、完成度和时间线计算；
-- 集成测试覆盖阶段切换、选择连续性、保存失败、模型确认后生成、任务重试、导出和反馈归因；
+- 集成测试使用固定项目 fixture，覆盖阶段切换、选择连续性、保存失败、模型确认后生成、任务重试、导出和反馈归因，并断言每一步 API、任务状态和产物数量；
 - 浏览器真实 QA 同时覆盖浅色/深色和桌面/移动，`design-qa.md` 最终为 `passed`；
 - 部署前创建带时间与动作的完整备份，校验后只保留最近三个；
 - 生产健康检查、主要流程和静态资源通过后提交并 push。
