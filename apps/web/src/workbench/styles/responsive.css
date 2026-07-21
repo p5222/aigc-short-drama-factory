@@ -11,12 +11,16 @@
     display: none;
   }
 
+  .wb-more-menu {
+    display: block;
+  }
+
   .wb-workspace {
-    grid-template-columns: 260px minmax(640px, 1fr) 340px;
+    grid-template-columns: 260px minmax(0, 1fr) 340px;
   }
 }
 
-@media (max-width: 1239px) {
+@media (max-width: 1199px) {
   .wb-header {
     grid-template-columns: minmax(180px, 1fr) minmax(360px, auto) minmax(88px, 1fr);
   }

@@ -1,5 +1,6 @@
 import {
   ArrowLeft,
+  Ellipsis,
   ListTree,
   Moon,
   PanelRight,
@@ -111,6 +112,28 @@ export function WorkbenchHeader({
         >
           {theme === "dark" ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
         </button>
+        <details className="wb-more-menu">
+          <summary className="wb-icon-button">
+            <Ellipsis aria-hidden="true" />
+            <span className="wb-sr-only">更多操作</span>
+          </summary>
+          <div className="wb-more-popover">
+            <span className={`wb-more-save-state wb-save-state--${saveState}`} role="status" aria-live="polite">
+              <span>保存状态</span>
+              <strong>{saveStateLabels[saveState]}</strong>
+            </span>
+            {onRefresh ? (
+              <button type="button" onClick={onRefresh}>
+                <RefreshCw aria-hidden="true" />
+                <span>刷新项目数据</span>
+              </button>
+            ) : null}
+            <button type="button" onClick={() => onThemeChange(nextWorkbenchTheme(theme))}>
+              {theme === "dark" ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
+              <span>{theme === "dark" ? "切换到浅色主题" : "切换到深色主题"}</span>
+            </button>
+          </div>
+        </details>
       </div>
     </header>
   );
