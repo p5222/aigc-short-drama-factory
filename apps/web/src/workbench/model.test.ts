@@ -1,17 +1,23 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { GenerationTask, Project, ProjectWorkflow, ScriptDraft, StoryboardShot, TaskStatus, TaskType } from "@aifilm/shared";
+import type { AssetItem, CharacterProfile, GenerationTask, Project, ProjectWorkflow, ScriptDraft, StoryboardShot, TaskStatus, TaskType } from "@aifilm/shared";
 import {
   RELEASE_A_CAPABILITIES,
+  buildAssetFeedbackTarget,
+  buildCharacterGenerationPayload,
   buildContentSceneRows,
+  deriveSceneAssetList,
   buildStoryboardGenerationPayload,
   buildTaskSummary,
   collectContentEpisodeNumbers,
   createWorkbenchState,
   derivedScene,
+  listCharacterReferenceAssets,
   nextWorkbenchTheme,
+  reconcileActiveAsset,
   reconcileContentSelection,
   reconcileSelection,
+  resolveCharacterIdentityAsset,
   resolveThemePreference,
   shouldReconcileStoryboardSelection,
   storyboardScene,
@@ -72,6 +78,36 @@ function script(content: string): ScriptDraft {
     synopsis: "一段测试梗概",
     version: 1,
     createdAt: "2026-07-20T00:00:00.000Z"
+  };
+}
+
+function character(id: string, referenceAssetId?: string): CharacterProfile {
+  return {
+    id,
+    projectId: "project-1",
+    name: `Character ${id}`,
+    identity: "Lead",
+    appearance: "Black hair",
+    costume: "Coat",
+    personality: "Calm",
+    prompt: "",
+    negativePrompt: "",
+    referenceAssetId,
+    consistencyLevel: "high"
+  };
+}
+
+function asset(id: string, type: AssetItem["type"], relatedCharacterId?: string, referenceUrl?: string): AssetItem {
+  return {
+    id,
+    projectId: "project-1",
+    type,
+    name: id,
+    description: "",
+    prompt: "",
+    referenceUrl,
+    relatedCharacterId,
+    status: referenceUrl ? "succeeded" : "pending"
   };
 }
 
@@ -358,6 +394,73 @@ test("storyboard payload preserves the project's art style and video ratio", () 
   assert.deepEqual(buildStoryboardGenerationPayload(project), {
     artStyle: "电影写实",
     videoRatio: "9:16"
+  });
+});
+
+test("resolves a generated character identity without treating creator references as identity", () => {
+  const profile = character("char-1", "primary-role");
+  const assets = [
+    asset("creator-reference", "role_reference", profile.id, "https://cdn.test/reference.jpg"),
+    asset("primary-role", "role", profile.id, "https://cdn.test/primary.jpg"),
+    asset("latest-derivative", "role_derivative", profile.id, "https://cdn.test/derivative.jpg")
+  ];
+
+  assert.equal(resolveCharacterIdentityAsset(profile, assets)?.id, "primary-role");
+  assert.deepEqual(listCharacterReferenceAssets(profile.id, assets).map((item) => item.id), ["creator-reference"]);
+  assert.equal(resolveCharacterIdentityAsset(profile, assets.filter((item) => item.type !== "role_reference"))?.id, "primary-role");
+  assert.equal(resolveCharacterIdentityAsset(character("char-2"), [assets[0]!] as AssetItem[]), undefined);
+});
+
+test("falls back from a missing primary character identity to a generated derivative", () => {
+  const profile = character("char-1", "missing-role");
+  const assets = [
+    asset("empty-primary", "role", profile.id),
+    asset("generated-derivative", "role_derivative", profile.id, "https://cdn.test/identity.jpg")
+  ];
+  assert.equal(resolveCharacterIdentityAsset(profile, assets)?.id, "generated-derivative");
+});
+
+test("derives only real scene and prop assets in workflow order", () => {
+  const assets = [
+    asset("role", "role"),
+    asset("scene-1", "scene", undefined, "https://cdn.test/scene.jpg"),
+    asset("image", "image"),
+    asset("prop-1", "prop")
+  ];
+  assert.deepEqual(deriveSceneAssetList(assets).map((item) => item.id), ["scene-1", "prop-1"]);
+});
+
+test("reconciles active asset to a valid item while preserving its selected mode", () => {
+  const characters = [character("char-1"), character("char-2")];
+  const scenes = [asset("scene-1", "scene"), asset("scene-2", "scene")];
+
+  assert.deepEqual(reconcileActiveAsset({ type: "character", id: "char-2" }, characters, scenes), { type: "character", id: "char-2" });
+  assert.deepEqual(reconcileActiveAsset({ type: "character", id: "removed" }, characters, scenes), { type: "character", id: "char-1" });
+  assert.deepEqual(reconcileActiveAsset({ type: "scene", id: "removed" }, characters, scenes), { type: "scene", id: "scene-1" });
+  assert.deepEqual(reconcileActiveAsset(null, [], scenes), { type: "scene", id: "scene-1" });
+  assert.equal(reconcileActiveAsset(null, [], []), null);
+});
+
+test("builds exact generation and feedback targets for the selected asset", () => {
+  const sceneAsset = asset("scene-7", "scene");
+  assert.deepEqual(buildCharacterGenerationPayload("char-4", true), {
+    characterIds: ["char-4"],
+    forceRegenerate: true
+  });
+  assert.deepEqual(buildAssetFeedbackTarget({ type: "scene", asset: sceneAsset }), {
+    stage: "image",
+    assetId: "scene-7",
+    label: "场景资产反馈"
+  });
+  assert.deepEqual(buildAssetFeedbackTarget({ type: "character", asset: asset("identity-2", "role", "char-2") }), {
+    stage: "character",
+    assetId: "identity-2",
+    label: "角色身份板反馈"
+  });
+  assert.deepEqual(buildAssetFeedbackTarget({ type: "character" }), {
+    stage: "character",
+    assetId: undefined,
+    label: "角色身份板反馈"
   });
 });
 

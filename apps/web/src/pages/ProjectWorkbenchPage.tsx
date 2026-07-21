@@ -16,7 +16,6 @@ import {
   Save,
   SlidersHorizontal,
   Sparkles,
-  Trash2,
   Upload,
   UserRound,
   WandSparkles,
@@ -50,6 +49,7 @@ import { api } from "../lib/api";
 import { ProductionWorkspace } from "../workbench/components/ProductionWorkspace";
 import { WorkbenchHeader } from "../workbench/components/WorkbenchHeader";
 import { WorkbenchProvider } from "../workbench/WorkbenchContext";
+import { AssetStage } from "../workbench/stages/AssetStage";
 import { ContentStage } from "../workbench/stages/ContentStage";
 import { createWorkbenchState, shouldReconcileStoryboardSelection, workbenchReducer, type WorkbenchStage, type WorkbenchTheme } from "../workbench/model";
 import { buildTimelineClipLayout } from "./projectWorkbenchModel";
@@ -265,6 +265,17 @@ export function ProjectWorkbenchPage({ workflow, providers, modelPrices, theme, 
           onCloseInspector={() => setInspectorOpen(false)}
           onRefresh={onRefresh}
         />
+      ) : activeTab === "assets" ? (
+        <AssetStage
+          providers={providers}
+          modelPrices={modelPrices}
+          railOpen={railOpen}
+          inspectorOpen={inspectorOpen}
+          onCloseRail={() => setRailOpen(false)}
+          onCloseInspector={() => setInspectorOpen(false)}
+          onRefresh={onRefresh}
+          onPreview={setPreviewImage}
+        />
       ) : <ProductionWorkspace
         rail={(
           <div className="wb-rail-summary">
@@ -283,7 +294,6 @@ export function ProjectWorkbenchPage({ workflow, providers, modelPrices, theme, 
             {operation ? <InlineProgress operation={operation} elapsed={operationElapsed} /> : null}
             {message ? <p className="success-text studio-v4-message">{message}</p> : null}
             {error ? <p className="danger-text studio-v4-message">{error}</p> : null}
-            {activeTab === "assets" ? <CreatorCharacterBoard project={project} providers={providers} modelPrices={modelPrices} characters={characters} roleAssets={roleAssets} sceneAssets={sceneAssets} qualityReports={qualityReports} feedbacks={feedbacks} isBusy={isBusy} onRefresh={refreshProject} onSaveModelRoutes={saveModelRoutes} onPreview={setPreviewImage} /> : null}
             {activeTab === "shots" ? (
               <div className="studio-v4-shots-stage">
                 <div className="studio-v4-view-switch" role="tablist" aria-label="分镜视图">
@@ -321,205 +331,6 @@ export function ProjectWorkbenchPage({ workflow, providers, modelPrices, theme, 
       {previewImage ? <ImagePreviewModal preview={previewImage} onClose={() => setPreviewImage(null)} /> : null}
     </div>
     </WorkbenchProvider>
-  );
-}
-
-function CreatorCharacterBoard({
-  project,
-  providers,
-  modelPrices,
-  characters,
-  roleAssets,
-  sceneAssets,
-  qualityReports,
-  feedbacks,
-  isBusy,
-  onRefresh,
-  onSaveModelRoutes,
-  onPreview
-}: {
-  project: Project;
-  providers: ModelProvider[];
-  modelPrices: ModelPrice[];
-  characters: CharacterProfile[];
-  roleAssets: AssetItem[];
-  sceneAssets: AssetItem[];
-  qualityReports: QualityReport[];
-  feedbacks: UserFeedback[];
-  isBusy: boolean;
-  onRefresh: () => void | Promise<void>;
-  onSaveModelRoutes: (routes: Partial<Pick<Project, "textProvider" | "textModel" | "imageProvider" | "imageModel" | "imageSize" | "imageQuality" | "videoProvider" | "videoModel">>) => void | Promise<void>;
-  onPreview: (preview: { url: string; title: string }) => void;
-}) {
-  const projectId = project.id;
-  const [referenceInputs, setReferenceInputs] = useState<Record<string, string>>({});
-  const [savingId, setSavingId] = useState<string | null>(null);
-  const [evaluating, setEvaluating] = useState(false);
-  const [localMessage, setLocalMessage] = useState("");
-  const [assetMode, setAssetMode] = useState<"character" | "scene">(characters.length ? "character" : "scene");
-  const [activeCharacterId, setActiveCharacterId] = useState(characters[0]?.id ?? "");
-  const [activeSceneId, setActiveSceneId] = useState(sceneAssets[0]?.id ?? "");
-  const [generatingId, setGeneratingId] = useState("");
-  const latestReport = latestStageReport(qualityReports, "character");
-  const characterFeedback = feedbacks.filter((item) => item.stage === "character");
-  const lockedRoleCount = countCompletedCharacterSheets(characters, roleAssets);
-  const lockedSceneCount = sceneAssets.filter((asset) => Boolean(asset.referenceUrl)).length;
-  const activeCharacter = characters.find((character) => character.id === activeCharacterId) ?? characters[0];
-  const activeIdentityAsset = activeCharacter ? resolveCharacterIdentityAsset(activeCharacter, roleAssets) : undefined;
-  const activeReferenceAssets = activeCharacter ? roleAssets.filter((asset) => asset.type === "role_reference" && asset.relatedCharacterId === activeCharacter.id && asset.referenceUrl) : [];
-  const activeSceneAsset = sceneAssets.find((asset) => asset.id === activeSceneId) ?? sceneAssets[0];
-
-  useEffect(() => {
-    setActiveCharacterId((current) => current && characters.some((character) => character.id === current) ? current : characters[0]?.id ?? "");
-    setActiveSceneId((current) => current && sceneAssets.some((asset) => asset.id === current) ? current : sceneAssets[0]?.id ?? "");
-    if (!characters.length && sceneAssets.length) setAssetMode("scene");
-  }, [characters, sceneAssets]);
-
-  async function runEvaluation() {
-    setEvaluating(true);
-    setLocalMessage("");
-    try {
-      await api.generateQualityReports(projectId, { stages: ["character"] });
-      setLocalMessage("角色离线评测已完成，评分和问题已回流后台。");
-      await onRefresh();
-    } finally {
-      setEvaluating(false);
-    }
-  }
-
-  async function saveReference(character: CharacterProfile, referenceUrl: string) {
-    if (!referenceUrl.trim()) return;
-    setSavingId(character.id);
-    setLocalMessage("");
-    try {
-      await api.setCharacterReferenceImage(projectId, character.id, {
-        referenceUrl: referenceUrl.trim(),
-        description: `${character.name} 创作者上传参考设定图`
-      });
-      setReferenceInputs((current) => ({ ...current, [character.id]: "" }));
-      setLocalMessage("参考设定图已保存，不会覆盖 AI 三视图。");
-      await onRefresh();
-    } finally {
-      setSavingId(null);
-    }
-  }
-
-  async function uploadReference(character: CharacterProfile, event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (!file) return;
-    const referenceUrl = await fileToDataUrl(file);
-    await saveReference(character, referenceUrl);
-  }
-
-  async function clearReferences(character: CharacterProfile) {
-    if (!window.confirm(`确认清空「${character.name}」的创作者上传参考图？AI 三视图不会被删除。`)) return;
-    setSavingId(character.id);
-    try {
-      await api.deleteCharacterReferenceImage(projectId, character.id);
-      await onRefresh();
-    } finally {
-      setSavingId(null);
-    }
-  }
-
-  async function generateCharacter(character: CharacterProfile) {
-    setGeneratingId(character.id);
-    setLocalMessage("");
-    try {
-      const result = await api.generateCharacterImages(projectId, { characterIds: [character.id], forceRegenerate: Boolean(resolveCharacterIdentityAsset(character, roleAssets)?.referenceUrl) });
-      setLocalMessage(result.assetsCreated ? `${character.name} 身份板已生成。` : `${character.name} 已有可用身份板。`);
-      await onRefresh();
-    } finally {
-      setGeneratingId("");
-    }
-  }
-
-  async function generateScene(asset: AssetItem) {
-    setGeneratingId(asset.id);
-    setLocalMessage("");
-    try {
-      await api.generateSceneImage(projectId, asset.id);
-      setLocalMessage(`${asset.name} 场景图已生成，并会自动进入分镜参考。`);
-      await onRefresh();
-    } finally {
-      setGeneratingId("");
-    }
-  }
-
-  return (
-    <section className="panel creator-character-workbench asset-lock-workbench preworkbench-board">
-      <div className="panel-head">
-        <div>
-          <h2>角色与场景资产</h2>
-          <small>左侧选择资产，中间检查定稿，右侧完成模型选择、参考图与生成。</small>
-        </div>
-        <div className="inline-actions">
-          <button className="ghost-button" onClick={() => void runEvaluation()} disabled={evaluating || !characters.length}>{evaluating ? <Loader2 size={16} className="spin-icon" /> : <BookOpenCheck size={16} />}离线评测</button>
-          <span className="asset-ready-count">角色 {lockedRoleCount}/{characters.length} · 场景 {lockedSceneCount}/{sceneAssets.length}</span>
-        </div>
-      </div>
-
-      {localMessage ? <p className="success-text">{localMessage}</p> : null}
-
-      <div className="asset-library-layout">
-        <aside className="asset-library-rail">
-          <div className="asset-library-tabs">
-            <button className={assetMode === "character" ? "active" : ""} onClick={() => setAssetMode("character")} type="button"><UserRound size={15} />角色 <span>{characters.length}</span></button>
-            <button className={assetMode === "scene" ? "active" : ""} onClick={() => setAssetMode("scene")} type="button"><MapPin size={15} />场景 <span>{sceneAssets.length}</span></button>
-          </div>
-          <div className="asset-library-list">
-            {assetMode === "character" ? characters.map((character) => {
-              const identity = resolveCharacterIdentityAsset(character, roleAssets);
-              return <button className={activeCharacter?.id === character.id ? "active" : ""} key={character.id} onClick={() => setActiveCharacterId(character.id)} type="button"><span>{identity?.referenceUrl ? <StableImage src={identity.referenceUrl} alt={character.name} /> : <UserRound size={18} />}</span><div><strong>{character.name}</strong><small>{character.identity}</small></div><em>{identity?.referenceUrl ? "已定稿" : "待生成"}</em></button>;
-            }) : sceneAssets.map((asset) => <button className={activeSceneAsset?.id === asset.id ? "active" : ""} key={asset.id} onClick={() => setActiveSceneId(asset.id)} type="button"><span>{asset.referenceUrl ? <StableImage src={asset.referenceUrl} alt={asset.name} /> : <Images size={18} />}</span><div><strong>{asset.name}</strong><small>{asset.type === "prop" ? "道具" : "环境场景"}</small></div><em>{asset.referenceUrl ? "已出图" : "待生成"}</em></button>)}
-            {assetMode === "character" && !characters.length ? <div className="empty-state">暂无角色，请先生成剧本。</div> : null}
-            {assetMode === "scene" && !sceneAssets.length ? <div className="empty-state">暂无场景，先生成分镜表。</div> : null}
-          </div>
-        </aside>
-
-        <main className="asset-detail-canvas">
-          {assetMode === "character" && activeCharacter ? <>
-            <button className={activeIdentityAsset?.referenceUrl ? "asset-detail-preview ready" : "asset-detail-preview"} type="button" onClick={() => activeIdentityAsset?.referenceUrl && onPreview({ url: activeIdentityAsset.referenceUrl, title: activeCharacter.name })}>
-              {activeIdentityAsset?.referenceUrl ? <StableImage src={activeIdentityAsset.referenceUrl} alt={activeCharacter.name} /> : <><UserRound size={42} /><strong>角色身份板待生成</strong></>}
-            </button>
-            <div className="asset-detail-copy"><span>{activeIdentityAsset?.referenceUrl ? "身份板已锁定" : "待生成身份板"}</span><h3>{activeCharacter.name}</h3><p>{activeCharacter.identity}</p><dl><div><dt>外观</dt><dd>{activeCharacter.appearance}</dd></div><div><dt>服装</dt><dd>{activeCharacter.costume}</dd></div><div><dt>性格</dt><dd>{activeCharacter.personality}</dd></div></dl></div>
-          </> : null}
-          {assetMode === "scene" && activeSceneAsset ? <>
-            <button className={activeSceneAsset.referenceUrl ? "asset-detail-preview ready" : "asset-detail-preview"} type="button" onClick={() => activeSceneAsset.referenceUrl && onPreview({ url: activeSceneAsset.referenceUrl, title: activeSceneAsset.name })}>
-              {activeSceneAsset.referenceUrl ? <StableImage src={activeSceneAsset.referenceUrl} alt={activeSceneAsset.name} /> : <><MapPin size={42} /><strong>场景概念图待生成</strong></>}
-            </button>
-            <div className="asset-detail-copy"><span>{activeSceneAsset.referenceUrl ? "场景图已锁定" : "文本场景已就绪"}</span><h3>{activeSceneAsset.name}</h3><p>{activeSceneAsset.description || "等待场景描述"}</p><dl><div><dt>资产类型</dt><dd>{activeSceneAsset.type === "prop" ? "关键道具" : "环境场景"}</dd></div><div><dt>用途</dt><dd>分镜首帧与视频空间一致性参考</dd></div></dl></div>
-          </> : null}
-          {!activeCharacter && !activeSceneAsset ? <div className="empty-state">暂无可编辑资产。</div> : null}
-        </main>
-
-        <aside className="asset-action-panel">
-          <ImageRoutePicker
-            project={project}
-            providers={providers}
-            modelPrices={modelPrices}
-            onSave={onSaveModelRoutes}
-            actionLabel={assetMode === "character" ? (activeIdentityAsset?.referenceUrl ? "应用模型并重新生成身份板" : "应用模型并生成身份板") : (activeSceneAsset?.referenceUrl ? "应用模型并重新生成场景图" : "应用模型并生成场景图")}
-            onAction={assetMode === "character" && activeCharacter ? () => generateCharacter(activeCharacter) : assetMode === "scene" && activeSceneAsset ? () => generateScene(activeSceneAsset) : undefined}
-            actionDisabled={isBusy || Boolean(generatingId)}
-          />
-          {assetMode === "character" && activeCharacter ? <section>
-            <div className="asset-action-title"><strong>参考与生成</strong><small>{activeReferenceAssets.length} 张参考图</small></div>
-            <div className="reference-thumb-row">{activeReferenceAssets.map((asset) => <button key={asset.id} type="button" onClick={() => asset.referenceUrl && onPreview({ url: asset.referenceUrl, title: asset.name })}><StableImage src={asset.referenceUrl!} alt={asset.name} /></button>)}{!activeReferenceAssets.length ? <span className="reference-empty">上传脸型、服装或风格参考</span> : null}</div>
-            <div className="reference-url-row compact"><input value={referenceInputs[activeCharacter.id] ?? ""} onChange={(event) => setReferenceInputs((current) => ({ ...current, [activeCharacter.id]: event.target.value }))} placeholder="粘贴图片 URL" /><button className="icon-button" title="保存参考" type="button" onClick={() => void saveReference(activeCharacter, referenceInputs[activeCharacter.id] ?? "")} disabled={savingId === activeCharacter.id || !referenceInputs[activeCharacter.id]?.trim()}><Save size={16} /></button></div>
-            <div className="inline-actions"><label className="ghost-button avatar-upload-button"><Upload size={16} />上传参考<input type="file" accept="image/*" onChange={(event) => void uploadReference(activeCharacter, event)} disabled={savingId === activeCharacter.id} /></label><button className="icon-button danger-ghost" title="清空参考" onClick={() => void clearReferences(activeCharacter)} disabled={savingId === activeCharacter.id || !activeReferenceAssets.length}><Trash2 size={16} /></button></div>
-          </section> : null}
-          {assetMode === "scene" && activeSceneAsset ? <section>
-            <div className="asset-action-title"><strong>生成场景环境</strong><small>16:9 · 无人物</small></div>
-            <p className="asset-action-note">使用当前项目模型生成环境概念图，成功后按一张图片计费，并自动提供给后续分镜。</p>
-          </section> : null}
-          <QualityReportCard report={latestReport} emptyTitle="尚未评测" emptyText="生成资产后可运行离线评测。" />
-        </aside>
-      </div>
-
-      <FeedbackComposer projectId={projectId} stage="character" recentCount={characterFeedback.length} onSubmitted={onRefresh} />
-    </section>
   );
 }
 
@@ -2170,13 +1981,4 @@ function exportJobLabel(job: ExportJob) {
   if (job.outputKind === "subtitle" || job.type === "subtitle") return "字幕文件";
   if (job.outputKind === "diagnostic_bundle") return "诊断包";
   return "导出任务";
-}
-
-function fileToDataUrl(file: File) {
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(new Error("图片读取失败"));
-    reader.readAsDataURL(file);
-  });
 }

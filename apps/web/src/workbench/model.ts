@@ -1,4 +1,4 @@
-import type { Project, ProjectWorkflow, ScriptDraft, StoryboardShot, TaskStatus, TaskType } from "@aifilm/shared";
+import type { AssetItem, CharacterProfile, EvaluationStage, Project, ProjectWorkflow, ScriptDraft, StoryboardShot, TaskStatus, TaskType } from "@aifilm/shared";
 
 export {
   buildTimelineClipLayout,
@@ -92,6 +92,71 @@ export interface TaskTypeSummary {
   type: TaskType;
   total: number;
   byStatus: Partial<Record<TaskStatus, number>>;
+}
+
+export interface AssetFeedbackTarget {
+  stage: EvaluationStage;
+  assetId?: string;
+  label: "角色身份板反馈" | "场景资产反馈";
+}
+
+export function resolveCharacterIdentityAsset(
+  character: Pick<CharacterProfile, "id" | "referenceAssetId">,
+  assets: AssetItem[]
+): AssetItem | undefined {
+  const generatedAssets = assets.filter((asset) => (
+    asset.relatedCharacterId === character.id
+    && asset.type !== "role_reference"
+    && Boolean(asset.referenceUrl)
+  ));
+  return generatedAssets.find((asset) => asset.id === character.referenceAssetId)
+    ?? generatedAssets.find((asset) => asset.type === "role_derivative")
+    ?? generatedAssets.find((asset) => asset.type === "role");
+}
+
+export function listCharacterReferenceAssets(characterId: string, assets: AssetItem[]): AssetItem[] {
+  return assets.filter((asset) => (
+    asset.type === "role_reference"
+    && asset.relatedCharacterId === characterId
+    && Boolean(asset.referenceUrl)
+  ));
+}
+
+export function deriveSceneAssetList(assets: AssetItem[]): AssetItem[] {
+  return assets.filter((asset) => asset.type === "scene" || asset.type === "prop");
+}
+
+export function reconcileActiveAsset(
+  requested: ActiveAsset | null,
+  characters: Pick<CharacterProfile, "id">[],
+  sceneAssets: Pick<AssetItem, "id">[]
+): ActiveAsset | null {
+  if (requested?.type === "character") {
+    const id = characters.some((character) => character.id === requested.id)
+      ? requested.id
+      : characters[0]?.id;
+    if (id) return { type: "character", id };
+  }
+  if (requested?.type === "scene") {
+    const id = sceneAssets.some((asset) => asset.id === requested.id)
+      ? requested.id
+      : sceneAssets[0]?.id;
+    if (id) return { type: "scene", id };
+  }
+  if (characters[0]) return { type: "character", id: characters[0].id };
+  if (sceneAssets[0]) return { type: "scene", id: sceneAssets[0].id };
+  return null;
+}
+
+export function buildCharacterGenerationPayload(characterId: string, forceRegenerate: boolean) {
+  return { characterIds: [characterId], forceRegenerate };
+}
+
+export function buildAssetFeedbackTarget(input: { type: ActiveAsset["type"]; asset?: Pick<AssetItem, "id"> }): AssetFeedbackTarget {
+  if (input.type === "scene") {
+    return { stage: "image", assetId: input.asset?.id, label: "场景资产反馈" };
+  }
+  return { stage: "character", assetId: input.asset?.id, label: "角色身份板反馈" };
 }
 
 export function derivedScene(value: string): SceneKey {
