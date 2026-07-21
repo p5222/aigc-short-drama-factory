@@ -80,6 +80,19 @@ test("stored theme wins and system preference is only the fallback", () => {
   assert.equal(resolveThemePreference("unsupported", false), "light");
 });
 
+test("reads system preference lazily only when storage has no valid theme", () => {
+  let systemPreferenceReads = 0;
+  const readSystemPreference = () => {
+    systemPreferenceReads += 1;
+    return false;
+  };
+
+  assert.equal(resolveThemePreference("dark", readSystemPreference), "dark");
+  assert.equal(systemPreferenceReads, 0);
+  assert.equal(resolveThemePreference(null, readSystemPreference), "light");
+  assert.equal(systemPreferenceReads, 1);
+});
+
 test("creates conservative state and scene keys", () => {
   assert.deepEqual(createWorkbenchState(), {
     activeStage: "content",

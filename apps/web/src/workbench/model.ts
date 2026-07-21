@@ -163,9 +163,15 @@ export function reconcileSelection(state: WorkbenchState, storyboards: Storyboar
   };
 }
 
-export function resolveThemePreference(stored: string | null, systemPrefersDark: boolean): "light" | "dark" {
+export type WorkbenchTheme = "light" | "dark";
+
+export function resolveThemePreference(
+  stored: string | null,
+  systemPrefersDark: boolean | (() => boolean)
+): WorkbenchTheme {
   if (stored === "light" || stored === "dark") return stored;
-  return systemPrefersDark ? "dark" : "light";
+  const prefersDark = typeof systemPrefersDark === "function" ? systemPrefersDark() : systemPrefersDark;
+  return prefersDark ? "dark" : "light";
 }
 
 export function buildTaskSummary(workflow: ProjectWorkflow): TaskTypeSummary[] {

@@ -1,6 +1,7 @@
 ﻿import { useCallback, useEffect, useMemo, useState } from "react";
 import { Bell, ChartNoAxesCombined, ChevronDown, CircleDollarSign, FilePenLine, Gift, LayoutDashboard, Layers3, Megaphone, Moon, ReceiptText, SlidersHorizontal, UserRound, Video } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import { useLayoutEffect } from "react";
 import type {
   AdminUserRow,
   AdminSummary,
@@ -35,6 +36,30 @@ import { StudioPage } from "./pages/StudioPage";
 import { TaskCenterPage } from "./pages/TaskCenterPage";
 import { WizardPage } from "./pages/WizardPage";
 import { WorkbenchPage } from "./pages/WorkbenchPage";
+import { resolveThemePreference, type WorkbenchTheme } from "./workbench/model";
+
+const THEME_STORAGE_KEY = "manjiao-theme";
+
+function getInitialTheme(): WorkbenchTheme {
+  let storedTheme: string | null = null;
+
+  if (typeof window !== "undefined") {
+    try {
+      storedTheme = window.localStorage?.getItem(THEME_STORAGE_KEY) ?? null;
+    } catch {
+      storedTheme = null;
+    }
+  }
+
+  return resolveThemePreference(storedTheme, () => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false;
+    try {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches;
+    } catch {
+      return false;
+    }
+  });
+}
 
 export function App() {
   const isAdminRoute = window.location.pathname.startsWith("/admin");
@@ -93,12 +118,30 @@ export function App() {
   const [evaluationOverview, setEvaluationOverview] = useState<EvaluationOverview>();
   const [qualityProjects, setQualityProjects] = useState<QualityProjectRow[]>([]);
   const [workflow, setWorkflow] = useState<ProjectWorkflow>();
-  const [theme, setTheme] = useState<"dark" | "light">("dark");
+  const [theme, setTheme] = useState<WorkbenchTheme>(getInitialTheme);
   const [error, setError] = useState("");
 
-  useEffect(() => {
-    document.documentElement.dataset.theme = theme;
+  useLayoutEffect(() => {
+    if (typeof document !== "undefined") {
+      document.documentElement.dataset.theme = theme;
+      document.documentElement.style.colorScheme = theme;
+    }
+    if (typeof window !== "undefined") {
+      try {
+        window.localStorage?.setItem(THEME_STORAGE_KEY, theme);
+      } catch {
+        // Theme still applies when storage is unavailable or blocked.
+      }
+    }
   }, [theme]);
+
+  const handleThemeChange = useCallback((nextTheme: WorkbenchTheme) => {
+    setTheme(nextTheme);
+  }, []);
+
+  const handleToggleTheme = useCallback(() => {
+    setTheme((currentTheme) => (currentTheme === "dark" ? "light" : "dark"));
+  }, []);
 
   useEffect(() => {
     if (!isAdminRoute) return;
@@ -301,6 +344,8 @@ export function App() {
             workflow={workflow}
             providers={providers}
             modelPrices={modelPrices}
+            theme={theme}
+            onThemeChange={handleThemeChange}
             onBack={() => setActivePage("scripts")}
             onRefresh={(projectId) => refreshCurrentProject(projectId)}
           />
@@ -347,7 +392,7 @@ export function App() {
       default:
         return null;
     }
-  }, [account, activePage, adminPlans, adminSummary, adminUsers, announcements, helpArticles, membershipPlans, modelPrices, orders, plans, projects, providers, redeemCodes, summary, tasks, templates, transactions, workflow, load, user]);
+  }, [account, activePage, adminPlans, adminSummary, adminUsers, announcements, handleThemeChange, helpArticles, membershipPlans, modelPrices, orders, plans, projects, providers, redeemCodes, summary, tasks, templates, theme, transactions, workflow, load, user]);
 
   if (!authReady) {
     return <div className="app-loading">正在连接 AI 漫剧工作台...</div>;
@@ -439,6 +484,25 @@ export function App() {
     );
   }
 
+  if (activePage === "project") {
+    return (
+      <>
+        {error ? <div className="error-banner">API 连接异常：{error}</div> : null}
+        {page}
+        {tourOpen ? (
+          <ProductTour
+            activePage={activePage}
+            currentIndex={tourIndex}
+            steps={creatorTourSteps}
+            onNavigate={setActivePage}
+            onStepChange={setTourIndex}
+            onClose={() => setTourOpen(false)}
+          />
+        ) : null}
+      </>
+    );
+  }
+
   return (
     <Shell
       active={activePage}
@@ -449,7 +513,7 @@ export function App() {
       }}
       credits={account?.balance ?? summary?.credits ?? 0}
       theme={theme}
-      onToggleTheme={() => setTheme((value) => (value === "dark" ? "light" : "dark"))}
+      onToggleTheme={handleToggleTheme}
       userName={user.name}
       onLogout={logout}
     >

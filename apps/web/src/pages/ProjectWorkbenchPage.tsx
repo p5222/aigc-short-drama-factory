@@ -57,12 +57,15 @@ import {
   resolveSceneSelection,
   type SceneListFilter
 } from "./projectWorkbenchModel";
+import type { WorkbenchTheme } from "../workbench/model";
 import "./ProjectStudioV4.css";
 
 interface ProjectWorkbenchPageProps {
   workflow?: ProjectWorkflow;
   providers: ModelProvider[];
   modelPrices: ModelPrice[];
+  theme: WorkbenchTheme;
+  onThemeChange: (theme: WorkbenchTheme) => void;
   onBack: () => void;
   onRefresh: (projectId: string) => void | Promise<void>;
 }
@@ -83,7 +86,7 @@ const statusText: Record<TaskStatus, string> = {
 
 const failedImageModels = new Set(["wanx-v1", "wan2.5-t2i-preview"]);
 
-export function ProjectWorkbenchPage({ workflow, providers, modelPrices, onBack, onRefresh }: ProjectWorkbenchPageProps) {
+export function ProjectWorkbenchPage({ workflow, providers, modelPrices, theme, onBack, onRefresh }: ProjectWorkbenchPageProps) {
   const [activeTab, setActiveTab] = useState<WorkbenchTab>("content");
   const [shotWorkspaceView, setShotWorkspaceView] = useState<ShotWorkspaceView>("director");
   const [message, setMessage] = useState("");
@@ -222,7 +225,7 @@ export function ProjectWorkbenchPage({ workflow, providers, modelPrices, onBack,
   }
 
   return (
-    <div className="page-stack project-workbench">
+    <div className="page-stack project-workbench" data-theme={theme}>
       <div className="page-title row-title workbench-hero-title">
         <div>
           <span className="section-kicker">PROJECT PRODUCTION</span>
