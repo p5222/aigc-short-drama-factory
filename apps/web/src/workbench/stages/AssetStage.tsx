@@ -1,5 +1,4 @@
 import {
-  BookOpenCheck,
   Image as ImageIcon,
   Loader2,
   MapPin,
@@ -11,7 +10,7 @@ import {
   WandSparkles
 } from "lucide-react";
 import { useEffect, useMemo, useState, type ChangeEvent, type ReactNode } from "react";
-import type { AssetItem, ModelPrice, ModelProvider, Project, ProjectWorkflow, QualityReport, UserFeedback } from "@aifilm/shared";
+import type { AssetItem, ModelPrice, ModelProvider, Project, ProjectWorkflow, UserFeedback } from "@aifilm/shared";
 import {
   estimateImageCredits,
   imageOutputQualityOptions,
@@ -83,7 +82,6 @@ function LoadedAssetStage({
     type: activeAsset?.type ?? "character",
     asset: activeAsset?.type === "scene" ? activeScene : identityAsset
   });
-  const latestReport = latestScopedReport(workflow.qualityReports ?? [], feedbackTarget.stage, feedbackTarget.assetId);
   const recentFeedback = (workflow.feedbacks ?? []).filter((item) => (
     item.stage === feedbackTarget.stage
     && (!feedbackTarget.assetId || item.assetId === feedbackTarget.assetId)
@@ -167,14 +165,6 @@ function LoadedAssetStage({
         `${activeScene.name} 的场景图已生成并进入后续分镜参考。`
       );
     }
-  }
-
-  function evaluateCurrent() {
-    void run(
-      `evaluate:${feedbackTarget.stage}`,
-      () => api.generateQualityReports(project.id, { stages: [feedbackTarget.stage] }),
-      `${feedbackTarget.label}评测已更新，结果会用于后续优化。`
-    );
   }
 
   const mediaUrl = activeCharacter ? identityAsset?.referenceUrl : activeScene?.referenceUrl;
@@ -291,8 +281,7 @@ function LoadedAssetStage({
             </section>
           ) : null}
           <section className="wb-inspector-section">
-            <header><strong>{feedbackTarget.label}</strong><button className="wb-text-button" type="button" disabled={pendingKey.startsWith("evaluate:") || (!identityAsset && !activeScene?.referenceUrl)} onClick={evaluateCurrent}>{pendingKey.startsWith("evaluate:") ? <Loader2 className="wb-spin" aria-hidden="true" /> : <BookOpenCheck aria-hidden="true" />}运行评测</button></header>
-            <QualitySummary report={latestReport} />
+            <header><strong>{feedbackTarget.label}</strong><small>反馈仅归属当前选中资产</small></header>
             <FeedbackForm projectId={project.id} target={feedbackTarget} recentCount={recentFeedback} disabled={!feedbackTarget.assetId} onRefresh={onRefresh} />
           </section>
           <div className="wb-action-feedback" aria-live="polite">
@@ -374,15 +363,6 @@ function FeedbackForm({ projectId, target, recentCount, disabled, onRefresh }: {
   }
 
   return <div className="wb-feedback-form"><small>已回流 {recentCount} 条反馈</small><div><label><span>评分</span><select value={rating} onChange={(event) => setRating(Number(event.target.value))}>{[5, 4, 3, 2, 1].map((value) => <option key={value} value={value}>{value} 分</option>)}</select></label><label><span>可用性</span><select value={usability} onChange={(event) => setUsability(event.target.value as UserFeedback["usability"])}><option value="usable">可用</option><option value="barely_usable">勉强可用</option><option value="unusable">不可用</option></select></label></div><label><span>说明</span><textarea value={content} onChange={(event) => setContent(event.target.value)} placeholder="记录需要继续优化的具体问题" /></label><button className="wb-secondary-button" type="button" disabled={disabled || submitting} onClick={() => void submit()}>{submitting ? "提交中" : "提交反馈"}</button>{message ? <p className="wb-action-feedback--success">{message}</p> : null}{error ? <p className="wb-action-feedback--error">{error}</p> : null}</div>;
-}
-
-function QualitySummary({ report }: { report?: QualityReport }) {
-  if (!report) return <p className="wb-quality-empty">当前资产尚未评测。</p>;
-  return <div className="wb-quality-summary"><strong>{report.totalScore} 分</strong><span>{report.pass ? "可继续优化生产" : "建议先处理问题"}</span><p>{report.problems[0] || report.suggestions[0] || report.recommendedAction}</p></div>;
-}
-
-function latestScopedReport(reports: QualityReport[], stage: QualityReport["stage"], assetId?: string) {
-  return [...reports].filter((report) => report.stage === stage && (!assetId || !report.assetId || report.assetId === assetId)).sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0];
 }
 
 function routeDraft(project: Project, providers: ModelProvider[]) {

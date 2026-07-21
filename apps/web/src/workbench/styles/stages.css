@@ -337,7 +337,6 @@
 }
 
 .wb-asset-mode svg,
-.wb-text-button svg,
 .wb-route-panel svg,
 .wb-secondary-button svg {
   width: 16px;
@@ -618,8 +617,7 @@
 }
 
 .wb-primary-button,
-.wb-secondary-button,
-.wb-text-button {
+.wb-secondary-button {
   min-height: 40px;
   display: inline-flex;
   align-items: center;
@@ -643,32 +641,23 @@
   background: var(--accent-hover);
 }
 
-.wb-secondary-button,
-.wb-text-button {
+.wb-secondary-button {
   border: 1px solid var(--border-1);
   color: var(--text-2);
   background: var(--surface-1);
 }
 
-.wb-secondary-button:hover,
-.wb-text-button:hover {
+.wb-secondary-button:hover {
   color: var(--text-1);
   background: var(--surface-2);
 }
 
 .wb-primary-button:disabled,
-.wb-secondary-button:disabled,
-.wb-text-button:disabled {
+.wb-secondary-button:disabled {
   border-color: var(--border-1);
   color: var(--text-3);
   background: var(--surface-3);
   cursor: not-allowed;
-}
-
-.wb-text-button {
-  min-height: 32px;
-  padding: 0 9px;
-  font-size: var(--text-xs);
 }
 
 .wb-reference-list {
@@ -732,28 +721,6 @@
 
 .wb-icon-button--danger {
   color: var(--danger);
-}
-
-.wb-quality-empty,
-.wb-quality-summary {
-  margin: 0 0 14px;
-  color: var(--text-3);
-  line-height: 1.6;
-}
-
-.wb-quality-summary strong {
-  margin-right: 8px;
-  color: var(--text-1);
-  font-size: var(--text-lg);
-}
-
-.wb-quality-summary span {
-  color: var(--text-2);
-  font-size: var(--text-xs);
-}
-
-.wb-quality-summary p {
-  margin: 8px 0 0;
 }
 
 .wb-feedback-form {
