@@ -1,0 +1,215 @@
+@media (max-width: 1439px) {
+  .wb-header {
+    grid-template-columns: minmax(200px, 1fr) minmax(360px, auto) minmax(180px, 1fr);
+    gap: 16px;
+    padding: 0 16px;
+  }
+
+  .wb-header__project-copy span,
+  .wb-save-state,
+  .wb-header__secondary-action {
+    display: none;
+  }
+
+  .wb-workspace {
+    grid-template-columns: 260px minmax(640px, 1fr) 340px;
+  }
+}
+
+@media (max-width: 1239px) {
+  .wb-header {
+    grid-template-columns: minmax(180px, 1fr) minmax(360px, auto) minmax(88px, 1fr);
+  }
+
+  .wb-header__drawer-trigger {
+    display: inline-grid;
+  }
+
+  .wb-header__rail-trigger {
+    display: none;
+  }
+
+  .wb-workspace {
+    grid-template-columns: 260px minmax(640px, 1fr) 0;
+    overflow-x: auto;
+  }
+
+  .wb-inspector {
+    position: fixed;
+    z-index: 40;
+    top: 68px;
+    right: 0;
+    bottom: 0;
+    width: min(392px, 100vw);
+    border-left: 1px solid var(--border-1);
+    visibility: hidden;
+    transform: translateX(100%);
+    transition: transform var(--motion-normal), visibility var(--motion-normal);
+  }
+
+  .wb-inspector.is-open {
+    visibility: visible;
+    transform: translateX(0);
+  }
+
+  .wb-inspector .wb-drawer-panel {
+    position: relative;
+    z-index: 2;
+    display: grid;
+    grid-template-rows: 56px minmax(0, 1fr);
+    background: var(--bg-shell);
+  }
+
+  .wb-drawer-heading {
+    display: flex;
+  }
+
+  .wb-inspector .wb-drawer-scrim {
+    position: absolute;
+    z-index: 1;
+    top: 0;
+    right: 100%;
+    bottom: 0;
+    width: calc(100vw - 392px);
+    display: block;
+    padding: 0;
+    border: 0;
+    background: var(--overlay);
+    cursor: default;
+  }
+}
+
+@media (max-width: 979px) {
+  .wb-header {
+    grid-template-columns: minmax(150px, 1fr) minmax(280px, auto) minmax(88px, 1fr);
+    padding: 0 12px;
+  }
+
+  .wb-header__project-copy strong {
+    max-width: 150px;
+    font-size: var(--text-md);
+  }
+
+  .wb-stage-nav {
+    justify-content: flex-start;
+    gap: 4px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .wb-stage-nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .wb-stage-nav button {
+    min-width: 64px;
+  }
+
+  .wb-header__rail-trigger {
+    display: inline-grid;
+  }
+
+  .wb-workspace {
+    display: block;
+    overflow: hidden;
+  }
+
+  .wb-canvas {
+    width: 100%;
+    height: 100%;
+  }
+
+  .wb-entity-rail {
+    position: fixed;
+    z-index: 40;
+    top: 68px;
+    bottom: 0;
+    left: 0;
+    width: min(300px, 100vw);
+    border-right: 1px solid var(--border-1);
+    visibility: hidden;
+    transform: translateX(-100%);
+    transition: transform var(--motion-normal), visibility var(--motion-normal);
+  }
+
+  .wb-entity-rail.is-open {
+    visibility: visible;
+    transform: translateX(0);
+  }
+
+  .wb-entity-rail .wb-drawer-panel {
+    position: relative;
+    z-index: 2;
+    display: grid;
+    grid-template-rows: 56px minmax(0, 1fr);
+    background: var(--bg-shell);
+  }
+
+  .wb-entity-rail .wb-drawer-scrim {
+    position: absolute;
+    z-index: 1;
+    top: 0;
+    bottom: 0;
+    left: 100%;
+    width: calc(100vw - 300px);
+    display: block;
+    padding: 0;
+    border: 0;
+    background: var(--overlay);
+    cursor: default;
+  }
+}
+
+@media (max-width: 767px) {
+  .wb-header {
+    grid-template-columns: minmax(120px, 1fr) minmax(0, 1.5fr) auto;
+    gap: 8px;
+    padding: 0 8px;
+  }
+
+  .wb-header__project {
+    gap: 2px;
+  }
+
+  .wb-header__project-copy strong {
+    max-width: 100px;
+    font-size: var(--text-sm);
+  }
+
+  .wb-stage-nav button {
+    min-width: 56px;
+    height: 68px;
+    padding: 0 4px;
+    font-size: var(--text-xs);
+  }
+
+  .wb-stage-complete {
+    display: none;
+  }
+
+  .wb-header__actions {
+    gap: 0;
+  }
+
+  .wb-header__actions .wb-icon-button,
+  .wb-header__project > .wb-icon-button {
+    width: 44px;
+    height: 44px;
+    flex-basis: 44px;
+  }
+
+  .wb-canvas__legacy {
+    min-width: 0;
+    padding: 16px;
+  }
+
+  .wb-entity-rail,
+  .wb-inspector {
+    width: 100vw;
+  }
+
+  .wb-entity-rail .wb-drawer-scrim,
+  .wb-inspector .wb-drawer-scrim {
+    display: none;
+  }
+}

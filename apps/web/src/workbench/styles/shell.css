@@ -1,0 +1,110 @@
+.wb-shell {
+  min-width: 0;
+  min-height: 100dvh;
+  height: 100dvh;
+  display: grid;
+  grid-template-rows: 68px minmax(0, 1fr);
+  overflow: hidden;
+  color: var(--text-1);
+  background: var(--bg-app);
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  letter-spacing: 0;
+}
+
+.wb-header {
+  min-width: 0;
+  height: 68px;
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) minmax(420px, auto) minmax(240px, 1fr);
+  align-items: stretch;
+  gap: 24px;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--border-1);
+  background: var(--bg-shell);
+}
+
+.wb-header__project,
+.wb-header__actions {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.wb-header__project-copy {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.wb-header__project-copy strong {
+  max-width: 220px;
+  overflow: hidden;
+  color: var(--text-1);
+  font-size: var(--text-lg);
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wb-header__project-copy span {
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.wb-header__actions {
+  justify-content: flex-end;
+}
+
+.wb-workspace {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 300px minmax(640px, 1fr) 392px;
+  overflow: hidden;
+  background: var(--bg-app);
+}
+
+.wb-entity-rail,
+.wb-inspector,
+.wb-canvas {
+  min-width: 0;
+  min-height: 0;
+}
+
+.wb-entity-rail {
+  border-right: 1px solid var(--border-1);
+  background: var(--bg-shell);
+}
+
+.wb-inspector {
+  border-left: 1px solid var(--border-1);
+  background: var(--bg-shell);
+}
+
+.wb-canvas {
+  overflow: auto;
+  overscroll-behavior: contain;
+  background: var(--surface-1);
+}
+
+.wb-drawer-panel,
+.wb-region-scroll {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
+
+.wb-region-scroll {
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.wb-drawer-scrim,
+.wb-drawer-heading,
+.wb-header__drawer-trigger {
+  display: none;
+}

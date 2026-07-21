@@ -12,14 +12,12 @@ import {
   Loader2,
   MapPin,
   MessageSquareText,
-  Moon,
   Pause,
   Play,
   RefreshCw,
   Save,
   SlidersHorizontal,
   Sparkles,
-  Sun,
   Trash2,
   Upload,
   UserRound,
@@ -52,6 +50,9 @@ import {
   normalizeImageOutputSize
 } from "@aifilm/shared";
 import { api } from "../lib/api";
+import { ProductionWorkspace } from "../workbench/components/ProductionWorkspace";
+import { WorkbenchHeader } from "../workbench/components/WorkbenchHeader";
+import type { WorkbenchStage, WorkbenchTheme } from "../workbench/model";
 import {
   buildTimelineClipLayout,
   collectEpisodeNumbers,
@@ -59,7 +60,6 @@ import {
   resolveSceneSelection,
   type SceneListFilter
 } from "./projectWorkbenchModel";
-import { nextWorkbenchTheme, type WorkbenchTheme } from "../workbench/model";
 import "./ProjectStudioV4.css";
 
 interface ProjectWorkbenchPageProps {
@@ -72,7 +72,6 @@ interface ProjectWorkbenchPageProps {
   onRefresh: (projectId: string) => void | Promise<void>;
 }
 
-type WorkbenchTab = "content" | "assets" | "shots" | "assembly";
 type ShotWorkspaceView = "director" | "matrix";
 type OperationKey = "storyboard" | "character" | "images" | "video" | "export" | null;
 type OperationState = { key: OperationKey; title: string; startedAt: number; detail: string } | null;
@@ -89,8 +88,10 @@ const statusText: Record<TaskStatus, string> = {
 const failedImageModels = new Set(["wanx-v1", "wan2.5-t2i-preview"]);
 
 export function ProjectWorkbenchPage({ workflow, providers, modelPrices, theme, onThemeChange, onBack, onRefresh }: ProjectWorkbenchPageProps) {
-  const [activeTab, setActiveTab] = useState<WorkbenchTab>("content");
+  const [activeTab, setActiveTab] = useState<WorkbenchStage>("content");
   const [shotWorkspaceView, setShotWorkspaceView] = useState<ShotWorkspaceView>("director");
+  const [railOpen, setRailOpen] = useState(false);
+  const [inspectorOpen, setInspectorOpen] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [isBusy, setIsBusy] = useState(false);
@@ -133,7 +134,7 @@ export function ProjectWorkbenchPage({ workflow, providers, modelPrices, theme, 
     { id: "content" as const, label: "内容", detail: "大纲 / 分集 / 剧本", done: Boolean(script) },
     { id: "assets" as const, label: "资产", detail: "角色 / 场景 / 道具", done: characters.length === 0 || completedRoleRefs >= characters.length },
     { id: "shots" as const, label: "分镜", detail: "脚本 / 首帧 / 视频", done: storyboards.length > 0 && completedImages >= storyboards.length },
-    { id: "assembly" as const, label: "成片", detail: "配音 / 字幕 / 导出", done: storyboards.length > 0 && completedVideos > 0 }
+    { id: "delivery" as const, label: "成片", detail: "配音 / 字幕 / 导出", done: storyboards.length > 0 && completedVideos > 0 }
   ];
 
   function beginOperation(key: OperationKey, title: string, detail: string) {
@@ -178,7 +179,7 @@ export function ProjectWorkbenchPage({ workflow, providers, modelPrices, theme, 
         beginOperation("video", "视频片段生成中", "正在把已确认分镜图提交给视频模型。");
         const result = await api.generateVideos(project.id);
         setMessage(`视频任务已提交，新增 ${result.assetsCreated ?? 0} 个资产。`);
-        setActiveTab("assembly");
+        setActiveTab("delivery");
       }
       await onRefresh(project.id);
     } catch (err) {
@@ -227,68 +228,80 @@ export function ProjectWorkbenchPage({ workflow, providers, modelPrices, theme, 
   }
 
   return (
-    <div className="page-stack project-workbench" data-theme={theme}>
-      <div className="page-title row-title workbench-hero-title">
-        <div>
-          <span className="section-kicker">PROJECT PRODUCTION</span>
-          <h1>{project.name}</h1>
-          <p>{project.intro}</p>
-        </div>
-        <div className="workbench-command-side">
-          <div className="inline-actions workbench-hero-actions">
-            <button
-              className="ghost-button"
-              type="button"
-              aria-label={theme === "dark" ? "切换到浅色主题" : "切换到深色主题"}
-              onClick={() => onThemeChange(nextWorkbenchTheme(theme))}
-            >
-              {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
-            </button>
-            <button className="ghost-button" onClick={onBack}>返回作品列表</button>
-            <button className="ghost-button" onClick={() => void refreshProject()}><RefreshCw size={18} />刷新</button>
+    <div className="wb-shell project-workbench" data-theme={theme}>
+      <WorkbenchHeader
+        projectName={project.name}
+        projectMeta={`第 1 集 · ${project.videoRatio}`}
+        stages={pipelineSteps}
+        activeStage={activeTab}
+        saveState="unchanged"
+        theme={theme}
+        onBack={onBack}
+        onStageChange={setActiveTab}
+        onThemeChange={onThemeChange}
+        onRefresh={() => void refreshProject()}
+        onOpenRail={() => {
+          setInspectorOpen(false);
+          setRailOpen(true);
+        }}
+        onOpenInspector={() => {
+          setRailOpen(false);
+          setInspectorOpen(true);
+        }}
+      />
+      <ProductionWorkspace
+        rail={(
+          <div className="wb-rail-summary">
+            <h2 className="wb-region-heading">{pipelineSteps.find((step) => step.id === activeTab)?.label}</h2>
+            <p className="wb-region-copy">{pipelineSteps.find((step) => step.id === activeTab)?.detail}</p>
+            <dl className="wb-summary-list">
+              <div><dt>剧集</dt><dd>{project.episodes}</dd></div>
+              <div><dt>角色</dt><dd>{characters.length}</dd></div>
+              <div><dt>镜头</dt><dd>{storyboards.length}</dd></div>
+              <div><dt>画幅</dt><dd>{project.videoRatio}</dd></div>
+            </dl>
           </div>
-          <details className="project-route-drawer workbench-route-popover">
-            <summary>
-              <span><SlidersHorizontal size={16} />模型路由</span>
-              <small>{project.imageModel || project.textModel || "按项目默认"}</small>
-            </summary>
-            <ProjectRouteSwitcher project={project} providers={providers} onSave={saveModelRoutes} />
-          </details>
-        </div>
-      </div>
-
-      <nav className="studio-v4-stage-nav" data-tour-id="project-flow-tabs" aria-label="项目生产阶段">
-        {pipelineSteps.map((step, index) => (
-          <button className={`${activeTab === step.id ? "active" : ""} ${step.done ? "done" : ""}`} key={step.id} type="button" onClick={() => setActiveTab(step.id)}>
-            <span>{step.done ? <CheckCircle2 size={17} /> : index + 1}</span>
-            <strong>{step.label}</strong>
-            <small>{step.detail}</small>
-          </button>
-        ))}
-        <div className="studio-v4-project-meta">
-          <span>{project.episodes} 集</span><span>{characters.length} 角色</span><span>{storyboards.length} 镜头</span><span>{project.videoRatio}</span>
-        </div>
-      </nav>
-
-      {operation ? <InlineProgress operation={operation} elapsed={operationElapsed} /> : null}
-      {message ? <p className="success-text studio-v4-message">{message}</p> : null}
-      {error ? <p className="danger-text studio-v4-message">{error}</p> : null}
-
-      {activeTab === "content" ? <ScriptBoard script={script} characters={characters} storyboards={storyboards} episodeCount={project.episodes} isBusy={isBusy} onOpenCharacters={() => setActiveTab("assets")} onGenerateStoryboards={() => void runWorkflowAction("storyboard")} /> : null}
-      {activeTab === "assets" ? <CreatorCharacterBoard project={project} providers={providers} modelPrices={modelPrices} characters={characters} roleAssets={roleAssets} sceneAssets={sceneAssets} qualityReports={qualityReports} feedbacks={feedbacks} isBusy={isBusy} onRefresh={refreshProject} onSaveModelRoutes={saveModelRoutes} onPreview={setPreviewImage} /> : null}
-      {activeTab === "shots" ? (
-        <div className="studio-v4-shots-stage">
-          <div className="studio-v4-view-switch" role="tablist" aria-label="分镜视图">
-            <button className={shotWorkspaceView === "director" ? "active" : ""} type="button" onClick={() => setShotWorkspaceView("director")}><Film size={16} />单镜头</button>
-            <button className={shotWorkspaceView === "matrix" ? "active" : ""} type="button" onClick={() => setShotWorkspaceView("matrix")}><Images size={16} />故事板矩阵</button>
-            <span>在同一阶段完成脚本、首帧、候选版本与视频检查</span>
+        )}
+        canvas={(
+          <div className="wb-canvas__legacy">
+            {operation ? <InlineProgress operation={operation} elapsed={operationElapsed} /> : null}
+            {message ? <p className="success-text studio-v4-message">{message}</p> : null}
+            {error ? <p className="danger-text studio-v4-message">{error}</p> : null}
+            {activeTab === "content" ? <ScriptBoard script={script} characters={characters} storyboards={storyboards} episodeCount={project.episodes} isBusy={isBusy} onOpenCharacters={() => setActiveTab("assets")} onGenerateStoryboards={() => void runWorkflowAction("storyboard")} /> : null}
+            {activeTab === "assets" ? <CreatorCharacterBoard project={project} providers={providers} modelPrices={modelPrices} characters={characters} roleAssets={roleAssets} sceneAssets={sceneAssets} qualityReports={qualityReports} feedbacks={feedbacks} isBusy={isBusy} onRefresh={refreshProject} onSaveModelRoutes={saveModelRoutes} onPreview={setPreviewImage} /> : null}
+            {activeTab === "shots" ? (
+              <div className="studio-v4-shots-stage">
+                <div className="studio-v4-view-switch" role="tablist" aria-label="分镜视图">
+                  <button className={shotWorkspaceView === "director" ? "active" : ""} type="button" onClick={() => setShotWorkspaceView("director")}><Film size={16} />单镜头</button>
+                  <button className={shotWorkspaceView === "matrix" ? "active" : ""} type="button" onClick={() => setShotWorkspaceView("matrix")}><Images size={16} />故事板矩阵</button>
+                  <span>在同一阶段完成脚本、首帧、候选版本与视频检查</span>
+                </div>
+                {shotWorkspaceView === "director"
+                  ? <CreatorImagesBoard project={project} providers={providers} modelPrices={modelPrices} storyboards={storyboards} characters={characters} roleAssets={roleAssets} sceneAssets={sceneAssets} imageAssets={imageAssets} qualityReports={qualityReports} feedbacks={feedbacks} isBusy={isBusy} onRefresh={refreshProject} onSaveModelRoutes={saveModelRoutes} onPreview={setPreviewImage} />
+                  : <DesignDeskBoard storyboards={storyboards} characters={characters} roleAssets={roleAssets} sceneAssets={sceneAssets} imageAssets={imageAssets} videoAssets={videoAssets} productionPackage={productionPackage} isBusy={isBusy} onGenerate={() => void runWorkflowAction("storyboard")} onOpenDirector={() => setShotWorkspaceView("director")} onOpenVideo={() => setActiveTab("delivery")} onPreview={setPreviewImage} />}
+              </div>
+            ) : null}
+            {activeTab === "delivery" ? <VideoBoard project={project} providers={providers} modelPrices={modelPrices} storyboards={storyboards} characters={characters} roleAssets={roleAssets} imageAssets={imageAssets} videoAssets={videoAssets} exportJobs={exportJobs} isBusy={isBusy} onGenerate={() => void runWorkflowAction("video")} onCreateExport={createExport} onRefresh={refreshProject} onSaveModelRoutes={saveModelRoutes} onPublish={() => setPublishOpen(true)} /> : null}
           </div>
-          {shotWorkspaceView === "director"
-            ? <CreatorImagesBoard project={project} providers={providers} modelPrices={modelPrices} storyboards={storyboards} characters={characters} roleAssets={roleAssets} sceneAssets={sceneAssets} imageAssets={imageAssets} qualityReports={qualityReports} feedbacks={feedbacks} isBusy={isBusy} onRefresh={refreshProject} onSaveModelRoutes={saveModelRoutes} onPreview={setPreviewImage} />
-            : <DesignDeskBoard storyboards={storyboards} characters={characters} roleAssets={roleAssets} sceneAssets={sceneAssets} imageAssets={imageAssets} videoAssets={videoAssets} productionPackage={productionPackage} isBusy={isBusy} onGenerate={() => void runWorkflowAction("storyboard")} onOpenDirector={() => setShotWorkspaceView("director")} onOpenVideo={() => setActiveTab("assembly")} onPreview={setPreviewImage} />}
-        </div>
-      ) : null}
-      {activeTab === "assembly" ? <VideoBoard project={project} providers={providers} modelPrices={modelPrices} storyboards={storyboards} characters={characters} roleAssets={roleAssets} imageAssets={imageAssets} videoAssets={videoAssets} exportJobs={exportJobs} isBusy={isBusy} onGenerate={() => void runWorkflowAction("video")} onCreateExport={createExport} onRefresh={refreshProject} onSaveModelRoutes={saveModelRoutes} onPublish={() => setPublishOpen(true)} /> : null}
+        )}
+        inspector={(
+          <div className="wb-inspector-content">
+            <h2 className="wb-region-heading">项目设置</h2>
+            <p className="wb-region-copy">生成前修改会同时更新项目默认模型。</p>
+            <details className="project-route-drawer workbench-route-popover">
+              <summary>
+                <span><SlidersHorizontal size={16} />项目默认模型</span>
+                <small>{project.imageModel || project.textModel || "按项目默认"}</small>
+              </summary>
+              <ProjectRouteSwitcher project={project} providers={providers} onSave={saveModelRoutes} />
+            </details>
+          </div>
+        )}
+        railOpen={railOpen}
+        inspectorOpen={inspectorOpen}
+        onCloseRail={() => setRailOpen(false)}
+        onCloseInspector={() => setInspectorOpen(false)}
+      />
       {publishOpen ? <ShowcasePublishModal project={project} storyboards={storyboards} imageAssets={imageAssets} videoAssets={videoAssets} exportJobs={exportJobs} onClose={() => setPublishOpen(false)} /> : null}
       {previewImage ? <ImagePreviewModal preview={previewImage} onClose={() => setPreviewImage(null)} /> : null}
     </div>
