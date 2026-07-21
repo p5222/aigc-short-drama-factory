@@ -13,6 +13,7 @@ import {
   reconcileContentSelection,
   reconcileSelection,
   resolveThemePreference,
+  shouldReconcileStoryboardSelection,
   storyboardScene,
   workbenchReducer
 } from "./model.ts";
@@ -247,8 +248,41 @@ test("labels script-derived scenes as 从剧本识别", () => {
   assert.equal(rows.length, 1);
   assert.equal(rows[0]?.source, "derived");
   assert.equal(rows[0]?.sourceLabel, "从剧本识别");
-  assert.deepEqual(rows[0]?.key, derivedScene("script-scene-1"));
+  assert.deepEqual(rows[0]?.key, derivedScene("script-scene-1-1"));
   assert.equal(rows[0]?.emotion, "");
+});
+
+test("maps buildLocalScript-style episodes without mixing their content", () => {
+  const content = [
+    "第1集 旧车站",
+    "剧情节拍：林夏在雨夜抵达旧车站。",
+    "场景动作：林夏收起雨伞。",
+    "林夏：你终于来了。",
+    "旁白：列车声从远处传来。",
+    "结尾钩子：站台尽头出现熟悉身影。",
+    "",
+    "第2集 医院走廊",
+    "剧情节拍：林夏追查病历。",
+    "场景动作：她推开档案室。",
+    "顾沉：这里没有你要找的东西。",
+    "旁白：灯光忽然熄灭。",
+    "结尾钩子：病历上的名字被划掉。"
+  ].join("\n");
+  const rows = buildContentSceneRows(script(content), []);
+
+  assert.deepEqual(rows.map((row) => row.episodeNo), [1, 2]);
+  assert.equal(rows[0]?.lines.some((line) => line.includes("病历")), false);
+  assert.equal(rows[1]?.lines.some((line) => line.includes("旧车站")), false);
+});
+
+test("recognizes conservative Chinese-numeral episode headings", () => {
+  const rows = buildContentSceneRows(script("第一集 码头\n开场。\n\n第二集 仓库\n追踪。"), []);
+  assert.deepEqual(rows.map((row) => row.episodeNo), [1, 2]);
+});
+
+test("does not storyboard-reconcile explicit empty episode selection in content", () => {
+  assert.equal(shouldReconcileStoryboardSelection("content"), false);
+  assert.equal(shouldReconcileStoryboardSelection("assets"), true);
 });
 
 test("keeps explicit weather separate from time metadata", () => {

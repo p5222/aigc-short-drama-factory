@@ -129,6 +129,10 @@ export function buildStoryboardGenerationPayload(project: Pick<Project, "artStyl
   return { artStyle: project.artStyle, videoRatio: project.videoRatio };
 }
 
+export function shouldReconcileStoryboardSelection(stage: WorkbenchStage): boolean {
+  return stage !== "content";
+}
+
 export function buildContentSceneRows(script: ScriptDraft | undefined, storyboards: StoryboardShot[]): ContentSceneRow[] {
   if (storyboards.length) {
     const groups = new Map<string, StoryboardShot[]>();
@@ -143,16 +147,23 @@ export function buildContentSceneRows(script: ScriptDraft | undefined, storyboar
   }
 
   if (!script?.content.trim()) return [];
-  return splitScriptIntoSceneCandidates(script.content).slice(0, 12).map((lines, index) => {
-    const title = inferScriptSceneTitle(lines, index);
-    const id = `script-scene-${index + 1}`;
+  const candidates = splitScriptIntoEpisodes(script.content).flatMap((episode) => (
+    splitScriptIntoSceneCandidates(episode.content).slice(0, 12).map((lines, sceneIndex) => ({
+      episodeNo: episode.episodeNo,
+      sceneNo: sceneIndex + 1,
+      lines
+    }))
+  ));
+  return candidates.map(({ episodeNo, sceneNo, lines }) => {
+    const title = inferScriptSceneTitle(lines, sceneNo - 1);
+    const id = `script-scene-${episodeNo}-${sceneNo}`;
     return {
       id,
       key: derivedScene(id),
       source: "derived",
       sourceLabel: "从剧本识别",
-      episodeNo: 1,
-      sceneNo: index + 1,
+      episodeNo,
+      sceneNo,
       title,
       location: inferLocation(title),
       timeOfDay: inferSceneTime(title),
@@ -167,6 +178,70 @@ export function buildContentSceneRows(script: ScriptDraft | undefined, storyboar
       emotion: ""
     } satisfies ContentSceneRow;
   });
+}
+
+interface ScriptEpisodeChunk {
+  episodeNo: number;
+  content: string;
+}
+
+function splitScriptIntoEpisodes(content: string): ScriptEpisodeChunk[] {
+  const chunks: ScriptEpisodeChunk[] = [];
+  let activeEpisodeNo = 1;
+  let activeLines: string[] = [];
+
+  const flush = () => {
+    const episodeContent = activeLines.join("\n").trim();
+    if (episodeContent) chunks.push({ episodeNo: activeEpisodeNo, content: episodeContent });
+  };
+
+  for (const line of content.split(/\r?\n/)) {
+    const heading = matchEpisodeHeading(line);
+    if (heading) {
+      flush();
+      activeEpisodeNo = heading.episodeNo;
+      activeLines = [line.trim()];
+    } else {
+      activeLines.push(line);
+    }
+  }
+  flush();
+  return chunks;
+}
+
+function matchEpisodeHeading(line: string): { episodeNo: number; title: string } | null {
+  const match = line.match(/^\s*(?:#{1,6}\s*)?第\s*([0-9]+|[零〇一二三四五六七八九十]+)\s*集(?:\s+|[：:]\s*)?(.*)$/);
+  if (!match) return null;
+  const episodeNo = parseEpisodeNumber(match[1]);
+  return episodeNo === null ? null : { episodeNo, title: match[2]?.trim() ?? "" };
+}
+
+function parseEpisodeNumber(value: string): number | null {
+  if (/^\d+$/.test(value)) {
+    const parsed = Number(value);
+    return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+  }
+
+  const digits: Record<string, number> = {
+    零: 0,
+    〇: 0,
+    一: 1,
+    二: 2,
+    三: 3,
+    四: 4,
+    五: 5,
+    六: 6,
+    七: 7,
+    八: 8,
+    九: 9
+  };
+  if (value === "十") return 10;
+  if (!value.includes("十")) return value.length === 1 && digits[value] ? digits[value] : null;
+  const [tensText, onesText] = value.split("十");
+  const tens = tensText ? digits[tensText] : 1;
+  const ones = onesText ? digits[onesText] : 0;
+  if (tens === undefined || ones === undefined || tens === 0) return null;
+  return tens * 10 + ones;
 }
 
 function buildStoryboardSceneRow(key: string, shots: StoryboardShot[]): ContentSceneRow {
@@ -198,12 +273,13 @@ function buildStoryboardSceneRow(key: string, shots: StoryboardShot[]): ContentS
 }
 
 function splitScriptIntoSceneCandidates(content: string): string[][] {
+  const lines = content.split(/\n+/).map((line) => line.trim()).filter(Boolean);
   const rawBlocks = content
     .split(/\n{2,}|(?=第[一二三四五六七八九十0-9]+[场幕])|(?=【[^】]+】)/)
     .map((block) => block.trim())
     .filter(Boolean);
   if (rawBlocks.length > 1) return rawBlocks.map((block) => block.split(/\n+/).map((line) => line.trim()).filter(Boolean));
-  const lines = content.split(/\n+/).map((line) => line.trim()).filter(Boolean);
+  if (matchEpisodeHeading(lines[0] ?? "")) return [lines];
   const chunks: string[][] = [];
   for (let index = 0; index < lines.length; index += 3) chunks.push(lines.slice(index, index + 3));
   return chunks;
@@ -211,6 +287,8 @@ function splitScriptIntoSceneCandidates(content: string): string[][] {
 
 function inferScriptSceneTitle(lines: string[], index: number): string {
   const first = lines[0] ?? "";
+  const episodeHeading = matchEpisodeHeading(first);
+  if (episodeHeading) return episodeHeading.title.slice(0, 18) || `第 ${episodeHeading.episodeNo} 集`;
   const bracket = first.match(/【([^】]+)】/);
   if (bracket?.[1]) return bracket[1].slice(0, 18);
   const marker = first.match(/第[一二三四五六七八九十0-9]+[场幕][：:\s]*(.{0,18})/);

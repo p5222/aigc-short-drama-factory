@@ -267,8 +267,10 @@ export function App() {
   }
 
   async function refreshCurrentProject(projectId: string) {
+    const nextWorkflow = await api.workflow(projectId);
+    setWorkflow(nextWorkflow);
     await load();
-    setWorkflow(await api.workflow(projectId));
+    return nextWorkflow;
   }
 
   async function refreshTaskAction(action: () => Promise<GenerationTask>) {

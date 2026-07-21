@@ -51,7 +51,7 @@ import { ProductionWorkspace } from "../workbench/components/ProductionWorkspace
 import { WorkbenchHeader } from "../workbench/components/WorkbenchHeader";
 import { WorkbenchProvider } from "../workbench/WorkbenchContext";
 import { ContentStage } from "../workbench/stages/ContentStage";
-import { createWorkbenchState, workbenchReducer, type WorkbenchStage, type WorkbenchTheme } from "../workbench/model";
+import { createWorkbenchState, shouldReconcileStoryboardSelection, workbenchReducer, type WorkbenchStage, type WorkbenchTheme } from "../workbench/model";
 import { buildTimelineClipLayout } from "./projectWorkbenchModel";
 import "./ProjectStudioV4.css";
 
@@ -62,7 +62,7 @@ interface ProjectWorkbenchPageProps {
   theme: WorkbenchTheme;
   onThemeChange: (theme: WorkbenchTheme) => void;
   onBack: () => void;
-  onRefresh: (projectId: string) => void | Promise<void>;
+  onRefresh: (projectId: string) => Promise<ProjectWorkflow>;
 }
 
 type ShotWorkspaceView = "director" | "matrix";
@@ -108,9 +108,9 @@ export function ProjectWorkbenchPage({ workflow, providers, modelPrices, theme, 
   }, [workflow?.project.id, workflow?.assets.length, workflow?.storyboards.length]);
 
   useEffect(() => {
-    if (!workflow) return;
+    if (!workflow || !shouldReconcileStoryboardSelection(workbenchState.activeStage)) return;
     dispatch({ type: "reconcile-workflow", storyboards: workflow.storyboards });
-  }, [workflow]);
+  }, [workbenchState.activeStage, workflow]);
 
   if (!workflow) {
     return <div className="page-stack"><section className="panel centered-panel">正在加载项目生产数据...</section></div>;

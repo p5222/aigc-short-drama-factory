@@ -1,4 +1,4 @@
-import { BookOpenCheck, Clock3, MapPin } from "lucide-react";
+import { BookOpenCheck, Clock3, MapPin, RefreshCw } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { ProjectWorkflow } from "@aifilm/shared";
 import type { ContentSceneRow } from "../model";
@@ -17,8 +17,10 @@ interface ContentStageProps {
   inspectorOpen: boolean;
   onCloseRail: () => void;
   onCloseInspector: () => void;
-  onRefresh: (projectId: string) => void | Promise<void>;
+  onRefresh: (projectId: string) => Promise<ProjectWorkflow>;
 }
+
+type ContentActionPhase = "idle" | "generating" | "syncing" | "refresh-required";
 
 export function ContentStage({
   railOpen,
@@ -41,7 +43,7 @@ function LoadedContentStage({
   onRefresh
 }: ContentStageProps & { workflow: ProjectWorkflow }) {
   const { state, dispatch } = useWorkbench();
-  const [isGenerating, setIsGenerating] = useState(false);
+  const [actionPhase, setActionPhase] = useState<ContentActionPhase>("idle");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
@@ -92,26 +94,40 @@ function LoadedContentStage({
     });
   }
 
+  async function syncGeneratedWorkflow() {
+    setActionPhase("syncing");
+    setMessage("镜头结构已生成，正在刷新项目数据。");
+    setError("");
+    try {
+      const refreshedWorkflow = await onRefresh(project.id);
+      dispatch({ type: "reconcile-workflow", storyboards: refreshedWorkflow.storyboards });
+      dispatch({ type: "set-stage", stage: "assets" });
+    } catch {
+      setActionPhase("refresh-required");
+      setMessage("");
+      setError("镜头结构已生成，但刷新失败");
+    }
+  }
+
   async function generateStoryboardStructure() {
-    if (!script || isGenerating) return;
+    if (!script || actionPhase !== "idle") return;
     if (storyboards.length && !window.confirm("重建镜头结构会覆盖现有镜头、分镜图和视频草稿，确认继续？")) return;
 
-    setIsGenerating(true);
+    setActionPhase("generating");
     setMessage("");
     setError("");
     try {
       await api.generateStoryboards(project.id, buildStoryboardGenerationPayload(project));
-      const refreshedWorkflow = await api.workflow(project.id);
-      dispatch({ type: "reconcile-workflow", storyboards: refreshedWorkflow.storyboards });
-      dispatch({ type: "set-stage", stage: "assets" });
-      setMessage("镜头结构已生成，正在进入资产阶段。");
-      await onRefresh(project.id);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "镜头结构生成失败");
-    } finally {
-      setIsGenerating(false);
+      setActionPhase("idle");
+      return;
     }
+    await syncGeneratedWorkflow();
   }
+
+  const actionPending = actionPhase === "generating" || actionPhase === "syncing";
+  const refreshOnly = actionPhase === "refresh-required";
 
   return (
     <ProductionWorkspace
@@ -125,15 +141,14 @@ function LoadedContentStage({
             <h2 className="wb-region-heading">剧集与场次</h2>
             <p className="wb-region-copy">选择一集，再查看该集识别出的场次。</p>
           </div>
-          <div className="wb-episode-tabs" role="tablist" aria-label="剧集">
+          <div className="wb-episode-tabs" role="group" aria-label="剧集">
             {episodeNumbers.map((episodeNo) => {
               const count = scenes.filter((scene) => scene.episodeNo === episodeNo).length;
               return (
                 <button
                   key={episodeNo}
                   type="button"
-                  role="tab"
-                  aria-selected={selection.activeEpisodeNo === episodeNo}
+                  aria-pressed={selection.activeEpisodeNo === episodeNo}
                   className={selection.activeEpisodeNo === episodeNo ? "is-active" : undefined}
                   onClick={() => selectEpisode(episodeNo)}
                 >
@@ -203,9 +218,19 @@ function LoadedContentStage({
             <div><dt>内容状态</dt><dd>{selectedScene ? contentStatusLabel(selectedScene) : "无场次"}</dd></div>
           </dl>
           <div className="wb-content-primary-action">
-            <button type="button" onClick={() => void generateStoryboardStructure()} disabled={!script || isGenerating}>
-              <BookOpenCheck aria-hidden="true" />
-              {isGenerating ? "正在生成镜头结构" : "确认内容并生成镜头结构"}
+            <button
+              type="button"
+              onClick={() => void (refreshOnly ? syncGeneratedWorkflow() : generateStoryboardStructure())}
+              disabled={(!script && !refreshOnly) || actionPending}
+            >
+              {refreshOnly || actionPhase === "syncing" ? <RefreshCw aria-hidden="true" /> : <BookOpenCheck aria-hidden="true" />}
+              {actionPhase === "generating"
+                ? "正在生成镜头结构"
+                : actionPhase === "syncing"
+                  ? "正在刷新项目"
+                  : refreshOnly
+                    ? "重试刷新"
+                    : "确认内容并生成镜头结构"}
             </button>
             <div className="wb-action-feedback" aria-live="polite">
               {message ? <p className="wb-action-feedback--success">{message}</p> : null}
