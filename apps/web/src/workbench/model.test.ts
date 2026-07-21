@@ -68,6 +68,11 @@ test("release A hides every unsupported command", () => {
   });
 });
 
+if (false) {
+  // @ts-expect-error Release A capabilities are immutable at compile time.
+  RELEASE_A_CAPABILITIES.autosave = true;
+}
+
 test("stored theme wins and system preference is only the fallback", () => {
   assert.equal(resolveThemePreference("light", true), "light");
   assert.equal(resolveThemePreference("dark", false), "dark");
@@ -91,6 +96,13 @@ test("creates conservative state and scene keys", () => {
   assert.deepEqual(storyboardScene("1:2"), { source: "storyboard", value: "1:2" });
 });
 
+test("isolates selected shots from initializer array mutations", () => {
+  const selectedShotIds = ["shot-1"];
+  const state = createWorkbenchState({ selectedShotIds });
+  selectedShotIds.push("shot-2");
+  assert.deepEqual(state.selectedShotIds, ["shot-1"]);
+});
+
 test("keeps a valid shot while changing mode and visiting delivery", () => {
   const initial = createWorkbenchState({ episodeNo: 1, sceneKey: storyboardScene("1:1"), shotId: "shot-2" });
   const shots = workbenchReducer(initial, { type: "set-stage", stage: "shots" });
@@ -105,18 +117,18 @@ test("keeps a valid shot while changing mode and visiting delivery", () => {
 });
 
 test("updates simple fields and reconciles episode and scene child selections", () => {
-  const data = workflow([
+  const storyboards = [
     shot("e1-s1-a", 1, 1),
     shot("e2-s2-a", 2, 2),
     shot("e2-s3-a", 2, 3)
-  ]);
+  ];
   let state = createWorkbenchState({ episodeNo: 1, sceneKey: storyboardScene("1:1"), shotId: "e1-s1-a" });
-  state = workbenchReducer(state, { type: "set-episode", episodeNo: 2, workflow: data });
+  state = workbenchReducer(state, { type: "set-episode", episodeNo: 2, storyboards });
   assert.deepEqual(
     [state.activeSceneKey, state.activeShotId],
     [storyboardScene("2:2"), "e2-s2-a"]
   );
-  state = workbenchReducer(state, { type: "set-scene", sceneKey: storyboardScene("2:3"), workflow: data });
+  state = workbenchReducer(state, { type: "set-scene", sceneKey: storyboardScene("2:3"), storyboards });
   assert.equal(state.activeShotId, "e2-s3-a");
 
   state = workbenchReducer(state, { type: "set-asset", asset: { type: "character", id: "character-1" } });
@@ -129,6 +141,22 @@ test("updates simple fields and reconciles episode and scene child selections", 
   );
 });
 
+test("explicitly clearing a parent also clears its child context", () => {
+  const storyboards = [shot("e1-s1-a", 1, 1)];
+  const initial = createWorkbenchState({ episodeNo: 1, sceneKey: storyboardScene("1:1"), shotId: "e1-s1-a" });
+  const noScene = workbenchReducer(initial, { type: "set-scene", sceneKey: null, storyboards });
+  assert.deepEqual(
+    [noScene.activeEpisodeNo, noScene.activeSceneKey, noScene.activeShotId],
+    [1, null, null]
+  );
+
+  const noEpisode = workbenchReducer(initial, { type: "set-episode", episodeNo: null, storyboards });
+  assert.deepEqual(
+    [noEpisode.activeEpisodeNo, noEpisode.activeSceneKey, noEpisode.activeShotId],
+    [null, null, null]
+  );
+});
+
 test("reconciles invalid parents and children to the first real candidates", () => {
   const state = createWorkbenchState({
     episodeNo: 9,
@@ -136,11 +164,11 @@ test("reconciles invalid parents and children to the first real candidates", () 
     shotId: "missing-shot",
     selectedShotIds: ["missing-shot"]
   });
-  const reconciled = reconcileSelection(state, workflow([
+  const reconciled = reconcileSelection(state, [
     shot("e1-s1-a", 1, 1),
     shot("e1-s1-b", 1, 1),
     shot("e2-s3-a", 2, 3)
-  ]));
+  ]);
 
   assert.equal(reconciled.activeEpisodeNo, 1);
   assert.deepEqual(reconciled.activeSceneKey, storyboardScene("1:1"));
@@ -150,16 +178,16 @@ test("reconciles invalid parents and children to the first real candidates", () 
 
 test("preserves a valid child and clears scene and shot IDs removed by rebuild", () => {
   const state = createWorkbenchState({ episodeNo: 2, sceneKey: storyboardScene("2:3"), shotId: "e2-s3-b" });
-  const kept = reconcileSelection(state, workflow([
+  const kept = reconcileSelection(state, [
     shot("e1-s1-a", 1, 1),
     shot("e2-s3-a", 2, 3),
     shot("e2-s3-b", 2, 3)
-  ]));
+  ]);
   assert.equal(kept.activeShotId, "e2-s3-b");
 
   const rebuilt = workbenchReducer(kept, {
     type: "reconcile-workflow",
-    workflow: workflow([shot("e1-s4-a", 1, 4)])
+    storyboards: [shot("e1-s4-a", 1, 4)]
   });
   assert.equal(rebuilt.activeEpisodeNo, 1);
   assert.deepEqual(rebuilt.activeSceneKey, storyboardScene("1:4"));
@@ -168,7 +196,7 @@ test("preserves a valid child and clears scene and shot IDs removed by rebuild",
 
 test("clears selections when a rebuild has no valid scene or shot keys", () => {
   const state = createWorkbenchState({ episodeNo: 1, sceneKey: derivedScene("obsolete"), shotId: "obsolete-shot" });
-  const rebuilt = reconcileSelection(state, workflow([]));
+  const rebuilt = reconcileSelection(state, []);
   assert.equal(rebuilt.activeEpisodeNo, null);
   assert.equal(rebuilt.activeSceneKey, null);
   assert.equal(rebuilt.activeShotId, null);

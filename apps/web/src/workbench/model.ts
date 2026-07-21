@@ -1,4 +1,4 @@
-import type { ProjectWorkflow, TaskStatus, TaskType } from "@aifilm/shared";
+import type { ProjectWorkflow, StoryboardShot, TaskStatus, TaskType } from "@aifilm/shared";
 
 export {
   buildTimelineClipLayout,
@@ -25,7 +25,7 @@ export interface WorkbenchCapabilities {
   perRunModelOverride: boolean;
 }
 
-export const RELEASE_A_CAPABILITIES: WorkbenchCapabilities = Object.freeze({
+export const RELEASE_A_CAPABILITIES: Readonly<WorkbenchCapabilities> = Object.freeze({
   autosave: false,
   singleShotVideo: false,
   timelineEdit: false,
@@ -53,15 +53,15 @@ export interface WorkbenchStateInitializers extends Partial<WorkbenchState> {
 
 export type WorkbenchAction =
   | { type: "set-stage"; stage: WorkbenchStage }
-  | { type: "set-episode"; episodeNo: number | null; workflow?: ProjectWorkflow }
-  | { type: "set-scene"; sceneKey: SceneKey | null; workflow?: ProjectWorkflow }
+  | { type: "set-episode"; episodeNo: number | null; storyboards: StoryboardShot[] }
+  | { type: "set-scene"; sceneKey: SceneKey | null; storyboards: StoryboardShot[] }
   | { type: "set-asset"; asset: ActiveAsset | null }
   | { type: "set-shot"; shotId: string | null }
   | { type: "set-selected-shots"; shotIds: string[] }
   | { type: "set-shot-mode"; mode: ShotMode }
   | { type: "set-dirty-entity"; entityKey: string | null }
   | { type: "set-inspector-open"; open: boolean }
-  | { type: "reconcile-workflow"; workflow: ProjectWorkflow };
+  | { type: "reconcile-workflow"; storyboards: StoryboardShot[] };
 
 export interface TaskTypeSummary {
   type: TaskType;
@@ -84,7 +84,7 @@ export function createWorkbenchState(initial: WorkbenchStateInitializers = {}): 
     activeSceneKey: initial.activeSceneKey ?? initial.sceneKey ?? null,
     activeAsset: initial.activeAsset ?? null,
     activeShotId: initial.activeShotId ?? initial.shotId ?? null,
-    selectedShotIds: initial.selectedShotIds ?? [],
+    selectedShotIds: [...(initial.selectedShotIds ?? [])],
     shotMode: initial.shotMode ?? "table",
     dirtyEntityKey: initial.dirtyEntityKey ?? null,
     inspectorOpen: initial.inspectorOpen ?? true
@@ -100,12 +100,16 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
         selectedShotIds: state.activeStage === "shots" && action.stage !== "shots" ? [] : state.selectedShotIds
       };
     case "set-episode": {
-      const next = { ...state, activeEpisodeNo: action.episodeNo };
-      return action.workflow ? reconcileSelection(next, action.workflow) : next;
+      if (action.episodeNo === null) {
+        return { ...state, activeEpisodeNo: null, activeSceneKey: null, activeShotId: null };
+      }
+      return reconcileSelection({ ...state, activeEpisodeNo: action.episodeNo }, action.storyboards);
     }
     case "set-scene": {
-      const next = { ...state, activeSceneKey: action.sceneKey };
-      return action.workflow ? reconcileSelection(next, action.workflow) : next;
+      if (action.sceneKey === null) {
+        return { ...state, activeSceneKey: null, activeShotId: null };
+      }
+      return reconcileSelection({ ...state, activeSceneKey: action.sceneKey }, action.storyboards);
     }
     case "set-asset":
       return { ...state, activeAsset: action.asset };
@@ -120,19 +124,19 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
     case "set-inspector-open":
       return { ...state, inspectorOpen: action.open };
     case "reconcile-workflow":
-      return reconcileSelection(state, action.workflow);
+      return reconcileSelection(state, action.storyboards);
   }
 }
 
-export function reconcileSelection(state: WorkbenchState, workflow: ProjectWorkflow): WorkbenchState {
-  const episodes = [...new Set(workflow.storyboards.map((shot) => shot.episodeNo))].sort((a, b) => a - b);
+export function reconcileSelection(state: WorkbenchState, storyboards: StoryboardShot[]): WorkbenchState {
+  const episodes = [...new Set(storyboards.map((shot) => shot.episodeNo))].sort((a, b) => a - b);
   const activeEpisodeNo = state.activeEpisodeNo !== null && episodes.includes(state.activeEpisodeNo)
     ? state.activeEpisodeNo
     : episodes[0] ?? null;
 
   const episodeShots = activeEpisodeNo === null
     ? []
-    : workflow.storyboards.filter((shot) => shot.episodeNo === activeEpisodeNo);
+    : storyboards.filter((shot) => shot.episodeNo === activeEpisodeNo);
   const sceneKeys = [...new Set(episodeShots.map((shot) => `${shot.episodeNo}:${shot.sceneNo}`))];
   const requestedSceneValue = state.activeSceneKey?.source === "storyboard" ? state.activeSceneKey.value : null;
   const activeSceneValue = requestedSceneValue && sceneKeys.includes(requestedSceneValue)
@@ -148,7 +152,7 @@ export function reconcileSelection(state: WorkbenchState, workflow: ProjectWorkf
   const activeShotId = state.activeShotId && sceneShotIds.includes(state.activeShotId)
     ? state.activeShotId
     : sceneShotIds[0] ?? null;
-  const validShotIds = new Set(workflow.storyboards.map((shot) => shot.id));
+  const validShotIds = new Set(storyboards.map((shot) => shot.id));
 
   return {
     ...state,
