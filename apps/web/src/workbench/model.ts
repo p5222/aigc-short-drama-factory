@@ -1,4 +1,4 @@
-import type { ProjectWorkflow, StoryboardShot, TaskStatus, TaskType } from "@aifilm/shared";
+import type { Project, ProjectWorkflow, ScriptDraft, StoryboardShot, TaskStatus, TaskType } from "@aifilm/shared";
 
 export {
   buildTimelineClipLayout,
@@ -23,6 +23,29 @@ export interface WorkbenchCapabilities {
   timelineEdit: boolean;
   shotCrud: boolean;
   perRunModelOverride: boolean;
+}
+
+export type ContentSceneStatus = "ready" | "risk" | "draft";
+
+export interface ContentSceneRow {
+  id: string;
+  key: SceneKey;
+  source: SceneKey["source"];
+  sourceLabel: "从剧本识别" | "已生成镜头";
+  episodeNo: number;
+  sceneNo: number;
+  title: string;
+  location: string;
+  timeOfDay: string;
+  duration: number;
+  shots: number;
+  characters: string[];
+  status: ContentSceneStatus;
+  risk?: string;
+  lines: string[];
+  dialogue: string[];
+  action: string;
+  hook: string;
 }
 
 export const RELEASE_A_CAPABILITIES: Readonly<WorkbenchCapabilities> = Object.freeze({
@@ -53,6 +76,7 @@ export interface WorkbenchStateInitializers extends Partial<WorkbenchState> {
 
 export type WorkbenchAction =
   | { type: "set-stage"; stage: WorkbenchStage }
+  | { type: "set-content-selection"; episodeNo: number | null; sceneKey: SceneKey | null; storyboards: StoryboardShot[] }
   | { type: "set-episode"; episodeNo: number | null; storyboards: StoryboardShot[] }
   | { type: "set-scene"; sceneKey: SceneKey | null; storyboards: StoryboardShot[] }
   | { type: "set-asset"; asset: ActiveAsset | null }
@@ -77,6 +101,136 @@ export function storyboardScene(value: string): SceneKey {
   return { source: "storyboard", value };
 }
 
+export function collectContentEpisodeNumbers(rows: ContentSceneRow[], configuredEpisodes = 1): number[] {
+  const episodes = new Set<number>();
+  for (let episodeNo = 1; episodeNo <= Math.max(1, configuredEpisodes); episodeNo += 1) {
+    episodes.add(episodeNo);
+  }
+  rows.forEach((row) => episodes.add(Math.max(1, row.episodeNo)));
+  return [...episodes].sort((a, b) => a - b);
+}
+
+export function reconcileContentSelection(
+  requestedEpisodeNo: number | null,
+  requestedSceneKey: SceneKey | null,
+  episodeNumbers: number[],
+  rows: ContentSceneRow[]
+): { activeEpisodeNo: number | null; activeSceneKey: SceneKey | null } {
+  const activeEpisodeNo = requestedEpisodeNo !== null && episodeNumbers.includes(requestedEpisodeNo)
+    ? requestedEpisodeNo
+    : episodeNumbers[0] ?? null;
+  const episodeRows = activeEpisodeNo === null ? [] : rows.filter((row) => row.episodeNo === activeEpisodeNo);
+  const activeScene = episodeRows.find((row) => sceneKeysEqual(row.key, requestedSceneKey)) ?? episodeRows[0];
+  return { activeEpisodeNo, activeSceneKey: activeScene?.key ?? null };
+}
+
+export function buildStoryboardGenerationPayload(project: Pick<Project, "artStyle" | "videoRatio">) {
+  return { artStyle: project.artStyle, videoRatio: project.videoRatio };
+}
+
+export function buildContentSceneRows(script: ScriptDraft | undefined, storyboards: StoryboardShot[]): ContentSceneRow[] {
+  if (storyboards.length) {
+    const groups = new Map<string, StoryboardShot[]>();
+    for (const shot of storyboards) {
+      const key = `${shot.episodeNo}:${shot.sceneNo}`;
+      groups.set(key, [...(groups.get(key) ?? []), shot]);
+    }
+
+    return [...groups.entries()]
+      .map(([key, shots]) => buildStoryboardSceneRow(key, shots))
+      .sort((a, b) => a.episodeNo - b.episodeNo || a.sceneNo - b.sceneNo);
+  }
+
+  if (!script?.content.trim()) return [];
+  return splitScriptIntoSceneCandidates(script.content).slice(0, 12).map((lines, index) => {
+    const title = inferScriptSceneTitle(lines, index);
+    const id = `script-scene-${index + 1}`;
+    return {
+      id,
+      key: derivedScene(id),
+      source: "derived",
+      sourceLabel: "从剧本识别",
+      episodeNo: 1,
+      sceneNo: index + 1,
+      title,
+      location: inferLocation(title),
+      timeOfDay: inferSceneTime(title),
+      duration: 0,
+      shots: 0,
+      characters: [],
+      status: "draft",
+      lines: lines.slice(0, 5),
+      dialogue: lines.filter((line) => /[:：]|“|”|「|」/.test(line)).slice(0, 4),
+      action: lines.find((line) => !/[:：]|“|”|「|」/.test(line)) ?? "",
+      hook: ""
+    } satisfies ContentSceneRow;
+  });
+}
+
+function buildStoryboardSceneRow(key: string, shots: StoryboardShot[]): ContentSceneRow {
+  const ordered = [...shots].sort((a, b) => a.shotNo - b.shotNo);
+  const first = ordered[0];
+  const dialogue = ordered.flatMap((shot) => [shot.dialogue, shot.voiceOver].filter(Boolean)).slice(0, 5);
+  const characters = [...new Set(ordered.flatMap((shot) => shot.characters).filter(Boolean))];
+  const duration = ordered.reduce((sum, shot) => sum + (shot.duration || 0), 0);
+  const finalShot = ordered.at(-1);
+  return {
+    id: `scene-${key}`,
+    key: storyboardScene(key),
+    source: "storyboard",
+    sourceLabel: "已生成镜头",
+    episodeNo: first.episodeNo,
+    sceneNo: first.sceneNo,
+    title: first.scene || `场次 ${first.sceneNo}`,
+    location: inferLocation(first.scene),
+    timeOfDay: inferSceneTime(first.scene),
+    duration,
+    shots: ordered.length,
+    characters,
+    status: "ready",
+    lines: ordered.map((shot) => shot.pictureDesc).filter(Boolean).slice(0, 6),
+    dialogue,
+    action: ordered.map((shot) => shot.action || shot.cameraMovement || shot.pictureDesc).filter(Boolean).slice(0, 3).join(" / "),
+    hook: finalShot?.voiceOver || finalShot?.dialogue || finalShot?.emotion || ""
+  };
+}
+
+function splitScriptIntoSceneCandidates(content: string): string[][] {
+  const rawBlocks = content
+    .split(/\n{2,}|(?=第[一二三四五六七八九十0-9]+[场幕])|(?=【[^】]+】)/)
+    .map((block) => block.trim())
+    .filter(Boolean);
+  if (rawBlocks.length > 1) return rawBlocks.map((block) => block.split(/\n+/).map((line) => line.trim()).filter(Boolean));
+  const lines = content.split(/\n+/).map((line) => line.trim()).filter(Boolean);
+  const chunks: string[][] = [];
+  for (let index = 0; index < lines.length; index += 3) chunks.push(lines.slice(index, index + 3));
+  return chunks;
+}
+
+function inferScriptSceneTitle(lines: string[], index: number): string {
+  const first = lines[0] ?? "";
+  const bracket = first.match(/【([^】]+)】/);
+  if (bracket?.[1]) return bracket[1].slice(0, 18);
+  const marker = first.match(/第[一二三四五六七八九十0-9]+[场幕][：:\s]*(.{0,18})/);
+  return marker?.[1]?.trim() || first.slice(0, 14) || `场次 ${index + 1}`;
+}
+
+function inferLocation(scene: string): string {
+  const clean = scene.replace(/[【】]/g, "").trim();
+  return clean.split(/[·｜|、,， -]/).map((part) => part.trim()).find(Boolean) || "待定场景";
+}
+
+function inferSceneTime(scene: string): string {
+  if (/夜|晚|凌晨|黑/.test(scene)) return "夜晚";
+  if (/雨|阴|雾/.test(scene)) return "雨天";
+  if (/午|白天|日/.test(scene)) return "白天";
+  return "未提供";
+}
+
+function sceneKeysEqual(left: SceneKey, right: SceneKey | null): boolean {
+  return Boolean(right && left.source === right.source && left.value === right.value);
+}
+
 export function createWorkbenchState(initial: WorkbenchStateInitializers = {}): WorkbenchState {
   return {
     activeStage: initial.activeStage ?? "content",
@@ -99,6 +253,21 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
         activeStage: action.stage,
         selectedShotIds: state.activeStage === "shots" && action.stage !== "shots" ? [] : state.selectedShotIds
       };
+    case "set-content-selection": {
+      const sceneShotIds = action.sceneKey?.source === "storyboard"
+        ? action.storyboards
+          .filter((shot) => `${shot.episodeNo}:${shot.sceneNo}` === action.sceneKey?.value)
+          .map((shot) => shot.id)
+        : [];
+      return {
+        ...state,
+        activeEpisodeNo: action.episodeNo,
+        activeSceneKey: action.sceneKey,
+        activeShotId: state.activeShotId && sceneShotIds.includes(state.activeShotId)
+          ? state.activeShotId
+          : sceneShotIds[0] ?? null
+      };
+    }
     case "set-episode": {
       if (action.episodeNo === null) {
         return { ...state, activeEpisodeNo: null, activeSceneKey: null, activeShotId: null };

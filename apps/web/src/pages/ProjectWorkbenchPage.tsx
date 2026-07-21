@@ -2,13 +2,11 @@ import {
   AlertTriangle,
   BookOpenCheck,
   CheckCircle2,
-  Clock3,
   Copy,
   Download,
   Film,
   FileText,
   Images,
-  ListChecks,
   Loader2,
   MapPin,
   MessageSquareText,
@@ -24,7 +22,7 @@ import {
   WandSparkles,
   X
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 import type {
   AssetItem,
   CharacterProfile,
@@ -34,7 +32,6 @@ import type {
   Project,
   ProjectWorkflow,
   QualityReport,
-  ScriptDraft,
   StoryboardProductionPackage,
   StoryboardShot,
   ShowcaseWork,
@@ -52,14 +49,10 @@ import {
 import { api } from "../lib/api";
 import { ProductionWorkspace } from "../workbench/components/ProductionWorkspace";
 import { WorkbenchHeader } from "../workbench/components/WorkbenchHeader";
-import type { WorkbenchStage, WorkbenchTheme } from "../workbench/model";
-import {
-  buildTimelineClipLayout,
-  collectEpisodeNumbers,
-  filterSceneRows,
-  resolveSceneSelection,
-  type SceneListFilter
-} from "./projectWorkbenchModel";
+import { WorkbenchProvider } from "../workbench/WorkbenchContext";
+import { ContentStage } from "../workbench/stages/ContentStage";
+import { createWorkbenchState, workbenchReducer, type WorkbenchStage, type WorkbenchTheme } from "../workbench/model";
+import { buildTimelineClipLayout } from "./projectWorkbenchModel";
 import "./ProjectStudioV4.css";
 
 interface ProjectWorkbenchPageProps {
@@ -88,7 +81,7 @@ const statusText: Record<TaskStatus, string> = {
 const failedImageModels = new Set(["wanx-v1", "wan2.5-t2i-preview"]);
 
 export function ProjectWorkbenchPage({ workflow, providers, modelPrices, theme, onThemeChange, onBack, onRefresh }: ProjectWorkbenchPageProps) {
-  const [activeTab, setActiveTab] = useState<WorkbenchStage>("content");
+  const [workbenchState, dispatch] = useReducer(workbenchReducer, undefined, createWorkbenchState);
   const [shotWorkspaceView, setShotWorkspaceView] = useState<ShotWorkspaceView>("director");
   const [railOpen, setRailOpen] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(false);
@@ -114,11 +107,18 @@ export function ProjectWorkbenchPage({ workflow, providers, modelPrices, theme, 
     void api.storyboardProductionPackage(workflow.project.id).then(setProductionPackage).catch(() => setProductionPackage(null));
   }, [workflow?.project.id, workflow?.assets.length, workflow?.storyboards.length]);
 
+  useEffect(() => {
+    if (!workflow) return;
+    dispatch({ type: "reconcile-workflow", storyboards: workflow.storyboards });
+  }, [workflow]);
+
   if (!workflow) {
     return <div className="page-stack"><section className="panel centered-panel">正在加载项目生产数据...</section></div>;
   }
 
   const { project, script, characters, storyboards } = workflow;
+  const activeTab = workbenchState.activeStage;
+  const setActiveTab = (stage: WorkbenchStage) => dispatch({ type: "set-stage", stage });
   const assets = workflow.assets ?? [];
   const roleAssets = assets.filter((asset) => asset.type === "role" || asset.type === "role_derivative" || asset.type === "role_reference");
   const sceneAssets = assets.filter((asset) => asset.type === "scene" || asset.type === "prop");
@@ -228,6 +228,14 @@ export function ProjectWorkbenchPage({ workflow, providers, modelPrices, theme, 
   }
 
   return (
+    <WorkbenchProvider
+      state={workbenchState}
+      dispatch={dispatch}
+      saveState="unchanged"
+      workflow={workflow}
+      theme={theme}
+      onThemeChange={onThemeChange}
+    >
     <div className="wb-shell project-workbench" data-theme={theme}>
       <WorkbenchHeader
         projectName={project.name}
@@ -249,7 +257,15 @@ export function ProjectWorkbenchPage({ workflow, providers, modelPrices, theme, 
           setInspectorOpen(true);
         }}
       />
-      <ProductionWorkspace
+      {activeTab === "content" ? (
+        <ContentStage
+          railOpen={railOpen}
+          inspectorOpen={inspectorOpen}
+          onCloseRail={() => setRailOpen(false)}
+          onCloseInspector={() => setInspectorOpen(false)}
+          onRefresh={onRefresh}
+        />
+      ) : <ProductionWorkspace
         rail={(
           <div className="wb-rail-summary">
             <h2 className="wb-region-heading">{pipelineSteps.find((step) => step.id === activeTab)?.label}</h2>
@@ -267,7 +283,6 @@ export function ProjectWorkbenchPage({ workflow, providers, modelPrices, theme, 
             {operation ? <InlineProgress operation={operation} elapsed={operationElapsed} /> : null}
             {message ? <p className="success-text studio-v4-message">{message}</p> : null}
             {error ? <p className="danger-text studio-v4-message">{error}</p> : null}
-            {activeTab === "content" ? <ScriptBoard script={script} characters={characters} storyboards={storyboards} episodeCount={project.episodes} isBusy={isBusy} onOpenCharacters={() => setActiveTab("assets")} onGenerateStoryboards={() => void runWorkflowAction("storyboard")} /> : null}
             {activeTab === "assets" ? <CreatorCharacterBoard project={project} providers={providers} modelPrices={modelPrices} characters={characters} roleAssets={roleAssets} sceneAssets={sceneAssets} qualityReports={qualityReports} feedbacks={feedbacks} isBusy={isBusy} onRefresh={refreshProject} onSaveModelRoutes={saveModelRoutes} onPreview={setPreviewImage} /> : null}
             {activeTab === "shots" ? (
               <div className="studio-v4-shots-stage">
@@ -301,189 +316,11 @@ export function ProjectWorkbenchPage({ workflow, providers, modelPrices, theme, 
         inspectorOpen={inspectorOpen}
         onCloseRail={() => setRailOpen(false)}
         onCloseInspector={() => setInspectorOpen(false)}
-      />
+      />}
       {publishOpen ? <ShowcasePublishModal project={project} storyboards={storyboards} imageAssets={imageAssets} videoAssets={videoAssets} exportJobs={exportJobs} onClose={() => setPublishOpen(false)} /> : null}
       {previewImage ? <ImagePreviewModal preview={previewImage} onClose={() => setPreviewImage(null)} /> : null}
     </div>
-  );
-}
-
-function ScriptBoard({ script, characters, storyboards, episodeCount, isBusy, onOpenCharacters, onGenerateStoryboards }: { script?: ScriptDraft; characters: CharacterProfile[]; storyboards: StoryboardShot[]; episodeCount: number; isBusy: boolean; onOpenCharacters: () => void; onGenerateStoryboards: () => void }) {
-  const [sceneFilter, setSceneFilter] = useState<SceneListFilter>("all");
-  const [selectedSceneId, setSelectedSceneId] = useState("");
-  const sceneRows = useMemo(() => buildScriptSceneRows(script, storyboards), [script, storyboards]);
-  const episodeNumbers = useMemo(() => collectEpisodeNumbers(storyboards, episodeCount), [episodeCount, storyboards]);
-  const [activeEpisode, setActiveEpisode] = useState(episodeNumbers[0] ?? 1);
-  const episodeScenes = sceneRows.filter((scene) => scene.episodeNo === activeEpisode);
-  const { visibleRows: filteredScenes, selectedId: resolvedSceneId } = resolveSceneSelection(sceneRows, activeEpisode, sceneFilter, selectedSceneId);
-  const selectedScene = sceneRows.find((scene) => scene.id === resolvedSceneId);
-  const longDialogueCount = episodeScenes.filter((scene) => scene.risk?.includes("台词")).length;
-  const readySceneCount = episodeScenes.filter((scene) => scene.status === "ready" || scene.status === "locked").length;
-  const totalDuration = episodeScenes.reduce((sum, scene) => sum + scene.duration, 0);
-  const riskSceneCount = episodeScenes.filter((scene) => scene.risk).length;
-  const preflightItems = [
-    { label: "剧本可读", done: Boolean(script), detail: script ? "正文与梗概已生成" : "等待剧本生成" },
-    { label: "场次清晰", done: episodeScenes.length > 0, detail: episodeScenes.length ? `本集 ${episodeScenes.length} 个场次` : "尚未拆出场次" },
-    { label: "角色已抽取", done: characters.length > 0, detail: `${characters.length} 个角色候选` },
-    { label: "台词可拆镜", done: longDialogueCount === 0, detail: longDialogueCount ? `${longDialogueCount} 场疑似长台词` : "无明显长台词风险" }
-  ];
-
-  useEffect(() => {
-    if (!episodeNumbers.includes(activeEpisode)) setActiveEpisode(episodeNumbers[0] ?? 1);
-  }, [activeEpisode, episodeNumbers]);
-
-  useEffect(() => {
-    if (selectedSceneId !== resolvedSceneId) setSelectedSceneId(resolvedSceneId);
-  }, [resolvedSceneId, selectedSceneId]);
-
-  function requestStoryboardGeneration() {
-    if (storyboards.length > 0 && !window.confirm("重建分镜表会覆盖现有分镜、分镜图和视频草稿，确认继续？")) return;
-    onGenerateStoryboards();
-  }
-
-  return (
-    <section className="panel script-review-board preworkbench-board script-scene-workbench">
-      <div className="panel-head script-scene-head">
-        <div>
-          <h2>内容策划工作台</h2>
-          <small>在一个阶段完成大纲、分集和剧本分场，确认当前集后再进入资产准备。</small>
-        </div>
-        <div className="inline-actions">
-          <button className="ghost-button" onClick={onOpenCharacters} disabled={!script}><UserRound size={16} />角色场景</button>
-          <button className="primary-button" onClick={requestStoryboardGeneration} disabled={!script || isBusy}>
-            <BookOpenCheck size={18} />{storyboards.length > 0 ? "重建分镜表" : "生成分镜表"}
-          </button>
-        </div>
-      </div>
-
-      <div className="script-episode-bar" aria-label="剧集选择">
-        <div><strong>剧集</strong><span>先选集，再处理该集场次</span></div>
-        <div>
-          {episodeNumbers.map((episodeNo) => {
-            const count = sceneRows.filter((scene) => scene.episodeNo === episodeNo).length;
-            return <button className={activeEpisode === episodeNo ? "active" : ""} key={episodeNo} onClick={() => { setActiveEpisode(episodeNo); setSelectedSceneId(""); }} type="button"><strong>第 {episodeNo} 集</strong><small>{count} 场</small></button>;
-          })}
-        </div>
-      </div>
-
-      <div className="script-scene-layout">
-        <aside className="script-scene-nav">
-          <div className="script-scene-section-head">
-            <div>
-              <h3>剧集与场次</h3>
-              <small>第 {activeEpisode} 集 · {episodeScenes.length} 场 · 预计 {Math.max(totalDuration, 1)} 秒</small>
-            </div>
-            <ListChecks size={17} />
-          </div>
-          <div className="script-scene-filter-row">
-            {[
-              ["all", "全部", episodeScenes.length],
-              ["draft", "未确认", filterSceneRows(sceneRows, activeEpisode, "draft").length],
-              ["risk", "有风险", riskSceneCount],
-              ["ready", "可拆镜", readySceneCount]
-            ].map(([key, label, count]) => (
-              <button className={sceneFilter === key ? "active" : ""} key={key} onClick={() => setSceneFilter(key as typeof sceneFilter)} type="button">{label}<span>{count}</span></button>
-            ))}
-          </div>
-          <div className="script-scene-list">
-            {filteredScenes.map((scene) => (
-              <button className={selectedScene?.id === scene.id ? "active" : ""} key={scene.id} onClick={() => setSelectedSceneId(scene.id)} type="button">
-                <span className={`script-scene-state ${scene.status}`}>{sceneStatusText(scene.status)}</span>
-                <strong>{scene.sceneNo}. {scene.title}</strong>
-                <small><MapPin size={12} />{scene.location}<em>{scene.timeOfDay}</em></small>
-                <small><Clock3 size={12} />{scene.duration || "-"}s · {scene.shots || "待拆"} 镜头</small>
-                {scene.risk ? <b><AlertTriangle size={12} />{scene.risk}</b> : null}
-              </button>
-            ))}
-            {!filteredScenes.length ? <div className="empty-state">当前筛选下没有场次。</div> : null}
-          </div>
-        </aside>
-
-        <main className="script-scene-editor">
-          <div className="script-editor-heading">
-            <div><FileText size={16} /><strong>第 {activeEpisode} 集剧本</strong></div>
-            <span>{selectedScene ? `场 ${selectedScene.sceneNo}` : "未选择场次"}</span>
-          </div>
-          <section className="script-synopsis-panel">
-            <div>
-              <span>剧情梗概</span>
-              <p>{script?.synopsis || "暂无梗概，请先等待剧本生成任务完成。"}</p>
-            </div>
-            <dl>
-              <div><dt>当前集</dt><dd>第 {activeEpisode} 集</dd></div>
-              <div><dt>场次</dt><dd>{episodeScenes.length || "-"}</dd></div>
-              <div><dt>预计时长</dt><dd>{totalDuration || "-"}s</dd></div>
-            </dl>
-          </section>
-          {selectedScene ? (
-            <section className="script-scene-detail">
-              <div className="script-scene-detail-title">
-                <div>
-                  <span>场 {selectedScene.sceneNo}</span>
-                  <h3>{selectedScene.title}</h3>
-                  <small>{selectedScene.location} · {selectedScene.timeOfDay} · {selectedScene.duration || "-"} 秒</small>
-                </div>
-                <span className={`script-scene-state ${selectedScene.status}`}>{sceneStatusText(selectedScene.status)}</span>
-              </div>
-              <div className="script-scene-field-grid">
-                <ScriptSceneField label="场景描述" value={selectedScene.lines[0] || "等待场景描述。"} />
-                <ScriptSceneField label="人物出场" value={selectedScene.characters.length ? selectedScene.characters.join(" / ") : "待从剧本或分镜中抽取角色。"} />
-                <ScriptSceneField label="动作/调度" value={selectedScene.action || "待补充关键动作、走位和镜头承接。"} />
-                <ScriptSceneField label="情绪/钩子" value={selectedScene.hook || "待补充本场情绪转折与结尾钩子。"} />
-              </div>
-              <div className="script-dialogue-panel">
-                <div><MessageSquareText size={16} /><strong>台词 / 旁白</strong><span>{selectedScene.dialogue.length || 0} 条</span></div>
-                {selectedScene.dialogue.length ? selectedScene.dialogue.map((line, index) => <p key={`${line}-${index}`}>{line}</p>) : <p>本场暂无明确台词，后续分镜会以动作和旁白承接。</p>}
-              </div>
-            </section>
-          ) : (
-            <div className="empty-state">暂无剧本内容，请先完成剧本生成。</div>
-          )}
-        </main>
-
-        <aside className="script-preflight-panel script-context-panel">
-          <section className="script-quality-gates">
-            <div className="script-scene-section-head">
-              <div>
-                <h3>预检与生成</h3>
-                <small>{preflightItems.every((item) => item.done) ? "已满足分镜前置条件" : "还有项目需要确认"}</small>
-              </div>
-              <CheckCircle2 size={17} />
-            </div>
-            {preflightItems.map((item) => (
-              <div className={item.done ? "ready" : ""} key={item.label}>
-                <CheckCircle2 size={15} />
-                <strong>{item.label}</strong>
-                <span>{item.detail}</span>
-              </div>
-            ))}
-          </section>
-          <section className="script-episode-summary">
-            <h3>本集概览</h3>
-            <dl>
-              <div><dt>角色</dt><dd>{characters.length}</dd></div>
-              <div><dt>场次</dt><dd>{episodeScenes.length}</dd></div>
-              <div><dt>风险</dt><dd>{riskSceneCount}</dd></div>
-              <div><dt>镜头</dt><dd>{episodeScenes.reduce((sum, scene) => sum + scene.shots, 0) || "待拆"}</dd></div>
-            </dl>
-            {episodeScenes.find((scene) => scene.risk) ? <p><AlertTriangle size={14} />{episodeScenes.find((scene) => scene.risk)?.title}：{episodeScenes.find((scene) => scene.risk)?.risk}</p> : <p><CheckCircle2 size={14} />当前集暂无明显连续性风险。</p>}
-          </section>
-          <button className="primary-button full-button" onClick={requestStoryboardGeneration} disabled={!script || isBusy} type="button">
-            <WandSparkles size={18} />{storyboards.length > 0 ? "重建分镜表" : "生成分镜表"}
-          </button>
-        </aside>
-      </div>
-
-    </section>
-  );
-}
-
-function ScriptSceneField({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="script-scene-field">
-      <span>{label}</span>
-      <p>{value}</p>
-    </div>
+    </WorkbenchProvider>
   );
 }
 
@@ -2333,145 +2170,6 @@ function exportJobLabel(job: ExportJob) {
   if (job.outputKind === "subtitle" || job.type === "subtitle") return "字幕文件";
   if (job.outputKind === "diagnostic_bundle") return "诊断包";
   return "导出任务";
-}
-
-type ScriptSceneStatus = "locked" | "ready" | "risk" | "draft" | "blocked";
-
-type ScriptSceneRow = {
-  id: string;
-  episodeNo: number;
-  sceneNo: number;
-  title: string;
-  location: string;
-  timeOfDay: string;
-  duration: number;
-  shots: number;
-  characters: string[];
-  status: ScriptSceneStatus;
-  risk?: string;
-  lines: string[];
-  dialogue: string[];
-  action: string;
-  hook: string;
-};
-
-function buildScriptSceneRows(script: ScriptDraft | undefined, storyboards: StoryboardShot[]): ScriptSceneRow[] {
-  if (storyboards.length) {
-    const groups = new Map<string, StoryboardShot[]>();
-    storyboards.forEach((shot) => {
-      const key = `${shot.episodeNo}-${shot.sceneNo}-${shot.scene || "未命名场景"}`;
-      groups.set(key, [...(groups.get(key) ?? []), shot]);
-    });
-
-    return Array.from(groups.values())
-      .map((shots, index) => {
-        const ordered = [...shots].sort((a, b) => a.shotNo - b.shotNo);
-        const first = ordered[0];
-        const dialogue = ordered.flatMap((shot) => [shot.dialogue, shot.voiceOver].filter(Boolean)).slice(0, 5);
-        const characters = [...new Set(ordered.flatMap((shot) => shot.characters).filter(Boolean))];
-        const duration = ordered.reduce((sum, shot) => sum + (shot.duration || 0), 0);
-        const longDialogue = dialogue.find((line) => line.length > 42);
-        const risk = !characters.length
-          ? "角色未绑定"
-          : longDialogue
-            ? "台词偏长，建议拆镜"
-            : duration > 48
-              ? "场次偏长，建议加节拍"
-              : undefined;
-        return {
-          id: `scene-${first.episodeNo}-${first.sceneNo}-${index}`,
-          episodeNo: first.episodeNo || 1,
-          sceneNo: first.sceneNo || index + 1,
-          title: first.scene || `场次 ${index + 1}`,
-          location: inferLocation(first.scene),
-          timeOfDay: inferSceneTime(first.scene, index),
-          duration,
-          shots: ordered.length,
-          characters,
-          status: risk ? "risk" : "ready",
-          risk,
-          lines: ordered.map((shot) => shot.pictureDesc).filter(Boolean).slice(0, 6),
-          dialogue,
-          action: ordered.map((shot) => shot.action || shot.cameraMovement || shot.pictureDesc).filter(Boolean).slice(0, 3).join(" / "),
-          hook: [...ordered].reverse().find((shot) => shot.voiceOver || shot.dialogue || shot.emotion)?.voiceOver
-            || [...ordered].reverse().find((shot) => shot.dialogue || shot.emotion)?.dialogue
-            || ordered[ordered.length - 1]?.emotion
-            || ""
-        } satisfies ScriptSceneRow;
-      })
-      .sort((a, b) => a.sceneNo - b.sceneNo);
-  }
-
-  if (!script?.content?.trim()) return [];
-
-  const chunks = splitScriptIntoSceneCandidates(script.content).slice(0, 12);
-  return chunks.map((chunk, index) => {
-    const title = inferScriptSceneTitle(chunk, index);
-    const longLine = chunk.lines.find((line) => line.length > 58);
-    return {
-      id: `script-scene-${index + 1}`,
-      episodeNo: 1,
-      sceneNo: index + 1,
-      title,
-      location: inferLocation(title),
-      timeOfDay: inferSceneTime(title, index),
-      duration: Math.max(35, Math.min(90, chunk.lines.join("").length)),
-      shots: 0,
-      characters: [],
-      status: longLine ? "risk" : "draft",
-      risk: longLine ? "段落偏长，生成分镜前建议拆场" : undefined,
-      lines: chunk.lines.slice(0, 5),
-      dialogue: chunk.lines.filter((line) => /[:：]|“|”|「|」/.test(line)).slice(0, 4),
-      action: chunk.lines.find((line) => !/[:：]|“|”|「|」/.test(line)) ?? "",
-      hook: chunk.lines[chunk.lines.length - 1] ?? ""
-    } satisfies ScriptSceneRow;
-  });
-}
-
-function splitScriptIntoSceneCandidates(content: string) {
-  const rawBlocks = content
-    .split(/\n{2,}|(?=第[一二三四五六七八九十0-9]+[场幕])|(?=【[^】]+】)/)
-    .map((block) => block.trim())
-    .filter(Boolean);
-  const source = rawBlocks.length > 1 ? rawBlocks : content.split(/\n+/).map((line) => line.trim()).filter(Boolean);
-  const chunks: Array<{ lines: string[] }> = [];
-  for (let index = 0; index < source.length; index += rawBlocks.length > 1 ? 1 : 3) {
-    chunks.push({ lines: source.slice(index, index + (rawBlocks.length > 1 ? 1 : 3)) });
-  }
-  return chunks;
-}
-
-function inferScriptSceneTitle(chunk: { lines: string[] }, index: number) {
-  const first = chunk.lines[0] ?? "";
-  const bracket = first.match(/【([^】]+)】/);
-  if (bracket?.[1]) return bracket[1].slice(0, 18);
-  const sceneMarker = first.match(/第[一二三四五六七八九十0-9]+[场幕][：:\s]*(.{0,18})/);
-  if (sceneMarker?.[1]) return sceneMarker[1].trim() || `场次 ${index + 1}`;
-  return first.slice(0, 14) || `场次 ${index + 1}`;
-}
-
-function inferLocation(scene: string) {
-  const clean = scene.replace(/[【】]/g, "").trim();
-  const parts = clean.split(/[·｜|、,， -]/).map((part) => part.trim()).filter(Boolean);
-  return parts[0] || clean || "待定场景";
-}
-
-function inferSceneTime(scene: string, index: number) {
-  if (/夜|晚|凌晨|黑/.test(scene)) return "夜晚";
-  if (/雨|阴|雾/.test(scene)) return "雨天";
-  if (/午|白天|日/.test(scene)) return "白天";
-  return index % 3 === 0 ? "白天" : index % 3 === 1 ? "下午" : "夜晚";
-}
-
-function sceneStatusText(status: ScriptSceneStatus) {
-  const labels: Record<ScriptSceneStatus, string> = {
-    locked: "锁定",
-    ready: "可拆镜",
-    risk: "需复核",
-    draft: "草稿",
-    blocked: "阻塞"
-  };
-  return labels[status];
 }
 
 function fileToDataUrl(file: File) {

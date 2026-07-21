@@ -1,12 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { GenerationTask, ProjectWorkflow, StoryboardShot, TaskStatus, TaskType } from "@aifilm/shared";
+import type { GenerationTask, Project, ProjectWorkflow, ScriptDraft, StoryboardShot, TaskStatus, TaskType } from "@aifilm/shared";
 import {
   RELEASE_A_CAPABILITIES,
+  buildContentSceneRows,
+  buildStoryboardGenerationPayload,
   buildTaskSummary,
+  collectContentEpisodeNumbers,
   createWorkbenchState,
   derivedScene,
   nextWorkbenchTheme,
+  reconcileContentSelection,
   reconcileSelection,
   resolveThemePreference,
   storyboardScene,
@@ -56,6 +60,18 @@ function task(id: string, type: TaskType, status: TaskStatus): GenerationTask {
 
 function workflow(storyboards: StoryboardShot[], tasks: GenerationTask[] = []): ProjectWorkflow {
   return { storyboards, tasks } as ProjectWorkflow;
+}
+
+function script(content: string): ScriptDraft {
+  return {
+    id: "script-1",
+    projectId: "project-1",
+    name: "测试剧本",
+    content,
+    synopsis: "一段测试梗概",
+    version: 1,
+    createdAt: "2026-07-20T00:00:00.000Z"
+  };
 }
 
 test("release A hides every unsupported command", () => {
@@ -219,6 +235,45 @@ test("clears selections when a rebuild has no valid scene or shot keys", () => {
   assert.equal(rebuilt.activeEpisodeNo, null);
   assert.equal(rebuilt.activeSceneKey, null);
   assert.equal(rebuilt.activeShotId, null);
+});
+
+test("collects every configured episode while keeping real storyboard episodes", () => {
+  const rows = buildContentSceneRows(undefined, [shot("e3-s1", 3, 1)]);
+  assert.deepEqual(collectContentEpisodeNumbers(rows, 2), [1, 2, 3]);
+});
+
+test("labels script-derived scenes as 从剧本识别", () => {
+  const rows = buildContentSceneRows(script("【旧车站 夜】\n林夏：你终于来了。\n她合上雨伞。"), []);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]?.source, "derived");
+  assert.equal(rows[0]?.sourceLabel, "从剧本识别");
+  assert.deepEqual(rows[0]?.key, derivedScene("script-scene-1"));
+});
+
+test("reconciles content selection to one scene in the active episode", () => {
+  const rows = buildContentSceneRows(undefined, [
+    shot("e1-s1", 1, 1),
+    shot("e1-s2", 1, 2),
+    shot("e2-s1", 2, 1)
+  ]);
+  const selection = reconcileContentSelection(1, storyboardScene("1:9"), [1, 2], rows);
+  assert.equal(selection.activeEpisodeNo, 1);
+  assert.deepEqual(selection.activeSceneKey, storyboardScene("1:1"));
+});
+
+test("keeps an explicitly selected empty second episode empty", () => {
+  const rows = buildContentSceneRows(script("【第一场】\n只有第一集的内容。"), []);
+  const selection = reconcileContentSelection(2, derivedScene("script-scene-1"), [1, 2], rows);
+  assert.equal(selection.activeEpisodeNo, 2);
+  assert.equal(selection.activeSceneKey, null);
+});
+
+test("storyboard payload preserves the project's art style and video ratio", () => {
+  const project = { artStyle: "电影写实", videoRatio: "9:16" } as Project;
+  assert.deepEqual(buildStoryboardGenerationPayload(project), {
+    artStyle: "电影写实",
+    videoRatio: "9:16"
+  });
 });
 
 test("summarizes only real task type and status counts", () => {
