@@ -12,12 +12,14 @@ import {
   Loader2,
   MapPin,
   MessageSquareText,
+  Moon,
   Pause,
   Play,
   RefreshCw,
   Save,
   SlidersHorizontal,
   Sparkles,
+  Sun,
   Trash2,
   Upload,
   UserRound,
@@ -57,7 +59,7 @@ import {
   resolveSceneSelection,
   type SceneListFilter
 } from "./projectWorkbenchModel";
-import type { WorkbenchTheme } from "../workbench/model";
+import { nextWorkbenchTheme, type WorkbenchTheme } from "../workbench/model";
 import "./ProjectStudioV4.css";
 
 interface ProjectWorkbenchPageProps {
@@ -86,7 +88,7 @@ const statusText: Record<TaskStatus, string> = {
 
 const failedImageModels = new Set(["wanx-v1", "wan2.5-t2i-preview"]);
 
-export function ProjectWorkbenchPage({ workflow, providers, modelPrices, theme, onBack, onRefresh }: ProjectWorkbenchPageProps) {
+export function ProjectWorkbenchPage({ workflow, providers, modelPrices, theme, onThemeChange, onBack, onRefresh }: ProjectWorkbenchPageProps) {
   const [activeTab, setActiveTab] = useState<WorkbenchTab>("content");
   const [shotWorkspaceView, setShotWorkspaceView] = useState<ShotWorkspaceView>("director");
   const [message, setMessage] = useState("");
@@ -234,6 +236,14 @@ export function ProjectWorkbenchPage({ workflow, providers, modelPrices, theme, 
         </div>
         <div className="workbench-command-side">
           <div className="inline-actions workbench-hero-actions">
+            <button
+              className="ghost-button"
+              type="button"
+              aria-label={theme === "dark" ? "切换到浅色主题" : "切换到深色主题"}
+              onClick={() => onThemeChange(nextWorkbenchTheme(theme))}
+            >
+              {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
+            </button>
             <button className="ghost-button" onClick={onBack}>返回作品列表</button>
             <button className="ghost-button" onClick={() => void refreshProject()}><RefreshCw size={18} />刷新</button>
           </div>

@@ -6,6 +6,7 @@ import {
   buildTaskSummary,
   createWorkbenchState,
   derivedScene,
+  nextWorkbenchTheme,
   reconcileSelection,
   resolveThemePreference,
   storyboardScene,
@@ -91,6 +92,11 @@ test("reads system preference lazily only when storage has no valid theme", () =
   assert.equal(systemPreferenceReads, 0);
   assert.equal(resolveThemePreference(null, readSystemPreference), "light");
   assert.equal(systemPreferenceReads, 1);
+});
+
+test("returns the opposite theme for a manual toggle", () => {
+  assert.equal(nextWorkbenchTheme("light"), "dark");
+  assert.equal(nextWorkbenchTheme("dark"), "light");
 });
 
 test("creates conservative state and scene keys", () => {

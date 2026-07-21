@@ -165,6 +165,10 @@ export function reconcileSelection(state: WorkbenchState, storyboards: Storyboar
 
 export type WorkbenchTheme = "light" | "dark";
 
+export function nextWorkbenchTheme(theme: WorkbenchTheme): WorkbenchTheme {
+  return theme === "dark" ? "light" : "dark";
+}
+
 export function resolveThemePreference(
   stored: string | null,
   systemPrefersDark: boolean | (() => boolean)
