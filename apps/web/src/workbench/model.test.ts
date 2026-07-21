@@ -248,6 +248,19 @@ test("labels script-derived scenes as 从剧本识别", () => {
   assert.equal(rows[0]?.source, "derived");
   assert.equal(rows[0]?.sourceLabel, "从剧本识别");
   assert.deepEqual(rows[0]?.key, derivedScene("script-scene-1"));
+  assert.equal(rows[0]?.emotion, "");
+});
+
+test("uses only real shot emotion for content metadata", () => {
+  const dialogueOnly = {
+    ...shot("dialogue-only", 1, 1),
+    dialogue: "我很害怕。",
+    voiceOver: "空气令人不安。"
+  };
+  assert.equal(buildContentSceneRows(undefined, [dialogueOnly])[0]?.emotion, "");
+
+  const realEmotion = { ...shot("emotion", 1, 1), emotion: "紧张" };
+  assert.equal(buildContentSceneRows(undefined, [dialogueOnly, realEmotion])[0]?.emotion, "紧张");
 });
 
 test("reconciles content selection to one scene in the active episode", () => {

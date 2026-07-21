@@ -45,7 +45,7 @@ export interface ContentSceneRow {
   lines: string[];
   dialogue: string[];
   action: string;
-  hook: string;
+  emotion: string;
 }
 
 export const RELEASE_A_CAPABILITIES: Readonly<WorkbenchCapabilities> = Object.freeze({
@@ -162,7 +162,7 @@ export function buildContentSceneRows(script: ScriptDraft | undefined, storyboar
       lines: lines.slice(0, 5),
       dialogue: lines.filter((line) => /[:：]|“|”|「|」/.test(line)).slice(0, 4),
       action: lines.find((line) => !/[:：]|“|”|「|」/.test(line)) ?? "",
-      hook: ""
+      emotion: ""
     } satisfies ContentSceneRow;
   });
 }
@@ -173,7 +173,6 @@ function buildStoryboardSceneRow(key: string, shots: StoryboardShot[]): ContentS
   const dialogue = ordered.flatMap((shot) => [shot.dialogue, shot.voiceOver].filter(Boolean)).slice(0, 5);
   const characters = [...new Set(ordered.flatMap((shot) => shot.characters).filter(Boolean))];
   const duration = ordered.reduce((sum, shot) => sum + (shot.duration || 0), 0);
-  const finalShot = ordered.at(-1);
   return {
     id: `scene-${key}`,
     key: storyboardScene(key),
@@ -191,7 +190,7 @@ function buildStoryboardSceneRow(key: string, shots: StoryboardShot[]): ContentS
     lines: ordered.map((shot) => shot.pictureDesc).filter(Boolean).slice(0, 6),
     dialogue,
     action: ordered.map((shot) => shot.action || shot.cameraMovement || shot.pictureDesc).filter(Boolean).slice(0, 3).join(" / "),
-    hook: finalShot?.voiceOver || finalShot?.dialogue || finalShot?.emotion || ""
+    emotion: ordered.find((shot) => shot.emotion?.trim())?.emotion?.trim() ?? ""
   };
 }
 
