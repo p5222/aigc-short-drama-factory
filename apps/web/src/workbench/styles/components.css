@@ -143,14 +143,6 @@
   display: none;
 }
 
-.wb-more-menu > summary {
-  list-style: none;
-}
-
-.wb-more-menu > summary::-webkit-details-marker {
-  display: none;
-}
-
 .wb-more-popover {
   position: absolute;
   z-index: 50;

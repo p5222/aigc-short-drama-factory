@@ -7,6 +7,7 @@ import {
   RefreshCw,
   Sun
 } from "lucide-react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { WorkbenchSaveState } from "../WorkbenchContext";
 import { nextWorkbenchTheme, type WorkbenchStage, type WorkbenchTheme } from "../model";
 
@@ -53,6 +54,44 @@ export function WorkbenchHeader({
   onOpenRail,
   onOpenInspector
 }: WorkbenchHeaderProps) {
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreMenuId = useId();
+  const moreMenuRef = useRef<HTMLDivElement>(null);
+  const moreTriggerRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!moreOpen) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      if (event.target instanceof Node && !moreMenuRef.current?.contains(event.target)) {
+        setMoreOpen(false);
+        moreTriggerRef.current?.focus();
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setMoreOpen(false);
+      moreTriggerRef.current?.focus();
+    };
+    const media = window.matchMedia("(max-width: 1439px)");
+    const handleMediaChange = (event: MediaQueryListEvent) => {
+      if (!event.matches) setMoreOpen(false);
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    media.addEventListener("change", handleMediaChange);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+      media.removeEventListener("change", handleMediaChange);
+    };
+  }, [moreOpen]);
+
+  function closeMoreAndRestoreFocus() {
+    setMoreOpen(false);
+    moreTriggerRef.current?.focus();
+  }
+
   return (
     <header className="wb-header">
       <div className="wb-header__project">
@@ -112,28 +151,41 @@ export function WorkbenchHeader({
         >
           {theme === "dark" ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
         </button>
-        <details className="wb-more-menu">
-          <summary className="wb-icon-button">
+        <div ref={moreMenuRef} className="wb-more-menu">
+          <button
+            ref={moreTriggerRef}
+            className="wb-icon-button"
+            type="button"
+            aria-expanded={moreOpen}
+            aria-controls={moreMenuId}
+            onClick={() => setMoreOpen((current) => !current)}
+          >
             <Ellipsis aria-hidden="true" />
             <span className="wb-sr-only">更多操作</span>
-          </summary>
-          <div className="wb-more-popover">
+          </button>
+          {moreOpen ? <div id={moreMenuId} className="wb-more-popover">
             <span className={`wb-more-save-state wb-save-state--${saveState}`} role="status" aria-live="polite">
               <span>保存状态</span>
               <strong>{saveStateLabels[saveState]}</strong>
             </span>
             {onRefresh ? (
-              <button type="button" onClick={onRefresh}>
+              <button type="button" onClick={() => {
+                onRefresh();
+                closeMoreAndRestoreFocus();
+              }}>
                 <RefreshCw aria-hidden="true" />
                 <span>刷新项目数据</span>
               </button>
             ) : null}
-            <button type="button" onClick={() => onThemeChange(nextWorkbenchTheme(theme))}>
+            <button type="button" onClick={() => {
+              onThemeChange(nextWorkbenchTheme(theme));
+              closeMoreAndRestoreFocus();
+            }}>
               {theme === "dark" ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
               <span>{theme === "dark" ? "切换到浅色主题" : "切换到深色主题"}</span>
             </button>
-          </div>
-        </details>
+          </div> : null}
+        </div>
       </div>
     </header>
   );
