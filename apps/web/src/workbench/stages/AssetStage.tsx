@@ -24,9 +24,13 @@ import { ProductionWorkspace } from "../components/ProductionWorkspace";
 import {
   buildAssetFeedbackTarget,
   buildCharacterGenerationPayload,
+  commitMutationThenSync,
   deriveSceneAssetList,
   listCharacterReferenceAssets,
   reconcileActiveAsset,
+  resolveImageRoutePair,
+  resolveImageUnitCredits,
+  updateCharacterReferenceDraft,
   resolveCharacterIdentityAsset,
   type ActiveAsset
 } from "../model";
@@ -87,10 +91,11 @@ function LoadedAssetStage({
     && (!feedbackTarget.assetId || item.assetId === feedbackTarget.assetId)
   )).length;
 
-  const [referenceUrl, setReferenceUrl] = useState("");
+  const [referenceDrafts, setReferenceDrafts] = useState<Record<string, string>>({});
   const [pendingKey, setPendingKey] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [refreshRequired, setRefreshRequired] = useState<{ success: string } | null>(null);
 
   useEffect(() => {
     if (sameActiveAsset(state.activeAsset, activeAsset)) return;
@@ -103,40 +108,64 @@ function LoadedAssetStage({
     dispatch({ type: "set-asset", asset });
   }
 
-  async function run(key: string, action: () => Promise<unknown>, success: string) {
+  async function runMutation(key: string, action: () => Promise<unknown>, success: string): Promise<boolean> {
     setPendingKey(key);
     setMessage("");
     setError("");
-    try {
-      await action();
-      await onRefresh(project.id);
+    const result = await commitMutationThenSync(action, () => onRefresh(project.id));
+    if (result.status === "mutation-failed") {
+      setError(errorMessage(result.error, "操作失败，请稍后重试。"));
+      setPendingKey("");
+      return false;
+    }
+    if (result.status === "sync-required") {
+      setRefreshRequired({ success });
+      setMessage(`${success} 项目数据暂未刷新，请重试刷新；不会重复提交生成或保存。`);
+    } else {
+      setRefreshRequired(null);
       setMessage(success);
+    }
+    setPendingKey("");
+    return true;
+  }
+
+  async function retryRefresh() {
+    if (!refreshRequired) return;
+    setPendingKey("refresh");
+    setError("");
+    try {
+      await onRefresh(project.id);
+      setMessage(`${refreshRequired.success} 项目数据已刷新。`);
+      setRefreshRequired(null);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "操作失败，请稍后重试。");
+      setMessage(`${refreshRequired.success} 项目数据仍未刷新，但操作不会重复提交。`);
+      setError(errorMessage(cause, "刷新失败，请稍后重试。"));
     } finally {
       setPendingKey("");
     }
   }
 
-  async function saveReference(url: string) {
-    if (!activeCharacter || !url.trim()) return;
-    await run(
-      `reference:${activeCharacter.id}`,
-      () => api.setCharacterReferenceImage(project.id, activeCharacter.id, {
+  async function saveReference(character: typeof activeCharacter, url: string) {
+    if (!character || !url.trim()) return;
+    const persisted = await runMutation(
+      `reference:${character.id}`,
+      () => api.setCharacterReferenceImage(project.id, character.id, {
         referenceUrl: url.trim(),
-        description: `${activeCharacter.name} 创作者上传参考设定图`
+        description: `${character.name} 创作者上传参考设定图`
       }),
       "创作者参考图已保存，不会覆盖生成身份板。"
     );
-    setReferenceUrl("");
+    if (persisted) setReferenceDrafts((current) => updateCharacterReferenceDraft(current, character.id, ""));
   }
 
   async function uploadReference(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file) return;
+    const character = activeCharacter;
+    if (!character) return;
     try {
-      await saveReference(await fileToDataUrl(file));
+      await saveReference(character, await fileToDataUrl(file));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "参考图读取失败。");
     }
@@ -144,22 +173,22 @@ function LoadedAssetStage({
 
   function deleteReferences() {
     if (!activeCharacter || !window.confirm(`确认清空「${activeCharacter.name}」的创作者参考图？生成身份板不会被删除。`)) return;
-    void run(
+    void runMutation(
       `reference:${activeCharacter.id}`,
       () => api.deleteCharacterReferenceImage(project.id, activeCharacter.id),
       "创作者参考图已清空，生成身份板保持不变。"
     );
   }
 
-  function generateCurrent() {
+  async function generateCurrent() {
     if (activeCharacter) {
-      void run(
+      await runMutation(
         `generate:${activeCharacter.id}`,
         () => api.generateCharacterImages(project.id, buildCharacterGenerationPayload(activeCharacter.id, Boolean(identityAsset?.referenceUrl))),
         `${activeCharacter.name} 的身份板生成任务已完成。`
       );
     } else if (activeScene) {
-      void run(
+      await runMutation(
         `generate:${activeScene.id}`,
         () => api.generateSceneImage(project.id, activeScene.id),
         `${activeScene.name} 的场景图已生成并进入后续分镜参考。`
@@ -260,9 +289,11 @@ function LoadedAssetStage({
             providers={providers}
             modelPrices={modelPrices}
             disabled={!activeCharacter && !activeScene}
-            pending={pendingKey.startsWith("generate:")}
+            pending={pendingKey.startsWith("generate:") || pendingKey === "refresh"}
+            refreshRequired={Boolean(refreshRequired)}
             actionLabel={activeCharacter ? (identityAsset?.referenceUrl ? "重新生成身份板" : "生成身份板") : activeScene?.referenceUrl ? "重新生成场景图" : "生成场景图"}
             onGenerate={generateCurrent}
+            onRetryRefresh={retryRefresh}
             onRefresh={onRefresh}
           />
           {activeCharacter ? (
@@ -273,7 +304,7 @@ function LoadedAssetStage({
                 {referenceAssets.map((asset) => <button key={asset.id} type="button" onClick={() => asset.referenceUrl && onPreview({ url: asset.referenceUrl, title: `${activeCharacter.name} 参考图` })}><img src={asset.referenceUrl} alt={`${activeCharacter.name} 参考图`} loading="lazy" /></button>)}
                 {!referenceAssets.length ? <span>尚未上传参考图</span> : null}
               </div>
-              <label className="wb-reference-url"><span>图片 URL</span><span><input value={referenceUrl} onChange={(event) => setReferenceUrl(event.target.value)} placeholder="粘贴图片 URL" /><button className="wb-icon-button" type="button" aria-label="保存参考图" disabled={!referenceUrl.trim() || pendingKey.startsWith("reference:")} onClick={() => void saveReference(referenceUrl)}><Save aria-hidden="true" /></button></span></label>
+              <label className="wb-reference-url"><span>图片 URL</span><span><input value={referenceDrafts[activeCharacter.id] ?? ""} onChange={(event) => setReferenceDrafts((current) => updateCharacterReferenceDraft(current, activeCharacter.id, event.target.value))} placeholder="粘贴图片 URL" /><button className="wb-icon-button" type="button" aria-label="保存参考图" disabled={!referenceDrafts[activeCharacter.id]?.trim() || pendingKey.startsWith("reference:")} onClick={() => void saveReference(activeCharacter, referenceDrafts[activeCharacter.id] ?? "")}><Save aria-hidden="true" /></button></span></label>
               <div className="wb-reference-actions">
                 <label className="wb-secondary-button"><Upload aria-hidden="true" />上传参考图<input type="file" accept="image/*" disabled={pendingKey.startsWith("reference:")} onChange={(event) => void uploadReference(event)} /></label>
                 <button className="wb-icon-button wb-icon-button--danger" type="button" aria-label="清空创作者参考图" disabled={!referenceAssets.length || pendingKey.startsWith("reference:")} onClick={deleteReferences}><Trash2 aria-hidden="true" /></button>
@@ -302,41 +333,65 @@ function AssetDetail({ label, value }: { label: string; value: string }) {
   return <section><h2>{label}</h2><p>{value || "未提供"}</p></section>;
 }
 
-function AssetImageRoute({ project, providers, modelPrices, disabled, pending, actionLabel, onGenerate, onRefresh }: { project: Project; providers: ModelProvider[]; modelPrices: ModelPrice[]; disabled: boolean; pending: boolean; actionLabel: string; onGenerate: () => void; onRefresh: (projectId: string) => Promise<ProjectWorkflow> }) {
+function AssetImageRoute({
+  project,
+  providers,
+  modelPrices,
+  disabled,
+  pending,
+  refreshRequired,
+  actionLabel,
+  onGenerate,
+  onRetryRefresh,
+  onRefresh
+}: {
+  project: Project;
+  providers: ModelProvider[];
+  modelPrices: ModelPrice[];
+  disabled: boolean;
+  pending: boolean;
+  refreshRequired: boolean;
+  actionLabel: string;
+  onGenerate: () => Promise<void>;
+  onRetryRefresh: () => Promise<void>;
+  onRefresh: (projectId: string) => Promise<ProjectWorkflow>;
+}) {
   const imageProviders = providers.filter((provider) => provider.modality === "image" && provider.enabled);
-  const [draft, setDraft] = useState(() => routeDraft(project, imageProviders));
+  const [draft, setDraft] = useState(() => routeDraft(project, providers));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const models = (imageProviders.find((provider) => provider.id === draft.imageProvider)?.models ?? [draft.imageModel]).filter((model) => !failedImageModels.has(model));
-  const unitCredits = modelPrices.find((price) => price.enabled && price.modality === "image" && price.providerId === draft.imageProvider && price.model === draft.imageModel)?.unitCredits
-    ?? modelPrices.find((price) => price.enabled && price.modality === "image" && price.model === draft.imageModel)?.unitCredits
-    ?? 8;
+  const selectedProvider = imageProviders.find((provider) => provider.id === draft.imageProvider);
+  const models = selectedProvider?.models.filter((model) => !failedImageModels.has(model)) ?? [];
+  const validPair = models.includes(draft.imageModel);
+  const unitCredits = resolveImageUnitCredits(modelPrices, draft.imageProvider, draft.imageModel);
   const estimate = estimateImageCredits(unitCredits, draft.imageSize, draft.imageQuality);
 
-  useEffect(() => setDraft(routeDraft(project, imageProviders)), [project.id, project.imageProvider, project.imageModel, project.imageSize, project.imageQuality]);
+  useEffect(() => setDraft(routeDraft(project, providers)), [project.id, project.imageProvider, project.imageModel, project.imageSize, project.imageQuality, providers]);
 
   function selectProvider(providerId: string) {
-    const nextModel = imageProviders.find((provider) => provider.id === providerId)?.models.find((model) => !failedImageModels.has(model));
-    setDraft((current) => ({ ...current, imageProvider: providerId, imageModel: nextModel ?? current.imageModel }));
+    const pair = resolveImageRoutePair(providerId, undefined, providers, failedImageModels);
+    setDraft((current) => ({ ...current, ...pair }));
   }
 
   async function applyAndGenerate() {
+    if (!validPair) return;
     setSaving(true);
     setError("");
-    try {
-      await api.updateProjectModelRoutes(project.id, draft);
-      await onRefresh(project.id);
-      onGenerate();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "模型路由保存失败。");
-    } finally {
+    const routeResult = await commitMutationThenSync(
+      () => api.updateProjectModelRoutes(project.id, draft),
+      () => onRefresh(project.id)
+    );
+    if (routeResult.status === "mutation-failed") {
+      setError(errorMessage(routeResult.error, "模型路由保存失败。"));
       setSaving(false);
+      return;
     }
+    await onGenerate();
+    setSaving(false);
   }
 
-  return <section className="wb-route-panel"><header><strong><SlidersHorizontal aria-hidden="true" />图片模型</strong><small>预计 {estimate} 积分</small></header><label><span>渠道</span><select value={draft.imageProvider} onChange={(event) => selectProvider(event.target.value)}>{imageProviders.map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}</select></label><label><span>模型</span><select value={draft.imageModel} onChange={(event) => setDraft((current) => ({ ...current, imageModel: event.target.value }))}>{models.map((model) => <option key={model} value={model}>{model}</option>)}</select></label><div className="wb-route-grid"><label><span>尺寸</span><select value={draft.imageSize} onChange={(event) => setDraft((current) => ({ ...current, imageSize: normalizeImageOutputSize(event.target.value) }))}>{imageOutputSizeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label><label><span>质量</span><select value={draft.imageQuality} onChange={(event) => setDraft((current) => ({ ...current, imageQuality: normalizeImageOutputQuality(event.target.value) }))}>{imageOutputQualityOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label></div><button className="wb-primary-button" type="button" disabled={disabled || pending || saving || !draft.imageProvider || !draft.imageModel} onClick={() => void applyAndGenerate()}>{pending || saving ? <Loader2 className="wb-spin" aria-hidden="true" /> : <WandSparkles aria-hidden="true" />}{actionLabel}</button>{error ? <p className="wb-action-feedback--error">{error}</p> : null}</section>;
+  return <section className="wb-route-panel"><header><strong><SlidersHorizontal aria-hidden="true" />图片模型</strong><small>预计 {estimate} 积分</small></header><label><span>渠道</span><select value={draft.imageProvider} onChange={(event) => selectProvider(event.target.value)}>{imageProviders.filter((provider) => provider.models.some((model) => !failedImageModels.has(model))).map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}</select></label><label><span>模型</span><select value={draft.imageModel} onChange={(event) => setDraft((current) => ({ ...current, imageModel: event.target.value }))}>{models.map((model) => <option key={model} value={model}>{model}</option>)}</select></label><div className="wb-route-grid"><label><span>尺寸</span><select value={draft.imageSize} onChange={(event) => setDraft((current) => ({ ...current, imageSize: normalizeImageOutputSize(event.target.value) }))}>{imageOutputSizeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label><label><span>质量</span><select value={draft.imageQuality} onChange={(event) => setDraft((current) => ({ ...current, imageQuality: normalizeImageOutputQuality(event.target.value) }))}>{imageOutputQualityOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label></div><button className="wb-primary-button" type="button" disabled={disabled || pending || saving || (!refreshRequired && !validPair)} onClick={() => void (refreshRequired ? onRetryRefresh() : applyAndGenerate())}>{pending || saving ? <Loader2 className="wb-spin" aria-hidden="true" /> : refreshRequired ? <Save aria-hidden="true" /> : <WandSparkles aria-hidden="true" />}{refreshRequired ? "重试刷新" : actionLabel}</button>{error ? <p className="wb-action-feedback--error">{error}</p> : null}</section>;
 }
-
 function FeedbackForm({ projectId, target, recentCount, disabled, onRefresh }: { projectId: string; target: ReturnType<typeof buildAssetFeedbackTarget>; recentCount: number; disabled: boolean; onRefresh: (projectId: string) => Promise<ProjectWorkflow> }) {
   const [rating, setRating] = useState(4);
   const [usability, setUsability] = useState<UserFeedback["usability"]>("usable");
@@ -350,28 +405,36 @@ function FeedbackForm({ projectId, target, recentCount, disabled, onRefresh }: {
     setSubmitting(true);
     setMessage("");
     setError("");
-    try {
-      await api.submitFeedback({ projectId, assetId: target.assetId, stage: target.stage, rating, usability, tags: [], content, source: "creator_workbench" });
+    const result = await commitMutationThenSync(
+      () => api.submitFeedback({ projectId, assetId: target.assetId, stage: target.stage, rating, usability, tags: [], content, source: "creator_workbench" }),
+      () => onRefresh(projectId)
+    );
+    if (result.status === "mutation-failed") {
+      setError(errorMessage(result.error, "反馈提交失败。"));
+    } else {
       setContent("");
-      setMessage("反馈已回流质量中心。");
-      await onRefresh(projectId);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "反馈提交失败。");
-    } finally {
-      setSubmitting(false);
+      setMessage(result.status === "synced"
+        ? "反馈已回流质量中心。"
+        : "反馈已回流质量中心；当前列表暂未刷新。"
+      );
     }
+    setSubmitting(false);
   }
 
   return <div className="wb-feedback-form"><small>已回流 {recentCount} 条反馈</small><div><label><span>评分</span><select value={rating} onChange={(event) => setRating(Number(event.target.value))}>{[5, 4, 3, 2, 1].map((value) => <option key={value} value={value}>{value} 分</option>)}</select></label><label><span>可用性</span><select value={usability} onChange={(event) => setUsability(event.target.value as UserFeedback["usability"])}><option value="usable">可用</option><option value="barely_usable">勉强可用</option><option value="unusable">不可用</option></select></label></div><label><span>说明</span><textarea value={content} onChange={(event) => setContent(event.target.value)} placeholder="记录需要继续优化的具体问题" /></label><button className="wb-secondary-button" type="button" disabled={disabled || submitting} onClick={() => void submit()}>{submitting ? "提交中" : "提交反馈"}</button>{message ? <p className="wb-action-feedback--success">{message}</p> : null}{error ? <p className="wb-action-feedback--error">{error}</p> : null}</div>;
 }
 
 function routeDraft(project: Project, providers: ModelProvider[]) {
+  const pair = resolveImageRoutePair(project.imageProvider, project.imageModel, providers, failedImageModels);
   return {
-    imageProvider: project.imageProvider ?? providers[0]?.id ?? "",
-    imageModel: project.imageModel && !failedImageModels.has(project.imageModel) ? project.imageModel : "wan2.6-t2i",
+    ...pair,
     imageSize: normalizeImageOutputSize(project.imageSize),
     imageQuality: normalizeImageOutputQuality(project.imageQuality)
   };
+}
+
+function errorMessage(cause: unknown, fallback: string): string {
+  return cause instanceof Error ? cause.message : fallback;
 }
 
 function sameActiveAsset(left: ActiveAsset | null, right: ActiveAsset | null) {

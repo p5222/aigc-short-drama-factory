@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { AssetItem, CharacterProfile, GenerationTask, Project, ProjectWorkflow, ScriptDraft, StoryboardShot, TaskStatus, TaskType } from "@aifilm/shared";
+import type { AssetItem, CharacterProfile, GenerationTask, ModelPrice, ModelProvider, Project, ProjectWorkflow, ScriptDraft, StoryboardShot, TaskStatus, TaskType } from "@aifilm/shared";
 import {
   RELEASE_A_CAPABILITIES,
   buildAssetFeedbackTarget,
@@ -13,14 +13,18 @@ import {
   createWorkbenchState,
   derivedScene,
   listCharacterReferenceAssets,
+  commitMutationThenSync,
   nextWorkbenchTheme,
   reconcileActiveAsset,
   reconcileContentSelection,
   reconcileSelection,
   resolveCharacterIdentityAsset,
+  resolveImageRoutePair,
+  resolveImageUnitCredits,
   resolveThemePreference,
   shouldReconcileStoryboardSelection,
   storyboardScene,
+  updateCharacterReferenceDraft,
   workbenchReducer
 } from "./model.ts";
 
@@ -109,6 +113,14 @@ function asset(id: string, type: AssetItem["type"], relatedCharacterId?: string,
     relatedCharacterId,
     status: referenceUrl ? "succeeded" : "pending"
   };
+}
+
+function imageProvider(id: string, models: string[], enabled = true): ModelProvider {
+  return { id, modality: "image", models, enabled } as ModelProvider;
+}
+
+function imagePrice(providerId: string, model: string, unitCredits: number, enabled = true): ModelPrice {
+  return { providerId, model, unitCredits, enabled, modality: "image" } as ModelPrice;
 }
 
 test("release A hides every unsupported command", () => {
@@ -420,6 +432,18 @@ test("falls back from a missing primary character identity to a generated deriva
   assert.equal(resolveCharacterIdentityAsset(profile, assets)?.id, "generated-derivative");
 });
 
+test("keeps creator reference URL drafts isolated by character", () => {
+  const first = updateCharacterReferenceDraft({}, "char-a", "https://cdn.test/a.jpg");
+  const second = updateCharacterReferenceDraft(first, "char-b", "https://cdn.test/b.jpg");
+  const clearedA = updateCharacterReferenceDraft(second, "char-a", "");
+  assert.deepEqual(second, {
+    "char-a": "https://cdn.test/a.jpg",
+    "char-b": "https://cdn.test/b.jpg"
+  });
+  assert.equal(clearedA["char-a"], "");
+  assert.equal(clearedA["char-b"], "https://cdn.test/b.jpg");
+});
+
 test("derives only real scene and prop assets in workflow order", () => {
   const assets = [
     asset("role", "role"),
@@ -462,6 +486,69 @@ test("builds exact generation and feedback targets for the selected asset", () =
     assetId: undefined,
     label: "角色身份板反馈"
   });
+});
+
+test("classifies mutation failure without attempting workflow sync", async () => {
+  let syncCalls = 0;
+  const mutationError = new Error("mutation failed");
+  const result = await commitMutationThenSync(
+    async () => { throw mutationError; },
+    async () => { syncCalls += 1; }
+  );
+  assert.equal(result.status, "mutation-failed");
+  assert.equal(result.error, mutationError);
+  assert.equal(syncCalls, 0);
+});
+
+test("preserves committed mutation when workflow sync fails", async () => {
+  let mutationCalls = 0;
+  const syncError = new Error("refresh failed");
+  const result = await commitMutationThenSync(
+    async () => { mutationCalls += 1; return { id: "asset-1" }; },
+    async () => { throw syncError; }
+  );
+  assert.equal(result.status, "sync-required");
+  assert.deepEqual(result.value, { id: "asset-1" });
+  assert.equal(result.error, syncError);
+  assert.equal(mutationCalls, 1);
+});
+
+test("reports a fully synced mutation separately", async () => {
+  const result = await commitMutationThenSync(async () => "created", async () => undefined);
+  assert.deepEqual(result, { status: "synced", value: "created" });
+});
+
+test("normalizes unavailable and mismatched image routes to valid provider-model pairs", () => {
+  const providers = [
+    imageProvider("disabled", ["disabled-model"], false),
+    imageProvider("provider-a", ["blocked", "model-a"]),
+    imageProvider("provider-b", ["model-b"])
+  ];
+  const blocked = new Set(["blocked"]);
+
+  assert.deepEqual(resolveImageRoutePair("missing", "missing-model", providers, blocked), {
+    imageProvider: "provider-a",
+    imageModel: "model-a"
+  });
+  assert.deepEqual(resolveImageRoutePair("provider-b", "model-a", providers, blocked), {
+    imageProvider: "provider-b",
+    imageModel: "model-b"
+  });
+  assert.deepEqual(resolveImageRoutePair("provider-b", "model-b", providers, blocked), {
+    imageProvider: "provider-b",
+    imageModel: "model-b"
+  });
+});
+
+test("uses image pricing only for the exact enabled provider-model pair", () => {
+  const prices = [
+    imagePrice("provider-a", "shared-model", 3),
+    imagePrice("provider-b", "shared-model", 9),
+    imagePrice("provider-b", "disabled-model", 15, false)
+  ];
+  assert.equal(resolveImageUnitCredits(prices, "provider-b", "shared-model"), 9);
+  assert.equal(resolveImageUnitCredits(prices, "zml-image", "shared-model"), 28);
+  assert.equal(resolveImageUnitCredits(prices, "provider-b", "disabled-model"), 5);
 });
 
 test("summarizes only real task type and status counts", () => {

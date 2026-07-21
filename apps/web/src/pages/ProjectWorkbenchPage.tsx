@@ -51,7 +51,7 @@ import { WorkbenchHeader } from "../workbench/components/WorkbenchHeader";
 import { WorkbenchProvider } from "../workbench/WorkbenchContext";
 import { AssetStage } from "../workbench/stages/AssetStage";
 import { ContentStage } from "../workbench/stages/ContentStage";
-import { createWorkbenchState, shouldReconcileStoryboardSelection, workbenchReducer, type WorkbenchStage, type WorkbenchTheme } from "../workbench/model";
+import { createWorkbenchState, resolveCharacterIdentityAsset, shouldReconcileStoryboardSelection, workbenchReducer, type WorkbenchStage, type WorkbenchTheme } from "../workbench/model";
 import { buildTimelineClipLayout } from "./projectWorkbenchModel";
 import "./ProjectStudioV4.css";
 
@@ -732,13 +732,6 @@ function latestStageReport(reports: QualityReport[], stage: QualityReport["stage
   return [...reports]
     .filter((report) => report.stage === stage)
     .sort((a, b) => Number(new Date(b.createdAt)) - Number(new Date(a.createdAt)))[0];
-}
-
-function resolveCharacterIdentityAsset(character: CharacterProfile, assets: AssetItem[]) {
-  const byReference = character.referenceAssetId ? assets.find((asset) => asset.id === character.referenceAssetId && asset.referenceUrl) : undefined;
-  const derivative = assets.find((asset) => asset.type === "role_derivative" && asset.relatedCharacterId === character.id && asset.referenceUrl);
-  const primary = assets.find((asset) => asset.type === "role" && asset.relatedCharacterId === character.id && asset.referenceUrl);
-  return byReference ?? derivative ?? primary;
 }
 
 function stageLabelLocal(stage: string) {

@@ -1,4 +1,4 @@
-import type { AssetItem, CharacterProfile, EvaluationStage, Project, ProjectWorkflow, ScriptDraft, StoryboardShot, TaskStatus, TaskType } from "@aifilm/shared";
+import type { AssetItem, CharacterProfile, EvaluationStage, ModelPrice, ModelProvider, Project, ProjectWorkflow, ScriptDraft, StoryboardShot, TaskStatus, TaskType } from "@aifilm/shared";
 
 export {
   buildTimelineClipLayout,
@@ -100,6 +100,69 @@ export interface AssetFeedbackTarget {
   label: "角色身份板反馈" | "场景资产反馈";
 }
 
+export type MutationSyncResult<T> =
+  | { status: "synced"; value: T }
+  | { status: "sync-required"; value: T; error: unknown }
+  | { status: "mutation-failed"; error: unknown };
+
+export async function commitMutationThenSync<T>(
+  mutation: () => Promise<T>,
+  sync: () => Promise<unknown>
+): Promise<MutationSyncResult<T>> {
+  let value: T;
+  try {
+    value = await mutation();
+  } catch (error) {
+    return { status: "mutation-failed", error };
+  }
+  try {
+    await sync();
+    return { status: "synced", value };
+  } catch (error) {
+    return { status: "sync-required", value, error };
+  }
+}
+
+export function resolveImageRoutePair(
+  requestedProviderId: string | undefined,
+  requestedModel: string | undefined,
+  providers: ModelProvider[],
+  blockedModels: ReadonlySet<string> = new Set()
+): { imageProvider: string; imageModel: string } {
+  const candidates = providers
+    .filter((provider) => provider.enabled && provider.modality === "image")
+    .map((provider) => ({ provider, models: provider.models.filter((model) => !blockedModels.has(model)) }))
+    .filter((candidate) => candidate.models.length > 0);
+  const selected = candidates.find(({ provider }) => provider.id === requestedProviderId) ?? candidates[0];
+  if (!selected) return { imageProvider: "", imageModel: "" };
+  const imageModel = requestedModel && selected.models.includes(requestedModel)
+    ? requestedModel
+    : selected.models[0] ?? "";
+  return { imageProvider: selected.provider.id, imageModel };
+}
+
+export function resolveImageUnitCredits(
+  prices: ModelPrice[],
+  providerId: string,
+  model: string,
+  fallback = defaultImageUnitCredits(providerId)
+): number {
+  return prices.find((price) => (
+    price.enabled
+    && price.modality === "image"
+    && price.providerId === providerId
+    && price.model === model
+  ))?.unitCredits ?? fallback;
+}
+
+function defaultImageUnitCredits(providerId: string): number {
+  if (providerId === "dashscope" || providerId === "dashscope-image") return 8;
+  if (providerId === "zml" || providerId === "zml-image" || providerId === "zml-relay") return 28;
+  if (providerId === "doubao" || providerId === "doubao-seedream") return 8;
+  if (["openai-compatible", "openai-compatible-image", "relay", "relay-image"].includes(providerId)) return 30;
+  return 5;
+}
+
 export function resolveCharacterIdentityAsset(
   character: Pick<CharacterProfile, "id" | "referenceAssetId">,
   assets: AssetItem[]
@@ -120,6 +183,14 @@ export function listCharacterReferenceAssets(characterId: string, assets: AssetI
     && asset.relatedCharacterId === characterId
     && Boolean(asset.referenceUrl)
   ));
+}
+
+export function updateCharacterReferenceDraft(
+  drafts: Readonly<Record<string, string>>,
+  characterId: string,
+  value: string
+): Record<string, string> {
+  return { ...drafts, [characterId]: value };
 }
 
 export function deriveSceneAssetList(assets: AssetItem[]): AssetItem[] {
