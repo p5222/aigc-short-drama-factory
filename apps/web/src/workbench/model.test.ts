@@ -271,8 +271,30 @@ test("maps buildLocalScript-style episodes without mixing their content", () => 
   const rows = buildContentSceneRows(script(content), []);
 
   assert.deepEqual(rows.map((row) => row.episodeNo), [1, 2]);
+  assert.deepEqual(rows.map((row) => row.title), ["旧车站", "医院走廊"]);
+  assert.equal(rows.some((row) => row.lines.some((line) => /^第\s*\d+\s*集/.test(line))), false);
   assert.equal(rows[0]?.lines.some((line) => line.includes("病历")), false);
   assert.equal(rows[1]?.lines.some((line) => line.includes("旧车站")), false);
+});
+
+test("parses compound scene headings as one boundary per real scene", () => {
+  const content = [
+    "第1集 失踪",
+    "第1场【车站 夜】",
+    "林夏走下列车。",
+    "第2场【巷口 雨】",
+    "她发现一把伞。",
+    "",
+    "第2集 追踪",
+    "第1场【医院 白天】",
+    "顾沉翻开病历。"
+  ].join("\n");
+  const rows = buildContentSceneRows(script(content), []);
+
+  assert.deepEqual(rows.map((row) => row.episodeNo), [1, 1, 2]);
+  assert.deepEqual(rows.map((row) => row.title), ["车站 夜", "巷口 雨", "医院 白天"]);
+  assert.equal(rows.length, 3);
+  assert.equal(rows.some((row) => row.lines.some((line) => /^第\s*\d+\s*集/.test(line))), false);
 });
 
 test("recognizes conservative Chinese-numeral episode headings", () => {

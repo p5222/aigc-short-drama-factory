@@ -148,14 +148,15 @@ export function buildContentSceneRows(script: ScriptDraft | undefined, storyboar
 
   if (!script?.content.trim()) return [];
   const candidates = splitScriptIntoEpisodes(script.content).flatMap((episode) => (
-    splitScriptIntoSceneCandidates(episode.content).slice(0, 12).map((lines, sceneIndex) => ({
+    splitScriptIntoSceneCandidates(episode.content, episode.sourceTitle).slice(0, 12).map((scene, sceneIndex) => ({
       episodeNo: episode.episodeNo,
       sceneNo: sceneIndex + 1,
-      lines
+      lines: scene.lines,
+      sourceTitle: scene.sourceTitle
     }))
   ));
-  return candidates.map(({ episodeNo, sceneNo, lines }) => {
-    const title = inferScriptSceneTitle(lines, sceneNo - 1);
+  return candidates.map(({ episodeNo, sceneNo, lines, sourceTitle }) => {
+    const title = sourceTitle || inferScriptSceneTitle(lines, sceneNo - 1);
     const id = `script-scene-${episodeNo}-${sceneNo}`;
     return {
       id,
@@ -182,17 +183,19 @@ export function buildContentSceneRows(script: ScriptDraft | undefined, storyboar
 
 interface ScriptEpisodeChunk {
   episodeNo: number;
+  sourceTitle: string;
   content: string;
 }
 
 function splitScriptIntoEpisodes(content: string): ScriptEpisodeChunk[] {
   const chunks: ScriptEpisodeChunk[] = [];
   let activeEpisodeNo = 1;
+  let activeSourceTitle = "";
   let activeLines: string[] = [];
 
   const flush = () => {
     const episodeContent = activeLines.join("\n").trim();
-    if (episodeContent) chunks.push({ episodeNo: activeEpisodeNo, content: episodeContent });
+    if (episodeContent) chunks.push({ episodeNo: activeEpisodeNo, sourceTitle: activeSourceTitle, content: episodeContent });
   };
 
   for (const line of content.split(/\r?\n/)) {
@@ -200,7 +203,8 @@ function splitScriptIntoEpisodes(content: string): ScriptEpisodeChunk[] {
     if (heading) {
       flush();
       activeEpisodeNo = heading.episodeNo;
-      activeLines = [line.trim()];
+      activeSourceTitle = heading.title;
+      activeLines = [];
     } else {
       activeLines.push(line);
     }
@@ -272,17 +276,50 @@ function buildStoryboardSceneRow(key: string, shots: StoryboardShot[]): ContentS
   };
 }
 
-function splitScriptIntoSceneCandidates(content: string): string[][] {
-  const lines = content.split(/\n+/).map((line) => line.trim()).filter(Boolean);
-  const rawBlocks = content
-    .split(/\n{2,}|(?=第[一二三四五六七八九十0-9]+[场幕])|(?=【[^】]+】)/)
-    .map((block) => block.trim())
-    .filter(Boolean);
-  if (rawBlocks.length > 1) return rawBlocks.map((block) => block.split(/\n+/).map((line) => line.trim()).filter(Boolean));
-  if (matchEpisodeHeading(lines[0] ?? "")) return [lines];
-  const chunks: string[][] = [];
-  for (let index = 0; index < lines.length; index += 3) chunks.push(lines.slice(index, index + 3));
-  return chunks;
+interface ScriptSceneCandidate {
+  sourceTitle: string;
+  lines: string[];
+}
+
+function splitScriptIntoSceneCandidates(content: string, episodeTitle: string): ScriptSceneCandidate[] {
+  const lines = content.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  if (!lines.length) return [];
+
+  const scenes: ScriptSceneCandidate[] = [];
+  const prelude: string[] = [];
+  let activeScene: ScriptSceneCandidate | null = null;
+
+  for (const line of lines) {
+    const boundaryTitle = matchSceneBoundary(line);
+    if (boundaryTitle !== null) {
+      if (activeScene) scenes.push(activeScene);
+      activeScene = {
+        sourceTitle: boundaryTitle,
+        lines: scenes.length === 0 ? [...prelude, line] : [line]
+      };
+    } else if (activeScene) {
+      activeScene.lines.push(line);
+    } else {
+      prelude.push(line);
+    }
+  }
+
+  if (!activeScene) {
+    return [{ sourceTitle: episodeTitle, lines }];
+  }
+  scenes.push(activeScene);
+  return scenes;
+}
+
+function matchSceneBoundary(line: string): string | null {
+  const numbered = line.match(/^\s*第\s*[一二三四五六七八九十0-9]+\s*[场幕]\s*(?:[：:\-—]\s*)?(.*)$/);
+  if (numbered) {
+    const remainder = numbered[1]?.trim() ?? "";
+    const bracket = remainder.match(/^【([^】]+)】/);
+    return bracket?.[1]?.trim() || remainder.replace(/^【|】$/g, "").trim();
+  }
+  const bracketed = line.match(/^\s*【([^】]+)】/);
+  return bracketed?.[1]?.trim() ?? null;
 }
 
 function inferScriptSceneTitle(lines: string[], index: number): string {
