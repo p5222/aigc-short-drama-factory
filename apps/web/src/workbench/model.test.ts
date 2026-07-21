@@ -251,6 +251,22 @@ test("labels script-derived scenes as 从剧本识别", () => {
   assert.equal(rows[0]?.emotion, "");
 });
 
+test("keeps explicit weather separate from time metadata", () => {
+  const [rainyScene] = buildContentSceneRows(script("【旧车站 雨】\n她站在檐下。"), []);
+  assert.equal(rainyScene?.weather, "雨天");
+  assert.equal(rainyScene?.timeOfDay, "");
+
+  const [rainyStoryboardScene] = buildContentSceneRows(undefined, [
+    { ...shot("rainy-storyboard", 1, 1), scene: "旧车站 雨" }
+  ]);
+  assert.equal(rainyStoryboardScene?.weather, "雨天");
+  assert.equal(rainyStoryboardScene?.timeOfDay, "");
+
+  const [unspecifiedScene] = buildContentSceneRows(script("【旧车站】\n她站在檐下。"), []);
+  assert.equal(unspecifiedScene?.weather, "");
+  assert.equal(unspecifiedScene?.timeOfDay, "");
+});
+
 test("uses only real shot emotion for content metadata", () => {
   const dialogueOnly = {
     ...shot("dialogue-only", 1, 1),

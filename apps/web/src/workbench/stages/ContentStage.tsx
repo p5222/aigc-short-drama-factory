@@ -197,7 +197,7 @@ function LoadedContentStage({
           <dl className="wb-content-metadata">
             <div><dt><Clock3 aria-hidden="true" />时间</dt><dd>{selectedScene?.timeOfDay || "未提供"}</dd></div>
             <div><dt><MapPin aria-hidden="true" />地点</dt><dd>{selectedScene?.location || "未提供"}</dd></div>
-            <div><dt>天气</dt><dd>未提供</dd></div>
+            <div><dt>天气</dt><dd>{selectedScene?.weather || "未提供"}</dd></div>
             <div><dt>情绪</dt><dd>{selectedScene?.emotion || "未提供"}</dd></div>
             <div><dt>出场角色</dt><dd>{selectedScene?.characters.join("、") || "未提供"}</dd></div>
             <div><dt>内容状态</dt><dd>{selectedScene ? contentStatusLabel(selectedScene) : "无场次"}</dd></div>

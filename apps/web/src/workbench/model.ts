@@ -37,6 +37,7 @@ export interface ContentSceneRow {
   title: string;
   location: string;
   timeOfDay: string;
+  weather: string;
   duration: number;
   shots: number;
   characters: string[];
@@ -155,6 +156,7 @@ export function buildContentSceneRows(script: ScriptDraft | undefined, storyboar
       title,
       location: inferLocation(title),
       timeOfDay: inferSceneTime(title),
+      weather: inferSceneWeather(title),
       duration: 0,
       shots: 0,
       characters: [],
@@ -183,6 +185,7 @@ function buildStoryboardSceneRow(key: string, shots: StoryboardShot[]): ContentS
     title: first.scene || `场次 ${first.sceneNo}`,
     location: inferLocation(first.scene),
     timeOfDay: inferSceneTime(first.scene),
+    weather: inferSceneWeather(first.scene),
     duration,
     shots: ordered.length,
     characters,
@@ -220,10 +223,23 @@ function inferLocation(scene: string): string {
 }
 
 function inferSceneTime(scene: string): string {
-  if (/夜|晚|凌晨|黑/.test(scene)) return "夜晚";
-  if (/雨|阴|雾/.test(scene)) return "雨天";
-  if (/午|白天|日/.test(scene)) return "白天";
-  return "未提供";
+  if (/凌晨/.test(scene)) return "凌晨";
+  if (/清晨|早晨|黎明/.test(scene)) return "清晨";
+  if (/黄昏|傍晚/.test(scene)) return "傍晚";
+  if (/夜|夜晚|晚间/.test(scene)) return "夜晚";
+  if (/下午|午后/.test(scene)) return "下午";
+  if (/中午/.test(scene)) return "中午";
+  if (/白天|日间|日景/.test(scene)) return "白天";
+  return "";
+}
+
+function inferSceneWeather(scene: string): string {
+  if (/雨/.test(scene)) return "雨天";
+  if (/雪/.test(scene)) return "雪天";
+  if (/雾/.test(scene)) return "雾天";
+  if (/阴/.test(scene)) return "阴天";
+  if (/晴/.test(scene)) return "晴天";
+  return "";
 }
 
 function sceneKeysEqual(left: SceneKey, right: SceneKey | null): boolean {
