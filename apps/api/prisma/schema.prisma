@@ -422,6 +422,13 @@ model PromptVersion {
   purpose   String   @default("evaluation")
   version   String
   content   String
+  systemPrompt      String   @default("")
+  userTemplate      String   @default("")
+  variableSchema    Json     @default("{}")
+  outputSchema      Json     @default("{}")
+  validationRules   Json     @default("[]")
+  negativeRules     Json     @default("[]")
+  providerOverrides Json     @default("{}")
   status    String   @default("draft")
   owner     String?
   notes     String   @default("")
@@ -433,6 +440,26 @@ model PromptVersion {
   @@index([stage])
   @@index([purpose])
   @@index([status])
+}
+
+model StyleProfile {
+  id             String   @id
+  key            String   @unique
+  name           String
+  category       String
+  summary        String   @default("")
+  characterRules Json     @default("[]")
+  sceneRules     Json     @default("[]")
+  lightingRules  Json     @default("[]")
+  cameraRules    Json     @default("[]")
+  materialRules  Json     @default("[]")
+  negativeRules  Json     @default("[]")
+  enabled        Boolean  @default(true)
+  sortOrder      Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([category, enabled, sortOrder])
 }
 
 model ExperimentRun {
