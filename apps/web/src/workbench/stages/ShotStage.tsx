@@ -24,11 +24,14 @@ import {
   buildShotAssetMap,
   buildShotImageGenerationPayload,
   buildProjectVideoGenerationArgs,
+  buildStoryboardShotUpdatePayload,
   collectPendingShotIds,
   createShotDraftState,
   reduceShotDraftState,
   resolveImageRoutePair,
   resolveImageUnitCredits,
+  resolveShotSelection,
+  resolveVideoUnitCredits,
   type ShotDraftState,
   type ShotMode
 } from "../model";
@@ -119,13 +122,11 @@ function LoadedShotStage({
 
   useEffect(() => () => onSaveStateChange("unchanged"), [onSaveStateChange]);
 
-  function canDiscardDraft(): boolean {
-    if ((draftState.status !== "dirty" && draftState.status !== "error") || draftState.committed) return true;
-    return window.confirm("当前镜头有未保存修改。确认放弃这些修改并继续？");
-  }
-
   function selectShot(shot: StoryboardShot) {
-    if (shot.id === activeShot?.id || !canDiscardDraft()) return;
+    const selection = resolveShotSelection(activeShot?.id ?? "", shot.id, draftState, () => (
+      window.confirm("当前镜头有未保存修改。确认放弃这些修改并继续？")
+    ));
+    if (!selection.accepted) return;
     updateDraft({ type: "rebuild", shotId: shot.id, draft: shotDraft(shot) });
     dispatch({ type: "set-shot", shotId: shot.id });
   }
@@ -148,7 +149,7 @@ function LoadedShotStage({
     setMessage("");
     setError("");
     try {
-      await api.updateStoryboardShot(project.id, activeShot.id, draftState.draft);
+      await api.updateStoryboardShot(project.id, activeShot.id, buildStoryboardShotUpdatePayload(draftState.draft));
     } catch (cause) {
       const detail = errorText(cause, "镜头保存失败，请重试。");
       updateDraft({ type: "save-failed", error: detail });
@@ -174,6 +175,8 @@ function LoadedShotStage({
     try {
       await onRefresh(project.id);
       setRefreshRequired(false);
+      updateDraft({ type: "sync-succeeded" });
+      dispatch({ type: "set-dirty-entity", entityKey: null });
       setMessage("工作台数据已刷新。");
     } catch (cause) {
       setError(errorText(cause, "刷新失败，请稍后重试。"));
@@ -266,7 +269,7 @@ function LoadedShotStage({
       </header>
       {state.shotMode === "table" ? <ShotTable storyboards={storyboards} activeShot={activeShot} onSelect={selectShot} /> : null}
       {state.shotMode === "image" ? <ShotImageCanvas shot={activeShot} imageUrl={activeImage?.referenceUrl} onPreview={() => activeImage?.referenceUrl && onPreview({ url: activeImage.referenceUrl, title: activeImage.name })} /> : null}
-      {state.shotMode === "video" ? <ShotVideoCanvas shot={activeShot} videoUrl={activeVideo?.referenceUrl} status={activeVideo?.status} taskError={latestVideoTask?.status === "failed" ? latestVideoTask.errorReason : undefined} /> : null}
+      {state.shotMode === "video" ? <ShotVideoCanvas shot={activeShot} videoUrl={activeVideo?.referenceUrl} status={activeVideo?.status} /> : null}
       <div className="wb-action-feedback" aria-live="polite">{message ? <p className="wb-action-feedback--success">{message}</p> : null}{error ? <p className="wb-action-feedback--error">{error}</p> : null}</div>
     </div>}
     inspector={<div className="wb-shot-inspector">
@@ -284,6 +287,7 @@ function LoadedShotStage({
         <RouteSelect label="渠道" value={videoRoute.videoProvider} options={videoProviders.map((provider) => ({ value: provider.id, label: provider.name }))} onChange={(value) => { const provider = videoProviders.find((item) => item.id === value); setVideoRoute({ videoProvider: value, videoModel: provider?.models[0] ?? "" }); }} />
         <RouteSelect label="模型" value={videoRoute.videoModel} options={videoModels.map((model) => ({ value: model, label: model }))} onChange={(value) => setVideoRoute((current) => ({ ...current, videoModel: value }))} />
         <small>{videoSeconds}s · 预计 {Math.ceil(videoSeconds * videoUnit)} 积分</small>
+        {latestVideoTask?.status === "failed" ? <p className="wb-action-feedback--error">项目视频任务失败：{latestVideoTask.errorReason || "未提供失败原因"}</p> : null}
         <button className="wb-primary-button" type="button" disabled={!storyboards.length || Boolean(pending) || hasUnsavedDraft || !videoModels.includes(videoRoute.videoModel)} onClick={() => void generateVideos()}>{pending === "video" ? <Loader2 className="wb-spin" /> : <Film />}生成全部待完成视频</button>
       </section> : null}
       {refreshRequired ? <button className="wb-secondary-button wb-shot-refresh" type="button" disabled={pending === "refresh"} onClick={() => void retryRefresh()}>{pending === "refresh" ? <Loader2 className="wb-spin" /> : null}重试刷新</button> : null}
@@ -300,16 +304,16 @@ function ModeButton({ mode, current, icon, children, onSelect }: { mode: ShotMod
 }
 
 function ShotTable({ storyboards, activeShot, onSelect }: { storyboards: StoryboardShot[]; activeShot?: StoryboardShot; onSelect: (shot: StoryboardShot) => void }) {
-  return <div className="wb-shot-table-wrap"><table className="wb-shot-table"><thead><tr><th>镜头</th><th>画面</th><th>景别</th><th>机位</th><th>运镜</th><th>时长</th></tr></thead><tbody>{storyboards.map((shot, index) => <tr className={shot.id === activeShot?.id ? "is-active" : undefined} key={shot.id} onClick={() => onSelect(shot)}><td><button type="button" onClick={() => onSelect(shot)}>{formatShot(shot, index)}</button></td><td>{shot.pictureDesc || "未提供"}</td><td>{shot.shotSize || "未提供"}</td><td>{shot.cameraAngle || "未提供"}</td><td>{shot.cameraMovement || "未提供"}</td><td>{shot.duration}s</td></tr>)}</tbody></table></div>;
+  return <div className="wb-shot-table-wrap"><table className="wb-shot-table"><thead><tr><th>镜头</th><th>画面</th><th>景别</th><th>机位</th><th>运镜</th><th>时长</th></tr></thead><tbody>{storyboards.map((shot, index) => <tr className={shot.id === activeShot?.id ? "is-active" : undefined} key={shot.id}><td><button type="button" onClick={() => onSelect(shot)}>{formatShot(shot, index)}</button></td><td>{shot.pictureDesc || "未提供"}</td><td>{shot.shotSize || "未提供"}</td><td>{shot.cameraAngle || "未提供"}</td><td>{shot.cameraMovement || "未提供"}</td><td>{shot.duration}s</td></tr>)}</tbody></table></div>;
 }
 
 function ShotImageCanvas({ shot, imageUrl, onPreview }: { shot?: StoryboardShot; imageUrl?: string; onPreview: () => void }) {
   return <button className="wb-shot-media" type="button" disabled={!imageUrl} onClick={onPreview}><MediaFrame aspectRatio="16:9" label="当前镜头首帧">{imageUrl ? <img src={imageUrl} alt={shot?.pictureDesc || "镜头首帧"} /> : <div><ImageIcon /><strong>首帧待生成</strong><span>{shot?.pictureDesc || "选择镜头后查看"}</span></div>}</MediaFrame></button>;
 }
 
-function ShotVideoCanvas({ shot, videoUrl, status, taskError }: { shot?: StoryboardShot; videoUrl?: string; status?: string; taskError?: string }) {
+function ShotVideoCanvas({ shot, videoUrl, status }: { shot?: StoryboardShot; videoUrl?: string; status?: string }) {
   const playable = Boolean(videoUrl && /^(https?:|data:video|blob:)/.test(videoUrl));
-  return <div className="wb-shot-video"><MediaFrame aspectRatio="16:9" label="当前镜头视频">{playable ? <video src={videoUrl} controls preload="metadata" /> : <div className="wb-shot-video-empty"><Film /><strong>{status === "failed" ? "视频生成失败" : status === "running" ? "视频生成中" : "视频待生成"}</strong><span>{taskError || shot?.videoPrompt || "当前镜头尚无可播放片段"}</span></div>}</MediaFrame></div>;
+  return <div className="wb-shot-video"><MediaFrame aspectRatio="16:9" label="当前镜头视频">{playable ? <video src={videoUrl} controls preload="metadata" /> : <div className="wb-shot-video-empty"><Film /><strong>{status === "failed" ? "当前片段生成失败" : status === "running" ? "当前片段生成中" : "视频待生成"}</strong><span>{shot?.videoPrompt || "当前镜头尚无可播放片段"}</span></div>}</MediaFrame></div>;
 }
 
 function ShotEditor({ state, onEdit, onSave, disabled }: { state: ShotDraftState; onEdit: (patch: Partial<StoryboardShot>) => void; onSave: () => Promise<void>; disabled: boolean }) {
@@ -317,7 +321,7 @@ function ShotEditor({ state, onEdit, onSave, disabled }: { state: ShotDraftState
   return <section className="wb-shot-editor">
     <label><span>画面描述</span><textarea value={String(draft.pictureDesc ?? "")} onChange={(event) => onEdit({ pictureDesc: event.target.value })} /></label>
     <div><label><span>景别</span><input value={String(draft.shotSize ?? "")} onChange={(event) => onEdit({ shotSize: event.target.value })} /></label><label><span>机位</span><input value={String(draft.cameraAngle ?? "")} onChange={(event) => onEdit({ cameraAngle: event.target.value })} /></label></div>
-    <div><label><span>运镜</span><input value={String(draft.cameraMovement ?? "")} onChange={(event) => onEdit({ cameraMovement: event.target.value })} /></label><label><span>时长（秒）</span><input type="number" min="0.1" step="0.1" value={String(draft.duration ?? "")} onChange={(event) => onEdit({ duration: Number(event.target.value) })} /></label></div>
+    <div><label><span>运镜</span><input value={String(draft.cameraMovement ?? "")} onChange={(event) => onEdit({ cameraMovement: event.target.value })} /></label><label><span>时长（秒）</span><input type="number" min="1" max="30" step="1" value={String(draft.duration ?? "")} onChange={(event) => onEdit({ duration: Number(event.target.value) })} /></label></div>
     <label><span>角色绑定</span><input value={(draft.characters ?? []).join(" / ")} onChange={(event) => onEdit({ characters: event.target.value.split(/[、,/]/).map((item) => item.trim()).filter(Boolean) })} /></label>
     <label><span>场景绑定</span><input value={String(draft.scene ?? "")} onChange={(event) => onEdit({ scene: event.target.value })} /></label>
     <label><span>动作</span><textarea value={String(draft.action ?? "")} onChange={(event) => onEdit({ action: event.target.value })} /></label>
@@ -344,12 +348,6 @@ function initialVideoRoute(project: Project, providers: ModelProvider[]) {
   const candidates = providers.filter((provider) => provider.enabled && provider.modality === "video" && provider.models.length);
   const provider = candidates.find((item) => item.id === project.videoProvider) ?? candidates[0];
   return { videoProvider: provider?.id ?? "", videoModel: provider?.models.includes(project.videoModel ?? "") ? project.videoModel! : provider?.models[0] ?? "" };
-}
-
-function resolveVideoUnitCredits(prices: ModelPrice[], providerId: string, model: string): number {
-  return prices.find((price) => price.enabled && price.modality === "video" && price.unit === "video_second" && price.providerId === providerId && price.model === model)?.unitCredits
-    ?? prices.find((price) => price.enabled && price.modality === "video" && price.unit === "video_second" && price.model === model)?.unitCredits
-    ?? 0;
 }
 
 async function persistImageRoute(project: Project, route: ReturnType<typeof initialImageRoute>) {

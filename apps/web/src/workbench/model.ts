@@ -1,4 +1,4 @@
-import type { AssetItem, CharacterProfile, EvaluationStage, ModelProvider, Project, ProjectWorkflow, ScriptDraft, StoryboardShot, TaskStatus, TaskType } from "@aifilm/shared";
+import type { AssetItem, CharacterProfile, EvaluationStage, ModelPrice, ModelProvider, Project, ProjectWorkflow, ScriptDraft, StoryboardShot, TaskStatus, TaskType } from "@aifilm/shared";
 
 export { resolveImageUnitCredits } from "@aifilm/shared";
 
@@ -122,6 +122,7 @@ export type ShotDraftAction =
   | { type: "save-start" }
   | { type: "save-failed"; error: string }
   | { type: "save-committed"; refreshError?: string }
+  | { type: "sync-succeeded" }
   | { type: "rebuild"; shotId: string; draft: Partial<StoryboardShot> };
 
 export function createShotDraftState(shotId: string, draft: Partial<StoryboardShot>): ShotDraftState {
@@ -140,6 +141,8 @@ export function reduceShotDraftState(state: ShotDraftState, action: ShotDraftAct
       return action.refreshError
         ? { ...state, status: "sync-required", committed: true, error: action.refreshError }
         : { ...state, status: "saved", committed: true, error: undefined };
+    case "sync-succeeded":
+      return { ...state, status: "saved", committed: true, error: undefined };
     case "rebuild":
       return createShotDraftState(action.shotId, action.draft);
   }
@@ -176,6 +179,45 @@ export function buildShotImageGenerationPayload(
 
 export function buildProjectVideoGenerationArgs(): [] {
   return [];
+}
+
+export function resolveShotSelection(
+  currentShotId: string,
+  requestedShotId: string,
+  draftState: ShotDraftState,
+  confirmDiscard: () => boolean
+): { accepted: boolean; shotId: string } {
+  if (requestedShotId === currentShotId) return { accepted: false, shotId: currentShotId };
+  const needsConfirmation = !draftState.committed && (draftState.status === "dirty" || draftState.status === "error");
+  if (needsConfirmation && !confirmDiscard()) return { accepted: false, shotId: currentShotId };
+  return { accepted: true, shotId: requestedShotId };
+}
+
+export function buildStoryboardShotUpdatePayload(draft: Partial<StoryboardShot>): Partial<StoryboardShot> {
+  if (draft.duration === undefined) return { ...draft };
+  const parsed = Number(draft.duration);
+  const duration = Number.isFinite(parsed) ? Math.min(30, Math.max(1, Math.round(parsed))) : 1;
+  return { ...draft, duration };
+}
+
+export function defaultVideoUnitCredits(providerId: string): number {
+  if (["dashscope", "dashscope-video", "wanxiang", "wanx"].includes(providerId)) return 16;
+  if (["doubao", "doubao-seedance", "seedance"].includes(providerId)) return 18;
+  return 0;
+}
+
+export function resolveVideoUnitCredits(
+  prices: ModelPrice[],
+  providerId: string,
+  model: string
+): number {
+  return prices.find((price) => (
+    price.enabled
+    && price.modality === "video"
+    && price.unit === "video_second"
+    && price.providerId === providerId
+    && price.model === model
+  ))?.unitCredits ?? defaultVideoUnitCredits(providerId);
 }
 
 export async function commitMutationThenSync<T>(

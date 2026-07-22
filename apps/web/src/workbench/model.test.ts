@@ -13,6 +13,7 @@ import {
   buildShotAssetMap,
   buildShotImageGenerationPayload,
   buildProjectVideoGenerationArgs,
+  buildStoryboardShotUpdatePayload,
   collectPendingShotIds,
   createShotDraftState,
   reduceShotDraftState,
@@ -28,6 +29,8 @@ import {
   reconcileSelection,
   resolveCharacterIdentityAsset,
   resolveImageRoutePair,
+  resolveShotSelection,
+  resolveVideoUnitCredits,
   resolveThemePreference,
   shouldReconcileStoryboardSelection,
   storyboardScene,
@@ -180,6 +183,58 @@ test("shot drafts preserve failed saves and separate committed writes from faile
   assert.equal(refreshFailed.status, "sync-required");
   assert.equal(refreshFailed.draft.pictureDesc, "After");
   assert.equal(refreshFailed.committed, true);
+});
+
+test("successful refresh reconciliation clears sync error and returns the draft to saved", () => {
+  const syncRequired = reduceShotDraftState(
+    createShotDraftState("shot-1", { pictureDesc: "Saved" }),
+    { type: "save-committed", refreshError: "refresh" }
+  );
+  const reconciled = reduceShotDraftState(syncRequired, { type: "sync-succeeded" });
+
+  assert.equal(reconciled.status, "saved");
+  assert.equal(reconciled.error, undefined);
+  assert.equal(reconciled.committed, true);
+});
+
+test("canceling a dirty shot switch confirms once and preserves the draft", () => {
+  const dirty = reduceShotDraftState(createShotDraftState("shot-1", { pictureDesc: "Before" }), {
+    type: "edit",
+    patch: { pictureDesc: "Unsaved" }
+  });
+  let confirmations = 0;
+  const result = resolveShotSelection("shot-1", "shot-2", dirty, () => {
+    confirmations += 1;
+    return false;
+  });
+
+  assert.deepEqual(result, { accepted: false, shotId: "shot-1" });
+  assert.equal(confirmations, 1);
+  assert.equal(dirty.draft.pictureDesc, "Unsaved");
+});
+
+test("shot update payload constrains duration to integer seconds between one and thirty", () => {
+  assert.equal(buildStoryboardShotUpdatePayload({ duration: 0.2 }).duration, 1);
+  assert.equal(buildStoryboardShotUpdatePayload({ duration: 8.6 }).duration, 9);
+  assert.equal(buildStoryboardShotUpdatePayload({ duration: 80 }).duration, 30);
+  assert.equal(buildStoryboardShotUpdatePayload({ pictureDesc: "Keep" }).pictureDesc, "Keep");
+});
+
+test("video pricing never borrows a same-named model from another provider", () => {
+  const prices = [{
+    id: "foreign-price",
+    providerId: "another-provider",
+    providerName: "Another",
+    modality: "video",
+    model: "shared-model",
+    unit: "video_second",
+    unitCredits: 99,
+    vendorCostCny: 0,
+    enabled: true
+  }] as ModelPrice[];
+
+  assert.equal(resolveVideoUnitCredits(prices, "dashscope-video", "shared-model"), 16);
+  assert.equal(resolveVideoUnitCredits(prices, "unknown-provider", "shared-model"), 0);
 });
 
 test("rebuilding or discarding a shot draft invalidates the previous entity", () => {
