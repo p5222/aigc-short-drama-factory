@@ -4,7 +4,7 @@ import type { AdminUserRow, AssetItem, BatchGenerationResult, CreateProjectInput
 import { textModelName, textProviderName } from "../agents/generator.js";
 import { buildSeedanceVideoPrompt, buildStoryboardFirstFramePrompt, createStoryboardProductionPackage } from "../agents/storyboardProduction.js";
 import { estimateCreation } from "../agents/workflow.js";
-import { estimateImageCredits, normalizeImageOutputQuality, normalizeImageOutputSize } from "@aifilm/shared";
+import { estimateImageCredits, normalizeImageOutputQuality, normalizeImageOutputSize, normalizeImageProviderId, resolveImageUnitCredits } from "@aifilm/shared";
 import { hashPassword } from "../auth/password.js";
 import { buildDirectorStoryboardRow, createDirectorStoryboardPackage } from "../export/directorStoryboard.js";
 import { createSubtitleAsset, createTtsManifest, createVideoExportPackage, type MediaExportResult } from "../export/mediaExport.js";
@@ -2186,7 +2186,7 @@ async function resolveTextRunCredits(input: CreateProjectInput, suggestedEpisode
 }
 
 async function resolveImageBaseCreditPerShot(provider: string, model: string) {
-  const providerId = imageProviderId(provider);
+  const providerId = normalizeImageProviderId(provider);
   const price = await prisma.modelPrice.findFirst({
     where: {
       providerId,
@@ -2194,7 +2194,7 @@ async function resolveImageBaseCreditPerShot(provider: string, model: string) {
       enabled: true
     }
   });
-  return price?.unitCredits ?? imageCreditPerShot(provider);
+  return resolveImageUnitCredits(price ? [price] : [], provider, model);
 }
 
 async function resolveImageCreditPerShot(provider: string, model: string, size?: string, quality?: string) {
@@ -2242,15 +2242,6 @@ function characterHasLockedReference(
   return lockedAssets.some((asset) => asset.relatedCharacterId === character.id || asset.name.includes(character.name));
 }
 
-function imageProviderId(provider: string) {
-  if (provider === "dashscope" || provider === "dashscope-image") return "dashscope-image";
-  if (provider === "google" || provider === "google-ai-studio" || provider === "google-gemini-image") return "google-gemini-image";
-  if (provider === "zml" || provider === "zml-image" || provider === "zml-relay") return "zml-image";
-  if (provider === "doubao" || provider === "doubao-seedream") return "doubao-seedream";
-  if (provider === "relay" || provider === "relay-image" || provider === "openai-compatible") return "openai-compatible-image";
-  return "mock-image";
-}
-
 function videoProviderId(provider: string) {
   if (provider === "dashscope" || provider === "dashscope-video" || provider === "wanxiang" || provider === "wanx") return "dashscope-video";
   if (provider === "doubao" || provider === "doubao-seedance" || provider === "seedance") return "doubao-seedance";
@@ -2276,7 +2267,7 @@ function currentVideoProviderName(provider: string) {
 
 function currentImageModelName(provider: string, selectedModel?: string) {
   if (provider === "dashscope" || provider === "dashscope-image") return selectedModel || process.env.DASHSCOPE_IMAGE_MODEL || "qwen-image";
-  if (provider === "google" || provider === "google-ai-studio" || provider === "google-gemini-image") return selectedModel || process.env.GEMINI_IMAGE_MODEL || "gemini-3-pro-image";
+  if (provider === "google" || provider === "google-ai-studio" || provider === "google-gemini-image") return selectedModel || process.env.GEMINI_IMAGE_MODEL || "gemini-3-pro-image-preview";
   if (provider === "zml" || provider === "zml-image" || provider === "zml-relay") return selectedModel || process.env.ZML_IMAGE_MODEL || "gpt-image-2";
   if (provider === "doubao" || provider === "doubao-seedream") return selectedModel || process.env.DOUBAO_SEEDREAM_MODEL || "doubao-seedream-5-0-lite-260128";
   if (provider === "openai-compatible" || provider === "relay" || provider === "relay-image") return selectedModel || process.env.OPENAI_IMAGE_MODEL || "openai-compatible-image";
@@ -2302,15 +2293,6 @@ function videoBatchLimit(total: number, provider: string) {
     return Math.max(1, Math.min(total, Number(process.env.VIDEO_BATCH_LIMIT ?? 1)));
   }
   return total;
-}
-
-function imageCreditPerShot(provider: string) {
-  if (provider === "dashscope" || provider === "dashscope-image") return 8;
-  if (provider === "google" || provider === "google-ai-studio" || provider === "google-gemini-image") return 24;
-  if (provider === "zml" || provider === "zml-image" || provider === "zml-relay") return 28;
-  if (provider === "doubao" || provider === "doubao-seedream") return 8;
-  if (provider === "openai-compatible" || provider === "relay" || provider === "relay-image") return 30;
-  return 5;
 }
 
 function videoCreditPerSecond(provider: string) {

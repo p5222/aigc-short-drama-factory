@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { AssetItem, CharacterProfile, GenerationTask, ModelPrice, ModelProvider, Project, ProjectWorkflow, ScriptDraft, StoryboardShot, TaskStatus, TaskType } from "@aifilm/shared";
+import { defaultImageUnitCredits, normalizeImageProviderId, resolveImageUnitCredits } from "@aifilm/shared";
+import { modelPrices, providers } from "../../../api/src/seed/catalogData.ts";
 import {
   RELEASE_A_CAPABILITIES,
   buildAssetFeedbackTarget,
@@ -20,7 +22,6 @@ import {
   reconcileSelection,
   resolveCharacterIdentityAsset,
   resolveImageRoutePair,
-  resolveImageUnitCredits,
   resolveThemePreference,
   shouldReconcileStoryboardSelection,
   storyboardScene,
@@ -542,13 +543,48 @@ test("normalizes unavailable and mismatched image routes to valid provider-model
 
 test("uses image pricing only for the exact enabled provider-model pair", () => {
   const prices = [
-    imagePrice("provider-a", "shared-model", 3),
-    imagePrice("provider-b", "shared-model", 9),
-    imagePrice("provider-b", "disabled-model", 15, false)
+    imagePrice("dashscope-image", "shared-model", 3),
+    imagePrice("zml-image", "shared-model", 9),
+    imagePrice("zml-image", "disabled-model", 15, false)
   ];
-  assert.equal(resolveImageUnitCredits(prices, "provider-b", "shared-model"), 9);
-  assert.equal(resolveImageUnitCredits(prices, "zml-image", "shared-model"), 28);
-  assert.equal(resolveImageUnitCredits(prices, "provider-b", "disabled-model"), 5);
+  assert.equal(resolveImageUnitCredits(prices, "zml", "shared-model"), 9);
+  assert.equal(resolveImageUnitCredits(prices, "zml-image", "missing-model"), 28);
+  assert.equal(resolveImageUnitCredits(prices, "zml-image", "disabled-model"), 28);
+});
+
+test("normalizes every Google image provider alias to the catalog provider", () => {
+  const googleProvider = providers.find((provider) => provider.id === "google-gemini-image");
+  assert.ok(googleProvider);
+  const defaultModelPrice = modelPrices.find((price) => (
+    price.enabled
+    && price.modality === "image"
+    && price.providerId === googleProvider.id
+    && price.model === googleProvider.models[0]
+  ));
+  assert.ok(defaultModelPrice);
+
+  for (const alias of ["google", "google-ai-studio", "google-gemini-image"]) {
+    assert.equal(normalizeImageProviderId(alias), googleProvider.id);
+    assert.equal(defaultImageUnitCredits(alias), defaultModelPrice.unitCredits);
+  }
+});
+
+test("keeps every Google image catalog price exact across the shared contract", () => {
+  const googleProvider = providers.find((provider) => provider.id === "google-gemini-image");
+  assert.ok(googleProvider);
+  const googlePrices = modelPrices.filter((price) => (
+    price.enabled
+    && price.modality === "image"
+    && price.providerId === googleProvider.id
+  ));
+  assert.equal(googlePrices.length, googleProvider.models.length);
+
+  for (const model of googleProvider.models) {
+    const catalogPrice = googlePrices.find((price) => price.model === model);
+    assert.ok(catalogPrice, `missing enabled catalog price for ${model}`);
+    assert.equal(resolveImageUnitCredits(modelPrices, "google", model), catalogPrice.unitCredits);
+    assert.equal(resolveImageUnitCredits(modelPrices, "google-ai-studio", model), catalogPrice.unitCredits);
+  }
 });
 
 test("summarizes only real task type and status counts", () => {

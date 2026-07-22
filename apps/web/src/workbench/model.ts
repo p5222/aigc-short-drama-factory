@@ -1,4 +1,6 @@
-import type { AssetItem, CharacterProfile, EvaluationStage, ModelPrice, ModelProvider, Project, ProjectWorkflow, ScriptDraft, StoryboardShot, TaskStatus, TaskType } from "@aifilm/shared";
+import type { AssetItem, CharacterProfile, EvaluationStage, ModelProvider, Project, ProjectWorkflow, ScriptDraft, StoryboardShot, TaskStatus, TaskType } from "@aifilm/shared";
+
+export { resolveImageUnitCredits } from "@aifilm/shared";
 
 export {
   buildTimelineClipLayout,
@@ -139,28 +141,6 @@ export function resolveImageRoutePair(
     ? requestedModel
     : selected.models[0] ?? "";
   return { imageProvider: selected.provider.id, imageModel };
-}
-
-export function resolveImageUnitCredits(
-  prices: ModelPrice[],
-  providerId: string,
-  model: string,
-  fallback = defaultImageUnitCredits(providerId)
-): number {
-  return prices.find((price) => (
-    price.enabled
-    && price.modality === "image"
-    && price.providerId === providerId
-    && price.model === model
-  ))?.unitCredits ?? fallback;
-}
-
-function defaultImageUnitCredits(providerId: string): number {
-  if (providerId === "dashscope" || providerId === "dashscope-image") return 8;
-  if (providerId === "zml" || providerId === "zml-image" || providerId === "zml-relay") return 28;
-  if (providerId === "doubao" || providerId === "doubao-seedream") return 8;
-  if (["openai-compatible", "openai-compatible-image", "relay", "relay-image"].includes(providerId)) return 30;
-  return 5;
 }
 
 export function resolveCharacterIdentityAsset(

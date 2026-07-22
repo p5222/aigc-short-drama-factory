@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import type { BatchGenerationResult, CreateProjectInput, StoryboardShot } from "@aifilm/shared";
-import { estimateImageCredits, normalizeImageOutputQuality, normalizeImageOutputSize } from "@aifilm/shared";
+import { estimateImageCredits, normalizeImageOutputQuality, normalizeImageOutputSize, normalizeImageProviderId, resolveImageUnitCredits } from "@aifilm/shared";
 import { generateProjectStoryboards, textModelName, textProviderName } from "../agents/generator.js";
 import { buildCharacterIdentityBoardPrompt, buildStoryboardFirstFramePrompt } from "../agents/storyboardProduction.js";
 import { generateImage } from "../providers/dashscopeImage.js";
@@ -750,20 +750,13 @@ async function resolveTextRunCredits(input: CreateProjectInput) {
 }
 
 async function resolveImageCredits(provider: string, model: string, size?: string, quality?: string) {
-  const price = await prisma.modelPrice.findFirst({ where: { providerId: imageProviderId(provider), model, enabled: true } });
-  return estimateImageCredits(price?.unitCredits ?? imageCreditPerShot(provider), size, quality);
-}
-
-function imageProviderId(provider: string) {
-  if (provider === "dashscope" || provider === "dashscope-image") return "dashscope-image";
-  if (provider === "zml" || provider === "zml-image" || provider === "zml-relay") return "zml-image";
-  if (provider === "doubao" || provider === "doubao-seedream") return "doubao-seedream";
-  if (provider === "relay" || provider === "relay-image" || provider === "openai-compatible") return "openai-compatible-image";
-  return "mock-image";
+  const price = await prisma.modelPrice.findFirst({ where: { providerId: normalizeImageProviderId(provider), model, enabled: true } });
+  return estimateImageCredits(resolveImageUnitCredits(price ? [price] : [], provider, model), size, quality);
 }
 
 function currentImageProviderName(provider: string) {
   if (provider === "dashscope" || provider === "dashscope-image") return "DashScope / Qwen Image";
+  if (provider === "google" || provider === "google-ai-studio" || provider === "google-gemini-image") return "Google AI Studio / Gemini Image";
   if (provider === "zml" || provider === "zml-image" || provider === "zml-relay") return "ZML Image Relay";
   if (provider === "doubao" || provider === "doubao-seedream") return "Doubao Seedream Image";
   if (provider === "openai-compatible" || provider === "relay" || provider === "relay-image") return "OpenAI-compatible Image Relay";
@@ -772,6 +765,7 @@ function currentImageProviderName(provider: string) {
 
 function currentImageModelName(provider: string, selectedModel?: string) {
   if (provider === "dashscope" || provider === "dashscope-image") return selectedModel || process.env.DASHSCOPE_IMAGE_MODEL || "qwen-image";
+  if (provider === "google" || provider === "google-ai-studio" || provider === "google-gemini-image") return selectedModel || process.env.GEMINI_IMAGE_MODEL || "gemini-3-pro-image-preview";
   if (provider === "zml" || provider === "zml-image" || provider === "zml-relay") return selectedModel || process.env.ZML_IMAGE_MODEL || "gpt-image-2";
   if (provider === "doubao" || provider === "doubao-seedream") return selectedModel || process.env.DOUBAO_SEEDREAM_MODEL || "doubao-seedream-5-0-lite-260128";
   if (provider === "openai-compatible" || provider === "relay" || provider === "relay-image") return selectedModel || process.env.OPENAI_IMAGE_MODEL || "openai-compatible-image";
@@ -779,25 +773,17 @@ function currentImageModelName(provider: string, selectedModel?: string) {
 }
 
 function imageBatchLimit(total: number, provider: string) {
-  if (["dashscope", "dashscope-image", "zml", "zml-image", "zml-relay", "doubao", "doubao-seedream", "openai-compatible", "relay", "relay-image"].includes(provider)) {
+  if (["dashscope", "dashscope-image", "google", "google-ai-studio", "google-gemini-image", "zml", "zml-image", "zml-relay", "doubao", "doubao-seedream", "openai-compatible", "relay", "relay-image"].includes(provider)) {
     return Math.max(1, Math.min(total, Number(process.env.IMAGE_BATCH_LIMIT ?? 1)));
   }
   return total;
 }
 
 function characterImageBatchLimit(total: number, provider: string) {
-  if (["dashscope", "dashscope-image", "zml", "zml-image", "zml-relay", "doubao", "doubao-seedream", "openai-compatible", "relay", "relay-image"].includes(provider)) {
+  if (["dashscope", "dashscope-image", "google", "google-ai-studio", "google-gemini-image", "zml", "zml-image", "zml-relay", "doubao", "doubao-seedream", "openai-compatible", "relay", "relay-image"].includes(provider)) {
     return Math.max(1, Math.min(total, Number(process.env.CHARACTER_IMAGE_BATCH_LIMIT ?? 3)));
   }
   return total;
-}
-
-function imageCreditPerShot(provider: string) {
-  if (provider === "dashscope" || provider === "dashscope-image") return 8;
-  if (provider === "zml" || provider === "zml-image" || provider === "zml-relay") return 28;
-  if (provider === "doubao" || provider === "doubao-seedream") return 8;
-  if (provider === "openai-compatible" || provider === "relay" || provider === "relay-image") return 30;
-  return 5;
 }
 
 function isMockImageProvider(provider: string) {

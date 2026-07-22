@@ -11,6 +11,55 @@ export type ImageOutputSize =
 
 export type ImageOutputQuality = "low" | "medium" | "high" | "auto";
 
+export type CanonicalImageProviderId =
+  | "dashscope-image"
+  | "google-gemini-image"
+  | "zml-image"
+  | "doubao-seedream"
+  | "openai-compatible-image"
+  | "mock-image";
+
+export function normalizeImageProviderId(provider?: string | null): CanonicalImageProviderId {
+  if (provider === "dashscope" || provider === "dashscope-image") return "dashscope-image";
+  if (provider === "google" || provider === "google-ai-studio" || provider === "google-gemini-image") return "google-gemini-image";
+  if (provider === "zml" || provider === "zml-image" || provider === "zml-relay") return "zml-image";
+  if (provider === "doubao" || provider === "doubao-seedream") return "doubao-seedream";
+  if (provider === "openai-compatible" || provider === "openai-compatible-image" || provider === "relay" || provider === "relay-image") return "openai-compatible-image";
+  return "mock-image";
+}
+
+export function defaultImageUnitCredits(provider?: string | null): number {
+  const canonical = normalizeImageProviderId(provider);
+  if (canonical === "dashscope-image") return 8;
+  if (canonical === "google-gemini-image") return 24;
+  if (canonical === "zml-image") return 28;
+  if (canonical === "doubao-seedream") return 8;
+  if (canonical === "openai-compatible-image") return 30;
+  return 5;
+}
+
+export interface ImageUnitPriceLike {
+  providerId?: string | null;
+  modality: string;
+  model: string;
+  unitCredits: number;
+  enabled: boolean;
+}
+
+export function resolveImageUnitCredits(
+  prices: readonly ImageUnitPriceLike[],
+  provider: string,
+  model: string
+): number {
+  const providerId = normalizeImageProviderId(provider);
+  return prices.find((price) => (
+    price.enabled
+    && price.modality === "image"
+    && price.providerId === providerId
+    && price.model === model
+  ))?.unitCredits ?? defaultImageUnitCredits(provider);
+}
+
 export interface ImageOutputSizeOption {
   value: ImageOutputSize;
   label: string;
