@@ -117,6 +117,11 @@ function LoadedShotStage({
   }, [activeShot?.id, draftState.shotId]);
 
   useEffect(() => {
+    if (!activeShot || draftState.shotId !== activeShot.id) return;
+    updateDraft({ type: "reconcile-canonical", shotId: activeShot.id, draft: shotDraft(activeShot) });
+  }, [activeShot, draftState.shotId]);
+
+  useEffect(() => {
     onSaveStateChange(draftState.status);
   }, [draftState.status, onSaveStateChange]);
 
@@ -148,8 +153,11 @@ function LoadedShotStage({
     updateDraft({ type: "save-start" });
     setMessage("");
     setError("");
+    const submittedDraft = buildStoryboardShotUpdatePayload(draftState.draft);
+    let updatedShot: StoryboardShot;
     try {
-      await api.updateStoryboardShot(project.id, activeShot.id, buildStoryboardShotUpdatePayload(draftState.draft));
+      updatedShot = await api.updateStoryboardShot(project.id, activeShot.id, submittedDraft);
+      updateDraft({ type: "save-committed", draft: shotDraft(updatedShot) });
     } catch (cause) {
       const detail = errorText(cause, "镜头保存失败，请重试。");
       updateDraft({ type: "save-failed", error: detail });
@@ -157,13 +165,14 @@ function LoadedShotStage({
       return;
     }
     try {
-      await onRefresh(project.id);
-      updateDraft({ type: "save-committed" });
+      const refreshed = await onRefresh(project.id);
+      const canonicalShot = refreshed.storyboards.find((shot) => shot.id === activeShot.id) ?? updatedShot;
+      updateDraft({ type: "sync-succeeded", draft: shotDraft(canonicalShot) });
       setMessage("镜头已保存；相关旧首帧将按服务端规则失效。");
       dispatch({ type: "set-dirty-entity", entityKey: null });
     } catch (cause) {
       const detail = errorText(cause, "镜头已保存，但工作台刷新失败。");
-      updateDraft({ type: "save-committed", refreshError: detail });
+      updateDraft({ type: "save-committed", draft: shotDraft(updatedShot), refreshError: detail });
       setRefreshRequired(true);
       setError(`${detail} 重试刷新不会重复保存。`);
     }
@@ -173,9 +182,10 @@ function LoadedShotStage({
     setPending("refresh");
     setError("");
     try {
-      await onRefresh(project.id);
+      const refreshed = await onRefresh(project.id);
+      const canonicalShot = refreshed.storyboards.find((shot) => shot.id === draftState.shotId);
       setRefreshRequired(false);
-      updateDraft({ type: "sync-succeeded" });
+      updateDraft({ type: "sync-succeeded", draft: canonicalShot ? shotDraft(canonicalShot) : draftState.draft });
       dispatch({ type: "set-dirty-entity", entityKey: null });
       setMessage("工作台数据已刷新。");
     } catch (cause) {

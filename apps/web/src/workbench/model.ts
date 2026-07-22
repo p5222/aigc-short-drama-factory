@@ -121,8 +121,9 @@ export type ShotDraftAction =
   | { type: "edit"; patch: Partial<StoryboardShot> }
   | { type: "save-start" }
   | { type: "save-failed"; error: string }
-  | { type: "save-committed"; refreshError?: string }
-  | { type: "sync-succeeded" }
+  | { type: "save-committed"; draft?: Partial<StoryboardShot>; refreshError?: string }
+  | { type: "sync-succeeded"; draft?: Partial<StoryboardShot> }
+  | { type: "reconcile-canonical"; shotId: string; draft: Partial<StoryboardShot> }
   | { type: "rebuild"; shotId: string; draft: Partial<StoryboardShot> };
 
 export function createShotDraftState(shotId: string, draft: Partial<StoryboardShot>): ShotDraftState {
@@ -139,13 +140,26 @@ export function reduceShotDraftState(state: ShotDraftState, action: ShotDraftAct
       return { ...state, status: "error", committed: false, error: action.error };
     case "save-committed":
       return action.refreshError
-        ? { ...state, status: "sync-required", committed: true, error: action.refreshError }
-        : { ...state, status: "saved", committed: true, error: undefined };
+        ? { ...state, draft: action.draft ? { ...action.draft } : state.draft, status: "sync-required", committed: true, error: action.refreshError }
+        : { ...state, draft: action.draft ? { ...action.draft } : state.draft, status: "saved", committed: true, error: undefined };
     case "sync-succeeded":
-      return { ...state, status: "saved", committed: true, error: undefined };
+      return { ...state, draft: action.draft ? { ...action.draft } : state.draft, status: "saved", committed: true, error: undefined };
+    case "reconcile-canonical":
+      return reconcileShotDraft(state, action.shotId, action.draft);
     case "rebuild":
       return createShotDraftState(action.shotId, action.draft);
   }
+}
+
+export function reconcileShotDraft(
+  state: ShotDraftState,
+  shotId: string,
+  canonicalDraft: Partial<StoryboardShot>
+): ShotDraftState {
+  if (state.shotId !== shotId) return state;
+  const hasUncommittedChanges = !state.committed && (state.status === "dirty" || state.status === "error" || state.status === "saving");
+  if (hasUncommittedChanges) return state;
+  return { ...state, draft: { ...canonicalDraft } };
 }
 
 export function buildShotAssetMap(

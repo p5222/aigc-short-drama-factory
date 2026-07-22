@@ -27,6 +27,7 @@ import {
   reconcileActiveAsset,
   reconcileContentSelection,
   reconcileSelection,
+  reconcileShotDraft,
   resolveCharacterIdentityAsset,
   resolveImageRoutePair,
   resolveShotSelection,
@@ -195,6 +196,42 @@ test("successful refresh reconciliation clears sync error and returns the draft 
   assert.equal(reconciled.status, "saved");
   assert.equal(reconciled.error, undefined);
   assert.equal(reconciled.committed, true);
+});
+
+test("committed shot draft adopts the canonical duration that was actually sent", () => {
+  const saving = reduceShotDraftState(
+    createShotDraftState("shot-1", { duration: 8.6 }),
+    { type: "save-start" }
+  );
+  const committed = reduceShotDraftState(saving, {
+    type: "save-committed",
+    draft: buildStoryboardShotUpdatePayload(saving.draft)
+  });
+
+  assert.equal(committed.status, "saved");
+  assert.equal(committed.draft.duration, 9);
+});
+
+test("sync-required retry adopts the refreshed canonical shot", () => {
+  const syncRequired = reduceShotDraftState(
+    createShotDraftState("shot-1", { duration: 8.6 }),
+    { type: "save-committed", draft: { duration: 9 }, refreshError: "refresh" }
+  );
+  const reconciled = reduceShotDraftState(syncRequired, { type: "sync-succeeded", draft: { duration: 9 } });
+
+  assert.equal(reconciled.status, "saved");
+  assert.equal(reconciled.draft.duration, 9);
+});
+
+test("workflow refresh never overwrites an uncommitted dirty shot draft", () => {
+  const dirty = reduceShotDraftState(createShotDraftState("shot-1", { duration: 8 }), {
+    type: "edit",
+    patch: { duration: 12 }
+  });
+  const reconciled = reconcileShotDraft(dirty, "shot-1", { duration: 9 });
+
+  assert.equal(reconciled, dirty);
+  assert.equal(reconciled.draft.duration, 12);
 });
 
 test("canceling a dirty shot switch confirms once and preserves the draft", () => {
