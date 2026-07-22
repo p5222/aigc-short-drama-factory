@@ -49,6 +49,7 @@ test("auto play targets the next playable clip exactly once and manual selection
 });
 
 test("normalizes persisted media source identity across relative and absolute URLs", () => {
-  assert.equal(normalizePersistedMediaUrl("/storage/clip.mp4?x=1#t"), normalizePersistedMediaUrl("https://studio.test/storage/clip.mp4?x=1#t"));
+  assert.equal(normalizePersistedMediaUrl("/storage/clip.mp4?x=1#t", "https://manjiao.cloud"), normalizePersistedMediaUrl("https://manjiao.cloud/storage/clip.mp4?x=1#t", "https://manjiao.cloud"));
+  assert.notEqual(normalizePersistedMediaUrl("https://cdn.other/storage/clip.mp4", "https://manjiao.cloud"), normalizePersistedMediaUrl("https://manjiao.cloud/storage/clip.mp4", "https://manjiao.cloud"));
   assert.notEqual(normalizePersistedMediaUrl("/storage/clip.mp4?x=1"), normalizePersistedMediaUrl("/storage/clip.mp4?x=2"));
 });

@@ -5,8 +5,12 @@ export function normalizeShotDuration(duration: number | undefined): number {
   return Number.isFinite(duration) && (duration ?? 0) > 0 ? duration! : 1;
 }
 
-export function normalizePersistedMediaUrl(url: string): string {
-  try { return new URL(url, "https://studio.test").href; } catch { return url; }
+export function normalizePersistedMediaUrl(url: string, base = "https://studio.test"): string {
+  try {
+    const parsed = new URL(url, base);
+    const origin = new URL(base).origin;
+    return parsed.origin === origin ? `${parsed.pathname}${parsed.search}${parsed.hash}` : parsed.href;
+  } catch { return url; }
 }
 
 export interface DeliveryClip { id: string; index: number; start: number; duration: number; width: number; }
