@@ -57,6 +57,7 @@ import { DeliveryStage } from "../workbench/stages/DeliveryStage";
 import { TaskDrawer } from "../workbench/components/TaskDrawer";
 import { EvaluationDrawer } from "../workbench/components/EvaluationDrawer";
 import { resolveSingleDeliveryCandidate } from "../workbench/stages/deliveryModel";
+import { generateCharacterImages, generateStoryboards, generateImages, generateVideos, createExportJob, generateQualityReports, submitFeedback } from "../workbench/workbenchActions";
 import { createWorkbenchState, resolveCharacterIdentityAsset, shouldReconcileStoryboardSelection, workbenchReducer, type WorkbenchStage, type WorkbenchTheme } from "../workbench/model";
 import { buildTimelineClipLayout } from "./projectWorkbenchModel";
 import "./ProjectStudioV4.css";
@@ -172,27 +173,27 @@ export function ProjectWorkbenchPage({ workflow, providers, modelPrices, theme, 
     try {
       if (actionId === "character") {
         beginOperation("character", "角色三视图生成中", "正在根据角色卡和已上传参考图生成角色身份锚点。");
-        const result = await api.generateCharacterImages(project.id);
+        const result = await generateCharacterImages(project.id);
         setMessage(`角色定稿任务已提交，新增 ${result.assetsCreated ?? 0} 个资产。`);
         setActiveTab("assets");
       }
       if (actionId === "storyboard") {
         beginOperation("storyboard", "分镜拆解中", "正在把剧本拆成镜头级清单。");
-        const result = await api.generateStoryboards(project.id, { artStyle: project.artStyle, videoRatio: project.videoRatio });
+        const result = await generateStoryboards(project.id, { artStyle: project.artStyle, videoRatio: project.videoRatio });
         setMessage(`分镜拆解已提交，新增 ${result.assetsCreated ?? 0} 条记录。`);
         setActiveTab("shots");
         dispatch({ type: "set-shot-mode", mode: "table" });
       }
       if (actionId === "image") {
         beginOperation("images", "分镜图生成中", "正在按未出图镜头补齐首帧图。");
-        const result = await api.generateImages(project.id);
+        const result = await generateImages(project.id);
         setMessage(`分镜图任务已提交，新增 ${result.assetsCreated ?? 0} 个资产。`);
         setActiveTab("shots");
         dispatch({ type: "set-shot-mode", mode: "image" });
       }
       if (actionId === "video") {
         beginOperation("video", "视频片段生成中", "正在把已确认分镜图提交给视频模型。");
-        const result = await api.generateVideos(project.id);
+        const result = await generateVideos(project.id);
         setMessage(`视频任务已提交，新增 ${result.assetsCreated ?? 0} 个资产。`);
         setActiveTab("delivery");
       }
@@ -230,7 +231,7 @@ export function ProjectWorkbenchPage({ workflow, providers, modelPrices, theme, 
     setIsBusy(true);
     beginOperation("export", type === "video_export" ? "MP4 合成中" : type === "tts" ? "配音生成中" : "字幕生成中", "正在整理镜头、台词、时长和素材。");
     try {
-      const job = await api.createExportJob(project.id, { type });
+      const job = await createExportJob(project.id, { type });
       setExportJobs((current) => [job, ...current.filter((item) => item.id !== job.id)]);
       setMessage(job.outputUrl ? "导出资产已生成。" : `导出任务状态：${job.status}`);
       await refreshProject();
@@ -446,7 +447,7 @@ function CreatorImagesBoard({
     setWorking("evaluate");
     setMessage("");
     try {
-      await api.generateQualityReports(projectId, { stages: ["image"] });
+      await generateQualityReports(projectId, { stages: ["image"] });
       setMessage("分镜图离线评测已完成，评分、问题和建议已回流后台。");
       await onRefresh();
     } finally {
@@ -472,7 +473,7 @@ function CreatorImagesBoard({
     setWorking("selected");
     setMessage("");
     try {
-      await api.generateImages(projectId, { shotIds: ids });
+      await generateImages(projectId, { shotIds: ids });
       setMessage(`已提交 ${ids.length} 个镜头生成。`);
       await onRefresh();
     } finally {
@@ -486,7 +487,7 @@ function CreatorImagesBoard({
     setWorking("pending");
     setMessage("");
     try {
-      await api.generateImages(projectId, { shotIds: pendingShotIds });
+      await generateImages(projectId, { shotIds: pendingShotIds });
       setMessage(`已提交 ${pendingShotIds.length} 个待生成镜头。`);
       await onRefresh();
     } finally {
@@ -710,7 +711,7 @@ function FeedbackComposer({ projectId, stage, assetId, recentCount, onSubmitted 
     setSubmitting(true);
     setMessage("");
     try {
-      await api.submitFeedback({
+      await submitFeedback({
         projectId,
         assetId,
         stage,
