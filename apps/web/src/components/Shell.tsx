@@ -6,6 +6,7 @@ import {
   Coins,
   CreditCard,
   Film,
+  FileText,
   Gauge,
   Grid2X2,
   LogOut,
@@ -20,6 +21,7 @@ import type { ReactNode } from "react";
 
 export type PageKey =
   | "workbench"
+  | "content"
   | "wizard"
   | "scripts"
   | "studio"
@@ -49,6 +51,7 @@ const sections: Array<{ label: string; items: Array<{ key: PageKey; label: strin
     label: "创作",
     items: [
       { key: "workbench", label: "工作台", icon: <Grid2X2 size={19} /> },
+      { key: "content", label: "内容创作", icon: <FileText size={19} /> },
       { key: "wizard", label: "新建漫剧", icon: <WandSparkles size={19} /> },
       { key: "scripts", label: "我的作品", icon: <BookOpen size={19} /> }
     ]
@@ -153,6 +156,7 @@ export function Shell({ active, onNavigate, children, credits = 0, theme, onTogg
 function pageTitle(page: PageKey) {
   const map: Record<PageKey, string> = {
     workbench: "工作台",
+    content: "内容创作",
     wizard: "新建漫剧",
     scripts: "我的作品",
     studio: "剪辑中心",

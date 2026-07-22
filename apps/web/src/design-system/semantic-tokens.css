@@ -1,0 +1,60 @@
+/*
+ * Shared semantic contract for gradual migration of legacy pages.
+ * Import after workbench/styles/tokens.css when a page adopts this layer.
+ */
+:root {
+  --ds-font-body: var(--font-ui, Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif);
+  --ds-font-code: var(--font-mono, "JetBrains Mono", Consolas, monospace);
+
+  --ds-space-1: 4px;
+  --ds-space-2: 8px;
+  --ds-space-3: 12px;
+  --ds-space-4: 16px;
+  --ds-space-5: 20px;
+  --ds-space-6: 24px;
+  --ds-space-8: 32px;
+
+  --ds-radius-control: var(--radius-xs, 4px);
+  --ds-radius-surface: var(--radius-sm, 6px);
+  --ds-radius-dialog: var(--radius-md, 8px);
+
+  --ds-bg-canvas: var(--bg-app);
+  --ds-bg-shell: var(--bg-shell);
+  --ds-bg-surface: var(--surface-1);
+  --ds-bg-subtle: var(--surface-2);
+  --ds-bg-muted: var(--surface-3);
+  --ds-bg-media: var(--media-bg);
+
+  --ds-text-primary: var(--text-1);
+  --ds-text-secondary: var(--text-2);
+  --ds-text-muted: var(--text-3);
+  --ds-text-on-accent: var(--on-accent);
+
+  --ds-border-default: var(--border-1);
+  --ds-border-strong: var(--border-2);
+  --ds-border-divider: var(--divider);
+  --ds-border-media: var(--media-border);
+
+  --ds-action-primary: var(--accent);
+  --ds-action-primary-hover: var(--accent-hover);
+  --ds-action-soft: var(--accent-soft);
+  --ds-action-selected: var(--accent-selected);
+  --ds-focus-ring: var(--focus);
+
+  --ds-status-success: var(--success);
+  --ds-status-info: var(--info);
+  --ds-status-warning: var(--warning);
+  --ds-status-danger: var(--danger);
+
+  --ds-overlay: var(--overlay);
+  --ds-shadow-floating: var(--shadow-popover);
+  --ds-motion-fast: var(--motion-fast);
+  --ds-motion-normal: var(--motion-normal);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --ds-motion-fast: 0ms;
+    --ds-motion-normal: 0ms;
+  }
+}

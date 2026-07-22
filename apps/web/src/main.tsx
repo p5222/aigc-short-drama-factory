@@ -9,6 +9,9 @@ import "./workbench/styles/shell.css";
 import "./workbench/styles/components.css";
 import "./workbench/styles/stages.css";
 import "./workbench/styles/responsive.css";
+import "./design-system/semantic-tokens.css";
+import "./design-system/components.css";
+import "./admin/admin.css";
 
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

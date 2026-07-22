@@ -1,0 +1,103 @@
+/* Primitive classes are opt-in. They do not override legacy page selectors. */
+.ds-surface {
+  color: var(--ds-text-primary);
+  background: var(--ds-bg-surface);
+  border: 1px solid var(--ds-border-default);
+  border-radius: var(--ds-radius-surface);
+}
+
+.ds-button {
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ds-space-2);
+  border: 1px solid var(--ds-border-default);
+  border-radius: var(--ds-radius-control);
+  padding: 0 var(--ds-space-3);
+  color: var(--ds-text-primary);
+  background: var(--ds-bg-surface);
+  font: 600 14px/1 var(--ds-font-body);
+  cursor: pointer;
+  transition: color var(--ds-motion-fast), background-color var(--ds-motion-fast), border-color var(--ds-motion-fast);
+}
+
+.ds-button:hover:not(:disabled) {
+  border-color: var(--ds-border-strong);
+  background: var(--ds-bg-subtle);
+}
+
+.ds-button--primary {
+  color: var(--ds-text-on-accent);
+  border-color: var(--ds-action-primary);
+  background: var(--ds-action-primary);
+}
+
+.ds-button--primary:hover:not(:disabled) {
+  border-color: var(--ds-action-primary-hover);
+  background: var(--ds-action-primary-hover);
+}
+
+.ds-button:focus-visible,
+.ds-field:focus-visible {
+  outline: 2px solid var(--ds-focus-ring);
+  outline-offset: 2px;
+}
+
+.ds-button:disabled {
+  color: var(--ds-text-muted);
+  background: var(--ds-bg-muted);
+  cursor: not-allowed;
+}
+
+.ds-field {
+  width: 100%;
+  min-height: 40px;
+  border: 1px solid var(--ds-border-default);
+  border-radius: var(--ds-radius-control);
+  padding: 0 var(--ds-space-3);
+  color: var(--ds-text-primary);
+  background: var(--ds-bg-surface);
+  font: 400 14px/1.4 var(--ds-font-body);
+}
+
+.ds-field::placeholder {
+  color: var(--ds-text-muted);
+}
+
+.ds-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ds-space-1);
+  color: var(--ds-text-secondary);
+  font: 600 12px/1.4 var(--ds-font-body);
+}
+
+.ds-status--success { color: var(--ds-status-success); }
+.ds-status--info { color: var(--ds-status-info); }
+.ds-status--warning { color: var(--ds-status-warning); }
+.ds-status--danger { color: var(--ds-status-danger); }
+
+.ds-dialog-scrim {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: var(--ds-space-4);
+  background: var(--ds-overlay);
+}
+
+.ds-dialog {
+  width: min(640px, 100%);
+  max-height: min(720px, calc(100dvh - 32px));
+  overflow: auto;
+  color: var(--ds-text-primary);
+  background: var(--ds-bg-surface);
+  border: 1px solid var(--ds-border-default);
+  border-radius: var(--ds-radius-dialog);
+  box-shadow: var(--ds-shadow-floating);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ds-button { transition: none; }
+}

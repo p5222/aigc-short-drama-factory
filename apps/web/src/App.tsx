@@ -27,6 +27,7 @@ import { Shell, type PageKey } from "./components/Shell";
 import { ProductTour, type ProductTourStep } from "./components/ProductTour";
 import { api, type AuthUser } from "./lib/api";
 import { AdminPage } from "./pages/AdminPage";
+import { AdminShell } from "./admin";
 import { LedgerPage, RechargePage } from "./pages/CreditsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { ScriptsPage } from "./pages/ScriptsPage";
@@ -36,6 +37,7 @@ import { StudioPage } from "./pages/StudioPage";
 import { TaskCenterPage } from "./pages/TaskCenterPage";
 import { WizardPage } from "./pages/WizardPage";
 import { WorkbenchPage } from "./pages/WorkbenchPage";
+import { ContentCreatorPage } from "./pages/ContentCreatorPage";
 import { resolveThemePreference, type WorkbenchTheme } from "./workbench/model";
 
 const THEME_STORAGE_KEY = "manjiao-theme";
@@ -94,6 +96,7 @@ export function App() {
   ], []);
   const [activePage, setActivePage] = useState<PageKey>("workbench");
   const [adminHash, setAdminHash] = useState(() => normalizeAdminHash(decodeURIComponent(window.location.hash.replace(/^#/, "")) || "运营总览"));
+  const [adminMobileOpen, setAdminMobileOpen] = useState(false);
   const [tourOpen, setTourOpen] = useState(false);
   const [tourIndex, setTourIndex] = useState(0);
   const [user, setUser] = useState<AuthUser | null>(null);
@@ -329,6 +332,8 @@ export function App() {
     switch (activePage) {
       case "workbench":
         return <WorkbenchPage summary={summary} onStart={() => setActivePage("wizard")} onOpen={(projectId) => void openProject(projectId)} />;
+      case "content":
+        return <ContentCreatorPage />;
       case "wizard":
         return (
           <WizardPage
@@ -419,70 +424,34 @@ export function App() {
     }
 
     return (
-      <div className="admin-standalone-shell">
-        <aside className="admin-standalone-sidebar">
-          <div className="brand admin-v2-brand">
-            <div className="brand-mark admin-v2-brand-mark">漫</div>
-            <div>
-              <strong>漫角</strong>
-              <span>运营控制台</span>
-            </div>
-          </div>
-          <nav className="admin-module-nav" aria-label="后台模块">
-            {adminNavGroups.map((group) => (
-              <div className="admin-nav-group" key={group.label}>
-                <small>{group.label}</small>
-                {group.items.map(({ name, icon: Icon }) => (
-                  <a className={adminHash === name ? "active" : undefined} key={name} href={`#${name}`}>
-                    <Icon size={20} />
-                    <span>{name}</span>
-                  </a>
-                ))}
-              </div>
-            ))}
-          </nav>
-          <div className="admin-sidebar-bottom">
-            <button type="button"><Moon size={20} />浅色模式</button>
-            <button type="button" onClick={() => { window.location.href = "/"; }}>返回前台</button>
-          </div>
-        </aside>
-        <main className="admin-standalone-main">
-          <header className="admin-standalone-topbar">
-            <div>
-              <strong>后台管理系统</strong>
-              <small>用户、积分、计费与模型供应商统一管理</small>
-            </div>
-            <div className="top-actions">
-              <button className="admin-top-icon" aria-label="通知"><Bell size={18} /></button>
-              <span className="admin-top-lang">CN&nbsp;ZH</span>
-              <details className="admin-top-user-menu">
-                <summary className="admin-top-user"><span>{user.name.slice(0, 2)}</span><div><strong>{user.name}</strong><small>{user.role}</small></div><ChevronDown size={16} /></summary>
-                <div className="admin-top-menu-panel">
-                  <button type="button" onClick={() => { window.location.href = "/"; }}>返回前台</button>
-                  <button type="button" onClick={logout}>退出登录</button>
-                </div>
-              </details>
-              <button className="admin-top-logout" onClick={logout} aria-label="退出登录">退出</button>
-            </div>
-          </header>
-          {error ? <div className="error-banner">API 连接异常：{error}</div> : null}
-          <AdminPage
-            summary={adminSummary}
-            providers={providers}
-            modelPrices={modelPrices}
-            templates={templates}
-            plans={adminPlans}
-            membershipPlans={membershipPlans}
-            redeemCodes={redeemCodes}
-            announcements={announcements}
-            helpArticles={helpArticles}
-            users={adminUsers}
-            evaluation={evaluationOverview}
-            qualityProjects={qualityProjects}
-            onRefresh={() => void loadAdmin()}
-          />
-        </main>
-      </div>
+      <AdminShell
+        title="后台管理系统"
+        description="创作、质量、模型与商业化统一运营"
+        items={adminNavGroups.flatMap((group) => group.items.map(({ name, icon: Icon }) => ({ id: name, label: name, icon: <Icon size={17} /> })))}
+        activeId={adminHash}
+        onNavigate={(id) => { window.location.hash = encodeURIComponent(id); }}
+        onThemeToggle={handleToggleTheme}
+        mobileOpen={adminMobileOpen}
+        onMobileOpenChange={setAdminMobileOpen}
+        actions={<><button className="adm-primary-btn" type="button" onClick={() => { window.location.href = "/"; }}>返回前台</button><button className="adm-icon-btn" type="button" onClick={logout} aria-label="退出登录">退</button></>}
+      >
+        {error ? <div className="error-banner">API 连接异常：{error}</div> : null}
+        <AdminPage
+          summary={adminSummary}
+          providers={providers}
+          modelPrices={modelPrices}
+          templates={templates}
+          plans={adminPlans}
+          membershipPlans={membershipPlans}
+          redeemCodes={redeemCodes}
+          announcements={announcements}
+          helpArticles={helpArticles}
+          users={adminUsers}
+          evaluation={evaluationOverview}
+          qualityProjects={qualityProjects}
+          onRefresh={() => void loadAdmin()}
+        />
+      </AdminShell>
     );
   }
 
