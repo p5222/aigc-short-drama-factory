@@ -42,6 +42,7 @@ import {
   imageOutputQualityOptions,
   imageOutputSizeOptions,
   imageParameterMultiplier,
+  isPlayableVideoUrl,
   normalizeImageOutputQuality,
   normalizeImageOutputSize
 } from "@aifilm/shared";
@@ -1906,10 +1907,6 @@ function describeCharactersForPrompt(names: string[], characters: CharacterProfi
 
 function compactPromptText(value?: string) {
   return (value || "待补充").replace(/\s+/g, " ").trim();
-}
-
-function isPlayableVideoUrl(url?: string): url is string {
-  return Boolean(url && /\.(mp4|webm|mov)(?:$|\?)/i.test(url));
 }
 
 function shotAspectClass(shot?: StoryboardShot) {

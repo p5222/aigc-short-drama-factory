@@ -35,6 +35,7 @@ import {
   resolveShotSelection,
   resolveVideoUnitCredits,
   resolveVideoAssetStatus,
+  isPlayableVideoUrl,
   resolveThemePreference,
   shouldReconcileStoryboardSelection,
   storyboardScene,
@@ -263,6 +264,33 @@ test("stale retry completion for shot A cannot overwrite shot B", () => {
   assert.equal(stale.shotId, "shot-b");
 });
 
+test("failed refresh clears the active operation and remains retryable", () => {
+  const syncRequired = reduceShotDraftState(createShotDraftState("shot-a", { duration: 9 }), {
+    type: "save-committed",
+    refreshError: "first refresh"
+  });
+  const refreshing = reduceShotDraftState(syncRequired, { type: "sync-start", token: "refresh-a-1" });
+  const failed = reduceShotDraftState(refreshing, { type: "sync-failed", token: "refresh-a-1", error: "still offline" });
+
+  assert.equal(failed.status, "sync-required");
+  assert.equal(failed.activeOperation, undefined);
+  assert.equal(failed.error, "still offline");
+  const retrying = reduceShotDraftState(failed, { type: "sync-start", token: "refresh-a-2" });
+  assert.equal(retrying.activeOperation?.token, "refresh-a-2");
+});
+
+test("stale refresh failure cannot affect the current shot", () => {
+  const refreshingA = reduceShotDraftState(createShotDraftState("shot-a", { duration: 9 }), {
+    type: "sync-start",
+    token: "refresh-a"
+  });
+  const shotB = reduceShotDraftState(refreshingA, { type: "rebuild", shotId: "shot-b", draft: { duration: 5 } });
+  const stale = reduceShotDraftState(shotB, { type: "sync-failed", token: "refresh-a", error: "offline" });
+
+  assert.equal(stale, shotB);
+  assert.equal(stale.error, undefined);
+});
+
 test("canceling a dirty shot switch confirms once and preserves the draft", () => {
   const dirty = reduceShotDraftState(createShotDraftState("shot-1", { pictureDesc: "Before" }), {
     type: "edit",
@@ -315,6 +343,13 @@ test("video eligibility requires a succeeded image and no succeeded playable vid
   assert.equal(resolveVideoAssetStatus(queuedVideo), "running");
   assert.equal(resolveVideoAssetStatus(completedVideo), "succeeded");
   assert.equal(resolveVideoAssetStatus({ ...completedVideo, status: "running" }), "running");
+});
+
+test("web video readiness follows the shared persisted URL contract", () => {
+  assert.equal(isPlayableVideoUrl("https://cdn.example.com/video?id=42"), true);
+  assert.equal(isPlayableVideoUrl("/storage/projects/p1/video/clip"), true);
+  assert.equal(isPlayableVideoUrl("task-123"), false);
+  assert.equal(isPlayableVideoUrl(""), false);
 });
 
 test("batch success summary uses actual backend result instead of requested range", () => {

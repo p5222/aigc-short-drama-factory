@@ -4,7 +4,7 @@ import type { AdminUserRow, AssetItem, BatchGenerationResult, CreateProjectInput
 import { textModelName, textProviderName } from "../agents/generator.js";
 import { buildSeedanceVideoPrompt, buildStoryboardFirstFramePrompt, createStoryboardProductionPackage } from "../agents/storyboardProduction.js";
 import { estimateCreation } from "../agents/workflow.js";
-import { estimateImageCredits, normalizeImageOutputQuality, normalizeImageOutputSize, normalizeImageProviderId, resolveImageUnitCredits } from "@aifilm/shared";
+import { estimateImageCredits, isPlayableVideoUrl, normalizeImageOutputQuality, normalizeImageOutputSize, normalizeImageProviderId, resolveImageUnitCredits } from "@aifilm/shared";
 import { hashPassword } from "../auth/password.js";
 import { buildDirectorStoryboardRow, createDirectorStoryboardPackage } from "../export/directorStoryboard.js";
 import { createSubtitleAsset, createTtsManifest, createVideoExportPackage, type MediaExportResult } from "../export/mediaExport.js";
@@ -2307,11 +2307,6 @@ function isMockImageProvider(provider: string) {
 
 function isMockVideoProvider(provider: string) {
   return provider === "mock" || provider === "mock-video" || provider === "mock-video-v1";
-}
-
-function isPlayableVideoUrl(url?: string) {
-  if (!url) return false;
-  return url.startsWith("/storage/") || url.startsWith("http://") || url.startsWith("https://") || url.startsWith("data:video");
 }
 
 function normalizeRedeemPrefix(value: string) {

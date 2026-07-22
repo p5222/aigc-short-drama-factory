@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import type { ShowcaseWork, ShowcaseWorkInput, ShowcaseWorkStatus } from "@aifilm/shared";
+import { isPlayableVideoUrl, type ShowcaseWork, type ShowcaseWorkInput, type ShowcaseWorkStatus } from "@aifilm/shared";
 import { prisma } from "./client.js";
 
 type PageQuery = {
@@ -26,10 +26,6 @@ function normalizedPage(query: PageQuery) {
   const page = Math.max(1, Math.floor(Number(query.page) || 1));
   const pageSize = Math.min(60, Math.max(1, Math.floor(Number(query.pageSize) || 20)));
   return { page, pageSize };
-}
-
-function isPlayableVideoUrl(value: string) {
-  return /\.(mp4|webm|mov)(?:$|[?#])/i.test(value.trim());
 }
 
 function mapShowcaseWork(row: {

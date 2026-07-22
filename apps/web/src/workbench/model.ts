@@ -1,6 +1,8 @@
 import type { AssetItem, CharacterProfile, EvaluationStage, ModelPrice, ModelProvider, Project, ProjectWorkflow, ScriptDraft, StoryboardShot, TaskStatus, TaskType } from "@aifilm/shared";
+import { isPlayableVideoUrl } from "@aifilm/shared";
 
 export { resolveImageUnitCredits } from "@aifilm/shared";
+export { isPlayableVideoUrl } from "@aifilm/shared";
 
 export {
   buildTimelineClipLayout,
@@ -123,6 +125,7 @@ export type ShotDraftAction =
   | { type: "edit"; patch: Partial<StoryboardShot> }
   | { type: "save-start"; token?: string }
   | { type: "sync-start"; token: string }
+  | { type: "sync-failed"; token: string; error: string }
   | { type: "save-failed"; token?: string; error: string }
   | { type: "save-committed"; token?: string; draft?: Partial<StoryboardShot>; refreshError?: string }
   | { type: "sync-succeeded"; token?: string; draft?: Partial<StoryboardShot> }
@@ -141,6 +144,9 @@ export function reduceShotDraftState(state: ShotDraftState, action: ShotDraftAct
       return { ...state, status: "saving", error: undefined, activeOperation: action.token ? { token: action.token, shotId: state.shotId, revision: state.revision, kind: "save" } : state.activeOperation };
     case "sync-start":
       return { ...state, activeOperation: { token: action.token, shotId: state.shotId, revision: state.revision, kind: "refresh" } };
+    case "sync-failed":
+      if (isStaleShotCompletion(state, action.token)) return state;
+      return { ...state, status: "sync-required", committed: true, activeOperation: undefined, error: action.error };
     case "save-failed":
       if (isStaleShotCompletion(state, action.token)) return state;
       return { ...state, status: "error", committed: false, activeOperation: undefined, error: action.error };
@@ -249,10 +255,6 @@ export function resolveVideoUnitCredits(
     && price.providerId === providerId
     && price.model === model
   ))?.unitCredits ?? defaultVideoUnitCredits(providerId);
-}
-
-export function isPlayableVideoUrl(url?: string): boolean {
-  return Boolean(url && (/^data:video\//.test(url) || /^blob:/.test(url) || /\.(mp4|webm|mov)(\?|#|$)/i.test(url)));
 }
 
 export function resolveVideoAssetStatus(asset?: AssetItem): "missing" | "running" | "failed" | "succeeded" {

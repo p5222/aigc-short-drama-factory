@@ -214,8 +214,10 @@ function LoadedShotStage({
       setMessage("工作台数据已刷新。");
     } catch (cause) {
       if (!isCurrentOperation(activeOperationRef.current, token, submittedShotId)) return;
+      const detail = errorText(cause, "刷新失败，请稍后重试。");
+      updateDraft({ type: "sync-failed", token, error: detail });
       activeOperationRef.current = null;
-      setError(errorText(cause, "刷新失败，请稍后重试。"));
+      setError(detail);
     } finally {
       setPending("");
     }

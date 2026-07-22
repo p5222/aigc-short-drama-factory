@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Download, FileAudio, Film, FolderOpen, Loader2, RefreshCw, Scissors, Subtitles, WandSparkles } from "lucide-react";
 import type { AssetItem, ExportJob, GenerationTask, Project, ProjectWorkflow, StoryboardShot } from "@aifilm/shared";
+import { isPlayableVideoUrl } from "@aifilm/shared";
 import { api } from "../lib/api";
 
 interface StudioPageProps {
@@ -466,10 +467,6 @@ function buildTimelineSegments(storyboards: StoryboardShot[]): TimelineSegment[]
   });
 }
 
-function isPlayableVideoUrl(url?: string) {
-  if (!url) return false;
-  return url.startsWith("/storage/") || url.startsWith("http://") || url.startsWith("https://") || url.startsWith("data:video");
-}
 
 function isMp4Export(job: ExportJob) {
   return job.status === "succeeded" && (job.outputKind === "mp4" || Boolean(job.outputUrl?.split(/[?#]/)[0]?.endsWith(".mp4"))) && Boolean(job.previewUrl || job.outputUrl);

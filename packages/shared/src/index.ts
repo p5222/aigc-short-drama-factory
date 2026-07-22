@@ -1,4 +1,5 @@
 export * from "./imageGeneration.js";
+export * from "./videoMedia.js";
 
 export type ProjectStatus = "draft" | "planning" | "scripting" | "storyboarding" | "asseting" | "rendering" | "completed";
 
