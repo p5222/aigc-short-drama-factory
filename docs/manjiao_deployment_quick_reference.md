@@ -139,3 +139,14 @@ Invoke-WebRequest https://www.manjiao.cloud/health -UseBasicParsing
 - Verification passed: `https://manjiao.cloud/` returned 200; `https://manjiao.cloud/health` returned 200; `https://www.manjiao.cloud/health` returned 200.
 
 Important lesson from this deploy: partial file uploads can leave the server source inconsistent because `/opt/manjiao` is not a Git worktree. Prefer extracting a full clean `git archive HEAD` snapshot unless intentionally hotfixing one isolated file.
+
+## 2026-07-22 Dual-Theme Workbench Release A
+
+- Deployed source: clean `git archive HEAD` from branch `codex/cine4k-light-theme`, archive `tmp/manjiao_workbench_release_20260722.tar`.
+- Backup directory: `/opt/manjiao-backups/20260722_143556_dual_theme_workbench`.
+- Backup verification: `source.tgz`, `aigc_drama.dump`, `storage.tar.gz`, and `compose-ps.txt` are present and non-empty.
+- Retained backups after cleanup: `20260722_143556_dual_theme_workbench`, `20260711_124119`, `20260711_013851_cine4k_light`.
+- Public asset fingerprint: `assets/index-DHAZHqGf.js`, `assets/index-D3MIzoOf.css`.
+- Health verification: `https://manjiao.cloud/health` 200, `https://www.manjiao.cloud/health` 200, `https://api.manjiao.cloud/health` 200; server-local `http://127.0.0.1:8080/health` 200.
+- Local gate: Web 75/75 unit tests, Web typecheck/build, API/shared/root typecheck/build passed. Existing Vite bundle-size warning remains.
+- QA residual: Playwright/axe browser execution is blocked in this environment because Chromium download timed out; see `docs/design-qa.md`. Legacy workbench function definitions remain as non-rendered dead code pending a separate safe cleanup; the live route renders only the four new stages.
