@@ -8,7 +8,7 @@ import {
   Table2,
   WandSparkles
 } from "lucide-react";
-import { useEffect, useMemo, useReducer, useState } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { ModelPrice, ModelProvider, Project, ProjectWorkflow, StoryboardShot } from "@aifilm/shared";
 import {
   estimateImageCredits,
@@ -24,14 +24,18 @@ import {
   buildShotAssetMap,
   buildShotImageGenerationPayload,
   buildProjectVideoGenerationArgs,
+  buildBatchResultSummary,
   buildStoryboardShotUpdatePayload,
   collectPendingShotIds,
+  collectEligibleVideoShotIds,
   createShotDraftState,
   reduceShotDraftState,
   resolveImageRoutePair,
   resolveImageUnitCredits,
   resolveShotSelection,
   resolveVideoUnitCredits,
+  resolveVideoAssetStatus,
+  isPlayableVideoUrl,
   type ShotDraftState,
   type ShotMode
 } from "../model";
@@ -89,6 +93,8 @@ function LoadedShotStage({
   const [refreshRequired, setRefreshRequired] = useState(false);
   const [imageRoute, setImageRoute] = useState(() => initialImageRoute(project, providers));
   const [videoRoute, setVideoRoute] = useState(() => initialVideoRoute(project, providers));
+  const operationSequence = useRef(0);
+  const activeOperationRef = useRef<{ token: string; shotId: string } | null>(null);
 
   const selectedIds = state.selectedShotIds.filter((id) => storyboards.some((shot) => shot.id === id));
   const activeImage = activeShot ? imageMap.get(activeShot.id) : undefined;
@@ -101,9 +107,11 @@ function LoadedShotStage({
   const selectedImageCount = selectedIds.length
     ? selectedIds.filter((shotId) => !imageMap.get(shotId)?.referenceUrl).length
     : activeShot && !activeImage?.referenceUrl ? 1 : 0;
-  const imageEstimate = estimateImageCredits(imageUnit, imageRoute.imageSize, imageRoute.imageQuality) * selectedImageCount;
+  const imageUnitEstimate = estimateImageCredits(imageUnit, imageRoute.imageSize, imageRoute.imageQuality);
+  const eligibleVideoShotIds = useMemo(() => collectEligibleVideoShotIds(storyboards, assets), [assets, storyboards]);
+  const eligibleVideoSet = new Set(eligibleVideoShotIds);
   const videoSeconds = storyboards
-    .filter((shot) => imageMap.get(shot.id)?.referenceUrl && !isPlayableVideoUrl(videoMap.get(shot.id)?.referenceUrl))
+    .filter((shot) => eligibleVideoSet.has(shot.id))
     .reduce((total, shot) => total + Math.max(1, shot.duration || 0), 0);
   const videoUnit = resolveVideoUnitCredits(modelPrices, videoRoute.videoProvider, videoRoute.videoModel);
   const latestVideoTask = [...tasks].filter((task) => task.type === "video").sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
@@ -113,6 +121,7 @@ function LoadedShotStage({
   useEffect(() => {
     if (!activeShot) return;
     if (draftState.shotId === activeShot.id) return;
+    activeOperationRef.current = null;
     updateDraft({ type: "rebuild", shotId: activeShot.id, draft: shotDraft(activeShot) });
   }, [activeShot?.id, draftState.shotId]);
 
@@ -122,8 +131,8 @@ function LoadedShotStage({
   }, [activeShot, draftState.shotId]);
 
   useEffect(() => {
-    onSaveStateChange(draftState.status);
-  }, [draftState.status, onSaveStateChange]);
+    onSaveStateChange(draftState.activeOperation ? "saving" : draftState.status);
+  }, [draftState.activeOperation, draftState.status, onSaveStateChange]);
 
   useEffect(() => () => onSaveStateChange("unchanged"), [onSaveStateChange]);
 
@@ -144,51 +153,68 @@ function LoadedShotStage({
   }
 
   function edit(patch: Partial<StoryboardShot>) {
+    activeOperationRef.current = null;
     updateDraft({ type: "edit", patch });
-    dispatch({ type: "set-dirty-entity", entityKey: activeShot ? `shot:${activeShot.id}` : null });
   }
 
   async function saveShot() {
     if (!activeShot || (draftState.status !== "dirty" && draftState.status !== "error")) return;
-    updateDraft({ type: "save-start" });
+    const submittedShotId = activeShot.id;
+    const token = nextOperationToken("save", submittedShotId, operationSequence);
+    activeOperationRef.current = { token, shotId: submittedShotId };
+    updateDraft({ type: "save-start", token });
     setMessage("");
     setError("");
     const submittedDraft = buildStoryboardShotUpdatePayload(draftState.draft);
     let updatedShot: StoryboardShot;
     try {
-      updatedShot = await api.updateStoryboardShot(project.id, activeShot.id, submittedDraft);
-      updateDraft({ type: "save-committed", draft: shotDraft(updatedShot) });
+      updatedShot = await api.updateStoryboardShot(project.id, submittedShotId, submittedDraft);
+      if (!isCurrentOperation(activeOperationRef.current, token, submittedShotId)) return;
+      updateDraft({ type: "save-committed", token, draft: shotDraft(updatedShot) });
     } catch (cause) {
       const detail = errorText(cause, "镜头保存失败，请重试。");
-      updateDraft({ type: "save-failed", error: detail });
+      if (!isCurrentOperation(activeOperationRef.current, token, submittedShotId)) return;
+      updateDraft({ type: "save-failed", token, error: detail });
+      activeOperationRef.current = null;
       setError(detail);
       return;
     }
     try {
       const refreshed = await onRefresh(project.id);
-      const canonicalShot = refreshed.storyboards.find((shot) => shot.id === activeShot.id) ?? updatedShot;
-      updateDraft({ type: "sync-succeeded", draft: shotDraft(canonicalShot) });
+      const canonicalShot = refreshed.storyboards.find((shot) => shot.id === submittedShotId) ?? updatedShot;
+      if (!isCurrentOperation(activeOperationRef.current, token, submittedShotId)) return;
+      updateDraft({ type: "sync-succeeded", token, draft: shotDraft(canonicalShot) });
+      activeOperationRef.current = null;
       setMessage("镜头已保存；相关旧首帧将按服务端规则失效。");
-      dispatch({ type: "set-dirty-entity", entityKey: null });
     } catch (cause) {
       const detail = errorText(cause, "镜头已保存，但工作台刷新失败。");
-      updateDraft({ type: "save-committed", draft: shotDraft(updatedShot), refreshError: detail });
+      if (!isCurrentOperation(activeOperationRef.current, token, submittedShotId)) return;
+      updateDraft({ type: "save-committed", token, draft: shotDraft(updatedShot), refreshError: detail });
+      activeOperationRef.current = null;
       setRefreshRequired(true);
       setError(`${detail} 重试刷新不会重复保存。`);
     }
   }
 
   async function retryRefresh() {
+    if (draftState.status === "dirty" || draftState.status === "error" || draftState.status === "saving") return;
+    const submittedShotId = draftState.shotId;
+    const token = nextOperationToken("refresh", submittedShotId, operationSequence);
+    activeOperationRef.current = { token, shotId: submittedShotId };
+    updateDraft({ type: "sync-start", token });
     setPending("refresh");
     setError("");
     try {
       const refreshed = await onRefresh(project.id);
-      const canonicalShot = refreshed.storyboards.find((shot) => shot.id === draftState.shotId);
+      const canonicalShot = refreshed.storyboards.find((shot) => shot.id === submittedShotId);
+      if (!isCurrentOperation(activeOperationRef.current, token, submittedShotId)) return;
+      updateDraft({ type: "sync-succeeded", token, draft: canonicalShot ? shotDraft(canonicalShot) : draftState.draft });
+      activeOperationRef.current = null;
       setRefreshRequired(false);
-      updateDraft({ type: "sync-succeeded", draft: canonicalShot ? shotDraft(canonicalShot) : draftState.draft });
-      dispatch({ type: "set-dirty-entity", entityKey: null });
       setMessage("工作台数据已刷新。");
     } catch (cause) {
+      if (!isCurrentOperation(activeOperationRef.current, token, submittedShotId)) return;
+      activeOperationRef.current = null;
       setError(errorText(cause, "刷新失败，请稍后重试。"));
     } finally {
       setPending("");
@@ -201,14 +227,14 @@ function LoadedShotStage({
     const payload = payloads[scope];
     if (!payload.shotIds.length) return;
     const billableCount = payload.shotIds.filter((shotId) => !imageMap.get(shotId)?.referenceUrl).length;
-    const estimate = estimateImageCredits(imageUnit, imageRoute.imageSize, imageRoute.imageQuality) * billableCount;
-    if (!window.confirm(`将生成 ${payload.shotIds.length} 个镜头首帧，预计 ${estimate} 积分。\n${imageRoute.imageProvider} / ${imageRoute.imageModel} / ${imageRoute.imageSize} / ${imageRoute.imageQuality}\n如修改模型，将同时更新项目默认模型。确认继续？`)) return;
+    if (!window.confirm(`首帧请求范围 ${payload.shotIds.length} 个（其中 ${billableCount} 个当前待生成）；服务端按当前批次上限接收，最终数量和扣费以后端返回为准。\n单个接收镜头约 ${imageUnitEstimate} 积分 · ${imageRoute.imageProvider} / ${imageRoute.imageModel} / ${imageRoute.imageSize} / ${imageRoute.imageQuality}\n如修改模型，将同时更新项目默认模型。确认继续？`)) return;
     setPending(`image:${scope}`);
     setMessage("");
     setError("");
     try {
       await persistImageRoute(project, imageRoute);
-      await api.generateImages(project.id, payload);
+      const result = await api.generateImages(project.id, payload);
+      setMessage(buildBatchResultSummary("首帧", payload.shotIds.length, result));
     } catch (cause) {
       setError(errorText(cause, "首帧任务提交失败。"));
       setPending("");
@@ -216,7 +242,6 @@ function LoadedShotStage({
     }
     try {
       await onRefresh(project.id);
-      setMessage(`已提交 ${payload.shotIds.length} 个镜头首帧。`);
     } catch (cause) {
       setRefreshRequired(true);
       setError(`${errorText(cause, "任务已提交，但工作台刷新失败。")} 重试刷新不会重复生成。`);
@@ -226,14 +251,14 @@ function LoadedShotStage({
   }
 
   async function generateVideos() {
-    const estimate = Math.ceil(videoSeconds * videoUnit);
-    if (!storyboards.length || !window.confirm(`将按项目级接口生成全部待完成视频片段，预计 ${estimate} 积分。\n${videoRoute.videoProvider} / ${videoRoute.videoModel}\n如修改模型，将同时更新项目默认模型。确认继续？`)) return;
+    if (!eligibleVideoShotIds.length || !window.confirm(`视频请求范围 ${eligibleVideoShotIds.length} 个符合条件的待完成片段；服务端按当前批次上限接收，最终数量和扣费以后端返回为准。\n实际接收片段按 ${videoUnit} 积分/秒结算 · ${videoRoute.videoProvider} / ${videoRoute.videoModel}\n如修改模型，将同时更新项目默认模型。确认继续？`)) return;
     setPending("video");
     setMessage("");
     setError("");
     try {
       await persistVideoRoute(project, videoRoute);
-      await api.generateVideos(project.id, ...buildProjectVideoGenerationArgs());
+      const result = await api.generateVideos(project.id, ...buildProjectVideoGenerationArgs());
+      setMessage(buildBatchResultSummary("视频", eligibleVideoShotIds.length, result));
     } catch (cause) {
       setError(errorText(cause, "项目视频任务提交失败。"));
       setPending("");
@@ -241,7 +266,6 @@ function LoadedShotStage({
     }
     try {
       await onRefresh(project.id);
-      setMessage("项目级视频任务已提交。");
     } catch (cause) {
       setRefreshRequired(true);
       setError(`${errorText(cause, "任务已提交，但工作台刷新失败。")} 重试刷新不会重复生成。`);
@@ -259,9 +283,9 @@ function LoadedShotStage({
           const video = videoMap.get(shot.id);
           return <div className={shot.id === activeShot?.id ? "is-active" : undefined} key={shot.id}>
             <button className="wb-shot-check" type="button" aria-label={`${selectedIds.includes(shot.id) ? "取消选择" : "选择"}镜头 ${shot.shotNo}`} aria-pressed={selectedIds.includes(shot.id)} onClick={() => toggleSelected(shot.id)}>{selectedIds.includes(shot.id) ? <CheckSquare2 /> : <Square />}</button>
-            <button className="wb-shot-select" type="button" onClick={() => selectShot(shot)}>
+            <button className="wb-shot-select" type="button" disabled={Boolean(draftState.activeOperation)} onClick={() => selectShot(shot)}>
               <span>{image?.referenceUrl ? <img src={image.referenceUrl} alt="" loading="lazy" /> : <ImageIcon />}</span>
-              <span><strong>{formatShot(shot, index)}</strong><small>{shot.pictureDesc || "未提供画面描述"}</small><em>{video?.referenceUrl ? "视频已生成" : image?.referenceUrl ? "首帧已生成" : "待生成"} · {shot.duration}s</em></span>
+              <span><strong>{formatShot(shot, index)}</strong><small>{shot.pictureDesc || "未提供画面描述"}</small><em>{videoStatusLabel(resolveVideoAssetStatus(video), image)} · {shot.duration}s</em></span>
             </button>
           </div>;
         })}
@@ -279,7 +303,7 @@ function LoadedShotStage({
       </header>
       {state.shotMode === "table" ? <ShotTable storyboards={storyboards} activeShot={activeShot} onSelect={selectShot} /> : null}
       {state.shotMode === "image" ? <ShotImageCanvas shot={activeShot} imageUrl={activeImage?.referenceUrl} onPreview={() => activeImage?.referenceUrl && onPreview({ url: activeImage.referenceUrl, title: activeImage.name })} /> : null}
-      {state.shotMode === "video" ? <ShotVideoCanvas shot={activeShot} videoUrl={activeVideo?.referenceUrl} status={activeVideo?.status} /> : null}
+      {state.shotMode === "video" ? <ShotVideoCanvas shot={activeShot} videoUrl={activeVideo?.referenceUrl} status={resolveVideoAssetStatus(activeVideo)} /> : null}
       <div className="wb-action-feedback" aria-live="polite">{message ? <p className="wb-action-feedback--success">{message}</p> : null}{error ? <p className="wb-action-feedback--error">{error}</p> : null}</div>
     </div>}
     inspector={<div className="wb-shot-inspector">
@@ -289,18 +313,19 @@ function LoadedShotStage({
         <RouteSelect label="渠道" value={imageRoute.imageProvider} options={imageProviders.map((provider) => ({ value: provider.id, label: provider.name }))} onChange={(value) => { const pair = resolveImageRoutePair(value, undefined, providers, failedImageModels); setImageRoute((current) => ({ ...current, ...pair })); }} />
         <RouteSelect label="模型" value={imageRoute.imageModel} options={imageModels.map((model) => ({ value: model, label: model }))} onChange={(value) => setImageRoute((current) => ({ ...current, imageModel: value }))} />
         <div className="wb-shot-route-grid"><RouteSelect label="尺寸" value={imageRoute.imageSize} options={imageOutputSizeOptions.map((item) => ({ value: item.value, label: item.label }))} onChange={(value) => setImageRoute((current) => ({ ...current, imageSize: normalizeImageOutputSize(value) }))} /><RouteSelect label="质量" value={imageRoute.imageQuality} options={imageOutputQualityOptions.map((item) => ({ value: item.value, label: item.label }))} onChange={(value) => setImageRoute((current) => ({ ...current, imageQuality: normalizeImageOutputQuality(value) }))} /></div>
-        <small>当前范围预计 {imageEstimate} 积分</small>
+        <small>单个实际接收镜头约 {imageUnitEstimate} 积分 · 服务端按当前批次上限结算</small>
         <button className="wb-primary-button" type="button" disabled={!activeShot || Boolean(pending) || hasUnsavedDraft || !validImageRoute || selectedImageCount === 0} onClick={() => void generateImages(selectedIds.length ? "selected" : "current")}>{pending.startsWith("image:") ? <Loader2 className="wb-spin" /> : <WandSparkles />}{selectedIds.length ? `生成已选 ${selectedIds.length} 个首帧` : activeImage?.referenceUrl ? "当前首帧已生成" : "生成当前首帧"}</button>
         <button className="wb-secondary-button" type="button" disabled={!pendingShotIds.length || Boolean(pending) || hasUnsavedDraft || !validImageRoute} onClick={() => void generateImages("pending")}>生成全部待生成（{pendingShotIds.length}）</button>
       </section> : null}
       {state.shotMode === "video" ? <section className="wb-shot-generation"><h3>项目视频生成</h3><p>Release A 仅支持项目级全部待完成片段，不提供单镜头生成或重生成。</p>
         <RouteSelect label="渠道" value={videoRoute.videoProvider} options={videoProviders.map((provider) => ({ value: provider.id, label: provider.name }))} onChange={(value) => { const provider = videoProviders.find((item) => item.id === value); setVideoRoute({ videoProvider: value, videoModel: provider?.models[0] ?? "" }); }} />
         <RouteSelect label="模型" value={videoRoute.videoModel} options={videoModels.map((model) => ({ value: model, label: model }))} onChange={(value) => setVideoRoute((current) => ({ ...current, videoModel: value }))} />
-        <small>{videoSeconds}s · 预计 {Math.ceil(videoSeconds * videoUnit)} 积分</small>
+        <small>{eligibleVideoShotIds.length} 个符合条件片段 · 共 {videoSeconds}s · {videoUnit} 积分/秒，实际扣费以后端本批次结果为准</small>
+        {!eligibleVideoShotIds.length ? <p>当前没有可生成片段。请先生成成功首帧，或等待现有视频任务完成。</p> : null}
         {latestVideoTask?.status === "failed" ? <p className="wb-action-feedback--error">项目视频任务失败：{latestVideoTask.errorReason || "未提供失败原因"}</p> : null}
-        <button className="wb-primary-button" type="button" disabled={!storyboards.length || Boolean(pending) || hasUnsavedDraft || !videoModels.includes(videoRoute.videoModel)} onClick={() => void generateVideos()}>{pending === "video" ? <Loader2 className="wb-spin" /> : <Film />}生成全部待完成视频</button>
+        <button className="wb-primary-button" type="button" disabled={!eligibleVideoShotIds.length || Boolean(pending) || hasUnsavedDraft || !videoModels.includes(videoRoute.videoModel)} onClick={() => void generateVideos()}>{pending === "video" ? <Loader2 className="wb-spin" /> : <Film />}生成当前批次视频</button>
       </section> : null}
-      {refreshRequired ? <button className="wb-secondary-button wb-shot-refresh" type="button" disabled={pending === "refresh"} onClick={() => void retryRefresh()}>{pending === "refresh" ? <Loader2 className="wb-spin" /> : null}重试刷新</button> : null}
+      {refreshRequired ? <button className="wb-secondary-button wb-shot-refresh" type="button" disabled={pending === "refresh" || hasUnsavedDraft} onClick={() => void retryRefresh()}>{pending === "refresh" ? <Loader2 className="wb-spin" /> : null}重试刷新</button> : null}
     </div>}
     railOpen={railOpen}
     inspectorOpen={inspectorOpen}
@@ -321,8 +346,8 @@ function ShotImageCanvas({ shot, imageUrl, onPreview }: { shot?: StoryboardShot;
   return <button className="wb-shot-media" type="button" disabled={!imageUrl} onClick={onPreview}><MediaFrame aspectRatio="16:9" label="当前镜头首帧">{imageUrl ? <img src={imageUrl} alt={shot?.pictureDesc || "镜头首帧"} /> : <div><ImageIcon /><strong>首帧待生成</strong><span>{shot?.pictureDesc || "选择镜头后查看"}</span></div>}</MediaFrame></button>;
 }
 
-function ShotVideoCanvas({ shot, videoUrl, status }: { shot?: StoryboardShot; videoUrl?: string; status?: string }) {
-  const playable = Boolean(videoUrl && /^(https?:|data:video|blob:)/.test(videoUrl));
+function ShotVideoCanvas({ shot, videoUrl, status }: { shot?: StoryboardShot; videoUrl?: string; status: ReturnType<typeof resolveVideoAssetStatus> }) {
+  const playable = status === "succeeded" && isPlayableVideoUrl(videoUrl);
   return <div className="wb-shot-video"><MediaFrame aspectRatio="16:9" label="当前镜头视频">{playable ? <video src={videoUrl} controls preload="metadata" /> : <div className="wb-shot-video-empty"><Film /><strong>{status === "failed" ? "当前片段生成失败" : status === "running" ? "当前片段生成中" : "视频待生成"}</strong><span>{shot?.videoPrompt || "当前镜头尚无可播放片段"}</span></div>}</MediaFrame></div>;
 }
 
@@ -378,6 +403,18 @@ function errorText(cause: unknown, fallback: string) {
   return cause instanceof Error ? cause.message : fallback;
 }
 
-function isPlayableVideoUrl(url?: string) {
-  return Boolean(url && (/^data:video\//.test(url) || /^blob:/.test(url) || /\.(mp4|webm|mov)(\?|#|$)/i.test(url)));
+function videoStatusLabel(status: ReturnType<typeof resolveVideoAssetStatus>, image?: { status: string; referenceUrl?: string }) {
+  if (status === "succeeded") return "视频已生成";
+  if (status === "running") return "视频生成中";
+  if (status === "failed") return "视频生成失败";
+  return image?.status === "succeeded" && image.referenceUrl ? "首帧已生成" : "待生成";
+}
+
+function nextOperationToken(kind: "save" | "refresh", shotId: string, sequence: { current: number }) {
+  sequence.current += 1;
+  return `${kind}:${shotId}:${sequence.current}`;
+}
+
+function isCurrentOperation(operation: { token: string; shotId: string } | null, token: string, shotId: string) {
+  return operation?.token === token && operation.shotId === shotId;
 }

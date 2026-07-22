@@ -114,41 +114,57 @@ export interface ShotDraftState {
   draft: Partial<StoryboardShot>;
   status: ShotDraftStatus;
   committed: boolean;
+  revision: number;
+  activeOperation?: { token: string; shotId: string; revision: number; kind: "save" | "refresh" };
   error?: string;
 }
 
 export type ShotDraftAction =
   | { type: "edit"; patch: Partial<StoryboardShot> }
-  | { type: "save-start" }
-  | { type: "save-failed"; error: string }
-  | { type: "save-committed"; draft?: Partial<StoryboardShot>; refreshError?: string }
-  | { type: "sync-succeeded"; draft?: Partial<StoryboardShot> }
+  | { type: "save-start"; token?: string }
+  | { type: "sync-start"; token: string }
+  | { type: "save-failed"; token?: string; error: string }
+  | { type: "save-committed"; token?: string; draft?: Partial<StoryboardShot>; refreshError?: string }
+  | { type: "sync-succeeded"; token?: string; draft?: Partial<StoryboardShot> }
   | { type: "reconcile-canonical"; shotId: string; draft: Partial<StoryboardShot> }
   | { type: "rebuild"; shotId: string; draft: Partial<StoryboardShot> };
 
 export function createShotDraftState(shotId: string, draft: Partial<StoryboardShot>): ShotDraftState {
-  return { shotId, draft: { ...draft }, status: "unchanged", committed: false };
+  return { shotId, draft: { ...draft }, status: "unchanged", committed: false, revision: 0 };
 }
 
 export function reduceShotDraftState(state: ShotDraftState, action: ShotDraftAction): ShotDraftState {
   switch (action.type) {
     case "edit":
-      return { ...state, draft: { ...state.draft, ...action.patch }, status: "dirty", committed: false, error: undefined };
+      return { ...state, draft: { ...state.draft, ...action.patch }, status: "dirty", committed: false, revision: state.revision + 1, activeOperation: undefined, error: undefined };
     case "save-start":
-      return { ...state, status: "saving", error: undefined };
+      return { ...state, status: "saving", error: undefined, activeOperation: action.token ? { token: action.token, shotId: state.shotId, revision: state.revision, kind: "save" } : state.activeOperation };
+    case "sync-start":
+      return { ...state, activeOperation: { token: action.token, shotId: state.shotId, revision: state.revision, kind: "refresh" } };
     case "save-failed":
-      return { ...state, status: "error", committed: false, error: action.error };
+      if (isStaleShotCompletion(state, action.token)) return state;
+      return { ...state, status: "error", committed: false, activeOperation: undefined, error: action.error };
     case "save-committed":
+      if (isStaleShotCompletion(state, action.token)) return state;
       return action.refreshError
-        ? { ...state, draft: action.draft ? { ...action.draft } : state.draft, status: "sync-required", committed: true, error: action.refreshError }
-        : { ...state, draft: action.draft ? { ...action.draft } : state.draft, status: "saved", committed: true, error: undefined };
+        ? { ...state, draft: action.draft ? { ...action.draft } : state.draft, status: "sync-required", committed: true, activeOperation: undefined, error: action.refreshError }
+        : { ...state, draft: action.draft ? { ...action.draft } : state.draft, status: "saved", committed: true, activeOperation: action.token ? state.activeOperation : undefined, error: undefined };
     case "sync-succeeded":
-      return { ...state, draft: action.draft ? { ...action.draft } : state.draft, status: "saved", committed: true, error: undefined };
+      if (isStaleShotCompletion(state, action.token)) return state;
+      return { ...state, draft: action.draft ? { ...action.draft } : state.draft, status: "saved", committed: true, activeOperation: undefined, error: undefined };
     case "reconcile-canonical":
       return reconcileShotDraft(state, action.shotId, action.draft);
     case "rebuild":
-      return createShotDraftState(action.shotId, action.draft);
+      return { ...createShotDraftState(action.shotId, action.draft), revision: state.revision + 1 };
   }
+}
+
+function isStaleShotCompletion(state: ShotDraftState, token?: string): boolean {
+  if (!token) return false;
+  return !state.activeOperation
+    || state.activeOperation.token !== token
+    || state.activeOperation.shotId !== state.shotId
+    || state.activeOperation.revision !== state.revision;
 }
 
 export function reconcileShotDraft(
@@ -202,6 +218,7 @@ export function resolveShotSelection(
   confirmDiscard: () => boolean
 ): { accepted: boolean; shotId: string } {
   if (requestedShotId === currentShotId) return { accepted: false, shotId: currentShotId };
+  if (draftState.activeOperation) return { accepted: false, shotId: currentShotId };
   const needsConfirmation = !draftState.committed && (draftState.status === "dirty" || draftState.status === "error");
   if (needsConfirmation && !confirmDiscard()) return { accepted: false, shotId: currentShotId };
   return { accepted: true, shotId: requestedShotId };
@@ -232,6 +249,39 @@ export function resolveVideoUnitCredits(
     && price.providerId === providerId
     && price.model === model
   ))?.unitCredits ?? defaultVideoUnitCredits(providerId);
+}
+
+export function isPlayableVideoUrl(url?: string): boolean {
+  return Boolean(url && (/^data:video\//.test(url) || /^blob:/.test(url) || /\.(mp4|webm|mov)(\?|#|$)/i.test(url)));
+}
+
+export function resolveVideoAssetStatus(asset?: AssetItem): "missing" | "running" | "failed" | "succeeded" {
+  if (!asset) return "missing";
+  if (asset.status === "succeeded" && isPlayableVideoUrl(asset.referenceUrl)) return "succeeded";
+  if (asset.status === "failed") return "failed";
+  return "running";
+}
+
+export function collectEligibleVideoShotIds(storyboards: StoryboardShot[], assets: AssetItem[]): string[] {
+  const images = buildShotAssetMap(storyboards, assets, "image");
+  const videos = buildShotAssetMap(storyboards, assets, "video");
+  return storyboards.filter((shot) => {
+    const image = images.get(shot.id);
+    return image?.status === "succeeded" && Boolean(image.referenceUrl) && resolveVideoAssetStatus(videos.get(shot.id)) !== "succeeded";
+  }).map((shot) => shot.id);
+}
+
+export function buildBatchResultSummary(
+  label: string,
+  requestedCount: number,
+  result: { assetsCreated: number; task: { finalCredits?: number; estimatedCredits?: number } }
+): string {
+  const charged = result.task.finalCredits !== undefined
+    ? `实际扣费 ${result.task.finalCredits} 积分`
+    : result.task.estimatedCredits !== undefined
+      ? `当前任务预计 ${result.task.estimatedCredits} 积分，实际扣费以后端结算为准`
+      : "实际扣费以后端任务结算为准";
+  return `${label}请求范围 ${requestedCount} 个；服务端本批次实际接收/创建 ${result.assetsCreated} 个，${charged}。`;
 }
 
 export async function commitMutationThenSync<T>(
@@ -624,7 +674,8 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
       return {
         ...state,
         activeStage: action.stage,
-        selectedShotIds: state.activeStage === "shots" && action.stage !== "shots" ? [] : state.selectedShotIds
+        selectedShotIds: state.activeStage === "shots" && action.stage !== "shots" ? [] : state.selectedShotIds,
+        dirtyEntityKey: state.activeStage === "shots" && action.stage !== "shots" ? null : state.dirtyEntityKey
       };
     case "set-content-selection": {
       const sceneShotIds = action.sceneKey?.source === "storyboard"

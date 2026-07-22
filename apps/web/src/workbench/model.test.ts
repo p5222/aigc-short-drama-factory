@@ -13,8 +13,10 @@ import {
   buildShotAssetMap,
   buildShotImageGenerationPayload,
   buildProjectVideoGenerationArgs,
+  buildBatchResultSummary,
   buildStoryboardShotUpdatePayload,
   collectPendingShotIds,
+  collectEligibleVideoShotIds,
   createShotDraftState,
   reduceShotDraftState,
   buildTaskSummary,
@@ -32,6 +34,7 @@ import {
   resolveImageRoutePair,
   resolveShotSelection,
   resolveVideoUnitCredits,
+  resolveVideoAssetStatus,
   resolveThemePreference,
   shouldReconcileStoryboardSelection,
   storyboardScene,
@@ -234,6 +237,32 @@ test("workflow refresh never overwrites an uncommitted dirty shot draft", () => 
   assert.equal(reconciled.draft.duration, 12);
 });
 
+test("stale save completion for shot A cannot overwrite shot B", () => {
+  const dirtyA = reduceShotDraftState(createShotDraftState("shot-a", { duration: 8 }), {
+    type: "edit",
+    patch: { duration: 9 }
+  });
+  const savingA = reduceShotDraftState(dirtyA, { type: "save-start", token: "save-a" });
+  const shotB = reduceShotDraftState(savingA, { type: "rebuild", shotId: "shot-b", draft: { duration: 5 } });
+  const stale = reduceShotDraftState(shotB, { type: "save-committed", token: "save-a", draft: { duration: 9 } });
+
+  assert.equal(stale, shotB);
+  assert.equal(stale.shotId, "shot-b");
+  assert.equal(stale.draft.duration, 5);
+});
+
+test("stale retry completion for shot A cannot overwrite shot B", () => {
+  const syncA = reduceShotDraftState(createShotDraftState("shot-a", { duration: 9 }), {
+    type: "sync-start",
+    token: "refresh-a"
+  });
+  const shotB = reduceShotDraftState(syncA, { type: "rebuild", shotId: "shot-b", draft: { duration: 5 } });
+  const stale = reduceShotDraftState(shotB, { type: "sync-succeeded", token: "refresh-a", draft: { duration: 9 } });
+
+  assert.equal(stale, shotB);
+  assert.equal(stale.shotId, "shot-b");
+});
+
 test("canceling a dirty shot switch confirms once and preserves the draft", () => {
   const dirty = reduceShotDraftState(createShotDraftState("shot-1", { pictureDesc: "Before" }), {
     type: "edit",
@@ -272,6 +301,28 @@ test("video pricing never borrows a same-named model from another provider", () 
 
   assert.equal(resolveVideoUnitCredits(prices, "dashscope-video", "shared-model"), 16);
   assert.equal(resolveVideoUnitCredits(prices, "unknown-provider", "shared-model"), 0);
+});
+
+test("video eligibility requires a succeeded image and no succeeded playable video", () => {
+  const shots = [shot("shot-1", 1, 1), shot("shot-2", 1, 1), shot("shot-3", 1, 1)];
+  const imageReady = { ...asset("image_shot-1", "image", undefined, "https://cdn.test/frame.jpg"), status: "succeeded" as const };
+  const imageRunning = { ...asset("image_shot-2", "image", undefined, "https://cdn.test/frame-2.jpg"), status: "running" as const };
+  const imageReadyThree = { ...asset("image_shot-3", "image", undefined, "https://cdn.test/frame-3.jpg"), status: "succeeded" as const };
+  const queuedVideo = { ...asset("video_shot-1", "video", undefined, "task-123"), status: "running" as const };
+  const completedVideo = { ...asset("video_shot-3", "video", undefined, "https://cdn.test/clip.mp4"), status: "succeeded" as const };
+
+  assert.deepEqual(collectEligibleVideoShotIds(shots, [imageReady, imageRunning, imageReadyThree, queuedVideo, completedVideo]), ["shot-1"]);
+  assert.equal(resolveVideoAssetStatus(queuedVideo), "running");
+  assert.equal(resolveVideoAssetStatus(completedVideo), "succeeded");
+  assert.equal(resolveVideoAssetStatus({ ...completedVideo, status: "running" }), "running");
+});
+
+test("batch success summary uses actual backend result instead of requested range", () => {
+  const summary = buildBatchResultSummary("首帧", 8, {
+    assetsCreated: 1,
+    task: { finalCredits: 24 }
+  });
+  assert.equal(summary, "首帧请求范围 8 个；服务端本批次实际接收/创建 1 个，实际扣费 24 积分。");
 });
 
 test("rebuilding or discarding a shot draft invalidates the previous entity", () => {
@@ -339,7 +390,7 @@ test("isolates selected shots from initializer array mutations", () => {
 });
 
 test("keeps a valid shot while changing mode and visiting delivery", () => {
-  const initial = createWorkbenchState({ episodeNo: 1, sceneKey: storyboardScene("1:1"), shotId: "shot-2" });
+  const initial = createWorkbenchState({ episodeNo: 1, sceneKey: storyboardScene("1:1"), shotId: "shot-2", dirtyEntityKey: "shot:shot-2" });
   const shots = workbenchReducer(initial, { type: "set-stage", stage: "shots" });
   const selected = workbenchReducer(shots, { type: "set-selected-shots", shotIds: ["shot-1", "shot-2"] });
   const video = workbenchReducer(selected, { type: "set-shot-mode", mode: "video" });
@@ -348,6 +399,7 @@ test("keeps a valid shot while changing mode and visiting delivery", () => {
   const delivery = workbenchReducer(video, { type: "set-stage", stage: "delivery" });
   assert.equal(delivery.activeShotId, "shot-2");
   assert.deepEqual(delivery.selectedShotIds, []);
+  assert.equal(delivery.dirtyEntityKey, null);
   assert.equal(workbenchReducer(delivery, { type: "set-stage", stage: "shots" }).activeShotId, "shot-2");
 });
 
