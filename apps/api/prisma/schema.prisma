@@ -699,4 +699,111 @@ model PromptTemplate {
   updatedAt DateTime @updatedAt
 }
 
+model ContentProject {
+  id                 String   @id
+  userId             String
+  title              String
+  mode               String
+  status             String   @default("draft")
+  styleProfile       Json     @default("{}")
+  activeStep         String   @default("source")
+  productionProjectId String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  sources            SourceDocument[]
+  analyses           StoryAnalysis[]
+  outlines           StoryOutline[]
+  chapters           StoryChapter[]
+  scripts            ScriptVersion[]
+  entities           EntityCatalog?
+
+  @@index([userId, updatedAt])
+  @@index([status])
+}
+
+model SourceDocument {
+  id          String   @id
+  contentProjectId String
+  kind        String
+  title       String
+  content     String
+  metadata    Json     @default("{}")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  contentProject ContentProject @relation(fields: [contentProjectId], references: [id], onDelete: Cascade)
+
+  @@index([contentProjectId])
+}
+
+model StoryAnalysis {
+  id          String   @id
+  contentProjectId String
+  version     Int      @default(1)
+  status      String   @default("draft")
+  result      Json     @default("{}")
+  promptSnapshot Json   @default("{}")
+  createdAt   DateTime @default(now())
+  contentProject ContentProject @relation(fields: [contentProjectId], references: [id], onDelete: Cascade)
+
+  @@index([contentProjectId, version])
+}
+
+model StoryOutline {
+  id          String   @id
+  contentProjectId String
+  version     Int      @default(1)
+  status      String   @default("draft")
+  result      Json     @default("{}")
+  promptSnapshot Json   @default("{}")
+  createdAt   DateTime @default(now())
+  contentProject ContentProject @relation(fields: [contentProjectId], references: [id], onDelete: Cascade)
+
+  @@index([contentProjectId, version])
+}
+
+model StoryChapter {
+  id          String   @id
+  contentProjectId String
+  chapterNo   Int
+  title       String   @default("")
+  status      String   @default("draft")
+  content     String   @default("")
+  result      Json     @default("{}")
+  promptSnapshot Json  @default("{}")
+  version     Int      @default(1)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  contentProject ContentProject @relation(fields: [contentProjectId], references: [id], onDelete: Cascade)
+
+  @@unique([contentProjectId, chapterNo, version])
+  @@index([contentProjectId, chapterNo])
+}
+
+model ScriptVersion {
+  id          String   @id
+  contentProjectId String
+  version     Int      @default(1)
+  status      String   @default("draft")
+  content     String
+  result      Json     @default("{}")
+  promptSnapshot Json  @default("{}")
+  createdAt   DateTime @default(now())
+  contentProject ContentProject @relation(fields: [contentProjectId], references: [id], onDelete: Cascade)
+
+  @@index([contentProjectId, version])
+}
+
+model EntityCatalog {
+  id          String   @id
+  contentProjectId String @unique
+  version     Int      @default(1)
+  characters  Json     @default("[]")
+  scenes      Json     @default("[]")
+  props       Json     @default("[]")
+  promptSnapshot Json  @default("{}")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  contentProject ContentProject @relation(fields: [contentProjectId], references: [id], onDelete: Cascade)
+}
+
 

@@ -493,6 +493,37 @@ export interface PromptVersion {
   updatedAt: string;
 }
 
+export type ContentProjectMode = "same_genre" | "original" | "adaptation";
+export type ContentStep = "source" | "analysis" | "strategy" | "outline" | "chapter" | "script" | "entity";
+export type ContentStepStatus = "draft" | "running" | "succeeded" | "failed" | "confirmed";
+
+export interface StyleProfile {
+  key: string;
+  name: string;
+  category: string;
+  summary: string;
+  characterRules: string[];
+  sceneRules: string[];
+  lightingRules: string[];
+  cameraRules: string[];
+  materialRules: string[];
+  negativeRules: string[];
+}
+
+export interface ContentProjectSummary {
+  id: string;
+  title: string;
+  mode: ContentProjectMode;
+  status: ContentStepStatus;
+  activeStep: ContentStep;
+  styleProfile: StyleProfile;
+  updatedAt: string;
+  sourceCount: number;
+  chapterCount: number;
+  scriptCount: number;
+  hasEntities: boolean;
+}
+
 export interface ExperimentRun {
   id: string;
   name: string;
