@@ -30,6 +30,8 @@ interface WorkbenchHeaderProps {
   onRefresh?: () => void;
   onOpenRail?: () => void;
   onOpenInspector?: () => void;
+  onOpenTasks?: () => void;
+  onOpenEvaluation?: () => void;
 }
 
 const saveStateLabels: Record<WorkbenchSaveState, string> = {
@@ -53,7 +55,7 @@ export function WorkbenchHeader({
   onThemeChange,
   onRefresh,
   onOpenRail,
-  onOpenInspector
+  onOpenInspector, onOpenTasks, onOpenEvaluation
 }: WorkbenchHeaderProps) {
   const [moreOpen, setMoreOpen] = useState(false);
   const moreMenuId = useId();
@@ -139,6 +141,8 @@ export function WorkbenchHeader({
             <PanelRight aria-hidden="true" />
           </button>
         ) : null}
+        {onOpenTasks ? <button className="wb-icon-button wb-header__drawer-trigger" type="button" aria-label="打开生成任务" onClick={onOpenTasks}><ListTree aria-hidden="true" /></button> : null}
+        {onOpenEvaluation ? <button className="wb-icon-button wb-header__drawer-trigger" type="button" aria-label="打开评测反馈" onClick={onOpenEvaluation}><PanelRight aria-hidden="true" /></button> : null}
         {onRefresh ? (
           <button className="wb-icon-button wb-header__secondary-action" type="button" aria-label="刷新项目数据" onClick={onRefresh}>
             <RefreshCw aria-hidden="true" />

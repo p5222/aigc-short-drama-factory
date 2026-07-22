@@ -54,6 +54,8 @@ import { AssetStage } from "../workbench/stages/AssetStage";
 import { ContentStage } from "../workbench/stages/ContentStage";
 import { ShotStage } from "../workbench/stages/ShotStage";
 import { DeliveryStage } from "../workbench/stages/DeliveryStage";
+import { TaskDrawer } from "../workbench/components/TaskDrawer";
+import { EvaluationDrawer } from "../workbench/components/EvaluationDrawer";
 import { resolveSingleDeliveryCandidate } from "../workbench/stages/deliveryModel";
 import { createWorkbenchState, resolveCharacterIdentityAsset, shouldReconcileStoryboardSelection, workbenchReducer, type WorkbenchStage, type WorkbenchTheme } from "../workbench/model";
 import { buildTimelineClipLayout } from "./projectWorkbenchModel";
@@ -97,6 +99,8 @@ export function ProjectWorkbenchPage({ workflow, providers, modelPrices, theme, 
   const [exportJobs, setExportJobs] = useState<ExportJob[]>([]);
   const [productionPackage, setProductionPackage] = useState<StoryboardProductionPackage | null>(null);
   const [previewImage, setPreviewImage] = useState<{ url: string; title: string } | null>(null);
+  const [taskDrawerOpen, setTaskDrawerOpen] = useState(false);
+  const [evaluationDrawerOpen, setEvaluationDrawerOpen] = useState(false);
 
   useEffect(() => {
     if (!operation) return;
@@ -269,7 +273,11 @@ export function ProjectWorkbenchPage({ workflow, providers, modelPrices, theme, 
           setRailOpen(false);
           setInspectorOpen(true);
         }}
+        onOpenTasks={() => setTaskDrawerOpen(true)}
+        onOpenEvaluation={() => setEvaluationDrawerOpen(true)}
       />
+      <TaskDrawer open={taskDrawerOpen} tasks={workflow.tasks} onClose={() => setTaskDrawerOpen(false)} />
+      <EvaluationDrawer open={evaluationDrawerOpen} reports={qualityReports} feedbacks={feedbacks} onClose={() => setEvaluationDrawerOpen(false)} onRefresh={() => void refreshProject()} />
       {activeTab === "content" ? (
         <ContentStage
           railOpen={railOpen}

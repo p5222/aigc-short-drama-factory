@@ -1,0 +1,11 @@
+import { X } from "lucide-react";
+import { useEffect, useRef } from "react";
+import type { QualityReport, UserFeedback } from "@aifilm/shared";
+
+export interface EvaluationDrawerProps { open: boolean; reports: QualityReport[]; feedbacks: UserFeedback[]; onClose: () => void; onRefresh?: () => void; }
+export function EvaluationDrawer({ open, reports, feedbacks, onClose, onRefresh }: EvaluationDrawerProps) {
+  const closeRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => { if (!open) return; closeRef.current?.focus(); const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); }; document.addEventListener("keydown", onKey); return () => document.removeEventListener("keydown", onKey); }, [open, onClose]);
+  if (!open) return null;
+  return <div className="wb-drawer-layer" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}><aside className="wb-drawer" role="dialog" aria-modal="true" aria-labelledby="evaluation-drawer-title"><header className="wb-drawer__header"><div><p className="eyebrow">优化反馈</p><h2 id="evaluation-drawer-title">评测与反馈</h2></div><button ref={closeRef} className="wb-icon-button" type="button" aria-label="关闭评测抽屉" onClick={onClose}><X /></button></header><div className="wb-drawer__body"><p className="wb-drawer__note">评测用于定位创作流程问题，不作为发布门禁。</p>{reports.map((report) => <article className="wb-evaluation-row" key={report.id}><div><strong>{report.stage} · {report.totalScore} 分</strong><small>{report.evaluatorType} · {new Date(report.createdAt).toLocaleString()}</small>{report.assetId ? <small>归因资产：{report.assetId}</small> : null}</div><p>{report.suggestions[0] || report.problems[0] || "暂无文字建议"}</p></article>)}{feedbacks.map((feedback) => <article className="wb-evaluation-row" key={feedback.id}><div><strong>{feedback.stage} · {feedback.rating} 分</strong><small>{feedback.usability} · {feedback.status}</small>{feedback.assetId ? <small>归因资产：{feedback.assetId}</small> : null}</div><p>{feedback.content || feedback.rootCause || "暂无反馈内容"}</p></article>)}{!reports.length && !feedbacks.length ? <div className="wb-empty-state">暂无评测记录</div> : null}{onRefresh ? <button className="wb-secondary-button" type="button" onClick={onRefresh}>刷新评测数据</button> : null}</div></aside></div>;
+}
