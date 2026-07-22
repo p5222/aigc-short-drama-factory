@@ -1111,7 +1111,7 @@
   }
 }
 
-.delivery-stage { display: grid; grid-template-columns: 260px minmax(0, 1fr) 300px; min-height: 0; }
+.delivery-stage { display: grid; grid-template-columns: 300px minmax(0, 1fr) 392px; min-height: 0; }
 .delivery-stage > .wb-entity-rail, .delivery-stage > .wb-inspector { min-width: 0; }
 .delivery-rail, .delivery-inspector { min-width: 0; overflow: auto; border-right: 1px solid var(--divider); background: var(--surface-1); }
 .delivery-inspector { border-right: 0; border-left: 1px solid var(--divider); display: grid; align-content: start; gap: 10px; padding: 20px; }

@@ -7,7 +7,7 @@ import { MediaFrame } from "../components/MediaCanvas";
 import { EntityRail } from "../components/EntityRail";
 import { Inspector } from "../components/Inspector";
 import { buildShotAssetMap } from "../model";
-import { buildDeliveryClipLayout, getDeliveryCandidates, getExportSummary, getNextPlayableShotId, normalizeShotDuration } from "./deliveryModel";
+import { buildDeliveryClipLayout, getDeliveryCandidates, getExportSummary, getNextPlayableShotId, normalizePersistedMediaUrl, normalizeShotDuration } from "./deliveryModel";
 
 interface DeliveryStageProps { railOpen: boolean; inspectorOpen: boolean; onCloseRail: () => void; onCloseInspector: () => void; onRefresh: (projectId: string) => Promise<ProjectWorkflow>; onPublish: () => void; exportJobs: ExportJob[]; onExport: (type: "tts" | "subtitle" | "video_export") => void; isBusy: boolean; }
 
@@ -35,9 +35,9 @@ function LoadedDeliveryStage({ workflow, railOpen, inspectorOpen, onCloseRail, o
 
   useEffect(() => { setProgress(0); setPlaying(false); videoRef.current?.pause(); }, [activeShot?.id, activeUrl]);
   function selectShot(id: string) { pendingAutoPlay.current = null; dispatch({ type: "set-shot", shotId: id }); }
-  function togglePlayback() { const video = videoRef.current; if (!video || !activeUrl) return; if (video.paused) void video.play().then(() => setPlaying(true)); else { video.pause(); setPlaying(false); } }
+  function togglePlayback() { const video = videoRef.current; if (!video || !activeUrl) return; if (video.paused) void video.play().then(() => setPlaying(true)).catch(() => setPlaying(false)); else { video.pause(); setPlaying(false); } }
   function onEnded() { const next = getNextPlayableShotId(storyboards, assets, activeShot?.id ?? ""); const nextUrl = next ? videoByShot.get(next)?.referenceUrl : undefined; if (next && isPersistedPlayableVideoReference(nextUrl)) { pendingAutoPlay.current = { shotId: next, url: nextUrl }; dispatch({ type: "set-shot", shotId: next }); } else { pendingAutoPlay.current = null; setPlaying(false); } }
-  function onCanPlay(event: SyntheticEvent<HTMLVideoElement>) { const target = pendingAutoPlay.current; if (!target || target.shotId !== activeShot?.id || target.url !== event.currentTarget.currentSrc) return; pendingAutoPlay.current = null; void event.currentTarget.play().then(() => setPlaying(true)).catch(() => setPlaying(false)); }
+  function onCanPlay(event: SyntheticEvent<HTMLVideoElement>) { const target = pendingAutoPlay.current; if (!target || target.shotId !== activeShot?.id || normalizePersistedMediaUrl(target.url) !== normalizePersistedMediaUrl(event.currentTarget.currentSrc)) return; pendingAutoPlay.current = null; void event.currentTarget.play().then(() => setPlaying(true)).catch(() => setPlaying(false)); }
 
   const exportStatus = summary.status === "idle" ? "暂无" : summary.status;
   return <main className="wb-workspace delivery-stage" data-rail-open={railOpen} data-inspector-open={inspectorOpen}>

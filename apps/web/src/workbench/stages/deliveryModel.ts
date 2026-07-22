@@ -5,6 +5,10 @@ export function normalizeShotDuration(duration: number | undefined): number {
   return Number.isFinite(duration) && (duration ?? 0) > 0 ? duration! : 1;
 }
 
+export function normalizePersistedMediaUrl(url: string): string {
+  try { return new URL(url, "https://studio.test").href; } catch { return url; }
+}
+
 export interface DeliveryClip { id: string; index: number; start: number; duration: number; width: number; }
 
 export function buildDeliveryClipLayout(shots: StoryboardShot[], pixelsPerSecond = 52, minimumWidth = 96, durationOverrides = new Map<string, number>()): DeliveryClip[] {

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { AssetItem, ExportJob, StoryboardShot } from "@aifilm/shared";
-import { buildDeliveryClipLayout, getDeliveryCandidates, getExportSummary, getNextPlayableShotId, normalizeShotDuration, reduceDeliveryAutoPlay, resolveSingleDeliveryCandidate } from "./deliveryModel.ts";
+import { buildDeliveryClipLayout, getDeliveryCandidates, getExportSummary, getNextPlayableShotId, normalizeShotDuration, normalizePersistedMediaUrl, reduceDeliveryAutoPlay, resolveSingleDeliveryCandidate } from "./deliveryModel.ts";
 
 const shot = (id: string, duration: number): StoryboardShot => ({ id, projectId: "p", episodeNo: 1, sceneNo: 1, shotNo: 1, duration, shotSize: "", cameraAngle: "", cameraMovement: "", characters: [], scene: "", pictureDesc: id, dialogue: "", voiceOver: "", environmentSound: "", soundEffect: "", imagePrompt: "", videoPrompt: "", referenceAssetIds: [], status: "succeeded" });
 const asset = (id: string, shotId: string, url?: string): AssetItem => ({ id: `video_${shotId}`, projectId: "p", type: "video", name: id, description: "", prompt: "", referenceUrl: url, status: url ? "succeeded" : "failed" });
@@ -46,4 +46,9 @@ test("auto play targets the next playable clip exactly once and manual selection
   assert.equal(reduceDeliveryAutoPlay(pending, { type: "consumed", shotId: "b", url: "https://cdn.test/b.mp4" }), null);
   assert.equal(reduceDeliveryAutoPlay(pending, { type: "manual" }), null);
   assert.equal(reduceDeliveryAutoPlay(null, { type: "ended" }), null);
+});
+
+test("normalizes persisted media source identity across relative and absolute URLs", () => {
+  assert.equal(normalizePersistedMediaUrl("/storage/clip.mp4?x=1#t"), normalizePersistedMediaUrl("https://studio.test/storage/clip.mp4?x=1#t"));
+  assert.notEqual(normalizePersistedMediaUrl("/storage/clip.mp4?x=1"), normalizePersistedMediaUrl("/storage/clip.mp4?x=2"));
 });
