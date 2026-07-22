@@ -2,6 +2,7 @@
 
 import { createToonflowScriptPlan, createToonflowStoryboardPlan } from "./toonflowAdapter.js";
 import { blockModelUntilNextDay, coolDownModel, getModelQuotaDecision, recordModelSubmission } from "../providers/modelQuota.js";
+import { materializePrompt } from "../prompts/runtime.js";
 
 interface PipelineCharacter {
   name: string;
@@ -108,7 +109,11 @@ export async function generateProjectScriptContent(projectId: string, input: Cre
   return normalizeScriptOutput(
     projectId,
     input,
-    { synopsis: local.synopsis, script: local.script, characters: local.characters },
+    {
+      synopsis: local.synopsis,
+      script: input.sourceType === "script" ? input.content.trim() : local.script,
+      characters: local.characters
+    },
     "local"
   );
 }
@@ -280,7 +285,9 @@ async function generateScriptWithModel(input: CreateProjectInput): Promise<Omit<
   const content = getModelContent(data);
   if (!content) throw new Error("Model returned empty content");
 
-  return parseModelJson<Omit<PipelineOutput, "storyboards">>(content, "剧本模型");
+  const parsed = parseModelJson<Omit<PipelineOutput, "storyboards">>(content, "剧本模型");
+  assertUsableScriptOutput(parsed, input.sourceType);
+  return parsed;
 }
 
 async function generateStoryboardsWithModel(
@@ -555,20 +562,36 @@ function buildPrompt(input: CreateProjectInput) {
   ].join("\n");
 }
 
-function buildScriptPrompt(input: CreateProjectInput) {
-  return createToonflowScriptPlan(input).prompt;
+export function buildScriptPrompt(input: CreateProjectInput) {
+  const plan = createToonflowScriptPlan(input);
+  if (input.sourceType === "script") return plan.prompt;
+
+  const builtin = materializePrompt("novel_to_script", {
+    content: input.content,
+    episodes: input.targetEpisodes ?? 1,
+    ratio: input.videoRatio,
+    styleProfile: input.artStyle || "自动匹配"
+  });
+  return [
+    builtin.systemPrompt,
+    builtin.userPrompt,
+    `输出校验：${builtin.validationRules.join("；")}`,
+    `禁止事项：${builtin.negativeRules.join("；")}`,
+    plan.prompt
+  ].join("\n\n");
 }
 
 function buildStoryboardPrompt(input: CreateProjectInput, script: Pick<ScriptDraft, "synopsis" | "content">, characters: PipelineCharacter[]) {
   return createToonflowStoryboardPlan(input, script, characters).prompt;
 }
 
-function normalizeScriptOutput(
+export function normalizeScriptOutput(
   projectId: string,
   input: CreateProjectInput,
   output: Omit<PipelineOutput, "storyboards">,
   mode: "real" | "local"
 ): GeneratedProjectScriptContent {
+  assertUsableScriptOutput(output, input.sourceType);
   const now = new Date().toISOString();
   const untitled = "\u672a\u547d\u540d\u4f5c\u54c1";
   const scriptSuffix = "\u7b2c\u4e00\u96c6\u5267\u672c";
@@ -577,7 +600,7 @@ function normalizeScriptOutput(
     projectId,
     name: `${input.title || untitled} ${scriptSuffix}`,
     synopsis: safeText(output.synopsis, `${input.title || untitled} ${scriptSuffix}\u56f4\u7ed5\u4e3b\u89d2\u7684\u5173\u952e\u9009\u62e9\u5c55\u5f00\u3002`),
-    content: safeText(output.script, buildFallbackScript(input)),
+    content: safeText(output.script, input.sourceType === "script" ? input.content : buildFallbackScript(input)),
     version: 1,
     createdAt: now
   };
@@ -611,7 +634,17 @@ function normalizeScriptOutput(
     relatedCharacterId: character.id
   }));
 
-  return { mode, script, characters, assets };
+  const sceneAssets = extractSceneNames(script.content, input.genre).map<AssetItem>((scene, index) => ({
+    id: `scene_${projectId}_${index + 1}`,
+    projectId,
+    type: "scene",
+    name: scene,
+    description: `${scene} 的基础场景资产，来源于已确认剧本，用于后续场景图与分镜保持空间一致。`,
+    prompt: `${scene}, ${input.artStyle}, cinematic environment reference, clean composition, ${input.videoRatio}, no character, no text, no watermark`,
+    status: "pending"
+  }));
+
+  return { mode, script, characters, assets: [...assets, ...sceneAssets] };
 }
 
 function normalizeOutput(
@@ -1169,6 +1202,37 @@ function totalShots(input: CreateProjectInput) {
 
 function safeText(value: unknown, fallback: string) {
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
+
+export function assertUsableScriptOutput(
+  output: Partial<Pick<PipelineOutput, "synopsis" | "script" | "characters">>,
+  sourceType: CreateProjectInput["sourceType"]
+) {
+  if (typeof output.script !== "string" || !output.script.trim()) {
+    throw new Error(sourceType === "script" ? "剧本拆解失败：模型未返回剧本正文" : "小说转剧本失败：模型未返回转换后的剧本正文");
+  }
+  const validCharacters = Array.isArray(output.characters)
+    ? output.characters.filter((item) => item && typeof item.name === "string" && item.name.trim())
+    : [];
+  if (!validCharacters.length) {
+    throw new Error(sourceType === "script" ? "剧本拆解失败：未识别到有效角色" : "小说转剧本失败：未提取到有效角色");
+  }
+}
+
+export function extractSceneNames(script: string, genre = "") {
+  const explicit = script
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .flatMap((line) => {
+      const match = line.match(/^(?:第[一二三四五六七八九十百\d]+[场幕]|场景\s*[一二三四五六七八九十百\d]*|SCENE\s*\d*)[：:\s-]*(.+)$/i);
+      if (!match?.[1]) return [];
+      const name = match[1].split(/[，。；;|]/)[0]?.trim();
+      return name ? [name.slice(0, 48)] : [];
+    });
+  const inline = Array.from(script.matchAll(/(?:地点|场景)[：:]\s*([^\n，。；;]{2,48})/g), (match) => match[1].trim());
+  const names = Array.from(new Set([...explicit, ...inline])).filter(Boolean).slice(0, 12);
+  return names.length ? names : [pickScene(genre, script)];
 }
 
 function ensureCharacters(characters?: PipelineCharacter[]) {

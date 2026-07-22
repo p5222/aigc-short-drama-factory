@@ -15,8 +15,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!response.ok) {
     const body = await response.text();
     if (response.status === 401) localStorage.removeItem("aifilm_auth_token");
-    try { throw new Error((JSON.parse(body) as { message?: string }).message || `请求失败（${response.status}）`); }
-    catch (error) { if (error instanceof SyntaxError) throw new Error(body || `请求失败（${response.status}）`); throw error; }
+    try {
+      const message = (JSON.parse(body) as { message?: string }).message;
+      throw new Error(message || `请求失败（${response.status}）`);
+    } catch (error) {
+      if (!(error instanceof SyntaxError)) throw error;
+      throw new Error(response.status >= 500 ? "内容创作服务暂时不可用，请稍后重试。" : `请求失败（${response.status}）`);
+    }
   }
   return response.json() as Promise<T>;
 }

@@ -64,9 +64,22 @@ const shotBreakdownRules = [
 
 export function createToonflowScriptPlan(input: CreateProjectInput): ToonflowScriptPlan {
   const targetEpisodes = input.targetEpisodes ?? 1;
+  const isScriptSource = input.sourceType === "script";
+  const sourceInstruction = isScriptSource
+    ? [
+        "用户输入是已经完成的剧本。禁止改编、续写或重新创作；script 必须完整保留原剧本正文。",
+        "你的任务只是结构化拆解：识别分集、场次、角色及其可见特征，为后续资产和分镜生产提供依据。",
+        "若原稿缺少显式场次标题，应根据地点/时间变化划分场次，但不得补造剧情。"
+      ]
+    : [
+        "用户输入是小说、短篇故事或创意素材，必须先转换成可拍摄的分集剧本，再提取角色卡。",
+        "小说转剧本必须遵循内置 novel_to_script 规则：原文是事实唯一来源，叙述可转成可见动作，但不得新增人物、事件、地点或关系。",
+        "script 必须是转换后的完整剧本，不能直接复制小说叙述，也不能只返回摘要。"
+      ];
   const prompt = [
     "你是 AI 漫剧平台“漫角”的编剧 Agent，参考 Toonflow-app 的“策划-编剧-分镜-资产”流水线工作。",
     "当前只做策划、分集剧本和角色卡，不生成分镜。",
+    ...sourceInstruction,
     "",
     "输出必须是合法 JSON 对象，顶层字段只能包含 synopsis, script, characters。",
     "synopsis：100-220 字，说明主线冲突、人物关系、视觉风格和每集推进目标。",
