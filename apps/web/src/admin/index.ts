@@ -3,3 +3,4 @@ export * from "./AdminTablePage";
 export * from "./AdminMasterDetail";
 export * from "./AdminEvaluationPage";
 import "./admin.css";
+import "./admin-enhancements.css";

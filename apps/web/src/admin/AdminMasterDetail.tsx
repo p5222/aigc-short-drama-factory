@@ -1,3 +1,22 @@
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import { X } from "lucide-react";
-export function AdminMasterDetail({ title, meta, open, onClose, children, footer }: { title: string; meta?: ReactNode; open: boolean; onClose: () => void; children: ReactNode; footer?: ReactNode; }) { if (!open) return null; return <div className="adm-detail-layer" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><aside className="adm-detail" role="dialog" aria-modal="true" aria-labelledby="adm-detail-title"><header><div><h2 id="adm-detail-title">{title}</h2>{meta}</div><button className="adm-icon-btn" type="button" aria-label="关闭详情" onClick={onClose}><X /></button></header><div className="adm-detail-body">{children}</div>{footer ? <footer>{footer}</footer> : null}</aside></div>; }
+
+export function AdminMasterDetail({ title, meta, open, onClose, children, footer }: { title: string; meta?: ReactNode; open: boolean; onClose: () => void; children: ReactNode; footer?: ReactNode; }) {
+  useEffect(() => {
+    if (!open) return;
+    const handleEscape = (event: KeyboardEvent) => event.key === "Escape" && onClose();
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [onClose, open]);
+
+  if (!open) return null;
+  return (
+    <div className="adm-detail-layer" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <aside className="adm-detail" role="dialog" aria-modal="true" aria-labelledby="adm-detail-title">
+        <header><div><h2 id="adm-detail-title">{title}</h2>{meta}</div><button className="adm-icon-btn" type="button" aria-label="关闭详情" onClick={onClose}><X /></button></header>
+        <div className="adm-detail-body">{children}</div>
+        {footer ? <footer>{footer}</footer> : null}
+      </aside>
+    </div>
+  );
+}

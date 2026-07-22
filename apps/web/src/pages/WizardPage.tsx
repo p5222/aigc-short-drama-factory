@@ -19,7 +19,7 @@ const failedImageModels = new Set(["wanx-v1", "wan2.5-t2i-preview"]);
 
 const defaultForm: CreateProjectInput = {
   title: "",
-  sourceType: "short_story",
+  sourceType: "novel",
   content: "",
   mode: "nine_grid",
   genre: "",
@@ -224,7 +224,7 @@ export function WizardPage({ providers, onCreated }: WizardPageProps) {
     const file = event.target.files?.[0];
     if (!file) return;
     const text = await file.text();
-    setForm({ ...form, title: form.title || file.name.replace(/\.[^.]+$/, ""), content: text, sourceType: inferSourceType(text) });
+    setForm({ ...form, title: form.title || file.name.replace(/\.[^.]+$/, ""), content: text });
     setEstimate(null);
     event.currentTarget.value = "";
   }
@@ -256,8 +256,9 @@ export function WizardPage({ providers, onCreated }: WizardPageProps) {
             onClick={() => goTo(item)}
             type="button"
           >
-            <span>{index + 1}</span>
-            {stepLabel(item)}
+            <span>{index < activeStepIndex ? "✓" : index + 1}</span>
+            <i>{stepLabel(item)}</i>
+            <small>{stepHint(item, form.sourceType)}</small>
           </button>
         ))}
       </nav>
@@ -358,9 +359,20 @@ function StoryStep({
         <div className="u-card-head">
           <div>
             <span className="section-kicker">STEP 1</span>
-            <h2>导入你的小说或故事</h2>
-            <p>粘贴正文、章节片段、故事大纲或已有剧本，系统会先整理成可生产的剧本资产。</p>
+            <h2>选择原稿类型并导入内容</h2>
+            <p>小说会先转换为标准剧本；已有剧本跳过改编，直接拆解场次、角色和资产。</p>
           </div>
+        </div>
+
+        <div className="source-type-switch" role="radiogroup" aria-label="原稿类型">
+          <button className={form.sourceType !== "script" ? "active" : ""} onClick={() => onChange({ ...form, sourceType: "novel" })} role="radio" aria-checked={form.sourceType !== "script"} type="button">
+            <BookOpenCheck size={19} />
+            <span><strong>小说 / 故事</strong><small>先按内置提示词转成可拍摄剧本</small></span>
+          </button>
+          <button className={form.sourceType === "script" ? "active" : ""} onClick={() => onChange({ ...form, sourceType: "script" })} role="radio" aria-checked={form.sourceType === "script"} type="button">
+            <FileText size={19} />
+            <span><strong>已有剧本</strong><small>保留剧情，直接识别场次与生产资产</small></span>
+          </button>
         </div>
 
         <label className="field">
@@ -369,11 +381,11 @@ function StoryStep({
         </label>
 
         <label className="field story-input-field">
-          <span>故事正文</span>
+          <span>{form.sourceType === "script" ? "剧本文本" : "小说正文"}</span>
           <textarea
             value={form.content}
-            onChange={(event) => onChange({ ...form, content: event.target.value, sourceType: inferSourceType(event.target.value) })}
-            placeholder="在这里粘贴小说原文 / 故事大纲 / 已有剧本。建议至少 2,000 字，系统会按正文长度估算集数。"
+            onChange={(event) => onChange({ ...form, content: event.target.value })}
+            placeholder={form.sourceType === "script" ? "粘贴已有剧本，建议包含场次、地点、角色、动作和对白。" : "粘贴小说正文或故事大纲，系统会先改编为标准剧本，再进入资产生产。"}
           />
         </label>
 
@@ -391,7 +403,7 @@ function StoryStep({
         </div>
 
         <div className="mode-picker" data-tour-id="generation-mode">
-          <span>选择生成模式</span>
+          <span>分镜密度</span>
           <ModeOption active={form.mode === "nine_grid"} title="9 宫格模式" desc="一集生成 3x3 总图，适合先跑通剧情到视频的完整闭环。" badge="推荐" onClick={() => onChange({ ...form, mode: "nine_grid" })} />
           <ModeOption active={form.mode === "twenty_five_grid"} title="25 宫格模式" desc="一集生成 5x5 总图，适合更细的镜头拆分和后期剪辑。" onClick={() => onChange({ ...form, mode: "twenty_five_grid" })} />
           <ModeOption active={form.mode === "director"} title="导演模式" desc="强化运镜、动作承接和视频提示词，后续开放。" disabled onClick={() => undefined} />
@@ -400,7 +412,7 @@ function StoryStep({
 
       <aside className="u-side-stack">
         <section className="u-card import-stats-card">
-          <h3>当前导入</h3>
+          <div className="import-summary-head"><h3>导入摘要</h3><span>{form.sourceType === "script" ? "剧本直拆" : "小说转剧本"}</span></div>
           <div className="mini-metrics import-metrics">
             <div><strong>{words.toLocaleString()}</strong><span>字数</span></div>
             <div><strong>{suggestedEpisodes}</strong><span>最多可生成集数</span></div>
@@ -417,8 +429,8 @@ function StoryStep({
               })}
             </select>
           </label>
-          <small>约每 2,000 字估算为 1 集，选项会按当前字数自动限制。</small>
-          {form.mode === "nine_grid" && words < 2000 ? <p className="warning-text">9 宫格模式建议每集至少 2,000 字，否则剧情节点会偏少。</p> : null}
+          <small>{form.sourceType === "script" ? "将按剧本中的场次结构拆分；集数用于控制本次生产范围。" : "约每 2,000 字估算为 1 集，选项会按当前字数自动限制。"}</small>
+          {form.mode === "nine_grid" && words < 2000 ? <p className="warning-text">内容较短，生成的剧情节点和场次可能偏少。</p> : null}
         </section>
 
         <section className="u-card ai-plan-card">
@@ -426,7 +438,10 @@ function StoryStep({
             <h3>接下来会生成什么</h3>
             <small>每一步都可以在项目工作台继续编辑、重生和质检。</small>
           </div>
-          {["提炼核心剧情", "按集数写剧本", "生成分镜拆解", "拆出场景 / 角色 / 道具", "进入角色图与视频生产"].map((item, index) => (
+          {(form.sourceType === "script"
+            ? ["识别集与场次", "提取角色 / 场景 / 道具", "生成分镜拆解", "建立一致性资产", "进入图片与视频生产"]
+            : ["分析小说结构", "转换为标准剧本", "识别集与场次", "提取角色 / 场景 / 道具", "进入分镜与资产生产"]
+          ).map((item, index) => (
             <div className="ai-step-line" key={item}>
               <span>{index + 1}</span>
               <strong>{item}</strong>
@@ -539,9 +554,9 @@ function ScriptStep({
 }) {
   const imageMultiplier = imageParameterMultiplier(form.imageSize, form.imageQuality).toFixed(2);
   const scriptAssets = [
-    { title: "全局设定", text: "世界观、题材、人设关系、主角动机和投流钩子。", icon: <BrainCircuit size={18} />, meta: form.genre || "AI 自动识别" },
-    { title: "核心剧情", text: "按集数梳理关键事件、情绪弧光、反转点和每集结尾钩子。", icon: <BookOpenCheck size={18} />, meta: `${form.targetEpisodes ?? 1} 集` },
-    { title: "剧本文本", text: "生成可继续拆镜的场景、动作、台词、旁白和节奏。", icon: <FileText size={18} />, meta: form.textModel || "待选择" },
+    { title: "全局设定", text: "世界观、题材、人设关系、主角动机和内容边界。", icon: <BrainCircuit size={18} />, meta: form.genre || "AI 自动识别" },
+    { title: form.sourceType === "script" ? "场次结构" : "核心剧情", text: form.sourceType === "script" ? "识别集、场次、时空、出场角色和剧情作用。" : "按集数梳理事件、情绪弧光、反转点和结尾钩子。", icon: <BookOpenCheck size={18} />, meta: `${form.targetEpisodes ?? 1} 集` },
+    { title: form.sourceType === "script" ? "剧本拆解" : "剧本改编", text: form.sourceType === "script" ? "保留原剧情，规范动作、台词、旁白和节奏。" : "把小说叙事转换为可拍摄的场景、动作、台词和旁白。", icon: <FileText size={18} />, meta: form.textModel || "待选择" },
     { title: "角色卡", text: "固定外貌、服装、性格、声线和一致性提示词。", icon: <UsersRound size={18} />, meta: form.videoRatio }
   ];
   const routeReady = Boolean(form.textProvider && form.textModel && form.imageProvider && form.imageModel);
@@ -552,8 +567,8 @@ function ScriptStep({
         <div className="u-card-head wizard-script-title">
           <div>
             <span className="section-kicker">SCRIPT ENGINE</span>
-            <h2>核心剧情·剧本生成</h2>
-            <p>先产出全局设定、核心剧情、剧本文本和角色卡，再进入角色定稿与分镜生产。</p>
+            <h2>{form.sourceType === "script" ? "剧本拆解与资产规划" : "小说改编与剧本生成"}</h2>
+            <p>{form.sourceType === "script" ? "保留原剧本剧情，识别场次结构并提取角色、场景和道具。" : "先将小说改编为标准剧本，再提取可进入视觉生产的场次与资产。"}</p>
           </div>
         </div>
 
@@ -642,15 +657,15 @@ function AssetsStep({
       <div className="u-card-head">
         <div>
           <span className="section-kicker">STEP 4</span>
-          <h2>分镜 / 资产生成</h2>
-          <p>先生成全局设定、核心剧情、剧本文本和角色卡。进入项目生产台后，再按主流程完成角色定稿、分镜图、视频和导出。</p>
+          <h2>确认生产计划</h2>
+          <p>{form.sourceType === "script" ? "系统将直接拆解现有剧本并写入真实场次和资产，完成后进入项目工作台。" : "系统将先完成小说改编，再写入真实场次和资产，完成后进入项目工作台。"}</p>
         </div>
       </div>
 
       <div className="asset-flow-grid">
         {[
           ["全局设定", form.videoRatio + " · " + (form.artStyle || "AI 自动匹配")],
-          ["核心剧情·剧本", form.textProvider + " / " + form.textModel],
+          [form.sourceType === "script" ? "剧本拆解" : "小说转剧本", form.textProvider + " / " + form.textModel],
           ["角色卡", "先形成角色身份、外貌、服装和一致性提示词"],
           ["分镜图", form.imageProvider + " / " + form.imageModel],
           ["视频资产", "进入项目生产台继续生成与剪辑"]
@@ -666,10 +681,10 @@ function AssetsStep({
       <div className="inline-actions stretch">
         <button className="ghost-button" onClick={onBack} type="button">返回模型设置</button>
         <button className="primary-button large" onClick={onStart} disabled={isGenerating} type="button">
-          {isGenerating ? <Loader2 size={18} className="spin-icon" /> : <WandSparkles size={18} />}{isGenerating ? "正在生成..." : "生成剧情剧本"}
+          {isGenerating ? <Loader2 size={18} className="spin-icon" /> : <WandSparkles size={18} />}{isGenerating ? "正在处理..." : form.sourceType === "script" ? "拆解剧本并创建项目" : "转换剧本并创建项目"}
         </button>
       </div>
-      {isGenerating ? <OperationProgress title="剧本生成中" elapsed={generationElapsed} detail="正在调用文本模型生成全局设定、角色卡和剧本文本。任务已写入后端队列，请不要重复点击。" /> : null}
+      {isGenerating ? <OperationProgress title={form.sourceType === "script" ? "剧本拆解中" : "小说改编中"} elapsed={generationElapsed} detail={form.sourceType === "script" ? "正在识别场次并提取角色、场景和道具。任务已写入后端队列，请不要重复点击。" : "正在将小说转换为标准剧本，并提取场次与资产。任务已写入后端队列，请不要重复点击。"} /> : null}
       {message ? <p className="success-text">{message}</p> : null}
       {error ? <p className="danger-text">{error}</p> : null}
     </section>
@@ -720,6 +735,11 @@ function OperationProgress({ title, elapsed, detail }: { title: string; elapsed:
       </div>
       <div className="operation-progress-track"><span style={{ width: `${percent}%` }} /></div>
       <p>{detail}</p>
+      <div className="operation-queue" aria-label="生成任务队列">
+        <span className="active"><i />文本模型处理中<strong>{elapsed}s</strong></span>
+        <span><i />保存剧本与场次<strong>等待中</strong></span>
+        <span><i />提取角色、场景和道具<strong>等待中</strong></span>
+      </div>
     </div>
   );
 }
@@ -789,19 +809,11 @@ function buildGenerationInput(form: CreateProjectInput): CreateProjectInput {
   return {
     ...normalizeDraft(form),
     title: form.title.trim() || autoTitle(form.content),
-    sourceType: inferSourceType(form.content),
+    sourceType: form.sourceType === "script" ? "script" : "novel",
     genre: form.genre.trim() || "AI 自动识别题材",
     artStyle: form.artStyle.trim() || "AI 自动匹配画风",
     targetEpisodes: Math.max(1, Math.min(maxEpisodes, form.targetEpisodes ?? 1))
   };
-}
-
-function inferSourceType(content: string): CreateProjectInput["sourceType"] {
-  const text = content.trim();
-  if (/(第[一二三四五六七八九十0-9]+[场幕]|旁白|台词|INT\.|EXT\.)/i.test(text)) return "script";
-  if (text.length > 8000) return "novel";
-  if (text.length < 80) return "idea";
-  return "short_story";
 }
 
 function autoTitle(content: string) {
@@ -815,6 +827,16 @@ function stepLabel(step: WizardStep) {
     settings: "全局设定",
     script: "核心剧情·剧本",
     assets: "分镜 / 资产生成"
+  };
+  return map[step];
+}
+
+function stepHint(step: WizardStep, sourceType: CreateProjectInput["sourceType"]) {
+  const map: Record<WizardStep, string> = {
+    story: sourceType === "script" ? "导入已有剧本" : "导入小说原文",
+    settings: "比例与视觉风格",
+    script: sourceType === "script" ? "识别场次与资产" : "改编为标准剧本",
+    assets: "确认并开始生产"
   };
   return map[step];
 }

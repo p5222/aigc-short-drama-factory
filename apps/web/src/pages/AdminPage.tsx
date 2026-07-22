@@ -64,6 +64,7 @@ import type {
   VisualPipelineTestResult
 } from "@aifilm/shared";
 import { api } from "../lib/api";
+import { AdminEvaluationPage, AdminMasterDetail, AdminTablePage } from "../admin";
 
 type AdminActionResult = void | Promise<void>;
 type ProviderTestResult = ModelTestResult | ImageModelTestResult | VideoModelTestResult;
@@ -420,6 +421,21 @@ function DashboardSection({ summary, providers, modelPrices }: { summary?: Admin
         </div>
       </div>
 
+      <AdminTablePage
+        title="模型渠道健康"
+        summary="只展示当前真实配置，便于快速发现停用渠道和未覆盖价格。"
+        columns={[
+          { key: "provider", label: "供应商", render: (row) => <strong>{row.name}</strong> },
+          { key: "modality", label: "能力", render: (row) => row.modality },
+          { key: "models", label: "模型数", render: (row) => row.models.length },
+          { key: "status", label: "状态", render: (row) => <span className="adm-status" data-status={row.enabled ? "active" : "disabled"}>{row.enabled ? "已启用" : "已停用"}</span> },
+          { key: "prices", label: "价格覆盖", render: (row) => modelPrices.filter((price) => price.providerId === row.id && price.enabled).length }
+        ]}
+        rows={providers}
+        rowKey={(row) => row.id}
+        emptyText="暂无模型渠道配置"
+      />
+
     </section>
   );
 }
@@ -544,59 +560,39 @@ function ShowcaseWorksSection() {
   return (
     <section className="admin-v2-section showcase-admin-section">
       {message ? <p className="admin-toast success">{message}</p> : null}
-      {error ? <p className="admin-toast danger">{error}</p> : null}
-      <div className="admin-v2-card showcase-admin-list-card">
-        <div className="admin-v2-card-head showcase-admin-toolbar">
-          <div><h2>作品审核队列</h2><p>前台只会展示状态为“已通过”的持久化作品。</p></div>
-          <div>
-            <label><Search size={16} /><input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="搜索作品或作者" /></label>
-            <select className="admin-filter-select" value={status} onChange={(event) => setStatus(event.target.value)}>
-              <option value="pending">待审核</option>
-              <option value="approved">已通过</option>
-              <option value="rejected">已驳回</option>
-              <option value="all">全部</option>
-            </select>
-            <button className="admin-icon-btn" type="button" title="刷新审核队列" onClick={() => setReloadKey((current) => current + 1)}><RefreshCw size={17} /></button>
-          </div>
-        </div>
-        <div className="showcase-admin-summary"><strong>{total}</strong><span>条记录</span><small>创作者提交后自动进入待审核队列</small></div>
-        {loading ? <div className="empty-state">正在加载作品...</div> : null}
-        {!loading ? (
-          <div className="showcase-admin-grid">
-            {items.map((work) => (
-              <article key={work.id}>
-                <button className="showcase-admin-cover" type="button" onClick={() => openWork(work)}>
-                  <img src={work.coverUrl} alt={work.title} />
-                  <span><PlayCircle size={22} /></span>
-                </button>
-                <div>
-                  <span className={`showcase-review-status ${work.status}`}>{showcaseStatusLabel(work.status)}</span>
-                  {work.featured ? <em>精选</em> : null}
-                  <h3>{work.title}</h3>
-                  <p>{work.creatorName} · {work.category} · {work.durationLabel}</p>
-                  <small>{work.submittedAt ? new Date(work.submittedAt).toLocaleString() : "官方初始化作品"}</small>
-                  <button className="admin-secondary-btn" type="button" onClick={() => openWork(work)}>查看与审核</button>
-                </div>
-              </article>
-            ))}
-            {!items.length ? <div className="empty-state">当前筛选条件下没有作品。</div> : null}
-          </div>
-        ) : null}
-        {totalPages > 1 ? (
-          <div className="showcase-admin-pagination">
-            <button type="button" disabled={page <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))}>上一页</button>
-            <span>{page} / {totalPages}</span>
-            <button type="button" disabled={page >= totalPages} onClick={() => setPage((current) => Math.min(totalPages, current + 1))}>下一页</button>
-          </div>
-        ) : null}
-      </div>
+      <AdminTablePage
+        title="作品审核队列"
+        summary={`共 ${total} 条真实记录；仅已通过作品会在前台展示。`}
+        filters={<><label><Search size={16} /><input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="搜索作品或作者" /></label><select value={status} onChange={(event) => setStatus(event.target.value)}><option value="pending">待审核</option><option value="approved">已通过</option><option value="rejected">已驳回</option><option value="all">全部</option></select></>}
+        actions={<button className="admin-icon-btn" type="button" title="刷新审核队列" onClick={() => setReloadKey((current) => current + 1)}><RefreshCw size={17} /></button>}
+        columns={[
+          { key: "work", label: "作品", render: (work) => <strong>{work.title}</strong> },
+          { key: "creator", label: "创作者", render: (work) => work.creatorName },
+          { key: "category", label: "分类", render: (work) => work.category },
+          { key: "duration", label: "时长", render: (work) => work.durationLabel },
+          { key: "status", label: "审核状态", render: (work) => <span className="adm-status" data-status={work.status}>{showcaseStatusLabel(work.status)}</span> },
+          { key: "featured", label: "前台精选", render: (work) => work.featured ? "是" : "否" },
+          { key: "submitted", label: "提交时间", render: (work) => work.submittedAt ? new Date(work.submittedAt).toLocaleString() : "官方初始化" }
+        ]}
+        rows={items}
+        rowKey={(work) => work.id}
+        loading={loading}
+        error={error}
+        emptyText="当前筛选条件下没有作品"
+        page={page}
+        totalPages={totalPages}
+        onPageChange={setPage}
+        onRowClick={openWork}
+      />
 
-      {selected && draft ? (
-        <div className="showcase-admin-modal" role="dialog" aria-modal="true" aria-label={`审核 ${selected.title}`}>
-          <button className="showcase-admin-backdrop" type="button" aria-label="关闭" onClick={() => { setSelected(null); setDraft(null); }} />
-          <section>
-            <header><div><span>{showcaseStatusLabel(selected.status)}</span><h2>{selected.title}</h2></div><button type="button" aria-label="关闭" onClick={() => { setSelected(null); setDraft(null); }}><X size={18} /></button></header>
-            <div className="showcase-admin-modal-body">
+      <AdminMasterDetail
+        open={Boolean(selected && draft)}
+        title={selected?.title ?? "作品审核"}
+        meta={selected ? <span className="adm-status" data-status={selected.status}>{showcaseStatusLabel(selected.status)}</span> : null}
+        onClose={() => { setSelected(null); setDraft(null); }}
+        footer={<>{message ? <span>{message}</span> : <span /> }<button className="admin-secondary-btn" type="button" disabled={working} onClick={() => void saveDraft()}>保存信息</button><button className="showcase-reject-btn" type="button" disabled={working} onClick={() => void review("reject")}><X size={16} />驳回</button><button className="admin-primary-btn" type="button" disabled={working} onClick={() => void review("approve")}><CheckCircle2 size={16} />通过并发布</button></>}
+      >
+        {draft ? <div className="showcase-admin-modal-body adm-showcase-detail">
               <div className="showcase-admin-preview">
                 <video src={draft.videoUrl} poster={draft.coverUrl} controls playsInline preload="metadata" />
                 <p>提交项目：{draft.projectId || "官方初始化"}</p>
@@ -613,15 +609,8 @@ function ShowcaseWorksSection() {
                 <label className="showcase-featured-toggle"><input type="checkbox" checked={draft.featured} onChange={(event) => setDraft({ ...draft, featured: event.target.checked })} /><span>设为官方精选</span></label>
                 <label className="wide"><span>审核意见</span><textarea value={reviewNote} onChange={(event) => setReviewNote(event.target.value)} placeholder="驳回时说明需要修改的内容" /></label>
               </div>
-            </div>
-            <footer>
-              <button className="admin-secondary-btn" type="button" disabled={working} onClick={() => void saveDraft()}>保存信息</button>
-              <button className="showcase-reject-btn" type="button" disabled={working} onClick={() => void review("reject")}><X size={16} />驳回</button>
-              <button className="admin-primary-btn" type="button" disabled={working} onClick={() => void review("approve")}><CheckCircle2 size={16} />通过并发布</button>
-            </footer>
-          </section>
-        </div>
-      ) : null}
+            </div> : null}
+      </AdminMasterDetail>
     </section>
   );
 }
@@ -1743,6 +1732,7 @@ function EvaluationExperimentWorkspace({
   onRefresh: () => Promise<void>;
 }) {
   const completedRuns = runs.filter((run) => run.status === "completed");
+  const [selectedPromptVersionId, setSelectedPromptVersionId] = useState<string>();
   const [experiments, setExperiments] = useState<ExperimentRun[]>([]);
   const [experimentPage, setExperimentPage] = useState(1);
   const [experimentPages, setExperimentPages] = useState(1);
@@ -1842,7 +1832,7 @@ function EvaluationExperimentWorkspace({
       </section>
 
       <div className="evaluation-experiment-builder-grid">
-        <article className="admin-v2-card evaluation-version-builder">
+        <article id="prompt-version-builder" className="admin-v2-card evaluation-version-builder">
           <div className="admin-v2-card-head"><div><h2>提示词版本库</h2><p>保存评分提示词版本；生成提示词也可记录版本，但必须用对应版本生成样本后再做运行对比。</p></div></div>
           <div className="evaluation-version-form">
             <input value={promptDraft.key} onChange={(event) => setPromptDraft({ ...promptDraft, key: event.target.value })} placeholder="版本 Key，例如 storyboard-generate" />
@@ -1866,7 +1856,7 @@ function EvaluationExperimentWorkspace({
           </div>
         </article>
 
-        <article className="admin-v2-card evaluation-comparison-builder">
+        <article id="experiment-builder" className="admin-v2-card evaluation-comparison-builder">
           <div className="admin-v2-card-head"><div><h2>创建对比实验</h2><p>选择覆盖同一阶段的两次已完成评测，自动计算候选相对基线的分数与通过率变化。</p></div></div>
           <div className="evaluation-comparison-form">
             <input value={experimentDraft.name} onChange={(event) => setExperimentDraft({ ...experimentDraft, name: event.target.value })} placeholder="实验名称" />
@@ -1882,22 +1872,15 @@ function EvaluationExperimentWorkspace({
         </article>
       </div>
 
-      <section className="evaluation-experiment-results">
-        <header><div><span>历史实验</span><h2>版本效果对比</h2></div><button className="admin-secondary-btn compact" type="button" disabled={loading} onClick={() => void loadExperiments(experimentPage)}><RefreshCw size={15} />刷新</button></header>
-        {experiments.map((experiment) => (
-          <article key={experiment.id} className={experiment.winner}>
-            <div><span>{experimentTypeLabel(experiment.experimentType)} · {stageLabel(experiment.stage)}</span><strong>{experiment.name}</strong><small>{experiment.hypothesis}</small></div>
-            <div className="evaluation-comparison-score"><span>基线<strong>{experiment.metrics.baselineScore}</strong></span><b>→</b><span>候选<strong>{experiment.metrics.candidateScore}</strong></span><em>{signedNumber(experiment.metrics.scoreDelta)} 分</em></div>
-            <div className="evaluation-comparison-meta"><span>通过率 {experiment.metrics.baselinePassRate}% → {experiment.metrics.candidatePassRate}%</span><span>改善 {experiment.metrics.sampleDeltas.filter((row) => row.status === "improved").length} · 退化 {experiment.metrics.sampleDeltas.filter((row) => row.status === "regressed").length}</span><span>{experiment.baselineVersion} vs {experiment.candidateVersion}</span></div>
-            <p>{experiment.resultSummary}</p>
-            {experiment.metrics.sampleDeltas.length ? <div className="evaluation-sample-deltas">
-              {experiment.metrics.sampleDeltas.slice(0, 8).map((row) => <span className={row.status} key={`${row.projectId}:${row.stage}`}>{row.projectName ?? row.projectId.slice(-8)} · {row.baseline ?? "-"} → {row.candidate ?? "-"} · {row.delta === undefined ? row.status : signedNumber(row.delta)}</span>)}
-            </div> : null}
-          </article>
-        ))}
-        {!experiments.length ? <EmptyHint text="暂无对比实验。先运行两个版本的评测，再创建模型或提示词对比。" /> : null}
-        <div className="admin-pagination"><button type="button" disabled={experimentPage <= 1} onClick={() => void loadExperiments(experimentPage - 1)}>‹</button><button className="active" type="button">{experimentPage} / {experimentPages}</button><button type="button" disabled={experimentPage >= experimentPages} onClick={() => void loadExperiments(experimentPage + 1)}>›</button></div>
-      </section>
+      <AdminEvaluationPage
+        prompts={promptVersions}
+        experiments={experiments}
+        selectedPromptId={selectedPromptVersionId}
+        onSelectPrompt={setSelectedPromptVersionId}
+        onCreatePrompt={() => document.querySelector<HTMLInputElement>("#prompt-version-builder input")?.focus()}
+        onCreateExperiment={() => document.querySelector<HTMLInputElement>("#experiment-builder input")?.focus()}
+      />
+      <div className="admin-pagination"><button type="button" disabled={experimentPage <= 1 || loading} onClick={() => void loadExperiments(experimentPage - 1)}>‹</button><button className="active" type="button">{experimentPage} / {experimentPages}</button><button type="button" disabled={experimentPage >= experimentPages || loading} onClick={() => void loadExperiments(experimentPage + 1)}>›</button></div>
     </div>
   );
 }
@@ -2251,6 +2234,7 @@ function UsersSection({
   const [status, setStatus] = useState("all");
   const [segment, setSegment] = useState("all");
   const [createOpen, setCreateOpen] = useState(false);
+  const [selectedUser, setSelectedUser] = useState<AdminUserRow | null>(null);
   const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
   function matchesSegment(user: AdminUserRow) {
     if (segment === "all") return true;
@@ -2329,43 +2313,29 @@ function UsersSection({
           <SelectFilter value={role} onChange={setRole} options={["all", "creator", "admin"]} labels={{ all: "全部角色", creator: "创作者", admin: "后台管理员" }} />
           <SelectFilter value={status} onChange={setStatus} options={["all", "active", "disabled"]} labels={{ all: "全部状态", active: "正常", disabled: "停用" }} />
         </AdminToolbar>
-        <div className="admin-data-card">
-          <div className="admin-v2-card-head">
-            <div>
-              <h2>账号列表</h2>
-              <p>保留真实账号数据，支持角色、状态、积分、密码和运营补偿在同一行完成。</p>
-            </div>
-          </div>
-          <div className="admin-user-management-table v2">
-            <div className="admin-user-management-head">
-              <label className="admin-row-checkbox"><input type="checkbox" checked={allVisibleSelected} onChange={toggleVisibleUsers} /></label>
-              <span>用户</span>
-              <span>手机号</span>
-              <span>身份</span>
-              <span>状态</span>
-              <span>积分余额</span>
-              <span>累计充值</span>
-              <span>累计消耗</span>
-              <span>项目</span>
-              <span>密码</span>
-              <span>操作</span>
-            </div>
-            {rows.map((user) => (
-              <UserRow
-                key={user.id}
-                user={user}
-                selected={selectedUserIds.includes(user.id)}
-                onToggleSelected={() => setSelectedUserIds((current) => current.includes(user.id) ? current.filter((id) => id !== user.id) : [...current, user.id])}
-                onUserSave={onUserSave}
-                onPasswordReset={onPasswordReset}
-                onCreditAdjust={onCreditAdjust}
-              />
-            ))}
-            {!rows.length ? <EmptyHint text="没有匹配的用户。可以切换左侧分层，或清空搜索/筛选条件。" /> : null}
-          </div>
-        </div>
-        <TableFooter total={rows.length} />
+        <AdminTablePage
+          title="账号列表"
+          summary="点击一行，在右侧完成身份、状态、积分与密码管理。"
+          actions={<label className="admin-row-checkbox"><input type="checkbox" checked={allVisibleSelected} onChange={toggleVisibleUsers} />选择当前结果</label>}
+          columns={[
+            { key: "user", label: "用户", render: (user) => <div><strong>{user.name}</strong><small>{user.email || user.id}</small></div> },
+            { key: "phone", label: "手机号", render: (user) => user.phone || "未绑定" },
+            { key: "role", label: "身份", render: (user) => adminRoleLabels[user.role] ?? user.role },
+            { key: "status", label: "状态", render: (user) => <span className="adm-status" data-status={user.status}>{adminStatusLabels[user.status] ?? user.status}</span> },
+            { key: "credits", label: "积分", render: (user) => user.credits.toLocaleString() },
+            { key: "recharge", label: "累计充值", render: (user) => `¥${user.totalRecharge.toFixed(2)}` },
+            { key: "consumed", label: "累计消耗", render: (user) => user.totalConsume.toLocaleString() },
+            { key: "projects", label: "项目", render: (user) => user.projects }
+          ]}
+          rows={rows}
+          rowKey={(user) => user.id}
+          emptyText="没有匹配的用户；请调整分层、搜索或筛选条件"
+          onRowClick={setSelectedUser}
+        />
       </AdminModuleWorkbench>
+      <AdminMasterDetail open={Boolean(selectedUser)} title={selectedUser?.name ?? "用户详情"} meta={selectedUser ? <p>{selectedUser.email || selectedUser.phone || selectedUser.id}</p> : null} onClose={() => setSelectedUser(null)}>
+        {selectedUser ? <div className="admin-user-management-table v2 adm-user-detail-editor"><UserRow user={selectedUser} selected={selectedUserIds.includes(selectedUser.id)} onToggleSelected={() => setSelectedUserIds((current) => current.includes(selectedUser.id) ? current.filter((id) => id !== selectedUser.id) : [...current, selectedUser.id])} onUserSave={onUserSave} onPasswordReset={onPasswordReset} onCreditAdjust={onCreditAdjust} /></div> : null}
+      </AdminMasterDetail>
       <AdminModal open={createOpen} title="创建用户" description="创建后可立即登录；初始积分会写入流水，密码不在后台明文保存。" onClose={() => setCreateOpen(false)} wide>
         <AdminUserCreator onCreate={(input) => { void onCreateUser(input); setCreateOpen(false); }} />
       </AdminModal>
