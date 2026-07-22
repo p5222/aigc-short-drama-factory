@@ -49,6 +49,15 @@ export function getNextPlayableShotId(shots: StoryboardShot[], assets: AssetItem
   return null;
 }
 
+export interface DeliveryAutoPlayTarget { shotId: string; url: string; }
+export type DeliveryAutoPlayAction = { type: "manual" } | { type: "ended"; shotId?: string; url?: string } | { type: "consumed"; shotId: string; url: string };
+
+export function reduceDeliveryAutoPlay(current: DeliveryAutoPlayTarget | null, action: DeliveryAutoPlayAction): DeliveryAutoPlayTarget | null {
+  if (action.type === "manual") return null;
+  if (action.type === "ended") return action.shotId && action.url ? { shotId: action.shotId, url: action.url } : null;
+  return current?.shotId === action.shotId && current.url === action.url ? null : current;
+}
+
 export function getExportSummary(jobs: ExportJob[]): { status: ExportJob["status"] | "idle"; messages: string[] } {
   const latest = [...jobs].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
   return { status: latest?.status ?? "idle" as const, messages: jobs.flatMap((job) => [...(job.warnings ?? []), job.errorReason].filter((message): message is string => Boolean(message))) };
