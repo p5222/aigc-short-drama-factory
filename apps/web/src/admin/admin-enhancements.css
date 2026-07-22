@@ -66,3 +66,243 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* Sub2API reference alignment: neutral operational surfaces and dense rows. */
+.adm-shell {
+  --adm-bg: #f7f8fa;
+  --adm-surface: #ffffff;
+  --adm-surface-2: #f9fafb;
+  --adm-text: #111827;
+  --adm-muted: #6b7280;
+  --adm-border: #e5e7eb;
+  --adm-accent: #10a58f;
+  --adm-accent-soft: #ecfdf8;
+}
+
+[data-theme="dark"] .adm-shell {
+  --adm-bg: #0b0e12;
+  --adm-surface: #15191f;
+  --adm-surface-2: #1b2027;
+  --adm-text: #f3f4f6;
+  --adm-muted: #9ca3af;
+  --adm-border: #2a3038;
+  --adm-accent: #2dd4bf;
+  --adm-accent-soft: #123c37;
+}
+
+.adm-content .admin-v2-card,
+.adm-content .admin-v2-metric,
+.adm-content .admin-v2-toolbar,
+.adm-content .admin-module-rail,
+.adm-content .admin-module-main {
+  border-color: var(--adm-border) !important;
+  border-radius: 8px !important;
+  background: var(--adm-surface) !important;
+  box-shadow: 0 1px 2px rgb(15 23 42 / 4%) !important;
+}
+
+.adm-content .admin-v2-metric {
+  min-height: 92px !important;
+  padding: 16px !important;
+}
+
+.adm-content .admin-v2-metric-icon {
+  width: 40px !important;
+  height: 40px !important;
+  border-radius: 8px !important;
+}
+
+.admin-price-section .admin-module-workbench {
+  grid-template-columns: 220px minmax(0, 1fr) !important;
+  gap: 16px !important;
+}
+
+.admin-price-section .admin-module-rail {
+  padding: 16px !important;
+}
+
+.admin-price-section .admin-module-rail-list {
+  gap: 4px !important;
+}
+
+.admin-price-section .admin-module-rail-list button,
+.admin-price-section .admin-module-rail-list button:hover,
+.admin-price-section .admin-module-rail-list button.active {
+  min-height: 52px !important;
+  padding: 8px 10px !important;
+  border: 1px solid transparent !important;
+  border-radius: 6px !important;
+  color: var(--adm-text) !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.admin-price-section .admin-module-rail-list button:hover {
+  background: var(--adm-surface-2) !important;
+}
+
+.admin-price-section .admin-module-rail-list button.active {
+  border-color: color-mix(in srgb, var(--adm-accent) 28%, var(--adm-border)) !important;
+  color: var(--adm-accent) !important;
+  background: var(--adm-accent-soft) !important;
+}
+
+.admin-price-section .admin-module-rail-list button b {
+  min-width: 26px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  color: var(--adm-muted) !important;
+  background: var(--adm-surface-2) !important;
+  font-size: 11px;
+}
+
+.admin-price-section .admin-v2-metrics.small {
+  gap: 12px !important;
+}
+
+.admin-price-section .admin-v2-toolbar {
+  min-height: 60px !important;
+  margin: 12px 0 !important;
+  padding: 10px 12px !important;
+  background: var(--adm-surface) !important;
+}
+
+.admin-price-section .admin-price-provider-list {
+  gap: 0 !important;
+  overflow: hidden;
+  border: 1px solid var(--adm-border);
+  border-radius: 8px;
+  background: var(--adm-surface);
+}
+
+.admin-price-section .admin-price-provider-card {
+  margin: 0 !important;
+  border: 0 !important;
+  border-bottom: 1px solid var(--adm-border) !important;
+  border-radius: 0 !important;
+  color: var(--adm-text) !important;
+  background: var(--adm-surface) !important;
+  box-shadow: none !important;
+}
+
+.admin-price-section .admin-price-provider-card:last-child {
+  border-bottom: 0 !important;
+}
+
+.admin-price-section .admin-price-provider-head,
+:root[data-theme="light"] .admin-price-section .admin-price-provider-head,
+:root:not([data-theme="light"]) .admin-price-section .admin-price-provider-head {
+  min-height: 64px !important;
+  padding: 10px 12px !important;
+  color: var(--adm-text) !important;
+  background: var(--adm-surface) !important;
+  background-image: none !important;
+  box-shadow: none !important;
+}
+
+.admin-price-section .admin-price-provider-head:hover {
+  background: var(--adm-surface-2) !important;
+}
+
+.admin-price-section .admin-price-provider-head .admin-provider-title strong,
+.admin-price-section .admin-price-row strong {
+  color: var(--adm-text) !important;
+}
+
+.admin-price-section .admin-price-provider-head .admin-provider-title span,
+.admin-price-section .admin-price-row > div:first-child span {
+  color: var(--adm-muted) !important;
+}
+
+.admin-price-section .admin-provider-icon {
+  width: 36px !important;
+  height: 36px !important;
+  border-radius: 8px !important;
+}
+
+.admin-price-section .admin-chip {
+  border-radius: 5px !important;
+}
+
+.admin-price-section .admin-user-metrics.compact {
+  gap: 8px !important;
+}
+
+.admin-price-section .admin-metric-pill {
+  min-width: 74px !important;
+  padding: 7px 9px !important;
+  border: 1px solid var(--adm-border) !important;
+  border-radius: 6px !important;
+  color: var(--adm-text) !important;
+  background: var(--adm-surface-2) !important;
+}
+
+.admin-price-section .admin-metric-pill.strong {
+  border-color: color-mix(in srgb, var(--adm-accent) 22%, var(--adm-border)) !important;
+  background: var(--adm-accent-soft) !important;
+}
+
+.admin-price-section .admin-price-row-list {
+  border-top: 1px solid var(--adm-border) !important;
+  background: var(--adm-surface-2) !important;
+}
+
+.admin-price-section .admin-price-row,
+:root[data-theme="light"] .admin-price-section .admin-price-row,
+:root:not([data-theme="light"]) .admin-price-section .admin-price-row {
+  min-height: 58px !important;
+  margin: 0 !important;
+  padding: 8px 12px 8px 58px !important;
+  border: 0 !important;
+  border-bottom: 1px solid var(--adm-border) !important;
+  border-radius: 0 !important;
+  color: var(--adm-text) !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.admin-price-section .admin-price-row:last-child {
+  border-bottom: 0 !important;
+}
+
+.admin-price-section .admin-price-row:hover {
+  background: color-mix(in srgb, var(--adm-accent) 5%, transparent) !important;
+}
+
+.admin-price-section .admin-price-row input {
+  height: 34px !important;
+  border: 1px solid var(--adm-border) !important;
+  border-radius: 6px !important;
+  color: var(--adm-text) !important;
+  background: var(--adm-surface) !important;
+}
+
+@media (max-width: 1100px) {
+  .admin-price-section .admin-module-workbench {
+    grid-template-columns: 1fr !important;
+  }
+
+  .admin-price-section .admin-module-rail-list {
+    grid-template-columns: repeat(4, minmax(140px, 1fr)) !important;
+  }
+}
+
+@media (max-width: 760px) {
+  .admin-price-section .admin-module-rail-list {
+    display: flex !important;
+    overflow-x: auto;
+  }
+
+  .admin-price-section .admin-module-rail-list button {
+    min-width: 150px;
+  }
+
+  .admin-price-section .admin-price-provider-head {
+    grid-template-columns: auto auto minmax(150px, 1fr) !important;
+  }
+
+  .admin-price-section .admin-price-modality-tags,
+  .admin-price-section .admin-user-metrics.compact {
+    display: none !important;
+  }
+}
