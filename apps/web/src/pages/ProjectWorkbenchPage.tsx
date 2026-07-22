@@ -53,6 +53,7 @@ import { WorkbenchProvider, type WorkbenchSaveState } from "../workbench/Workben
 import { AssetStage } from "../workbench/stages/AssetStage";
 import { ContentStage } from "../workbench/stages/ContentStage";
 import { ShotStage } from "../workbench/stages/ShotStage";
+import { DeliveryStage } from "../workbench/stages/DeliveryStage";
 import { createWorkbenchState, resolveCharacterIdentityAsset, shouldReconcileStoryboardSelection, workbenchReducer, type WorkbenchStage, type WorkbenchTheme } from "../workbench/model";
 import { buildTimelineClipLayout } from "./projectWorkbenchModel";
 import "./ProjectStudioV4.css";
@@ -299,7 +300,18 @@ export function ProjectWorkbenchPage({ workflow, providers, modelPrices, theme, 
           onPreview={setPreviewImage}
           onSaveStateChange={setSaveState}
         />
-      ) : <ProductionWorkspace
+      ) : <DeliveryStage
+        railOpen={railOpen}
+        inspectorOpen={inspectorOpen}
+        onCloseRail={() => setRailOpen(false)}
+        onCloseInspector={() => setInspectorOpen(false)}
+        onRefresh={onRefresh}
+        onPublish={() => setPublishOpen(true)}
+        exportJobs={exportJobs}
+        onExport={createExport}
+        isBusy={isBusy}
+      /> /* Legacy delivery board remains below for Task 8 cleanup. */}
+      {/* <ProductionWorkspace
         rail={(
           <div className="wb-rail-summary">
             <h2 className="wb-region-heading">{pipelineSteps.find((step) => step.id === activeTab)?.label}</h2>
@@ -337,7 +349,7 @@ export function ProjectWorkbenchPage({ workflow, providers, modelPrices, theme, 
         inspectorOpen={inspectorOpen}
         onCloseRail={() => setRailOpen(false)}
         onCloseInspector={() => setInspectorOpen(false)}
-      />}
+      /> */}
       {publishOpen ? <ShowcasePublishModal project={project} storyboards={storyboards} imageAssets={imageAssets} videoAssets={videoAssets} exportJobs={exportJobs} onClose={() => setPublishOpen(false)} /> : null}
       {previewImage ? <ImagePreviewModal preview={previewImage} onClose={() => setPreviewImage(null)} /> : null}
     </div>
