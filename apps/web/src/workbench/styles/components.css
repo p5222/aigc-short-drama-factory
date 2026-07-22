@@ -138,6 +138,10 @@
   color: var(--success);
 }
 
+.wb-save-state--sync-required {
+  color: var(--warning);
+}
+
 .wb-more-menu {
   position: relative;
   display: none;

@@ -8,7 +8,7 @@ import {
   type WorkbenchTheme
 } from "./model";
 
-export type WorkbenchSaveState = "unchanged" | "dirty" | "saving" | "error" | "saved";
+export type WorkbenchSaveState = "unchanged" | "dirty" | "saving" | "error" | "saved" | "sync-required";
 
 export interface WorkbenchContextValue {
   state: WorkbenchState;

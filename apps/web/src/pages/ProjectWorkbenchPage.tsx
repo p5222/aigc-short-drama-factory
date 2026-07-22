@@ -48,9 +48,10 @@ import {
 import { api } from "../lib/api";
 import { ProductionWorkspace } from "../workbench/components/ProductionWorkspace";
 import { WorkbenchHeader } from "../workbench/components/WorkbenchHeader";
-import { WorkbenchProvider } from "../workbench/WorkbenchContext";
+import { WorkbenchProvider, type WorkbenchSaveState } from "../workbench/WorkbenchContext";
 import { AssetStage } from "../workbench/stages/AssetStage";
 import { ContentStage } from "../workbench/stages/ContentStage";
+import { ShotStage } from "../workbench/stages/ShotStage";
 import { createWorkbenchState, resolveCharacterIdentityAsset, shouldReconcileStoryboardSelection, workbenchReducer, type WorkbenchStage, type WorkbenchTheme } from "../workbench/model";
 import { buildTimelineClipLayout } from "./projectWorkbenchModel";
 import "./ProjectStudioV4.css";
@@ -65,7 +66,6 @@ interface ProjectWorkbenchPageProps {
   onRefresh: (projectId: string) => Promise<ProjectWorkflow>;
 }
 
-type ShotWorkspaceView = "director" | "matrix";
 type OperationKey = "storyboard" | "character" | "images" | "video" | "export" | null;
 type OperationState = { key: OperationKey; title: string; startedAt: number; detail: string } | null;
 
@@ -82,7 +82,7 @@ const failedImageModels = new Set(["wanx-v1", "wan2.5-t2i-preview"]);
 
 export function ProjectWorkbenchPage({ workflow, providers, modelPrices, theme, onThemeChange, onBack, onRefresh }: ProjectWorkbenchPageProps) {
   const [workbenchState, dispatch] = useReducer(workbenchReducer, undefined, createWorkbenchState);
-  const [shotWorkspaceView, setShotWorkspaceView] = useState<ShotWorkspaceView>("director");
+  const [saveState, setSaveState] = useState<WorkbenchSaveState>("unchanged");
   const [railOpen, setRailOpen] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [message, setMessage] = useState("");
@@ -118,7 +118,15 @@ export function ProjectWorkbenchPage({ workflow, providers, modelPrices, theme, 
 
   const { project, script, characters, storyboards } = workflow;
   const activeTab = workbenchState.activeStage;
-  const setActiveTab = (stage: WorkbenchStage) => dispatch({ type: "set-stage", stage });
+  const canLeaveShotDraft = () => {
+    if (saveState === "saving") return false;
+    return saveState !== "dirty" && saveState !== "error"
+      || window.confirm("当前镜头有未保存修改。确认放弃这些修改并继续？");
+  };
+  const setActiveTab = (stage: WorkbenchStage) => {
+    if (stage !== activeTab && !canLeaveShotDraft()) return;
+    dispatch({ type: "set-stage", stage });
+  };
   const assets = workflow.assets ?? [];
   const roleAssets = assets.filter((asset) => asset.type === "role" || asset.type === "role_derivative" || asset.type === "role_reference");
   const sceneAssets = assets.filter((asset) => asset.type === "scene" || asset.type === "prop");
@@ -148,7 +156,7 @@ export function ProjectWorkbenchPage({ workflow, providers, modelPrices, theme, 
     if (actionId === "script" || actionId === "done") return;
     if (`${actionId}` === "image") {
       setActiveTab("shots");
-      setShotWorkspaceView("director");
+      dispatch({ type: "set-shot-mode", mode: "image" });
       setMessage("已进入分镜图工作台。建议先生成单张测试图或多选 3-5 个关键镜头，再决定是否全部补齐。");
       setError("");
       return;
@@ -166,14 +174,14 @@ export function ProjectWorkbenchPage({ workflow, providers, modelPrices, theme, 
         const result = await api.generateStoryboards(project.id, { artStyle: project.artStyle, videoRatio: project.videoRatio });
         setMessage(`分镜拆解已提交，新增 ${result.assetsCreated ?? 0} 条记录。`);
         setActiveTab("shots");
-        setShotWorkspaceView("matrix");
+        dispatch({ type: "set-shot-mode", mode: "table" });
       }
       if (actionId === "image") {
         beginOperation("images", "分镜图生成中", "正在按未出图镜头补齐首帧图。");
         const result = await api.generateImages(project.id);
         setMessage(`分镜图任务已提交，新增 ${result.assetsCreated ?? 0} 个资产。`);
         setActiveTab("shots");
-        setShotWorkspaceView("director");
+        dispatch({ type: "set-shot-mode", mode: "image" });
       }
       if (actionId === "video") {
         beginOperation("video", "视频片段生成中", "正在把已确认分镜图提交给视频模型。");
@@ -231,7 +239,7 @@ export function ProjectWorkbenchPage({ workflow, providers, modelPrices, theme, 
     <WorkbenchProvider
       state={workbenchState}
       dispatch={dispatch}
-      saveState="unchanged"
+      saveState={saveState}
       workflow={workflow}
       theme={theme}
       onThemeChange={onThemeChange}
@@ -242,9 +250,11 @@ export function ProjectWorkbenchPage({ workflow, providers, modelPrices, theme, 
         projectMeta={`第 1 集 · ${project.videoRatio}`}
         stages={pipelineSteps}
         activeStage={activeTab}
-        saveState="unchanged"
+        saveState={saveState}
         theme={theme}
-        onBack={onBack}
+        onBack={() => {
+          if (canLeaveShotDraft()) onBack();
+        }}
         onStageChange={setActiveTab}
         onThemeChange={onThemeChange}
         onRefresh={() => void refreshProject()}
@@ -276,6 +286,18 @@ export function ProjectWorkbenchPage({ workflow, providers, modelPrices, theme, 
           onRefresh={onRefresh}
           onPreview={setPreviewImage}
         />
+      ) : activeTab === "shots" ? (
+        <ShotStage
+          providers={providers}
+          modelPrices={modelPrices}
+          railOpen={railOpen}
+          inspectorOpen={inspectorOpen}
+          onCloseRail={() => setRailOpen(false)}
+          onCloseInspector={() => setInspectorOpen(false)}
+          onRefresh={onRefresh}
+          onPreview={setPreviewImage}
+          onSaveStateChange={setSaveState}
+        />
       ) : <ProductionWorkspace
         rail={(
           <div className="wb-rail-summary">
@@ -294,18 +316,6 @@ export function ProjectWorkbenchPage({ workflow, providers, modelPrices, theme, 
             {operation ? <InlineProgress operation={operation} elapsed={operationElapsed} /> : null}
             {message ? <p className="success-text studio-v4-message">{message}</p> : null}
             {error ? <p className="danger-text studio-v4-message">{error}</p> : null}
-            {activeTab === "shots" ? (
-              <div className="studio-v4-shots-stage">
-                <div className="studio-v4-view-switch" role="tablist" aria-label="分镜视图">
-                  <button className={shotWorkspaceView === "director" ? "active" : ""} type="button" onClick={() => setShotWorkspaceView("director")}><Film size={16} />单镜头</button>
-                  <button className={shotWorkspaceView === "matrix" ? "active" : ""} type="button" onClick={() => setShotWorkspaceView("matrix")}><Images size={16} />故事板矩阵</button>
-                  <span>在同一阶段完成脚本、首帧、候选版本与视频检查</span>
-                </div>
-                {shotWorkspaceView === "director"
-                  ? <CreatorImagesBoard project={project} providers={providers} modelPrices={modelPrices} storyboards={storyboards} characters={characters} roleAssets={roleAssets} sceneAssets={sceneAssets} imageAssets={imageAssets} qualityReports={qualityReports} feedbacks={feedbacks} isBusy={isBusy} onRefresh={refreshProject} onSaveModelRoutes={saveModelRoutes} onPreview={setPreviewImage} />
-                  : <DesignDeskBoard storyboards={storyboards} characters={characters} roleAssets={roleAssets} sceneAssets={sceneAssets} imageAssets={imageAssets} videoAssets={videoAssets} productionPackage={productionPackage} isBusy={isBusy} onGenerate={() => void runWorkflowAction("storyboard")} onOpenDirector={() => setShotWorkspaceView("director")} onOpenVideo={() => setActiveTab("delivery")} onPreview={setPreviewImage} />}
-              </div>
-            ) : null}
             {activeTab === "delivery" ? <VideoBoard project={project} providers={providers} modelPrices={modelPrices} storyboards={storyboards} characters={characters} roleAssets={roleAssets} imageAssets={imageAssets} videoAssets={videoAssets} exportJobs={exportJobs} isBusy={isBusy} onGenerate={() => void runWorkflowAction("video")} onCreateExport={createExport} onRefresh={refreshProject} onSaveModelRoutes={saveModelRoutes} onPublish={() => setPublishOpen(true)} /> : null}
           </div>
         )}

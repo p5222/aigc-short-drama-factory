@@ -10,6 +10,12 @@ import {
   buildContentSceneRows,
   deriveSceneAssetList,
   buildStoryboardGenerationPayload,
+  buildShotAssetMap,
+  buildShotImageGenerationPayload,
+  buildProjectVideoGenerationArgs,
+  collectPendingShotIds,
+  createShotDraftState,
+  reduceShotDraftState,
   buildTaskSummary,
   collectContentEpisodeNumbers,
   createWorkbenchState,
@@ -133,6 +139,58 @@ test("release A hides every unsupported command", () => {
     shotCrud: false,
     perRunModelOverride: false
   });
+});
+
+test("shot media maps only through exact persisted asset ids", () => {
+  const explicit = asset("image_shot-1", "image", undefined, "https://example.com/frame.jpg");
+  const unrelated = asset("opaque-image", "image", undefined, "https://example.com/unrelated.jpg");
+
+  assert.deepEqual([...buildShotAssetMap([shot("shot-1", 1, 1)], [explicit, unrelated], "image")], [["shot-1", explicit]]);
+});
+
+test("image generation scopes submit exact shot ids", () => {
+  assert.deepEqual(buildShotImageGenerationPayload("shot-2", ["shot-3", "shot-1"], ["shot-1", "shot-2"]), {
+    current: { shotIds: ["shot-2"] },
+    selected: { shotIds: ["shot-3", "shot-1"] },
+    pending: { shotIds: ["shot-1", "shot-2"] }
+  });
+});
+
+test("release A video generation has no per-shot or regeneration payload", () => {
+  assert.deepEqual(buildProjectVideoGenerationArgs(), []);
+});
+
+test("pending shot ids only include shots without a real image", () => {
+  const ready = asset("image_shot-2", "image", undefined, "https://example.com/frame.jpg");
+  assert.deepEqual(collectPendingShotIds([shot("shot-1", 1, 1), shot("shot-2", 1, 1)], [ready]), ["shot-1"]);
+});
+
+test("shot drafts preserve failed saves and separate committed writes from failed refreshes", () => {
+  const clean = createShotDraftState("shot-1", { pictureDesc: "Before" });
+  const dirty = reduceShotDraftState(clean, { type: "edit", patch: { pictureDesc: "After" } });
+  assert.equal(dirty.status, "dirty");
+  assert.equal(reduceShotDraftState(dirty, { type: "save-start" }).status, "saving");
+
+  const failed = reduceShotDraftState(dirty, { type: "save-failed", error: "network" });
+  assert.equal(failed.status, "error");
+  assert.equal(failed.draft.pictureDesc, "After");
+  assert.equal(failed.committed, false);
+
+  const refreshFailed = reduceShotDraftState(dirty, { type: "save-committed", refreshError: "refresh" });
+  assert.equal(refreshFailed.status, "sync-required");
+  assert.equal(refreshFailed.draft.pictureDesc, "After");
+  assert.equal(refreshFailed.committed, true);
+});
+
+test("rebuilding or discarding a shot draft invalidates the previous entity", () => {
+  const dirty = reduceShotDraftState(createShotDraftState("shot-1", { pictureDesc: "Before" }), {
+    type: "edit",
+    patch: { pictureDesc: "After" }
+  });
+  const rebuilt = reduceShotDraftState(dirty, { type: "rebuild", shotId: "shot-2", draft: { pictureDesc: "Next" } });
+  assert.equal(rebuilt.shotId, "shot-2");
+  assert.equal(rebuilt.status, "unchanged");
+  assert.equal(rebuilt.draft.pictureDesc, "Next");
 });
 
 if (false) {

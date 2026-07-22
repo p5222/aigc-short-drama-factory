@@ -107,6 +107,77 @@ export type MutationSyncResult<T> =
   | { status: "sync-required"; value: T; error: unknown }
   | { status: "mutation-failed"; error: unknown };
 
+export type ShotDraftStatus = "unchanged" | "dirty" | "saving" | "error" | "saved" | "sync-required";
+
+export interface ShotDraftState {
+  shotId: string;
+  draft: Partial<StoryboardShot>;
+  status: ShotDraftStatus;
+  committed: boolean;
+  error?: string;
+}
+
+export type ShotDraftAction =
+  | { type: "edit"; patch: Partial<StoryboardShot> }
+  | { type: "save-start" }
+  | { type: "save-failed"; error: string }
+  | { type: "save-committed"; refreshError?: string }
+  | { type: "rebuild"; shotId: string; draft: Partial<StoryboardShot> };
+
+export function createShotDraftState(shotId: string, draft: Partial<StoryboardShot>): ShotDraftState {
+  return { shotId, draft: { ...draft }, status: "unchanged", committed: false };
+}
+
+export function reduceShotDraftState(state: ShotDraftState, action: ShotDraftAction): ShotDraftState {
+  switch (action.type) {
+    case "edit":
+      return { ...state, draft: { ...state.draft, ...action.patch }, status: "dirty", committed: false, error: undefined };
+    case "save-start":
+      return { ...state, status: "saving", error: undefined };
+    case "save-failed":
+      return { ...state, status: "error", committed: false, error: action.error };
+    case "save-committed":
+      return action.refreshError
+        ? { ...state, status: "sync-required", committed: true, error: action.refreshError }
+        : { ...state, status: "saved", committed: true, error: undefined };
+    case "rebuild":
+      return createShotDraftState(action.shotId, action.draft);
+  }
+}
+
+export function buildShotAssetMap(
+  storyboards: Pick<StoryboardShot, "id">[],
+  assets: AssetItem[],
+  type: "image" | "video"
+): Map<string, AssetItem> {
+  const assetsById = new Map(assets.filter((asset) => asset.type === type).map((asset) => [asset.id, asset]));
+  return new Map(storyboards.flatMap((shot) => {
+    const matched = assetsById.get(`${type}_${shot.id}`);
+    return matched ? [[shot.id, matched] as const] : [];
+  }));
+}
+
+export function collectPendingShotIds(storyboards: StoryboardShot[], assets: AssetItem[]): string[] {
+  const images = buildShotAssetMap(storyboards, assets, "image");
+  return storyboards.filter((shot) => !images.get(shot.id)?.referenceUrl).map((shot) => shot.id);
+}
+
+export function buildShotImageGenerationPayload(
+  activeShotId: string,
+  selectedShotIds: string[],
+  pendingShotIds: string[]
+) {
+  return {
+    current: { shotIds: [activeShotId] },
+    selected: { shotIds: [...selectedShotIds] },
+    pending: { shotIds: [...pendingShotIds] }
+  };
+}
+
+export function buildProjectVideoGenerationArgs(): [] {
+  return [];
+}
+
 export async function commitMutationThenSync<T>(
   mutation: () => Promise<T>,
   sync: () => Promise<unknown>

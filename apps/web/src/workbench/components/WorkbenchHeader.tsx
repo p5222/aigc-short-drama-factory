@@ -37,7 +37,8 @@ const saveStateLabels: Record<WorkbenchSaveState, string> = {
   dirty: "有未保存修改",
   saving: "保存中",
   error: "保存失败",
-  saved: "已保存"
+  saved: "已保存",
+  "sync-required": "已保存 · 待刷新"
 };
 
 export function WorkbenchHeader({
