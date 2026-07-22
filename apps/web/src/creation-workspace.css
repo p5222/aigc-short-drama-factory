@@ -1,0 +1,27 @@
+/* Final cascade for the closed-loop creation workspace. */
+.u-wizard.creation-workbench { color: var(--cw-text, #1c2326); background: var(--cw-page, #f7f8fa); }
+:root:not([data-theme="light"]) .u-wizard.creation-workbench { color: var(--cw-text, #f2f5f6); background: var(--cw-page, #0b0e12); }
+.u-wizard.creation-workbench .u-card,
+:root:not([data-theme="light"]) .u-wizard.creation-workbench .u-card { background: var(--cw-surface, #fff) !important; border-color: var(--cw-border, #dfe3e6) !important; color: var(--cw-text, #1c2326) !important; }
+:root:not([data-theme="light"]) .u-wizard.creation-workbench .u-card { background: var(--cw-surface, #15191f) !important; }
+.u-wizard.creation-workbench .shot-density-options .mode-option,
+:root:not([data-theme="light"]) .u-wizard.creation-workbench .shot-density-options .mode-option { background: var(--cw-surface, #fff) !important; border-color: var(--cw-border, #dfe3e6) !important; color: var(--cw-text, #1c2326) !important; }
+.u-wizard.creation-workbench .shot-density-options .mode-option.active,
+:root:not([data-theme="light"]) .u-wizard.creation-workbench .shot-density-options .mode-option.active { background: var(--cw-accent-soft, #e6f5f1) !important; border-color: var(--cw-accent, #0b8f7b) !important; color: var(--cw-accent, #0b8f7b) !important; }
+.u-wizard.creation-workbench .u-step-tabs,
+:root:not([data-theme="light"]) .u-wizard.creation-workbench .u-step-tabs { background: transparent !important; }
+.u-wizard.creation-workbench .u-step-tabs button.active,
+.u-wizard.creation-workbench .u-step-tabs button.done { color: var(--cw-accent, #0b8f7b) !important; background: transparent !important; }
+.u-wizard.creation-workbench input,
+.u-wizard.creation-workbench textarea,
+.u-wizard.creation-workbench select,
+:root:not([data-theme="light"]) .u-wizard.creation-workbench input,
+:root:not([data-theme="light"]) .u-wizard.creation-workbench textarea,
+:root:not([data-theme="light"]) .u-wizard.creation-workbench select { color: var(--cw-text, #1c2326) !important; background: var(--cw-surface-subtle, #f3f5f6) !important; border-color: var(--cw-border, #dfe3e6) !important; }
+.u-wizard.creation-workbench .recommended-route-card { background: var(--cw-surface, #fff) !important; }
+:root:not([data-theme="light"]) .u-wizard.creation-workbench .recommended-route-card { background: var(--cw-surface, #15191f) !important; }
+.u-wizard.creation-workbench .recommended-route-head,
+.u-wizard.creation-workbench .route-summary-list,
+.u-wizard.creation-workbench .advanced-route-toggle { border-color: var(--cw-border, #dfe3e6); }
+.u-wizard.creation-workbench .advanced-route-panel .route-block-polished { background: var(--cw-surface-subtle, #f3f5f6) !important; }
+:root:not([data-theme="light"]) .u-wizard.creation-workbench .advanced-route-panel .route-block-polished { background: var(--cw-surface-subtle, #1b2027) !important; }

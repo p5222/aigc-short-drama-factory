@@ -12,6 +12,7 @@ import "./workbench/styles/responsive.css";
 import "./design-system/semantic-tokens.css";
 import "./design-system/components.css";
 import "./admin/admin.css";
+import "./creation-workspace.css";
 
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
