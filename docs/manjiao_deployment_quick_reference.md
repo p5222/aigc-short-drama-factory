@@ -145,8 +145,18 @@ Important lesson from this deploy: partial file uploads can leave the server sou
 - Deployed source: clean `git archive HEAD` from branch `codex/cine4k-light-theme`, archive `tmp/manjiao_workbench_release_20260722.tar`.
 - Backup directory: `/opt/manjiao-backups/20260722_143556_dual_theme_workbench`.
 - Backup verification: `source.tgz`, `aigc_drama.dump`, `storage.tar.gz`, and `compose-ps.txt` are present and non-empty.
-- Retained backups after cleanup: `20260722_143556_dual_theme_workbench`, `20260711_124119`, `20260711_013851_cine4k_light`.
+- Retained backups after cleanup at that release: `20260722_143556_dual_theme_workbench`, `20260711_124119`, `20260711_013851_cine4k_light`.
 - Public asset fingerprint: `assets/index-DHAZHqGf.js`, `assets/index-D3MIzoOf.css`.
 - Health verification: `https://manjiao.cloud/health` 200, `https://www.manjiao.cloud/health` 200, `https://api.manjiao.cloud/health` 200; server-local `http://127.0.0.1:8080/health` 200.
 - Local gate: Web 75/75 unit tests, Web typecheck/build, API/shared/root typecheck/build passed. Existing Vite bundle-size warning remains.
 - QA residual: Playwright/axe browser execution is blocked in this environment because Chromium download timed out; see `docs/design-qa.md`. Legacy workbench function definitions remain as non-rendered dead code pending a separate safe cleanup; the live route renders only the four new stages.
+
+## 2026-07-22 Full Creation Platform Redesign
+
+- Deployed commit: `7ac4fa7b feat: integrate content workspace and admin redesign` (branch `codex/cine4k-light-theme`).
+- Backup directory: `/opt/manjiao-backups/20260722_200000_full_redesign`.
+- Retained backups after cleanup: `20260722_200000_full_redesign`, `20260722_181928_auth_public_theme`, `20260722_143556_dual_theme_workbench`.
+- Database: `prisma db push` completed successfully in the production API container; additive migration is recorded at `apps/api/prisma/migrations/20260722_full_creation_platform/migration.sql`.
+- Public checks: `https://manjiao.cloud/health`, `https://www.manjiao.cloud/health`, and `https://api.manjiao.cloud/health` returned 200. New web assets: `assets/index-COsF3pCl.js`, `assets/index-y3KES0B9.css`.
+- Local gates: Web unit tests 78/78, Web typecheck/build, API typecheck/build, shared typecheck passed. Playwright browser execution remains unavailable because Chromium is not installed in this environment.
+- Visual references: five 2K ImageGen references are committed in `docs/design-previews/full-redesign-20260722/`; the sixth experiment reference timed out at the upstream image service and is intentionally not represented as a fake asset.
