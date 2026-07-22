@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Download, FileAudio, Film, FolderOpen, Loader2, RefreshCw, Scissors, Subtitles, WandSparkles } from "lucide-react";
 import type { AssetItem, ExportJob, GenerationTask, Project, ProjectWorkflow, StoryboardShot } from "@aifilm/shared";
-import { isPlayableVideoUrl } from "@aifilm/shared";
+import { isPersistedPlayableVideoReference } from "@aifilm/shared";
 import { api } from "../lib/api";
 
 interface StudioPageProps {
@@ -99,17 +99,17 @@ export function StudioPage({ projects, tasks, onOpenProject, onRefresh }: Studio
   const firstPlayableVideoAsset = useMemo(() => {
     for (const shot of storyboards) {
       const asset = videoAssetByShotId.get(shot.id);
-      if (isPlayableVideoUrl(asset?.referenceUrl)) return asset;
+      if (isPersistedPlayableVideoReference(asset?.referenceUrl)) return asset;
     }
     return undefined;
   }, [storyboards, videoAssetByShotId]);
-  const previewUrl = latestFinalExport?.previewUrl || latestFinalExport?.outputUrl || (isPlayableVideoUrl(selectedVideoAsset?.referenceUrl) ? selectedVideoAsset?.referenceUrl : firstPlayableVideoAsset?.referenceUrl);
+  const previewUrl = latestFinalExport?.previewUrl || latestFinalExport?.outputUrl || (isPersistedPlayableVideoReference(selectedVideoAsset?.referenceUrl) ? selectedVideoAsset?.referenceUrl : firstPlayableVideoAsset?.referenceUrl);
   const previewLabel = latestFinalExport ? "最终成片预览" : selectedVideoAsset?.referenceUrl ? "当前镜头预览" : firstPlayableVideoAsset ? "已有镜头预览" : "等待视频素材";
   const totalDuration = storyboards.reduce((sum, shot) => sum + Math.max(0, shot.duration || 0), 0);
   const timelineDuration = duration || totalDuration || 1;
   const timelineSegments = useMemo(() => buildTimelineSegments(storyboards), [storyboards]);
   const readyImages = storyboards.filter((shot) => imageAssetByShotId.has(shot.id)).length;
-  const playableVideos = storyboards.filter((shot) => isPlayableVideoUrl(videoAssetByShotId.get(shot.id)?.referenceUrl)).length;
+  const playableVideos = storyboards.filter((shot) => isPersistedPlayableVideoReference(videoAssetByShotId.get(shot.id)?.referenceUrl)).length;
   const outputReady = Boolean(latestFinalExport);
   const selectedSegment = selectedShot ? timelineSegments.find((segment) => segment.shot.id === selectedShot.id) : undefined;
   const displayTime = Math.min(currentTime, timelineDuration);
@@ -313,7 +313,7 @@ export function StudioPage({ projects, tasks, onOpenProject, onRefresh }: Studio
               <div className="studio-playhead" style={{ left: `${progressPercent}%` }} />
               {timelineSegments.map((segment, index) => {
                 const imageReady = imageAssetByShotId.has(segment.shot.id);
-                const videoReady = isPlayableVideoUrl(videoAssetByShotId.get(segment.shot.id)?.referenceUrl);
+                const videoReady = isPersistedPlayableVideoReference(videoAssetByShotId.get(segment.shot.id)?.referenceUrl);
                 return (
                   <button
                     className={`${selectedShot?.id === segment.shot.id ? "active" : ""} ${videoReady ? "ready" : imageReady ? "image-ready" : ""}`}
@@ -351,7 +351,7 @@ export function StudioPage({ projects, tasks, onOpenProject, onRefresh }: Studio
           {selectedShot ? (
             <div className="studio-shot-card">
               <div className="studio-shot-thumb">
-                {isPlayableVideoUrl(videoAssetByShotId.get(selectedShot.id)?.referenceUrl) ? (
+                {isPersistedPlayableVideoReference(videoAssetByShotId.get(selectedShot.id)?.referenceUrl) ? (
                   <video src={videoAssetByShotId.get(selectedShot.id)?.referenceUrl} preload="metadata" />
                 ) : imageAssetByShotId.get(selectedShot.id)?.referenceUrl ? (
                   <img src={imageAssetByShotId.get(selectedShot.id)?.referenceUrl} alt={selectedShot.pictureDesc || "镜头首帧"} />

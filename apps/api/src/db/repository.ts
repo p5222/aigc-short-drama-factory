@@ -4,7 +4,7 @@ import type { AdminUserRow, AssetItem, BatchGenerationResult, CreateProjectInput
 import { textModelName, textProviderName } from "../agents/generator.js";
 import { buildSeedanceVideoPrompt, buildStoryboardFirstFramePrompt, createStoryboardProductionPackage } from "../agents/storyboardProduction.js";
 import { estimateCreation } from "../agents/workflow.js";
-import { estimateImageCredits, isPlayableVideoUrl, normalizeImageOutputQuality, normalizeImageOutputSize, normalizeImageProviderId, resolveImageUnitCredits } from "@aifilm/shared";
+import { estimateImageCredits, isPersistedPlayableVideoReference, normalizeImageOutputQuality, normalizeImageOutputSize, normalizeImageProviderId, resolveImageUnitCredits } from "@aifilm/shared";
 import { hashPassword } from "../auth/password.js";
 import { buildDirectorStoryboardRow, createDirectorStoryboardPackage } from "../export/directorStoryboard.js";
 import { createSubtitleAsset, createTtsManifest, createVideoExportPackage, type MediaExportResult } from "../export/mediaExport.js";
@@ -1436,7 +1436,7 @@ export async function runProjectVideoTasks(projectId: string, userId = DEMO_USER
     ? [videoModel]
     : uniqueModelPool([videoModel, ...videoRouting.modelPool, ...(videoProviderConfig?.models ?? [])]);
   const shotsToGenerate = workflow.storyboards
-    .filter((shot) => !isPlayableVideoUrl(videoAssetByShotId.get(shot.id)?.referenceUrl))
+    .filter((shot) => !isPersistedPlayableVideoReference(videoAssetByShotId.get(shot.id)?.referenceUrl))
     .filter((shot) => imageAssetByShotId.has(shot.id))
     .slice(0, videoBatchLimit(workflow.storyboards.length, videoProvider));
   if (!shotsToGenerate.length) {
@@ -1454,7 +1454,7 @@ export async function runProjectVideoTasks(projectId: string, userId = DEMO_USER
     shotsToGenerate.map(async (shot) => {
       const imageAsset = imageAssetByShotId.get(shot.id);
       const existingVideoAsset = videoAssetByShotId.get(shot.id);
-      const queuedTaskId = existingVideoAsset?.referenceUrl && !isPlayableVideoUrl(existingVideoAsset.referenceUrl)
+      const queuedTaskId = existingVideoAsset?.referenceUrl && !isPersistedPlayableVideoReference(existingVideoAsset.referenceUrl)
         ? existingVideoAsset.referenceUrl
         : undefined;
       const queried = queuedTaskId

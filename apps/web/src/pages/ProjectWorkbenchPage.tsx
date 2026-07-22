@@ -42,7 +42,7 @@ import {
   imageOutputQualityOptions,
   imageOutputSizeOptions,
   imageParameterMultiplier,
-  isPlayableVideoUrl,
+  isPersistedPlayableVideoReference,
   normalizeImageOutputQuality,
   normalizeImageOutputSize
 } from "@aifilm/shared";
@@ -137,7 +137,7 @@ export function ProjectWorkbenchPage({ workflow, providers, modelPrices, theme, 
   const imageAssets = assets.filter((asset) => asset.type === "image");
   const videoAssets = assets.filter((asset) => asset.type === "video");
   const completedImages = imageAssets.filter((asset) => asset.referenceUrl && asset.status === "succeeded").length;
-  const completedVideos = videoAssets.filter((asset) => isPlayableVideoUrl(asset.referenceUrl)).length;
+  const completedVideos = videoAssets.filter((asset) => isPersistedPlayableVideoReference(asset.referenceUrl)).length;
   const completedRoleRefs = countCompletedCharacterSheets(characters, roleAssets);
   const pipelineSteps = [
     { id: "content" as const, label: "内容", detail: "大纲 / 分集 / 剧本", done: Boolean(script) },
@@ -808,7 +808,7 @@ function DesignDeskBoard({
   const readySceneCount = sceneAssets.filter((asset) => asset.referenceUrl || asset.status === "succeeded").length;
   const readyImages = storyboards.filter((shot) => imageAssetByShotId.get(shot.id)?.referenceUrl).length;
   const hasStoryboardVisuals = readyImages > 0 || Boolean(snapshot?.storyboardImages);
-  const playableVideos = storyboards.filter((shot) => isPlayableVideoUrl(videoAssetByShotId.get(shot.id)?.referenceUrl)).length;
+  const playableVideos = storyboards.filter((shot) => isPersistedPlayableVideoReference(videoAssetByShotId.get(shot.id)?.referenceUrl)).length;
   const storyboardCanvasPrompt = buildCanvasStoryboardBoardPrompt(storyboards, characters, sceneAssets);
   const storyboardCanvasSteps = [
     { label: "角色身份板", value: `${lockedRoleCount}/${characters.length}`, ready: !characters.length || lockedRoleCount >= characters.length },
@@ -875,7 +875,7 @@ function DesignDeskBoard({
           <div className="design-scene-list">
             {sceneGroups.map((group) => {
               const imageReady = group.shots.filter((shot) => imageAssetByShotId.get(shot.id)?.referenceUrl).length;
-              const videoReady = group.shots.filter((shot) => isPlayableVideoUrl(videoAssetByShotId.get(shot.id)?.referenceUrl)).length;
+              const videoReady = group.shots.filter((shot) => isPersistedPlayableVideoReference(videoAssetByShotId.get(shot.id)?.referenceUrl)).length;
               const progress = group.shots.length ? Math.round(((imageReady + videoReady) / (group.shots.length * 2)) * 100) : 0;
               return (
                 <button className={activeShot && group.shots.some((shot) => shot.id === activeShot.id) ? "active" : ""} key={group.id} onClick={() => setActiveShotId(group.shots[0]?.id ?? "")} type="button">
@@ -925,7 +925,7 @@ function DesignDeskBoard({
                         <p>{shot.pictureDesc}</p>
                         <span className="design-shot-statuses">
                           <em className={image?.referenceUrl ? "ready" : ""}>图</em>
-                          <em className={isPlayableVideoUrl(video?.referenceUrl) ? "ready" : ""}>视</em>
+                          <em className={isPersistedPlayableVideoReference(video?.referenceUrl) ? "ready" : ""}>视</em>
                           <em className={shot.dialogue || shot.voiceOver ? "ready" : ""}>字</em>
                           <em className={shot.environmentSound || shot.soundEffect ? "ready" : ""}>音</em>
                         </span>
@@ -975,7 +975,7 @@ function DesignDeskBoard({
                 <AssetCheck label="角色资产" value={activeShot.characters.length ? activeShot.characters.join(" / ") : "待绑定"} ready={activeShot.characters.length > 0} />
                 <AssetCheck label="场景资产" value={activeSceneAsset?.referenceUrl ? "已锁定场景图" : activeSceneAsset ? "文本场景已锁定" : "缺少场景参考"} ready={Boolean(activeSceneAsset)} />
                 <AssetCheck label="首帧图" value={activeImage?.referenceUrl ? "已生成" : "待生成"} ready={Boolean(activeImage?.referenceUrl)} />
-                <AssetCheck label="视频片段" value={isPlayableVideoUrl(activeVideo?.referenceUrl) ? "可播放" : activeVideo ? statusText[activeVideo.status] : "待生成"} ready={isPlayableVideoUrl(activeVideo?.referenceUrl)} />
+                <AssetCheck label="视频片段" value={isPersistedPlayableVideoReference(activeVideo?.referenceUrl) ? "可播放" : activeVideo ? statusText[activeVideo.status] : "待生成"} ready={isPersistedPlayableVideoReference(activeVideo?.referenceUrl)} />
                 <AssetCheck label="字幕/配音" value={activeShot.dialogue || activeShot.voiceOver ? "有台词可生成" : "暂无台词"} ready={Boolean(activeShot.dialogue || activeShot.voiceOver)} />
               </div>
               <div className="design-guidance-note">
@@ -1013,7 +1013,7 @@ function ProductionTimeline({
 }) {
   const tracks = [
     { key: "image", label: "首帧轨道", status: (shot: StoryboardShot) => imageAssetByShotId.get(shot.id)?.referenceUrl ? "ready" : "pending" },
-    { key: "video", label: "视频轨道", status: (shot: StoryboardShot) => isPlayableVideoUrl(videoAssetByShotId.get(shot.id)?.referenceUrl) ? "ready" : videoAssetByShotId.get(shot.id) ? "running" : "pending" },
+    { key: "video", label: "视频轨道", status: (shot: StoryboardShot) => isPersistedPlayableVideoReference(videoAssetByShotId.get(shot.id)?.referenceUrl) ? "ready" : videoAssetByShotId.get(shot.id) ? "running" : "pending" },
     { key: "caption", label: "字幕/配音", status: (shot: StoryboardShot) => shot.dialogue || shot.voiceOver ? "ready" : "pending" },
     { key: "sound", label: "音效/BGM", status: (shot: StoryboardShot) => shot.environmentSound || shot.soundEffect ? "ready" : "pending" }
   ];
@@ -1056,21 +1056,21 @@ function VideoBoard({ project, providers, modelPrices, storyboards, characters, 
   const [playbackProgress, setPlaybackProgress] = useState(0);
   const [playbackDuration, setPlaybackDuration] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
-  const playableVideoCount = storyboards.filter((shot) => isPlayableVideoUrl(videoAssetByShotId.get(shot.id)?.referenceUrl)).length;
+  const playableVideoCount = storyboards.filter((shot) => isPersistedPlayableVideoReference(videoAssetByShotId.get(shot.id)?.referenceUrl)).length;
   const latestJob = exportJobs[0];
   const latestMp4 = exportJobs.find((job) => job.outputKind === "mp4" || job.type === "video_export");
-  const publishableExport = exportJobs.find((job) => job.status === "succeeded" && isPlayableVideoUrl(job.outputUrl));
+  const publishableExport = exportJobs.find((job) => job.status === "succeeded" && isPersistedPlayableVideoReference(job.outputUrl));
   const audioJob = exportJobs.find((job) => job.audioUrl || job.outputKind === "audio" || job.type === "tts");
   const subtitleJob = exportJobs.find((job) => job.subtitleUrl || job.outputKind === "subtitle" || job.type === "subtitle");
   const activeShot = storyboards.find((shot) => shot.id === activeShotId) ?? storyboards[0];
   const activeIndex = activeShot ? storyboards.findIndex((shot) => shot.id === activeShot.id) : -1;
   const activeImage = activeShot ? imageAssetByShotId.get(activeShot.id) : undefined;
   const activeVideo = activeShot ? videoAssetByShotId.get(activeShot.id) : undefined;
-  const activeVideoUrl = isPlayableVideoUrl(activeVideo?.referenceUrl) ? activeVideo!.referenceUrl! : "";
+  const activeVideoUrl = isPersistedPlayableVideoReference(activeVideo?.referenceUrl) ? activeVideo!.referenceUrl! : "";
   const activeSeedancePrompt = activeShot ? buildCanvasSeedanceVideoPrompt(activeShot, storyboards, characters, roleAssets) : "";
   const totalDuration = Math.max(1, storyboards.reduce((sum, shot) => sum + (shot.duration || 0), 0));
   const pendingVideoSeconds = storyboards
-    .filter((shot) => !isPlayableVideoUrl(videoAssetByShotId.get(shot.id)?.referenceUrl))
+    .filter((shot) => !isPersistedPlayableVideoReference(videoAssetByShotId.get(shot.id)?.referenceUrl))
     .reduce((sum, shot) => sum + Math.max(1, shot.duration || 1), 0);
   const hasWarnings = exportJobs.some((job) => job.warnings?.length || job.errorReason);
 
@@ -1161,7 +1161,7 @@ function VideoBoard({ project, providers, modelPrices, storyboards, characters, 
             {storyboards.map((shot, index) => {
               const video = videoAssetByShotId.get(shot.id);
               const image = imageAssetByShotId.get(shot.id);
-              const ready = isPlayableVideoUrl(video?.referenceUrl);
+              const ready = isPersistedPlayableVideoReference(video?.referenceUrl);
               return (
                 <button className={activeShot?.id === shot.id ? "active" : ""} key={shot.id} onClick={() => setActiveShotId(shot.id)} type="button">
                   <span className={ready || image?.referenceUrl ? "video-clip-mini ready" : "video-clip-mini"}>{ready ? <video src={video!.referenceUrl} muted preload="metadata" /> : image?.referenceUrl ? <StableImage src={image.referenceUrl} alt={image.name} /> : <Film size={16} />}</span>
@@ -1301,7 +1301,7 @@ function ShowcasePublishModal({
   const candidates = useMemo<Array<{ id: string; label: string; sourceAssetId?: string; videoUrl: string; coverUrl: string; durationLabel: string }>>(() => {
     const clipCandidates = storyboards.flatMap((shot, index) => {
       const asset = videoByShotId.get(shot.id);
-      if (!asset?.referenceUrl || !isPlayableVideoUrl(asset.referenceUrl)) return [];
+      if (!asset?.referenceUrl || !isPersistedPlayableVideoReference(asset.referenceUrl)) return [];
       return [{
         id: `asset:${asset.id}`,
         label: `${formatShotNo(shot, index)} · ${shot.pictureDesc.slice(0, 24)}`,
@@ -1313,7 +1313,7 @@ function ShowcasePublishModal({
     });
     const totalDuration = storyboards.reduce((sum, shot) => sum + (shot.duration || 0), 0);
     const exportCandidates = exportJobs.flatMap((job) => {
-      if (job.status !== "succeeded" || !isPlayableVideoUrl(job.outputUrl) || (job.type !== "video_export" && job.outputKind !== "mp4")) return [];
+      if (job.status !== "succeeded" || !isPersistedPlayableVideoReference(job.outputUrl) || (job.type !== "video_export" && job.outputKind !== "mp4")) return [];
       return [{
         id: `export:${job.id}`,
         label: `合成 MP4 · ${new Date(job.updatedAt).toLocaleString()}`,
@@ -1425,7 +1425,7 @@ function VideoTimelineTracks({
   const activeIndex = storyboards.findIndex((shot) => shot.id === activeShotId);
   const playheadOffset = layout.slice(0, Math.max(0, activeIndex)).reduce((sum, clip) => sum + clip.width, 0);
   const tracks = [
-    { key: "video", label: "视频", icon: <Film size={15} />, ready: (shot: StoryboardShot) => isPlayableVideoUrl(videoAssetByShotId.get(shot.id)?.referenceUrl), text: (shot: StoryboardShot) => videoAssetByShotId.get(shot.id) ? "片段" : "待片段" },
+    { key: "video", label: "视频", icon: <Film size={15} />, ready: (shot: StoryboardShot) => isPersistedPlayableVideoReference(videoAssetByShotId.get(shot.id)?.referenceUrl), text: (shot: StoryboardShot) => videoAssetByShotId.get(shot.id) ? "片段" : "待片段" },
     { key: "audio", label: "配音", icon: <MessageSquareText size={15} />, ready: (shot: StoryboardShot) => Boolean(shot.dialogue || shot.voiceOver), text: (shot: StoryboardShot) => shot.dialogue || shot.voiceOver || "待配音" },
     { key: "caption", label: "字幕", icon: <FileText size={15} />, ready: (shot: StoryboardShot) => Boolean(shot.dialogue), text: (shot: StoryboardShot) => shot.dialogue || "待字幕" },
     { key: "sfx", label: "音效", icon: <Sparkles size={15} />, ready: (shot: StoryboardShot) => Boolean(shot.environmentSound || shot.soundEffect), text: (shot: StoryboardShot) => shot.environmentSound || shot.soundEffect || "环境声" }

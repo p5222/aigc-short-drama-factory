@@ -35,7 +35,7 @@ import {
   resolveShotSelection,
   resolveVideoUnitCredits,
   resolveVideoAssetStatus,
-  isPlayableVideoUrl,
+  isPersistedPlayableVideoReference,
   type ShotDraftState,
   type ShotMode
 } from "../model";
@@ -349,7 +349,7 @@ function ShotImageCanvas({ shot, imageUrl, onPreview }: { shot?: StoryboardShot;
 }
 
 function ShotVideoCanvas({ shot, videoUrl, status }: { shot?: StoryboardShot; videoUrl?: string; status: ReturnType<typeof resolveVideoAssetStatus> }) {
-  const playable = status === "succeeded" && isPlayableVideoUrl(videoUrl);
+  const playable = status === "succeeded" && isPersistedPlayableVideoReference(videoUrl);
   return <div className="wb-shot-video"><MediaFrame aspectRatio="16:9" label="当前镜头视频">{playable ? <video src={videoUrl} controls preload="metadata" /> : <div className="wb-shot-video-empty"><Film /><strong>{status === "failed" ? "当前片段生成失败" : status === "running" ? "当前片段生成中" : "视频待生成"}</strong><span>{shot?.videoPrompt || "当前镜头尚无可播放片段"}</span></div>}</MediaFrame></div>;
 }
 

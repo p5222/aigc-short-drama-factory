@@ -35,7 +35,7 @@ import {
   resolveShotSelection,
   resolveVideoUnitCredits,
   resolveVideoAssetStatus,
-  isPlayableVideoUrl,
+  isPersistedPlayableVideoReference,
   resolveThemePreference,
   shouldReconcileStoryboardSelection,
   storyboardScene,
@@ -346,10 +346,10 @@ test("video eligibility requires a succeeded image and no succeeded playable vid
 });
 
 test("web video readiness follows the shared persisted URL contract", () => {
-  assert.equal(isPlayableVideoUrl("https://cdn.example.com/video?id=42"), true);
-  assert.equal(isPlayableVideoUrl("/storage/projects/p1/video/clip"), true);
-  assert.equal(isPlayableVideoUrl("task-123"), false);
-  assert.equal(isPlayableVideoUrl(""), false);
+  assert.equal(isPersistedPlayableVideoReference("https://cdn.example.com/video?id=42"), true);
+  assert.equal(isPersistedPlayableVideoReference("/storage/projects/p1/video/clip"), true);
+  assert.equal(isPersistedPlayableVideoReference("task-123"), false);
+  assert.equal(isPersistedPlayableVideoReference(""), false);
 });
 
 test("batch success summary uses actual backend result instead of requested range", () => {

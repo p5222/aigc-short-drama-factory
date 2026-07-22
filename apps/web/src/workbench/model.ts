@@ -1,8 +1,8 @@
 import type { AssetItem, CharacterProfile, EvaluationStage, ModelPrice, ModelProvider, Project, ProjectWorkflow, ScriptDraft, StoryboardShot, TaskStatus, TaskType } from "@aifilm/shared";
-import { isPlayableVideoUrl } from "@aifilm/shared";
+import { isPersistedPlayableVideoReference } from "@aifilm/shared";
 
 export { resolveImageUnitCredits } from "@aifilm/shared";
-export { isPlayableVideoUrl } from "@aifilm/shared";
+export { isPersistedPlayableVideoReference } from "@aifilm/shared";
 
 export {
   buildTimelineClipLayout,
@@ -259,7 +259,7 @@ export function resolveVideoUnitCredits(
 
 export function resolveVideoAssetStatus(asset?: AssetItem): "missing" | "running" | "failed" | "succeeded" {
   if (!asset) return "missing";
-  if (asset.status === "succeeded" && isPlayableVideoUrl(asset.referenceUrl)) return "succeeded";
+  if (asset.status === "succeeded" && isPersistedPlayableVideoReference(asset.referenceUrl)) return "succeeded";
   if (asset.status === "failed") return "failed";
   return "running";
 }

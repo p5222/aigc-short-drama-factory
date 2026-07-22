@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { isPlayableVideoUrl, type ShowcaseWork, type ShowcaseWorkInput, type ShowcaseWorkStatus } from "@aifilm/shared";
+import { isPublishableVideoUrl, type ShowcaseWork, type ShowcaseWorkInput, type ShowcaseWorkStatus } from "@aifilm/shared";
 import { prisma } from "./client.js";
 
 type PageQuery = {
@@ -127,13 +127,13 @@ async function resolveCreatorMedia(userId: string, input: ShowcaseWorkInput) {
       where: { id: sourceAssetId, projectId: project.id, type: "video", status: "succeeded" },
       select: { referenceUrl: true }
     });
-    if (!asset?.referenceUrl || !isPlayableVideoUrl(asset.referenceUrl)) throw new Error("请选择当前项目中可播放的 MP4、WebM 或 MOV 视频资产。");
+    if (!asset?.referenceUrl || !isPublishableVideoUrl(asset.referenceUrl)) throw new Error("请选择当前项目中可播放的 MP4、WebM 或 MOV 视频资产。");
     videoUrl = asset.referenceUrl;
   } else {
     const exportJob = videoUrl
       ? await prisma.exportJob.findFirst({ where: { projectId: project.id, userId, outputUrl: videoUrl, status: "succeeded" }, select: { id: true } })
       : null;
-    if (!exportJob || !isPlayableVideoUrl(videoUrl)) throw new Error("请选择当前项目中已完成的 MP4、WebM 或 MOV 导出文件。");
+    if (!exportJob || !isPublishableVideoUrl(videoUrl)) throw new Error("请选择当前项目中已完成的 MP4、WebM 或 MOV 导出文件。");
   }
 
   let coverUrl = input.coverUrl?.trim() || "";
@@ -227,7 +227,7 @@ export async function updateAdminShowcaseWork(id: string, input: AdminShowcaseUp
   if (input.featured !== undefined) data.featured = input.featured;
   if (input.sortOrder !== undefined) data.sortOrder = Math.max(0, Math.floor(input.sortOrder));
   if (data.title === "" || data.coverUrl === "" || data.videoUrl === "") throw new Error("标题、封面和视频地址不能为空。");
-  if (data.videoUrl && !isPlayableVideoUrl(data.videoUrl)) throw new Error("视频地址必须是可播放的 MP4、WebM 或 MOV 文件。");
+  if (data.videoUrl && !isPublishableVideoUrl(data.videoUrl)) throw new Error("视频地址必须是可播放的 MP4、WebM 或 MOV 文件。");
   const row = await prisma.showcaseWork.update({
     where: { id },
     data,
