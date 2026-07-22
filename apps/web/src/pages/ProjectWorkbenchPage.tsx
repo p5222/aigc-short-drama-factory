@@ -54,6 +54,7 @@ import { AssetStage } from "../workbench/stages/AssetStage";
 import { ContentStage } from "../workbench/stages/ContentStage";
 import { ShotStage } from "../workbench/stages/ShotStage";
 import { DeliveryStage } from "../workbench/stages/DeliveryStage";
+import { resolveSingleDeliveryCandidate } from "../workbench/stages/deliveryModel";
 import { createWorkbenchState, resolveCharacterIdentityAsset, shouldReconcileStoryboardSelection, workbenchReducer, type WorkbenchStage, type WorkbenchTheme } from "../workbench/model";
 import { buildTimelineClipLayout } from "./projectWorkbenchModel";
 import "./ProjectStudioV4.css";
@@ -1308,34 +1309,10 @@ function ShowcasePublishModal({
   exportJobs: ExportJob[];
   onClose: () => void;
 }) {
-  const imageByShotId = useMemo(() => buildShotAssetMap(imageAssets, "image"), [imageAssets]);
-  const videoByShotId = useMemo(() => buildShotAssetMap(videoAssets, "video"), [videoAssets]);
-  const candidates = useMemo<Array<{ id: string; label: string; sourceAssetId?: string; videoUrl: string; coverUrl: string; durationLabel: string }>>(() => {
-    const clipCandidates = storyboards.flatMap((shot, index) => {
-      const asset = videoByShotId.get(shot.id);
-      if (!asset?.referenceUrl || !isPersistedPlayableVideoReference(asset.referenceUrl)) return [];
-      return [{
-        id: `asset:${asset.id}`,
-        label: `${formatShotNo(shot, index)} · ${shot.pictureDesc.slice(0, 24)}`,
-        sourceAssetId: asset.id,
-        videoUrl: asset.referenceUrl,
-        coverUrl: imageByShotId.get(shot.id)?.referenceUrl || imageAssets[0]?.referenceUrl || "",
-        durationLabel: formatClock(shot.duration || 0)
-      }];
-    });
-    const totalDuration = storyboards.reduce((sum, shot) => sum + (shot.duration || 0), 0);
-    const exportCandidates = exportJobs.flatMap((job) => {
-      if (job.status !== "succeeded" || !isPersistedPlayableVideoReference(job.outputUrl) || (job.type !== "video_export" && job.outputKind !== "mp4")) return [];
-      return [{
-        id: `export:${job.id}`,
-        label: `合成 MP4 · ${new Date(job.updatedAt).toLocaleString()}`,
-        videoUrl: job.outputUrl,
-        coverUrl: imageAssets[0]?.referenceUrl || "",
-        durationLabel: formatClock(totalDuration)
-      }];
-    });
-    return [...exportCandidates, ...clipCandidates];
-  }, [exportJobs, imageAssets, imageByShotId, storyboards, videoByShotId]);
+  const candidates = useMemo(() => {
+    const candidate = resolveSingleDeliveryCandidate(storyboards, [...imageAssets, ...videoAssets], exportJobs);
+    return candidate ? [candidate] : [];
+  }, [exportJobs, imageAssets, storyboards, videoAssets]);
   const [candidateId, setCandidateId] = useState(candidates[0]?.id ?? "");
   const selectedCandidate = candidates.find((item) => item.id === candidateId) ?? candidates[0];
   const [title, setTitle] = useState(project.name);

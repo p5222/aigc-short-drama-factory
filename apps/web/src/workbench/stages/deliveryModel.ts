@@ -1,5 +1,5 @@
 import type { AssetItem, ExportJob, StoryboardShot } from "@aifilm/shared";
-import { isPersistedPlayableVideoReference } from "@aifilm/shared";
+import { isPersistedPlayableVideoReference, isPublishableVideoUrl } from "@aifilm/shared";
 
 export function normalizeShotDuration(duration: number | undefined): number {
   return Number.isFinite(duration) && (duration ?? 0) > 0 ? duration! : 1;
@@ -7,10 +7,11 @@ export function normalizeShotDuration(duration: number | undefined): number {
 
 export interface DeliveryClip { id: string; index: number; start: number; duration: number; width: number; }
 
-export function buildDeliveryClipLayout(shots: StoryboardShot[], pixelsPerSecond = 52, minimumWidth = 96): DeliveryClip[] {
+export function buildDeliveryClipLayout(shots: StoryboardShot[], pixelsPerSecond = 52, minimumWidth = 96, durationOverrides = new Map<string, number>()): DeliveryClip[] {
   let start = 0;
   return shots.map((shot, index) => {
-    const duration = normalizeShotDuration(shot.duration);
+    const override = durationOverrides.get(shot.id);
+    const duration = Number.isFinite(override) && (override ?? 0) > 0 ? override! : normalizeShotDuration(shot.duration);
     const clip = { id: shot.id, index, start, duration, width: Math.max(minimumWidth, Math.round(duration * pixelsPerSecond)) };
     start += duration;
     return clip;
@@ -23,16 +24,20 @@ export function getDeliveryCandidates(shots: StoryboardShot[], assets: AssetItem
   const cover = assets.find((asset) => asset.type === "image" && asset.referenceUrl)?.referenceUrl ?? "";
   const total = shots.reduce((sum, shot) => sum + normalizeShotDuration(shot.duration), 0);
   const exports = jobs
-    .filter((job) => job.status === "succeeded" && (job.type === "video_export" || job.outputKind === "mp4") && isPersistedPlayableVideoReference(job.outputUrl))
-    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    .filter((job) => job.status === "succeeded" && (job.type === "video_export" || job.outputKind === "mp4") && isPublishableVideoUrl(job.outputUrl))
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || b.createdAt.localeCompare(a.createdAt));
   const exportCandidates = exports.slice(0, 1).map((job) => ({ id: `export:${job.id}`, label: "最新合成 MP4", videoUrl: job.outputUrl!, coverUrl: cover, durationLabel: formatClock(total) }));
   const clipCandidates = shots.flatMap((shot, index) => {
     const asset = assets.find((item) => item.type === "video" && item.id === `video_${shot.id}`);
-    if (!asset || !isPersistedPlayableVideoReference(asset.referenceUrl)) return [];
+    if (!asset || !isPublishableVideoUrl(asset.referenceUrl)) return [];
     const image = assets.find((item) => item.type === "image" && item.id.replace(/^image_/, "") === shot.id);
     return [{ id: `asset:${asset.id}`, label: `镜头 ${String(index + 1).padStart(2, "0")}`, videoUrl: asset.referenceUrl!, coverUrl: image?.referenceUrl ?? cover, sourceAssetId: asset.id, durationLabel: formatClock(normalizeShotDuration(shot.duration)) }];
   });
   return [...exportCandidates, ...clipCandidates];
+}
+
+export function resolveSingleDeliveryCandidate(shots: StoryboardShot[], assets: AssetItem[], jobs: ExportJob[]): DeliveryCandidate | undefined {
+  return getDeliveryCandidates(shots, assets, jobs)[0];
 }
 
 export function getNextPlayableShotId(shots: StoryboardShot[], assets: AssetItem[], activeId: string): string | null {
