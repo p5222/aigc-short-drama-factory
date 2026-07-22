@@ -1002,6 +1002,120 @@ body.auth-surface {
   font-size: 12px;
 }
 
+/* Auth surface polish: one clear panel, quiet inputs, and a stable focus state. */
+:root[data-theme="light"] .cine-auth-modal {
+  color-scheme: light;
+}
+
+:root[data-theme="light"] .cine-auth-backdrop {
+  background: rgba(20, 32, 35, 0.34);
+  backdrop-filter: blur(16px);
+}
+
+:root[data-theme="light"] .cine-auth-card {
+  border-color: #d8e5e2;
+  background: #fbfdfc;
+  box-shadow: 0 28px 80px rgba(23, 49, 45, 0.22);
+  backdrop-filter: none;
+}
+
+:root[data-theme="light"] .cine-auth-close {
+  border-color: #d8e5e2;
+  color: #52615f;
+  background: #f1f6f5;
+}
+
+:root[data-theme="light"] .cine-auth-brand h2,
+:root[data-theme="light"] .cine-auth-field > span {
+  color: #172522;
+}
+
+:root[data-theme="light"] .cine-auth-brand p,
+:root[data-theme="light"] .cine-form-options label,
+:root[data-theme="light"] .cine-agree-row,
+:root[data-theme="light"] .cine-form-options button,
+:root[data-theme="light"] .cine-auth-bottom,
+:root[data-theme="light"] .cine-auth-bottom small {
+  color: #61706d;
+}
+
+:root[data-theme="light"] .cine-auth-tabs {
+  background: #edf4f2;
+}
+
+:root[data-theme="light"] .cine-auth-tabs button {
+  color: #64736f;
+}
+
+:root[data-theme="light"] .cine-auth-tabs button.active {
+  color: #073c35;
+  background: #8de4d0;
+}
+
+:root[data-theme="light"] .cine-auth-input {
+  border-color: #cbdcd8;
+  color: #087568;
+  background: #f2f7f6;
+}
+
+:root[data-theme="light"] .cine-auth-input input {
+  color: #172522;
+}
+
+:root[data-theme="light"] .cine-auth-input input::placeholder {
+  color: #879692;
+}
+
+:root[data-theme="light"] .cine-auth-input:focus-within {
+  border-color: #28a995;
+  box-shadow: 0 0 0 3px rgba(40, 169, 149, 0.15);
+}
+
+:root[data-theme="light"] .cine-form-options button:hover,
+:root[data-theme="light"] .cine-auth-bottom button {
+  color: #087568;
+}
+
+:root[data-theme="light"] .cine-captcha-image {
+  border-color: #a9d9d0;
+  color: #087568;
+  background: #e5f7f2;
+}
+
+:root[data-theme="light"] .cine-auth-message {
+  color: #a5313f;
+  background: #fff1f2;
+}
+
+/* Larger editorial scale on the public surfaces. */
+.cine-center-copy h1 {
+  font-size: clamp(76px, 9vw, 124px);
+}
+
+.cine-center-copy span {
+  font-size: clamp(20px, 2.1vw, 30px);
+}
+
+.cine-card-stack {
+  width: 600px;
+  height: 340px;
+  transform: scale(1.12);
+  transform-origin: left bottom;
+}
+
+.nav-logo span {
+  font-size: 50px;
+}
+
+.nav-logo small {
+  font-size: 13px;
+}
+
+@media (max-width: 900px) {
+  .cine-center-copy h1 { font-size: clamp(58px, 15vw, 92px); }
+  .cine-card-stack { transform: scale(0.82); }
+}
+
 .cine-admin-login-page {
   min-height: 100vh;
   display: grid;
