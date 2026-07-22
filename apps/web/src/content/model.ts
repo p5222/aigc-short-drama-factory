@@ -1,4 +1,4 @@
-import type { ContentProjectMode, ContentProjectSummary, ContentStep, ContentStepStatus } from "@aifilm/shared";
+import type { ContentProjectMode, ContentProjectSummary, ContentStep, ContentStepStatus, CreateProjectInput } from "@aifilm/shared";
 
 export const creationModes: Array<{ id: ContentProjectMode; label: string; description: string }> = [
   { id: "same_genre", label: "同类爆款", description: "以参考作品为素材，提炼结构后创作新故事" },
@@ -25,6 +25,28 @@ export function modeLabel(mode: ContentProjectMode): string {
 
 export function sourceKindForMode(mode: ContentProjectMode): "novel" | "short_story" | "idea" {
   return mode === "adaptation" ? "novel" : mode === "same_genre" ? "short_story" : "idea";
+}
+
+export function buildProductionDraft(project: ContentProjectSummary, content: string): CreateProjectInput & { contentProjectId: string } {
+  return {
+    title: project.title,
+    sourceType: "script",
+    content: content.trim(),
+    mode: "director",
+    genre: "",
+    videoRatio: "9:16",
+    artStyle: project.styleProfile?.name || "",
+    targetEpisodes: Math.max(1, project.chapterCount || 1),
+    textProvider: "dashscope-text",
+    textModel: "qwen3.7-plus",
+    imageProvider: "dashscope-image",
+    imageModel: "wan2.6-t2i",
+    imageSize: "2048x1152",
+    imageQuality: "medium",
+    videoProvider: "dashscope-video",
+    videoModel: "wan2.7-i2v-2026-04-25",
+    contentProjectId: project.id
+  };
 }
 
 export interface RequestToken { projectId: string; sequence: number }

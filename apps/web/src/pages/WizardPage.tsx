@@ -1,4 +1,4 @@
-import { BookOpenCheck, BrainCircuit, CheckCircle2, ChevronDown, ChevronRight, FileText, FileUp, Gauge, Layers3, Loader2, Save, Sparkles, UsersRound, WandSparkles } from "lucide-react";
+import { BookOpenCheck, BrainCircuit, CheckCircle2, ChevronDown, ChevronRight, CircleDollarSign, FileText, FileUp, Image, Layers3, Loader2, Route, Save, Sparkles, UsersRound, Video, WandSparkles } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 import type { CreateProjectInput, CreationEstimate, ModelProvider } from "@aifilm/shared";
 import { imageOutputQualityOptions, imageOutputSizeOptions, imageParameterMultiplier, normalizeImageOutputQuality, normalizeImageOutputSize } from "@aifilm/shared";
@@ -15,6 +15,7 @@ type RouteTestState = { loading: boolean; ok?: boolean; message?: string };
 const stepOrder: WizardStep[] = ["story", "settings", "script"];
 const preferredTextProviderIds = ["dashscope-text", "deepseek", "zml-text"];
 const preferredImageProviderIds = ["dashscope-image", "zml-image", "doubao-seedream"];
+const preferredVideoProviderIds = ["dashscope-video", "zml-video", "doubao-video"];
 const failedImageModels = new Set(["wanx-v1", "wan2.5-t2i-preview"]);
 
 const defaultForm: CreateProjectInput = {
@@ -72,13 +73,16 @@ export function WizardPage({ providers, onCreated }: WizardPageProps) {
   const suggestedEpisodes = Math.max(1, Math.min(20, Math.ceil(Math.max(words, 800) / 2000)));
   const textProviders = useMemo(() => filterProviders(providers, "text", preferredTextProviderIds), [providers]);
   const imageProviders = useMemo(() => filterProviders(providers, "image", preferredImageProviderIds), [providers]);
+  const videoProviders = useMemo(() => filterProviders(providers, "video", preferredVideoProviderIds), [providers]);
   const selectedTextProvider = textProviders.find((provider) => provider.id === form.textProvider) ?? textProviders[0];
   const selectedImageProvider = imageProviders.find((provider) => provider.id === form.imageProvider) ?? imageProviders[0];
+  const selectedVideoProvider = videoProviders.find((provider) => provider.id === form.videoProvider) ?? videoProviders[0];
   const currentTextModels = selectedTextProvider?.models.length ? selectedTextProvider.models : ["deepseek-v4-pro"];
   const currentImageModels = useMemo(() => {
     const models = (selectedImageProvider?.models.length ? selectedImageProvider.models : ["wan2.6-t2i"]).filter((model) => !failedImageModels.has(model));
     return models.length ? models : ["wan2.6-t2i"];
   }, [selectedImageProvider]);
+  const currentVideoModels = selectedVideoProvider?.models.length ? selectedVideoProvider.models : [form.videoModel || "wan2.7-i2v-2026-04-25"];
   const activeStepIndex = stepOrder.indexOf(step);
 
   useEffect(() => {
@@ -220,6 +224,11 @@ export function WizardPage({ providers, onCreated }: WizardPageProps) {
     setImageRouteTest({ loading: false });
   }
 
+  function selectVideoProvider(providerId: string) {
+    const provider = videoProviders.find((item) => item.id === providerId);
+    setForm({ ...form, videoProvider: providerId, videoModel: provider?.models[0] ?? form.videoModel });
+  }
+
   async function importTextFile(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -291,10 +300,12 @@ export function WizardPage({ providers, onCreated }: WizardPageProps) {
         <ScriptStep
           currentImageModels={currentImageModels}
           currentTextModels={currentTextModels}
+          currentVideoModels={currentVideoModels}
           estimate={estimate}
           form={form}
           imageModelMessage={imageModelMessage}
           imageProviders={imageProviders}
+          videoProviders={videoProviders}
           isTestingImageModel={isTestingImageModel}
           isTestingModel={isTestingModel}
           modelMessage={modelMessage}
@@ -302,11 +313,13 @@ export function WizardPage({ providers, onCreated }: WizardPageProps) {
           imageRouteTest={imageRouteTest}
           selectedImageProvider={selectedImageProvider}
           selectedTextProvider={selectedTextProvider}
+          selectedVideoProvider={selectedVideoProvider}
           textProviders={textProviders}
           onChange={setForm}
           onEstimate={estimateCost}
           onImageProvider={selectImageProvider}
           onTextProvider={selectTextProvider}
+          onVideoProvider={selectVideoProvider}
           onTestImageModel={testImageModel}
           onTestModel={testModel}
           error={error}
@@ -502,6 +515,9 @@ function ScriptStep({
   selectedImageProvider,
   currentTextModels,
   currentImageModels,
+  currentVideoModels,
+  videoProviders,
+  selectedVideoProvider,
   estimate,
   textRouteTest,
   imageRouteTest,
@@ -510,6 +526,7 @@ function ScriptStep({
   onChange,
   onTextProvider,
   onImageProvider,
+  onVideoProvider,
   onTestModel,
   onTestImageModel,
   onEstimate,
@@ -522,10 +539,13 @@ function ScriptStep({
   form: CreateProjectInput;
   textProviders: ModelProvider[];
   imageProviders: ModelProvider[];
+  videoProviders: ModelProvider[];
   selectedTextProvider?: ModelProvider;
   selectedImageProvider?: ModelProvider;
+  selectedVideoProvider?: ModelProvider;
   currentTextModels: string[];
   currentImageModels: string[];
+  currentVideoModels: string[];
   estimate: CreationEstimate | null;
   modelMessage: string;
   textRouteTest: RouteTestState;
@@ -536,6 +556,7 @@ function ScriptStep({
   onChange: (form: CreateProjectInput) => void;
   onTextProvider: (providerId: string) => void;
   onImageProvider: (providerId: string) => void;
+  onVideoProvider: (providerId: string) => void;
   onTestModel: () => void;
   onTestImageModel: () => void;
   onEstimate: () => void;
@@ -546,42 +567,34 @@ function ScriptStep({
   onStart: () => void;
 }) {
   const imageMultiplier = imageParameterMultiplier(form.imageSize, form.imageQuality).toFixed(2);
-  const [advancedOpen, setAdvancedOpen] = useState(false);
-  const density = form.mode === "twenty_five_grid" ? "fine" : form.mode === "director" ? "standard" : "fast";
-  const densityMeta = density === "fine"
-    ? { shots: "7-10 镜头/场", time: "细节优先", label: "精细" }
-    : density === "fast"
-      ? { shots: "2-3 镜头/场", time: "快速成片", label: "快速" }
-      : { shots: "4-6 镜头/场", time: "节奏与成本均衡", label: "标准" };
+  const [routeMode, setRouteMode] = useState<"auto" | "custom">("auto");
+  const [activeRoute, setActiveRoute] = useState<"text" | "image" | "video">("text");
   const scriptAssets = [
     { title: "全局设定", text: "世界观、题材、人设关系、主角动机和内容边界。", icon: <BrainCircuit size={18} />, meta: form.genre || "AI 自动识别" },
     { title: form.sourceType === "script" ? "场次结构" : "核心剧情", text: form.sourceType === "script" ? "识别集、场次、时空、出场角色和剧情作用。" : "按集数梳理事件、情绪弧光、反转点和结尾钩子。", icon: <BookOpenCheck size={18} />, meta: `${form.targetEpisodes ?? 1} 集` },
     { title: form.sourceType === "script" ? "剧本拆解" : "剧本改编", text: form.sourceType === "script" ? "保留原剧情，规范动作、台词、旁白和节奏。" : "把小说叙事转换为可拍摄的场景、动作、台词和旁白。", icon: <FileText size={18} />, meta: form.textModel || "待选择" },
     { title: "角色卡", text: "固定外貌、服装、性格、声线和一致性提示词。", icon: <UsersRound size={18} />, meta: form.videoRatio }
   ];
-  const routeReady = Boolean(form.textProvider && form.textModel && form.imageProvider && form.imageModel);
-  const setDensity = (next: "fast" | "standard" | "fine") => onChange({ ...form, mode: next === "fine" ? "twenty_five_grid" : next === "standard" ? "director" : "nine_grid" });
+  const routeReady = Boolean(form.textProvider && form.textModel && form.imageProvider && form.imageModel && form.videoProvider && form.videoModel);
 
   return (
     <div className="u-wizard-grid wizard-balance-grid wizard-script-redesign shot-plan-workspace">
       <section className="u-card script-plan-card wizard-script-card shot-plan-main">
         <div className="u-card-head wizard-script-title">
           <div>
-            <span className="section-kicker">镜头计划</span>
-            <h2>系统已准备好自动拆分镜头</h2>
-            <p>按场次动作密度和目标集数生成建议，创建后仍可逐镜头编辑、重试或跳过。</p>
+            <span className="section-kicker">制作设置</span>
+            <h2>确认内容如何进入漫剧制作</h2>
+            <p>先完成剧本结构化和实体提取；镜头数量将在剧本解析后按每个真实场次自动建议。</p>
           </div>
-          <span className="plan-ready"><CheckCircle2 size={16} />推荐配置已就绪</span>
+          <span className="plan-ready"><CheckCircle2 size={16} />制作配置已就绪</span>
         </div>
 
-        <div className="shot-density" data-tour-id="generation-mode">
-          <div className="shot-density-head"><div><strong>镜头密度</strong><span>系统推荐“标准”，兼顾叙事节奏、生成成本和后续剪辑空间。</span></div><span>每场建议</span></div>
-          <div className="shot-density-options" role="radiogroup" aria-label="镜头密度">
-            <ModeOption active={density === "fast"} title="快速" desc="2-3 镜头/场" onClick={() => setDensity("fast")} />
-            <ModeOption active={density === "standard"} title="标准" desc="4-6 镜头/场" badge="推荐" onClick={() => setDensity("standard")} />
-            <ModeOption active={density === "fine"} title="精细" desc="7-10 镜头/场" onClick={() => setDensity("fine")} />
-          </div>
-          <p className="density-reason"><Sparkles size={15} />根据当前内容长度和 {form.targetEpisodes ?? 1} 集目标，推荐标准密度；系统会对对白场景减镜、动作场景加镜。</p>
+        <div className="production-runway">
+          <article><span><BookOpenCheck size={19} /></span><div><strong>{form.sourceType === "script" ? "剧本结构化" : "小说转剧本"}</strong><small>{form.sourceType === "script" ? "识别场次、对白与动作" : "改编为可拍摄标准剧本"}</small></div></article>
+          <ChevronRight size={18} />
+          <article><span><UsersRound size={19} /></span><div><strong>角色与场景提取</strong><small>建立可复用的一致性资产</small></div></article>
+          <ChevronRight size={18} />
+          <article><span><Layers3 size={19} /></span><div><strong>创建项目工作区</strong><small>解析后再生成逐场镜头建议</small></div></article>
         </div>
 
         <div className="script-output-heading"><div><strong>将自动完成</strong><span>创建后进入项目工作台继续调整</span></div><span>{form.sourceType === "script" ? "剧本直接拆解" : "小说先转为剧本"}</span></div>
@@ -597,7 +610,7 @@ function ScriptStep({
           <button className="ghost-button" onClick={onEstimate} type="button">按当前模型估算积分</button>
           <button className="primary-button large" onClick={onStart} disabled={isGenerating || !routeReady} type="button">
             {isGenerating ? <Loader2 size={18} className="spin-icon" /> : <WandSparkles size={18} />}
-            {isGenerating ? "正在建立项目..." : form.sourceType === "script" ? "拆解剧本并创建项目" : "转换剧本并创建项目"}
+            {isGenerating ? "正在建立项目..." : form.sourceType === "script" ? "解析剧本并创建项目" : "转换剧本并创建项目"}
           </button>
         </div>
         {isGenerating ? <OperationProgress title={form.sourceType === "script" ? "剧本拆解中" : "小说改编中"} elapsed={generationElapsed} detail="系统正在建立剧本、场次、角色、场景和镜头计划，请不要重复提交。" /> : null}
@@ -607,32 +620,24 @@ function ScriptStep({
 
       <aside className="u-side-stack">
         <section className="u-card route-card-clean route-card-polished recommended-route-card">
-          <div className="recommended-route-head">
-            <div><span>推荐配置</span><strong>{densityMeta.label} · {densityMeta.shots}</strong></div>
-            <Gauge size={20} />
+          <div className="recommended-route-head model-route-head">
+            <div><span>模型路由</span><strong><i />自动路由正常</strong></div>
+            <Route size={20} />
           </div>
-          <dl className="route-summary-list">
-            <div><dt>生成策略</dt><dd>{densityMeta.time}</dd></div>
-            <div><dt>文本模型</dt><dd>{form.textModel || "自动选择"}</dd></div>
-            <div><dt>图像质量</dt><dd>{normalizeImageOutputQuality(form.imageQuality)}</dd></div>
-            <div><dt>参数倍率</dt><dd>x{imageMultiplier}</dd></div>
-          </dl>
-          <button className="advanced-route-toggle" onClick={() => setAdvancedOpen((value) => !value)} aria-expanded={advancedOpen} type="button">
-            <span><Layers3 size={16} />高级设置</span><ChevronDown size={17} className={advancedOpen ? "is-open" : ""} />
-          </button>
+          <div className="route-mode-switch"><button className={routeMode === "auto" ? "is-active" : ""} onClick={() => setRouteMode("auto")} type="button">自动推荐</button><button className={routeMode === "custom" ? "is-active" : ""} onClick={() => setRouteMode("custom")} type="button">自定义</button></div>
 
-          <div className={advancedOpen ? "advanced-route-panel is-open" : "advanced-route-panel"}>
-            <div className="route-clean-block route-block-polished">
-              <strong>文本生成</strong>
+          <div className="model-route-channels">
+            <RouteChannel icon={<FileText size={17} />} title="文本推理" purpose="剧本解析、角色与场景提取" model={form.textModel || "自动选择"} active={activeRoute === "text"} onClick={() => setActiveRoute(activeRoute === "text" ? "image" : "text")} />
+            {activeRoute === "text" ? <div className="route-channel-detail">
               <label className="field"><span>供应商</span><select value={form.textProvider} onChange={(event) => onTextProvider(event.target.value)}>{textProviders.map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}</select></label>
               <label className="field"><span>模型</span><select value={form.textModel} onChange={(event) => onChange({ ...form, textModel: event.target.value })}>{currentTextModels.map((model) => <option key={model} value={model}>{model}</option>)}</select></label>
               <p>{cleanProviderHint(selectedTextProvider?.costHint, "用于剧本解析、角色卡和分镜拆解。")}</p>
               <button className="ghost-button full-button" onClick={onTestModel} disabled={isTestingModel} type="button">{isTestingModel ? "测试中..." : "测试文本模型"}</button>
               <RouteTestMessage state={textRouteTest} />
-            </div>
+            </div> : null}
 
-            <div className="route-clean-block route-block-polished">
-              <strong>分镜生图</strong>
+            <RouteChannel icon={<Image size={17} />} title="图像生成" purpose="角色、场景与分镜首帧" model={form.imageModel || "自动选择"} active={activeRoute === "image"} onClick={() => setActiveRoute("image")} />
+            {activeRoute === "image" ? <div className="route-channel-detail">
               <label className="field"><span>供应商</span><select value={form.imageProvider} onChange={(event) => onImageProvider(event.target.value)}>{imageProviders.map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}</select></label>
               <label className="field"><span>模型</span><select value={form.imageModel} onChange={(event) => onChange({ ...form, imageModel: event.target.value })}>{currentImageModels.map((model) => <option key={model} value={model}>{model}</option>)}</select></label>
               <div className="route-param-grid">
@@ -642,8 +647,16 @@ function ScriptStep({
               <p>{cleanProviderHint(selectedImageProvider?.costHint, "用于角色参考图、场景图和分镜首帧。")}</p>
               <button className="ghost-button full-button" onClick={onTestImageModel} disabled={isTestingImageModel} type="button">{isTestingImageModel ? "测试中..." : "测试生图模型"}</button>
               <RouteTestMessage state={imageRouteTest} />
-            </div>
+            </div> : null}
+
+            <RouteChannel icon={<Video size={17} />} title="视频生成" purpose="后续分镜视频与片段生成" model={form.videoModel || "自动选择"} active={activeRoute === "video"} warning={!selectedVideoProvider?.enabled} onClick={() => setActiveRoute("video")} />
+            {activeRoute === "video" ? <div className="route-channel-detail">
+              <label className="field"><span>供应商</span><select value={form.videoProvider} onChange={(event) => onVideoProvider(event.target.value)}>{videoProviders.map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}</select></label>
+              <label className="field"><span>模型</span><select value={form.videoModel} onChange={(event) => onChange({ ...form, videoModel: event.target.value })}>{currentVideoModels.map((model) => <option key={model} value={model}>{model}</option>)}</select></label>
+              <p>{cleanProviderHint(selectedVideoProvider?.costHint, "用于项目创建后的镜头视频生成。")}</p>
+            </div> : null}
           </div>
+          <div className="route-cost-note"><CircleDollarSign size={15} /><span>创建前仅锁定路由，不产生扣费；实际按任务和后台价格结算。</span><strong>x{imageMultiplier}</strong></div>
         </section>
       </aside>
     </div>
@@ -703,8 +716,8 @@ function OperationProgress({ title, elapsed, detail }: { title: string; elapsed:
   );
 }
 
-function ModeOption({ active, title, desc, badge, disabled, onClick }: { active: boolean; title: string; desc: string; badge?: string; disabled?: boolean; onClick: () => void }) {
-  return <button className={active ? "mode-option active" : "mode-option"} disabled={disabled} onClick={onClick} type="button"><strong>{title}{badge ? <em>{badge}</em> : null}</strong><span>{desc}</span></button>;
+function RouteChannel({ icon, title, purpose, model, active, warning, onClick }: { icon: ReactNode; title: string; purpose: string; model: string; active: boolean; warning?: boolean; onClick: () => void }) {
+  return <button className={active ? "route-channel is-active" : "route-channel"} onClick={onClick} type="button"><i>{icon}</i><span><strong>{title}<em className={warning ? "is-warning" : ""} /></strong><small>{purpose}</small></span><b>{model}</b><ChevronDown size={16} className={active ? "is-open" : ""} /></button>;
 }
 
 function ChoiceCard({ active, title, desc, badge, onClick }: { active: boolean; title: string; desc: string; badge?: string; onClick: () => void }) {

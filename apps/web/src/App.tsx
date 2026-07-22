@@ -333,7 +333,10 @@ export function App() {
       case "workbench":
         return <WorkbenchPage summary={summary} onStart={() => setActivePage("wizard")} onOpen={(projectId) => void openProject(projectId)} />;
       case "content":
-        return <ContentCreatorPage />;
+        return <ContentCreatorPage onEnterProduction={(draft) => {
+          localStorage.setItem("aifilm_creation_draft", JSON.stringify(draft));
+          setActivePage("wizard");
+        }} />;
       case "wizard":
         return (
           <WizardPage

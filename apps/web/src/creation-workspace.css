@@ -25,3 +25,39 @@
 .u-wizard.creation-workbench .advanced-route-toggle { border-color: var(--cw-border, #dfe3e6); }
 .u-wizard.creation-workbench .advanced-route-panel .route-block-polished { background: var(--cw-surface-subtle, #f3f5f6) !important; }
 :root:not([data-theme="light"]) .u-wizard.creation-workbench .advanced-route-panel .route-block-polished { background: var(--cw-surface-subtle, #1b2027) !important; }
+
+.production-runway { display: grid; grid-template-columns: minmax(0, 1fr) 24px minmax(0, 1fr) 24px minmax(0, 1fr); align-items: center; gap: 10px; margin: 6px 0 20px; padding: 20px; border: 1px solid var(--cw-border); border-radius: 6px; background: var(--cw-surface-subtle); }
+.production-runway > svg { color: var(--cw-muted); }
+.production-runway article { display: flex; align-items: center; gap: 11px; min-width: 0; }
+.production-runway article > span { display: grid; flex: 0 0 auto; place-items: center; width: 40px; height: 40px; border-radius: 50%; color: var(--cw-accent); background: var(--cw-accent-soft); }
+.production-runway article > div { display: grid; gap: 4px; min-width: 0; }
+.production-runway article small { color: var(--cw-text-secondary); line-height: 1.4; }
+.model-route-head strong { display: inline-flex; align-items: center; gap: 6px; color: var(--cw-accent); font-size: 12px; }
+.model-route-head strong i { width: 7px; height: 7px; border-radius: 50%; background: var(--cw-accent); box-shadow: 0 0 0 3px var(--cw-accent-soft); }
+.route-mode-switch { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin: 14px 16px 10px; padding: 4px; border-radius: 6px; background: var(--cw-surface-subtle); }
+.route-mode-switch button { min-height: 34px; border: 0; border-radius: 4px; color: var(--cw-text-secondary); background: transparent; cursor: pointer; }
+.route-mode-switch button.is-active { color: #fff; background: var(--cw-accent); }
+.model-route-channels { display: grid; gap: 8px; padding: 8px 14px 14px; }
+.route-channel { display: grid; grid-template-columns: 34px minmax(0, 1fr) minmax(70px, auto) 16px; align-items: center; gap: 9px; width: 100%; min-height: 66px; padding: 9px 11px; border: 1px solid var(--cw-border); border-radius: 6px; color: var(--cw-text); background: var(--cw-surface-subtle); text-align: left; cursor: pointer; }
+.route-channel.is-active { border-color: var(--cw-accent); background: var(--cw-accent-soft); }
+.route-channel > i { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 5px; color: var(--cw-accent); background: var(--cw-surface); }
+.route-channel > span { display: grid; gap: 4px; min-width: 0; }
+.route-channel > span strong { display: inline-flex; align-items: center; gap: 6px; }
+.route-channel > span em { width: 6px; height: 6px; border-radius: 50%; background: var(--cw-accent); }
+.route-channel > span em.is-warning { background: #d69427; }
+.route-channel small { overflow: hidden; color: var(--cw-text-secondary); text-overflow: ellipsis; white-space: nowrap; }
+.route-channel > b { overflow: hidden; font-size: 12px; text-align: right; text-overflow: ellipsis; white-space: nowrap; }
+.route-channel > svg { color: var(--cw-muted); transition: transform 160ms ease; }
+.route-channel > svg.is-open { transform: rotate(180deg); }
+.route-channel-detail { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-top: -9px; padding: 14px 12px 12px; border: 1px solid var(--cw-border); border-top: 0; border-radius: 0 0 6px 6px; background: var(--cw-surface-subtle); }
+.route-channel-detail > p, .route-channel-detail > button, .route-channel-detail > .route-test-message, .route-channel-detail > .route-param-grid { grid-column: 1 / -1; }
+.route-channel-detail > p { margin: 0; color: var(--cw-text-secondary); font-size: 11px; line-height: 1.5; }
+.route-cost-note { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: center; gap: 7px; padding: 12px 16px; border-top: 1px solid var(--cw-border); color: var(--cw-text-secondary); font-size: 11px; }
+.route-cost-note svg, .route-cost-note strong { color: var(--cw-accent); }
+
+@media (max-width: 720px) {
+  .production-runway { grid-template-columns: 1fr; }
+  .production-runway > svg { transform: rotate(90deg); justify-self: center; }
+  .route-channel-detail { grid-template-columns: 1fr; }
+  .route-channel-detail > * { grid-column: 1 !important; }
+}

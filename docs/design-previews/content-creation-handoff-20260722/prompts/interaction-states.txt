@@ -1,0 +1,8 @@
+Use case: infographic-diagram
+Asset type: product interaction state board, 2048x1152 landscape
+Primary request: Create a high-fidelity UI state board for a Chinese content creation workspace, displaying four clearly separated application states using the same component system: 1 空项目 with a concise creation choice for 同类爆款, 原创故事, 小说改编; 2 编辑中 with long-form editor, autosave and active 素材 stage; 3 处理中 with a compact inline progress row for 分析内容, 生成策略, 整理大纲 and retry/cancel controls; 4 可交接 with screenplay and entity readiness plus the primary button 进入漫剧创作. Also show one small error state inline: 生成失败 with 重试, preserving content. This is a product specification board, not a marketing infographic.
+Style/medium: coherent professional UI kit, neutral light background, white work surfaces, graphite typography, teal-green active and success, amber warning, red error, 1px borders, 4-8px radii, familiar outline icons.
+Composition/framing: four state frames arranged in a clean 2x2 grid with short Chinese state labels and arrows showing transitions; each frame resembles the same desktop app.
+Text (verbatim): "空项目", "编辑中", "处理中", "可交接", "同类爆款", "原创故事", "小说改编", "生成失败", "重试", "进入漫剧创作"
+Constraints: interaction changes must be obvious; preserve layout between states; text legible; concise state transitions.
+Avoid: black sidebar, purple gradients, flowchart-only output, decorative illustration, fake analytics, excessive copy, rounded marketing cards, decorative SVG.

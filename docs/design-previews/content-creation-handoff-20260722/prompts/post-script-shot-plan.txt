@@ -1,0 +1,8 @@
+Use case: ui-mockup
+Asset type: interaction-state prototype after screenplay parsing, 2048x1152 landscape
+Primary request: Design the 镜头计划 stage of a Chinese AI comic-drama workbench after the screenplay has already been parsed into real scenes. Left list shows scenes with dialogue/action density and target duration. Center shows actual scene rows with recommended shot counts derived from screenplay content, for example 场次 01 对白为主 建议 3 镜头, 场次 02 动作冲突 建议 7 镜头. At top show one automatic result summary: 已解析 8 场，建议 39 镜头，预计 14:20. Users can adjust each scene with a small numeric stepper or choose 自动 / 精简 / 加强 for that scene. Do not ask for a global density before analysis. Right inspector shows recommendation reasons, estimated credits/time, and model route summary collapsed. Bottom primary action 生成分镜, secondary 保存镜头计划.
+Style/medium: high-fidelity professional workbench UI, coherent light neutral surfaces, graphite text, teal-green accent, accessible contrast, compact rows, 4-8px radii, minimal shadows, familiar icons.
+Composition/framing: left scene rail 250px, central plan table flexible, right inspector 320px; integrated surface family with no black navigation.
+Text (verbatim): "镜头计划", "已解析 8 场", "建议 39 镜头", "对白为主", "动作冲突", "自动", "精简", "加强", "生成分镜", "保存镜头计划"
+Constraints: density is visibly derived from parsed screenplay per scene; one global summary but adjustment is scene-level; model route stays secondary.
+Avoid: pre-script density selector, 9-grid, 25-grid, black sidebar, purple gradients, repeated route data, giant cards, decorative SVG.

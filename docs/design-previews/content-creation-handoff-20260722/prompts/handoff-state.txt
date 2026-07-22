@@ -1,0 +1,8 @@
+Use case: ui-mockup
+Asset type: high-fidelity interaction-state prototype, 2048x1152 landscape
+Primary request: Design the final handoff state of a Chinese AI content creation workspace immediately before comic-drama production. Keep the same coherent light neutral workbench. Left rail shows the seven stages 素材, 分析, 策略, 大纲, 正文, 剧本, 实体 with 剧本 and 实体 completed. Center shows a readable screenplay preview with scene headings, action and dialogue; a compact entity strip below shows 角色 6, 场景 9, 道具 4. Right inspector is the focus: a section titled 制作交接 with four readiness rows 剧本已就绪, 角色已提取, 场景已提取, 视觉风格已设置, followed by one primary teal button 进入漫剧创作 and a small note 自动带入剧本与创作设定. Include a secondary 返回修改 action. Do not add a separate confirmation wizard.
+Style/medium: polished production UI, light theme with white and cool gray surfaces, graphite text, teal-green accent, restrained separators and no decorative art.
+Composition/framing: full desktop workbench, right handoff inspector visually clear but integrated with the same surface family; no black sidebar.
+Text (verbatim): "制作交接", "剧本已就绪", "角色已提取", "场景已提取", "视觉风格已设置", "进入漫剧创作", "自动带入剧本与创作设定", "返回修改"
+Constraints: show exact handoff relationship, accessible contrast, concise information, only one primary CTA.
+Avoid: modal confirmation, extra production-plan page, duplicated model routing, giant cards, nested cards, black navigation, purple gradients, decorative SVG.

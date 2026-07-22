@@ -1,0 +1,8 @@
+Use case: ui-mockup
+Asset type: production desktop web application prototype, 2048x1152 landscape
+Primary request: Design a mature Chinese AI content creation workspace that connects directly into comic-drama production. This is an operational tool, not a landing page. Left rail contains compact project list and one vertical seven-stage pipeline: 素材, 分析, 策略, 大纲, 正文, 剧本, 实体. Main center is the active writing task with source title, rich long-form text editor, word count, save state, and a concise next-action toolbar. Right inspector contains current configuration, quality feedback that does not block progress, and a prominent handoff section titled 进入漫剧创作 showing 剧本, 角色, 场景, 风格 readiness. Use one page title only. Show real dense product information with clean hierarchy.
+Style/medium: polished high-fidelity SaaS workbench UI, light neutral theme, calm and premium, restrained teal-green accent, white surfaces on #F7F8FA, graphite text, accessible secondary gray, 1px borders, 4-8px radii, minimal shadows, familiar outline icons.
+Composition/framing: fixed left rail 250px, flexible editor, right inspector 320px, compact 64px header; stable desktop layout with no floating marketing cards.
+Text (verbatim): "内容创作", "素材", "分析", "策略", "大纲", "正文", "剧本", "实体", "进入漫剧创作", "已保存", "质量建议"
+Constraints: Chinese text legible, action hierarchy obvious, no repeated page title, no model provider details, no fake charts, no nested cards.
+Avoid: purple gradients, black side rail, dark navy blocks, excessive pills, giant headings, decorative SVG, landing page composition, white-on-white low contrast.

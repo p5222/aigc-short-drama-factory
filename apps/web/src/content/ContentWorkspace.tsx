@@ -1,14 +1,18 @@
-import { BookOpen, Check, ChevronRight, CircleAlert, FileText, LoaderCircle, Plus, RefreshCw, Sparkles } from "lucide-react";
+import { ArrowRight, BookOpen, Check, CheckCircle2, ChevronRight, CircleAlert, FileText, LoaderCircle, Plus, RefreshCw, Sparkles, UsersRound, Clapperboard, Map } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ContentProjectMode, ContentProjectSummary, StyleProfile } from "@aifilm/shared";
+import type { ContentProjectMode, ContentProjectSummary, CreateProjectInput, StyleProfile } from "@aifilm/shared";
 import { contentApi, type SourceDocumentInput } from "../lib/contentApi";
-import { contentSteps, creationModes, isCurrentRequest, modeLabel, reconcileProjectId, sourceKindForMode, statusLabel, type RequestToken } from "./model";
+import { buildProductionDraft, contentSteps, creationModes, isCurrentRequest, modeLabel, reconcileProjectId, sourceKindForMode, statusLabel, type RequestToken } from "./model";
 
 const emptyStyle: StyleProfile = { key: "", name: "", category: "", summary: "", characterRules: [], sceneRules: [], lightingRules: [], cameraRules: [], materialRules: [], negativeRules: [] };
 
-interface ContentWorkspaceProps { initialProjects: ContentProjectSummary[]; onReload: () => Promise<ContentProjectSummary[]>; }
+interface ContentWorkspaceProps {
+  initialProjects: ContentProjectSummary[];
+  onReload: () => Promise<ContentProjectSummary[]>;
+  onEnterProduction: (draft: CreateProjectInput & { contentProjectId?: string }) => void;
+}
 
-export function ContentWorkspace({ initialProjects, onReload }: ContentWorkspaceProps) {
+export function ContentWorkspace({ initialProjects, onReload, onEnterProduction }: ContentWorkspaceProps) {
   const [projects, setProjects] = useState(initialProjects);
   const [selectedId, setSelectedId] = useState(() => reconcileProjectId(initialProjects));
   const [creating, setCreating] = useState(initialProjects.length === 0);
@@ -20,6 +24,7 @@ export function ContentWorkspace({ initialProjects, onReload }: ContentWorkspace
   const [busy, setBusy] = useState<"create" | "save" | "refresh" | "">("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [savedSources, setSavedSources] = useState<Record<string, { title: string; content: string }>>({});
   const requestSequence = useRef(0);
   const activeRequest = useRef<RequestToken | null>(null);
   const selected = projects.find((project) => project.id === selectedId);
@@ -58,13 +63,21 @@ export function ContentWorkspace({ initialProjects, onReload }: ContentWorkspace
       if (!isCurrentRequest(activeRequest.current, token)) return;
       const next = await onReload();
       if (!isCurrentRequest(activeRequest.current, token)) return;
-      setProjects(next); setMessage("素材已保存，后续分析能力接通后可继续推进");
+      setSavedSources((current) => ({ ...current, [selected.id]: { title: sourceTitle.trim(), content: sourceContent } }));
+      setProjects(next); setMessage("素材已保存，可继续创作或进入漫剧制作");
     } catch (reason) { if (isCurrentRequest(activeRequest.current, token)) setError(reason instanceof Error ? reason.message : "保存失败"); }
     finally { if (isCurrentRequest(activeRequest.current, token)) { activeRequest.current = null; setBusy(""); } }
   }
 
   const completedStepIndex = selected ? contentSteps.findIndex((step) => step.id === selected.activeStep) : 0;
   const wordCount = useMemo(() => sourceContent.replace(/\s/g, "").length, [sourceContent]);
+  const handoffSource = selected ? savedSources[selected.id] : undefined;
+  const handoffContent = sourceContent.trim() || handoffSource?.content.trim() || "";
+
+  function enterProduction() {
+    if (!selected || !handoffContent) return;
+    onEnterProduction(buildProductionDraft(selected, handoffContent));
+  }
 
   return <div className="content-workspace">
     <header className="content-header">
@@ -88,7 +101,11 @@ export function ContentWorkspace({ initialProjects, onReload }: ContentWorkspace
 
     <aside className="content-inspector">
       <div className="content-panel-title"><div><strong>配置与评测</strong><small>跟随当前内容步骤</small></div></div>
-      {selected ? <><section><h2>当前配置</h2><dl className="content-meta"><div><dt>创作模式</dt><dd>{modeLabel(selected.mode)}</dd></div><div><dt>当前步骤</dt><dd>{contentSteps.find((step) => step.id === selected.activeStep)?.label}</dd></div><div><dt>内容风格</dt><dd>{selected.styleProfile?.name || "未配置"}</dd></div><div><dt>模型</dt><dd>接口未提供</dd></div></dl></section><section><h2>评测摘要</h2><div className="content-evaluation-empty"><CircleAlert size={18} /><p>当前项目还没有真实评测结果。评分不会阻止创作者继续使用内容。</p></div></section><section><h2>下一步</h2><p className="content-muted">分析、重跑、版本确认和进入视觉工作台需等待对应 API 接通。</p></section></> : <p className="content-muted">选择项目后查看配置。</p>}
+      {selected ? <>
+        <section><h2>当前配置</h2><dl className="content-meta"><div><dt>创作模式</dt><dd>{modeLabel(selected.mode)}</dd></div><div><dt>当前步骤</dt><dd>{contentSteps.find((step) => step.id === selected.activeStep)?.label}</dd></div><div><dt>内容风格</dt><dd>{selected.styleProfile?.name || "AI 自动匹配"}</dd></div></dl></section>
+        <section><h2>质量建议</h2><div className="content-evaluation-empty"><CircleAlert size={18} /><p>评测用于提示后续优化方向，不会阻止当前内容进入制作。</p></div></section>
+        <section className="content-handoff"><div className="content-handoff-title"><div><span>制作交接</span><h2>进入漫剧创作</h2></div><Clapperboard size={20} /></div><p>自动带入当前内容、作品名称与视觉风格，不需要再次粘贴。</p><div className="content-handoff-list"><span><FileText size={15} /><b>剧本内容</b><em>{handoffContent ? "已就绪" : "待保存"}</em></span><span><UsersRound size={15} /><b>角色实体</b><em>{selected.hasEntities ? "已提取" : "制作时提取"}</em></span><span><Map size={15} /><b>场景信息</b><em>{selected.hasEntities ? "已提取" : "制作时提取"}</em></span><span><Sparkles size={15} /><b>视觉风格</b><em>{selected.styleProfile?.name || "自动匹配"}</em></span></div><button type="button" className="content-primary-button content-handoff-button" disabled={!handoffContent} onClick={enterProduction}><span>进入漫剧创作</span><ArrowRight size={17} /></button>{!handoffContent ? <small>先保存一份素材或剧本后即可交接。</small> : <small><CheckCircle2 size={13} />交接后仍可返回这里继续修改内容。</small>}</section>
+      </> : <p className="content-muted">选择项目后查看配置。</p>}
     </aside>
   </div>;
 }
