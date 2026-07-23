@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { CreateProjectInput } from "@aifilm/shared";
 import { assertUsableScriptOutput, buildScriptPrompt, extractSceneNames, normalizeScriptOutput } from "./generator.js";
+import { analyzeScriptShotPlan, createToonflowStoryboardPlan } from "./toonflowAdapter.js";
 
 const baseInput: CreateProjectInput = {
   title: "测试作品",
@@ -34,6 +35,18 @@ test("script source is routed to structural decomposition without rewriting", ()
   const prompt = buildScriptPrompt(baseInput);
   assert.match(prompt, /禁止改编、续写或重新创作/);
   assert.match(prompt, /完整保留原剧本正文/);
+});
+
+test("shot planning follows the parsed script instead of a fixed density", () => {
+  const compactScript = "第1集\n第1场 雨夜街口\n林晚：你来了。\n顾沉转身。";
+  const denseScript = "第1集\n第1场 雨夜街口\n林晚：你终于来了，我等了整整十年。\n顾沉转身，走近，停下。\n第2场 旧车站\n顾沉：我没有忘记。\n林晚后退，攥紧车票，抬头。";
+  const compact = analyzeScriptShotPlan(compactScript, 1);
+  const dense = analyzeScriptShotPlan(denseScript, 1);
+  assert.ok(dense[0].suggestedShots > compact[0].suggestedShots);
+  assert.equal(dense[0].sceneCount, 2);
+  const prompt = createToonflowStoryboardPlan(baseInput, { synopsis: "重逢", content: denseScript }, [{ name: "林晚", identity: "主角", appearance: "短发", costume: "风衣", personality: "坚定" }]).prompt;
+  assert.doesNotMatch(prompt, /exactly|每集 15 条/);
+  assert.match(prompt, /剧本分析后的镜头计划/);
 });
 
 test("empty model output is rejected instead of being persisted", () => {

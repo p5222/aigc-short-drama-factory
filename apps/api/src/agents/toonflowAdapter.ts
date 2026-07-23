@@ -46,6 +46,15 @@ export interface ToonflowStoryboardPlan {
   requiredJsonShape: Record<string, unknown>;
 }
 
+export interface ScriptShotPlan {
+  episodeNo: number;
+  sceneCount: number;
+  dialogueUnits: number;
+  actionUnits: number;
+  suggestedShots: number;
+  estimatedSeconds: number;
+}
+
 const toonflowWorkflow = [
   "策划 Agent：先确定题材、看点、分集目标、角色弧光和结尾钩子",
   "编剧 Agent：把用户输入扩展为可拍摄的分集剧本，保留动作、台词、旁白和情绪节奏",
@@ -138,16 +147,20 @@ export function createToonflowStoryboardPlan(
   script: Pick<ScriptDraft, "synopsis" | "content">,
   characters: ToonflowCharacterCard[] | CharacterProfile[]
 ): ToonflowStoryboardPlan {
-  const perEpisodeShots = input.mode === "twenty_five_grid" ? 25 : input.mode === "director" ? 15 : 9;
-  const targetEpisodes = input.targetEpisodes ?? inferEpisodeCount(script.content);
-  const totalShots = perEpisodeShots * targetEpisodes;
+  const shotPlan = analyzeScriptShotPlan(script.content, input.targetEpisodes);
+  const totalShots = shotPlan.reduce((sum, episode) => sum + episode.suggestedShots, 0);
   const characterCards = characters.map(formatCharacterCard).join("\n");
+  const shotPlanText = shotPlan.map((episode) =>
+    `第${episode.episodeNo}集：${episode.sceneCount} 场，${episode.dialogueUnits} 个对白单元，${episode.actionUnits} 个动作单元，建议 ${episode.suggestedShots} 镜，约 ${episode.estimatedSeconds} 秒。`
+  ).join("\n");
   const prompt = [
     "你是 AI 漫剧平台“漫角”的分镜 Agent，参考 Toonflow-app 的智能分镜思想和 LingGuo-Drama 的动作单元拆镜标准。",
     "你要把已确认剧本拆成镜头级生产数据。剧本已经确认，角色卡已经锁定，不能重新改写故事。",
     "",
     "输出必须是合法 JSON 对象，顶层字段只能包含 storyboards。",
-    `storyboards 必须生成 exactly ${totalShots} 条，按 ${targetEpisodes} 集分配，每集 ${perEpisodeShots} 条。`,
+    `剧本分析后的镜头计划合计约 ${totalShots} 镜。镜头数不是预设密度，必须服从真实场次、对白、动作和节奏。`,
+    "允许每集相对建议值上下浮动 2 镜；不得为了凑数拆出无叙事作用的空镜，也不得把多个独立动作硬塞进同一镜头。",
+    `逐集镜头计划：\n${shotPlanText}`,
     "每条必须包含：episodeNo, sceneNo, shotNo, duration, shotSize, cameraAngle, cameraMovement, characters, scene, pictureDesc, action, orientation, spatialRelation, dialogue, voiceOver, environmentSound, soundEffect, emotion, imagePrompt, videoPrompt。",
     "导演增强：每条镜头必须能推导焦距和 FOV。默认焦距：建立/空间重置 24mm；行走/双人移动 35mm；对白中近景 50mm；情绪近景 85mm；道具/手部/机关 100mm。",
     "spatialRelation 必须写 screen-left/center/screen-right + foreground/midground/background；orientation 必须写视线方向、身体朝向、180度轴线、首帧锚点和尾帧锚点。",
@@ -259,10 +272,27 @@ export function getToonflowAdapterMetadata() {
     name: "Toonflow 编剧/智能分镜适配层",
     sourceRepo: "HBAI-Ltd/Toonflow-app",
     licenseNote: "按开源项目公开工作流与提示词思想做 TypeScript 适配；未整仓复制。",
-    capabilities: ["分集编剧", "动作单元拆镜", "角色卡约束", "图片/视频提示词拆分", "九宫格/导演台镜头数控制"],
+    capabilities: ["分集编剧", "剧本后镜头规划", "动作单元拆镜", "角色卡约束", "图片/视频提示词拆分"],
     workflow: toonflowWorkflow,
     rules: shotBreakdownRules
   };
+}
+
+export function analyzeScriptShotPlan(content: string, requestedEpisodes?: number): ScriptShotPlan[] {
+  const sections = splitEpisodeScripts(content);
+  const episodeCount = Math.max(1, requestedEpisodes ?? sections.length);
+  return Array.from({ length: episodeCount }, (_, index) => {
+    const episode = sections[index] ?? "";
+    const lines = episode.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    const sceneCount = Math.max(1, lines.filter((line) => /^(?:第[一二三四五六七八九十百\d]+[场幕]|场景\s*[一二三四五六七八九十百\d]*|SCENE\s*\d*)/i.test(line)).length);
+    const dialogueLines = lines.filter((line) => /^(?:[^：:\n]{1,16})[：:](?!\/\/)/.test(line));
+    const dialogueCharacters = dialogueLines.reduce((sum, line) => sum + (line.split(/[：:]/).slice(1).join(":").length || 0), 0);
+    const dialogueUnits = Math.max(dialogueLines.length, Math.ceil(dialogueCharacters / 32));
+    const actionLines = lines.filter((line) => !dialogueLines.includes(line) && !/^(?:第\s*\d+\s*集|第[一二三四五六七八九十百\d]+[场幕]|场景|SCENE)/i.test(line));
+    const actionUnits = Math.max(1, actionLines.reduce((sum, line) => sum + Math.max(1, line.split(/[，。；;！？!?]/).filter(Boolean).length), 0));
+    const suggestedShots = Math.max(6, Math.min(30, sceneCount * 2 + dialogueUnits + Math.ceil(actionUnits * 0.75)));
+    return { episodeNo: index + 1, sceneCount, dialogueUnits, actionUnits, suggestedShots, estimatedSeconds: suggestedShots * 4 };
+  });
 }
 
 function formatCharacterCard(character: ToonflowCharacterCard | CharacterProfile) {
@@ -280,4 +310,9 @@ function formatCharacterCard(character: ToonflowCharacterCard | CharacterProfile
 function inferEpisodeCount(content: string) {
   const matches = content.match(/第\s*\d+\s*集/g);
   return Math.max(1, matches?.length ?? 1);
+}
+
+function splitEpisodeScripts(content: string) {
+  const sections = content.split(/(?=第\s*\d+\s*集)/).map((section) => section.trim()).filter(Boolean);
+  return sections.length ? sections : [content.trim()];
 }
