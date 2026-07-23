@@ -241,7 +241,7 @@ export function LedgerPage({ account, transactions }: { account?: CreditAccount;
               <span className={`ledger-type-chip ${tx.type}`}>{transactionTypeLabel(tx.type)}</span>
               <strong className={tx.amount >= 0 ? "ledger-positive" : "ledger-negative"}>{tx.amount >= 0 ? "+" : ""}{tx.amount}</strong>
               <span>{tx.balanceAfter}</span>
-              <span>{transactionDescriptionText(tx.description)}</span>
+              <span>{transactionDescriptionText(tx.description)}{tx.taskId || tx.projectId ? <small className="ledger-trace">{tx.projectId ? `项目 ${tx.projectId.slice(0, 10)}` : ""}{tx.taskId ? ` · 任务 ${tx.taskId.slice(0, 10)}` : ""}</small> : null}</span>
               <span>{formatLedgerDate(tx.createdAt)}</span>
             </div>
           ))}

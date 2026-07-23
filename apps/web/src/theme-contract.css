@@ -228,6 +228,7 @@
 .dashboard-mini-tasks em.running { color: var(--info); }
 .dashboard-mini-tasks em.failed { color: var(--danger); }
 .dashboard-mini-tasks em.succeeded { color: var(--success); }
+.app-shell .ledger-trace { display: block; margin-top: 3px; color: var(--ui-text-muted) !important; font: 11px var(--font-mono); }
 
 @media (max-width: 720px) {
   .app-shell .panel-head { align-items: flex-start; }
