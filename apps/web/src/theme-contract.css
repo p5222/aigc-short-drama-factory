@@ -137,6 +137,24 @@
 }
 
 .cine-auth-input input::placeholder { color: #85919b !important; }
+.cine-auth-card .cine-auth-brand h2,
+.cine-auth-card .cine-logo-text span,
+.cine-auth-card .cine-auth-field > span,
+.cine-auth-card .cine-auth-input input,
+.cine-auth-card .cine-form-options span,
+.cine-auth-card .cine-agree-row span,
+.cine-auth-card .cine-auth-bottom > span {
+  color: #f1f4f6 !important;
+}
+.cine-auth-card .cine-auth-brand p,
+.cine-auth-card .cine-auth-bottom small,
+.cine-auth-card .cine-form-options button { color: #bfc8cf !important; }
+.cine-auth-card .cine-auth-input input::placeholder { color: #9aa6af !important; }
+.cine-auth-card .cine-password-toggle { color: #c4cdd3 !important; }
+.cine-auth-card .cine-password-toggle:hover {
+  color: #5ee0d3 !important;
+  background: rgba(94, 224, 211, .1) !important;
+}
 .cine-auth-input:focus-within {
   border-color: #5ee0d3 !important;
   box-shadow: 0 0 0 3px rgba(94, 224, 211, .16) !important;
@@ -231,6 +249,12 @@
 .app-shell .ledger-trace { display: block; margin-top: 3px; color: var(--ui-text-muted) !important; font: 11px var(--font-mono); }
 
 @media (max-width: 720px) {
+  .cine-auth-card.register-mode {
+    width: min(430px, calc(100vw - 28px));
+    max-height: calc(100vh - 28px);
+    padding: 20px 20px 22px;
+  }
+  .cine-register-grid { grid-template-columns: 1fr; gap: 10px; }
   .app-shell .panel-head { align-items: flex-start; }
   .app-shell .recharge-validity { width: 100%; }
   .dashboard-action-header { align-items: stretch; flex-direction: column; }

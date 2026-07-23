@@ -710,6 +710,30 @@ body.auth-surface {
   padding: 18px 34px;
 }
 
+.cine-auth-card.register-mode {
+  width: min(620px, calc(100vw - 40px));
+  padding: 22px 30px 24px;
+}
+
+.cine-auth-card.register-mode .cine-auth-brand {
+  gap: 7px;
+  margin-bottom: 12px;
+}
+
+.cine-auth-card.register-mode .cine-auth-brand h2 { font-size: 26px; }
+.cine-auth-card.register-mode .cine-auth-tabs { margin-bottom: 12px; }
+.cine-auth-card.register-mode .cine-auth-form { gap: 10px; }
+.cine-auth-card.register-mode .cine-auth-bottom { gap: 6px; margin-top: 10px; }
+.cine-auth-card.register-mode .cine-auth-bottom small { display: none; }
+
+.cine-register-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.cine-register-full { min-width: 0; }
+
 .cine-auth-close {
   position: absolute;
   top: 16px;
@@ -864,6 +888,21 @@ body.auth-surface {
 .cine-auth-input input::placeholder {
   color: rgba(255, 255, 255, 0.38);
 }
+
+.cine-password-toggle {
+  flex: 0 0 30px;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 7px;
+  color: rgba(255, 255, 255, 0.72);
+  background: transparent;
+  cursor: pointer;
+}
+
+.cine-password-toggle:hover { color: #5ee0d3; background: rgba(94, 224, 211, .1); }
 
 .cine-captcha-row {
   display: grid;
@@ -1065,6 +1104,9 @@ body.auth-surface {
 :root[data-theme="light"] .cine-auth-input input::placeholder {
   color: #879692;
 }
+
+:root[data-theme="light"] .cine-password-toggle { color: #52615f; }
+:root[data-theme="light"] .cine-password-toggle:hover { color: #087568; background: #e1f3ef; }
 
 :root[data-theme="light"] .cine-auth-input:focus-within {
   border-color: #28a995;

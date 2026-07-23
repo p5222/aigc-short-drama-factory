@@ -3,6 +3,7 @@ import {
   Check,
   ChevronDown,
   Eye,
+  EyeOff,
   Globe2,
   LockKeyhole,
   Mail,
@@ -197,6 +198,8 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
   const [captchaInput, setCaptchaInput] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [remember, setRemember] = useState(true);
   const [agree, setAgree] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -742,7 +745,7 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
   }
 
   const authForm = (
-    <form className="cine-auth-form" autoComplete="off" onSubmit={handleSubmit}>
+    <form className="cine-auth-form" onSubmit={handleSubmit}>
       {activeMode === "login" ? (
         <>
           <label className="cine-auth-field">
@@ -750,7 +753,7 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
             <div className="cine-auth-input">
               <UserRound size={18} />
               <input
-                autoComplete="off"
+                autoComplete="username"
                 data-lpignore="true"
                 name={isAdmin ? "admin_account" : "creator_account"}
                 value={account}
@@ -767,7 +770,7 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
             <div className="cine-auth-input">
               <LockKeyhole size={18} />
               <input
-                autoComplete="new-password"
+                autoComplete="current-password"
                 data-lpignore="true"
                 name={isAdmin ? "admin_password" : "creator_password"}
                 value={password}
@@ -775,10 +778,18 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
                   setPassword(event.target.value);
                   clearMessage();
                 }}
-                type="password"
+                type={showPassword ? "text" : "password"}
                 placeholder={t.passwordPlaceholder}
               />
-              <Eye size={16} />
+              <button
+                className="cine-password-toggle"
+                type="button"
+                aria-label={showPassword ? (locale === "cn" ? "隐藏密码" : "Hide password") : (locale === "cn" ? "显示密码" : "Show password")}
+                aria-pressed={showPassword}
+                onClick={() => setShowPassword((visible) => !visible)}
+              >
+                {showPassword ? <EyeOff size={17} /> : <Eye size={17} />}
+              </button>
             </div>
           </label>
           {captchaField(isAdmin ? "admin_captcha" : "creator_captcha")}
@@ -799,6 +810,7 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
         </>
       ) : (
         <>
+          <div className="cine-register-grid">
           <label className="cine-auth-field">
             <span>{t.phone}</span>
             <div className="cine-auth-input">
@@ -834,7 +846,9 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
               />
             </div>
           </label>
-          {captchaField("register_captcha")}
+          </div>
+          <div className="cine-register-full">{captchaField("register_captcha")}</div>
+          <div className="cine-register-grid">
           <label className="cine-auth-field">
             <span>{t.setPassword}</span>
             <div className="cine-auth-input">
@@ -848,9 +862,18 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
                   setPassword(event.target.value);
                   clearMessage();
                 }}
-                type="password"
+                type={showPassword ? "text" : "password"}
                 placeholder={t.setPasswordPlaceholder}
               />
+              <button
+                className="cine-password-toggle"
+                type="button"
+                aria-label={showPassword ? (locale === "cn" ? "隐藏密码" : "Hide password") : (locale === "cn" ? "显示密码" : "Show password")}
+                aria-pressed={showPassword}
+                onClick={() => setShowPassword((visible) => !visible)}
+              >
+                {showPassword ? <EyeOff size={17} /> : <Eye size={17} />}
+              </button>
             </div>
           </label>
           <label className="cine-auth-field">
@@ -866,11 +889,21 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
                   setConfirmPassword(event.target.value);
                   clearMessage();
                 }}
-                type="password"
+                type={showConfirmPassword ? "text" : "password"}
                 placeholder={t.confirmPasswordPlaceholder}
               />
+              <button
+                className="cine-password-toggle"
+                type="button"
+                aria-label={showConfirmPassword ? (locale === "cn" ? "隐藏确认密码" : "Hide confirmation password") : (locale === "cn" ? "显示确认密码" : "Show confirmation password")}
+                aria-pressed={showConfirmPassword}
+                onClick={() => setShowConfirmPassword((visible) => !visible)}
+              >
+                {showConfirmPassword ? <EyeOff size={17} /> : <Eye size={17} />}
+              </button>
             </div>
           </label>
+          </div>
           <label className="cine-agree-row">
             <input checked={agree} onChange={(event) => setAgree(event.target.checked)} type="checkbox" />
             <span>{t.agreement}</span>
