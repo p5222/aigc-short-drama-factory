@@ -26,6 +26,8 @@ import { getCardPose, nextCardIndex, relativeCardOffset, shouldCorrectDrift, sho
 interface LoginPageProps {
   onAuthed: (token: string, user: AuthUser) => void;
   variant?: "creator" | "admin";
+  initialAuthOpen?: boolean;
+  sessionMessage?: string;
 }
 
 type AuthMode = "login" | "register";
@@ -177,8 +179,8 @@ function waitForDrawableFrame(video: HTMLVideoElement, timeoutMs = BG_FRAME_TIME
   });
 }
 
-export function LoginPage({ onAuthed, variant = "creator" }: LoginPageProps) {
-  const [authOpen, setAuthOpen] = useState(variant === "admin");
+export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = false, sessionMessage = "" }: LoginPageProps) {
+  const [authOpen, setAuthOpen] = useState(variant === "admin" || initialAuthOpen);
   const [mode, setMode] = useState<AuthMode>("login");
   const [locale, setLocale] = useState<Locale>("cn");
   const [publicView, setPublicView] = useState<PublicView>("home");
@@ -198,7 +200,7 @@ export function LoginPage({ onAuthed, variant = "creator" }: LoginPageProps) {
   const [remember, setRemember] = useState(true);
   const [agree, setAgree] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState("");
+  const [message, setMessage] = useState(sessionMessage);
   const bgRefs = useRef<Array<HTMLVideoElement | null>>([]);
   const visibleBgSlot = useRef<0 | 1>(0);
   const slotSceneIndexes = useRef<[number, number]>([0, 1]);

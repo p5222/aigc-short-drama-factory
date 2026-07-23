@@ -39,8 +39,11 @@ import { WizardPage } from "./pages/WizardPage";
 import { WorkbenchPage } from "./pages/WorkbenchPage";
 import { ContentCreatorPage } from "./pages/ContentCreatorPage";
 import { resolveThemePreference, type WorkbenchTheme } from "./workbench/model";
+import { AUTH_SESSION_EXPIRED_EVENT } from "./lib/httpClient";
 
 const THEME_STORAGE_KEY = "manjiao-theme";
+const AUTH_RESUME_PAGE_KEY = "manjiao-auth-resume-page";
+const AUTH_RESUME_PROJECT_KEY = "manjiao-auth-resume-project";
 
 function getInitialTheme(): WorkbenchTheme {
   let storedTheme: string | null = null;
@@ -123,6 +126,7 @@ export function App() {
   const [workflow, setWorkflow] = useState<ProjectWorkflow>();
   const [theme, setTheme] = useState<WorkbenchTheme>(getInitialTheme);
   const [error, setError] = useState("");
+  const [sessionExpired, setSessionExpired] = useState(false);
 
   useLayoutEffect(() => {
     if (typeof document !== "undefined") {
@@ -166,6 +170,18 @@ export function App() {
       .catch(() => localStorage.removeItem("aifilm_auth_token"))
       .finally(() => setAuthReady(true));
   }, []);
+
+  useEffect(() => {
+    const handleSessionExpired = () => {
+      sessionStorage.setItem(AUTH_RESUME_PAGE_KEY, activePage);
+      if (activePage === "project" && workflow?.project.id) sessionStorage.setItem(AUTH_RESUME_PROJECT_KEY, workflow.project.id);
+      setSessionExpired(true);
+      setError("");
+      setUser(null);
+    };
+    window.addEventListener(AUTH_SESSION_EXPIRED_EVENT, handleSessionExpired);
+    return () => window.removeEventListener(AUTH_SESSION_EXPIRED_EVENT, handleSessionExpired);
+  }, [activePage, workflow?.project.id]);
 
   const loadAdmin = useCallback(async () => {
     if (!user || !adminRoles.has(user.role)) return;
@@ -409,7 +425,24 @@ export function App() {
   }
 
   if (!user) {
-    return <LoginPage variant={isAdminRoute ? "admin" : "creator"} onAuthed={(_token, nextUser) => setUser(nextUser)} />;
+    return <LoginPage
+      variant={isAdminRoute ? "admin" : "creator"}
+      initialAuthOpen={sessionExpired}
+      sessionMessage={sessionExpired ? "登录状态已过期，当前页面和草稿已保留。重新登录后将返回原位置。" : ""}
+      onAuthed={(_token, nextUser) => {
+        setUser(nextUser);
+        setSessionExpired(false);
+        const resumePage = sessionStorage.getItem(AUTH_RESUME_PAGE_KEY) as PageKey | null;
+        const resumeProjectId = sessionStorage.getItem(AUTH_RESUME_PROJECT_KEY);
+        sessionStorage.removeItem(AUTH_RESUME_PAGE_KEY);
+        sessionStorage.removeItem(AUTH_RESUME_PROJECT_KEY);
+        if (resumePage === "project" && resumeProjectId) {
+          void openProject(resumeProjectId);
+        } else if (resumePage) {
+          setActivePage(resumePage);
+        }
+      }}
+    />;
   }
 
   if (isAdminRoute) {

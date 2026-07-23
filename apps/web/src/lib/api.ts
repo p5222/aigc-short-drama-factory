@@ -58,18 +58,7 @@
   CharacterConsistencyOutput,
   WorkbenchSummary
 } from "@aifilm/shared";
-
-const baseUrl = import.meta.env.VITE_API_BASE_URL ?? "/api";
-
-async function fetchWithFriendlyNetworkError(input: RequestInfo | URL, init?: RequestInit) {
-  try {
-    return await fetch(input, init);
-  } catch (error) {
-    const target = typeof input === "string" ? input : input instanceof URL ? input.toString() : baseUrl;
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`无法连接后端服务：${target}。请确认 API 服务已启动、端口 4000 可访问，或检查 VITE_API_BASE_URL 配置。原始错误：${message}`);
-  }
-}
+import { requestBlob as httpRequestBlob, requestJson, requestText as httpRequestText } from "./httpClient";
 
 export interface AuthUser {
   id: string;
@@ -87,87 +76,15 @@ export interface AuthResult {
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const token = localStorage.getItem("aifilm_auth_token");
-  const response = await fetchWithFriendlyNetworkError(`${baseUrl}${path}`, {
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(options?.headers ?? {})
-    },
-    ...options
-  });
-
-  if (!response.ok) {
-    const text = await response.text();
-    if (response.status === 401) localStorage.removeItem("aifilm_auth_token");
-    throw new Error(readableError(text, response.status));
-  }
-
-  if (response.status === 204) return undefined as T;
-  const text = await response.text();
-  return (text ? JSON.parse(text) : undefined) as T;
+  return requestJson<T>(path, options);
 }
 
 async function requestText(path: string, options?: RequestInit): Promise<string> {
-  const token = localStorage.getItem("aifilm_auth_token");
-  const response = await fetchWithFriendlyNetworkError(`${baseUrl}${path}`, {
-    headers: {
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(options?.headers ?? {})
-    },
-    ...options
-  });
-
-  if (!response.ok) {
-    const text = await response.text();
-    if (response.status === 401) localStorage.removeItem("aifilm_auth_token");
-    throw new Error(readableError(text, response.status));
-  }
-
-  return response.text();
+  return httpRequestText(path, options);
 }
 
 async function requestBlob(path: string, options?: RequestInit): Promise<Blob> {
-  const token = localStorage.getItem("aifilm_auth_token");
-  const response = await fetchWithFriendlyNetworkError(`${baseUrl}${path}`, {
-    headers: {
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(options?.headers ?? {})
-    },
-    ...options
-  });
-
-  if (!response.ok) {
-    const text = await response.text();
-    if (response.status === 401) localStorage.removeItem("aifilm_auth_token");
-    throw new Error(readableError(text, response.status));
-  }
-
-  return response.blob();
-}
-
-function readableError(text: string, status: number) {
-  if (!text) return `请求失败：${status}`;
-
-  try {
-    const data = JSON.parse(text) as {
-      message?: string;
-      error?: string;
-      formErrors?: string[];
-      fieldErrors?: Record<string, string[]>;
-    };
-    if (data.message) return data.message;
-    if (data.error) return data.error;
-    const zodMessages = [
-      ...(data.formErrors ?? []),
-      ...Object.entries(data.fieldErrors ?? {}).flatMap(([field, messages]) => messages.map((message) => `${field}: ${message}`))
-    ];
-    if (zodMessages.length) return zodMessages.join("；");
-  } catch {
-    return text;
-  }
-
-  return `请求失败：${status}`;
+  return httpRequestBlob(path, options);
 }
 
 export const api = {
