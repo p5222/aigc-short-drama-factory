@@ -1,4 +1,4 @@
-import type { ContentProjectMode, ContentProjectSummary, StyleProfile } from "@aifilm/shared";
+import type { ContentProductionPackage, ContentProjectMode, ContentProjectSummary, StyleProfile } from "@aifilm/shared";
 import { requestJson } from "./httpClient";
 
 export interface SourceDocumentInput {
@@ -19,5 +19,7 @@ export const contentApi = {
   createProject: (input: { title: string; mode: ContentProjectMode; styleProfile?: StyleProfile }) =>
     requestJson<ContentProjectSummary>("/content/projects", { method: "POST", body: JSON.stringify(input) }),
   addSource: (projectId: string, input: SourceDocumentInput) =>
-    requestJson<SourceDocumentResult>(`/content/projects/${encodeURIComponent(projectId)}/sources`, { method: "POST", body: JSON.stringify(input) })
+    requestJson<SourceDocumentResult>(`/content/projects/${encodeURIComponent(projectId)}/sources`, { method: "POST", body: JSON.stringify(input) }),
+  productionPackage: (projectId: string) => requestJson<ContentProductionPackage>(`/content/projects/${encodeURIComponent(projectId)}/package`),
+  generatePackage: (projectId: string) => requestJson<ContentProductionPackage>(`/content/projects/${encodeURIComponent(projectId)}/generate`, { method: "POST" })
 };

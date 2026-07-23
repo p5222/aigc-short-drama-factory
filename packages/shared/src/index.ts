@@ -524,6 +524,17 @@ export interface ContentProjectSummary {
   hasEntities: boolean;
 }
 
+export interface ContentProductionPackage {
+  projectId: string;
+  source?: { id: string; kind: "novel" | "short_story" | "idea" | "script"; title: string; content: string; updatedAt: string };
+  script?: { id: string; version: number; status: ContentStepStatus; content: string; createdAt: string };
+  entities?: {
+    characters: Array<{ id: string; name: string; description: string }>;
+    scenes: Array<{ id: string; name: string; description: string }>;
+    props: Array<{ id: string; name: string; description: string }>;
+  };
+}
+
 export interface ExperimentRun {
   id: string;
   name: string;

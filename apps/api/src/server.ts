@@ -126,7 +126,7 @@ import { testVideoModelConnection } from "./providers/video.js";
 import { listVisualPipelines, testVisualPipeline } from "./providers/visualPipelineRegistry.js";
 import { generationQueue, generationQueueEvents, queueConnection, startGenerationWorker } from "./queue/generationQueue.js";
 import { ensureStorageBuckets, storageRoot } from "./storage/objectStorage.js";
-import { handleAddSource, handleCreateContentProject, handleListContentProjects } from "./content/routes.js";
+import { handleAddSource, handleCreateContentProject, handleGenerateContentPackage, handleGetContentPackage, handleListContentProjects } from "./content/routes.js";
 
 const app = express();
 const port = Number(process.env.API_PORT ?? 4000);
@@ -935,6 +935,18 @@ app.post("/api/content/projects/:id/sources", asyncRoute(async (req, res) => {
   const userId = requestUserId(req);
   if (!userId) return res.status(401).json({ message: "请先登录。" });
   res.status(201).json(await handleAddSource(userId, paramId(req.params.id), req.body));
+}));
+
+app.get("/api/content/projects/:id/package", asyncRoute(async (req, res) => {
+  const userId = requestUserId(req);
+  if (!userId) return res.status(401).json({ message: "请先登录。" });
+  res.json(await handleGetContentPackage(userId, paramId(req.params.id)));
+}));
+
+app.post("/api/content/projects/:id/generate", asyncRoute(async (req, res) => {
+  const userId = requestUserId(req);
+  if (!userId) return res.status(401).json({ message: "请先登录。" });
+  res.json(await handleGenerateContentPackage(userId, paramId(req.params.id)));
 }));
 
 app.patch(
