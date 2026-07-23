@@ -11,11 +11,6 @@ export function RechargePage({ plans, membershipPlans, modelPrices, onRefresh }:
   const [showModelDetails, setShowModelDetails] = useState(false);
   const defaultShopUrl = "https://pay.ldxp.cn/shop/ZHP28OV1";
   const enabledModelPrices = modelPrices.filter((price) => price.enabled);
-  const modelPriceStats = {
-    providers: new Set(enabledModelPrices.map((price) => price.providerName)).size,
-    models: enabledModelPrices.length,
-    avgCredits: enabledModelPrices.length ? Math.round(enabledModelPrices.reduce((sum, price) => sum + price.unitCredits, 0) / enabledModelPrices.length) : 0
-  };
   const usageReferences = useMemo(() => buildCreditUsageReferences(enabledModelPrices), [enabledModelPrices]);
 
   async function redeem() {
@@ -180,21 +175,13 @@ function buildCreditUsageReferences(prices: ModelPrice[]) {
   const image = creditFor(prices, (price) => price.modality === "image", 100);
   const videoSecond = creditFor(prices, (price) => price.unit === "video_second" || price.modality === "video", 80);
   return [
-    { title: "角色生成", desc: "角色设定 · 文本生成", credits: `${textRun} 积分 / 次`, icon: <Coins size={19} /> },
-    { title: "提炼核心剧情", desc: "剧情梳理 · 文本生成", credits: `${textRun} 积分 / 次`, icon: <FileIconFallback /> },
-    { title: "生成剧本", desc: "分集脚本 · 文本生成", credits: `${textRun} 积分 / 次`, icon: <ReceiptText size={19} /> },
-    { title: "剧本转分镜 JSON", desc: "结构化分镜 · 文本生成", credits: `${textRun} 积分 / 次`, icon: <ClipboardList size={19} /> },
-    { title: "九宫格 · 生成剧本", desc: "短流程脚本生成", credits: `${textRun} 积分 / 次`, icon: <Gift size={19} /> },
-    { title: "9宫格 · 生成剧本", desc: "中文模板脚本生成", credits: `${textRun} 积分 / 次`, icon: <Gift size={19} /> },
-    { title: "25宫格 · 生成剧本", desc: "长流程脚本生成", credits: `${textRun} 积分 / 次`, icon: <ReceiptText size={19} /> },
-    { title: "25宫格 · 剧本转分镜 JSON", desc: "长流程分镜结构化", credits: `${textRun} 积分 / 次`, icon: <ClipboardList size={19} /> },
-    { title: "场景图", desc: "场景图 · 图片生成", credits: `${image} 积分 / 张`, icon: <CreditCard size={19} /> },
+    { title: "内容分析", desc: "题材、人物与剧情结构", credits: `${textRun} 积分 / 次`, icon: <Coins size={19} /> },
+    { title: "剧本生成", desc: "小说改编与分集剧本", credits: `${textRun} 积分 / 次`, icon: <ReceiptText size={19} /> },
+    { title: "分镜规划", desc: "按剧本场次规划镜头", credits: `${textRun} 积分 / 次`, icon: <ClipboardList size={19} /> },
+    { title: "角色与场景图", desc: "视觉资产图片生成", credits: `${image} 积分 / 张`, icon: <CreditCard size={19} /> },
+    { title: "镜头画面", desc: "分镜画面图片生成", credits: `${image} 积分 / 张`, icon: <Gift size={19} /> },
     { title: "镜头视频", desc: "图生视频 · 按秒计费", credits: `${videoSecond} 积分 / 秒`, icon: <WalletCards size={19} /> }
   ];
-}
-
-function FileIconFallback() {
-  return <ReceiptText size={19} />;
 }
 
 function creditFor(prices: ModelPrice[], predicate: (price: ModelPrice) => boolean, fallback: number) {

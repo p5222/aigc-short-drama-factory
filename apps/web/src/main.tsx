@@ -13,6 +13,7 @@ import "./design-system/semantic-tokens.css";
 import "./design-system/components.css";
 import "./admin/admin.css";
 import "./creation-workspace.css";
+import "./theme-contract.css";
 
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

@@ -1,0 +1,156 @@
+/* Final theme contract. This file is intentionally imported last. */
+:root {
+  --ui-canvas: var(--bg-app);
+  --ui-shell: var(--bg-shell);
+  --ui-surface: var(--surface-1);
+  --ui-surface-subtle: var(--surface-2);
+  --ui-surface-muted: var(--surface-3);
+  --ui-text: var(--text-1);
+  --ui-text-secondary: var(--text-2);
+  --ui-text-muted: var(--text-3);
+  --ui-border: var(--border-1);
+  --ui-border-strong: var(--border-2);
+  --ui-accent: var(--accent);
+  --ui-accent-hover: var(--accent-hover);
+  --ui-accent-soft: var(--accent-soft);
+  --ui-on-accent: var(--on-accent);
+  --ui-focus: var(--focus);
+  --ui-shadow: var(--shadow-popover);
+}
+
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }
+
+.app-shell {
+  color: var(--ui-text);
+  background: var(--ui-canvas);
+}
+
+.app-shell .sidebar,
+.app-shell .topbar {
+  color: var(--ui-text);
+  border-color: var(--ui-border);
+  background: var(--ui-shell);
+  box-shadow: none;
+}
+
+.app-shell .panel,
+.app-shell .metric-card,
+.app-shell .project-card,
+.app-shell .plan-card,
+.app-shell .membership-card,
+.app-shell .credit-usage-card,
+.app-shell .payment-method-card,
+.app-shell .ledger-summary-grid article {
+  color: var(--ui-text) !important;
+  border-color: var(--ui-border) !important;
+  border-radius: 8px !important;
+  background: var(--ui-surface) !important;
+  box-shadow: none !important;
+}
+
+.app-shell :is(.page-title, .panel-head, .plan-card, .membership-card, .credit-usage-card) :is(h1, h2, h3, strong) {
+  color: var(--ui-text) !important;
+}
+
+.app-shell :is(.page-title, .panel-head, .plan-card, .membership-card, .credit-usage-card) :is(p, small, span),
+.app-shell .plan-card li,
+.app-shell .membership-card li {
+  color: var(--ui-text-secondary) !important;
+}
+
+.app-shell :is(input, textarea, select) {
+  color: var(--ui-text) !important;
+  border-color: var(--ui-border-strong) !important;
+  background: var(--ui-surface-subtle) !important;
+}
+
+.app-shell :is(input, textarea)::placeholder { color: var(--ui-text-muted) !important; }
+
+.app-shell :is(input, textarea, select, button, a):focus-visible {
+  outline: 2px solid var(--ui-focus) !important;
+  outline-offset: 2px;
+}
+
+.app-shell .primary-button {
+  color: var(--ui-on-accent) !important;
+  border-color: var(--ui-accent) !important;
+  background: var(--ui-accent) !important;
+  box-shadow: none !important;
+}
+
+.app-shell .primary-button:hover { background: var(--ui-accent-hover) !important; }
+
+.app-shell .ghost-button {
+  color: var(--ui-text-secondary) !important;
+  border-color: var(--ui-border) !important;
+  background: var(--ui-surface) !important;
+  box-shadow: none !important;
+}
+
+.app-shell .ghost-button:hover {
+  color: var(--ui-accent) !important;
+  border-color: var(--ui-accent) !important;
+  background: var(--ui-accent-soft) !important;
+}
+
+.app-shell .recharge-validity {
+  color: var(--ui-accent) !important;
+  font-weight: 700 !important;
+}
+
+.app-shell .credit-usage-card svg { color: var(--ui-accent) !important; }
+.app-shell .credit-usage-card b {
+  color: var(--ui-text) !important;
+  background: var(--ui-surface-muted) !important;
+}
+
+.app-shell .plan-card .badge,
+.app-shell .membership-card .badge {
+  color: var(--ui-accent) !important;
+  background: var(--ui-accent-soft) !important;
+}
+
+/* Public authentication remains visually stable while workbench themes switch. */
+.cine-auth-card,
+.cine-admin-login-card {
+  color: #f1f4f6;
+  border-color: rgba(255, 255, 255, .16) !important;
+  background: rgba(20, 24, 28, .94) !important;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, .32) !important;
+}
+
+.cine-auth-card :is(h1, h2, strong),
+.cine-admin-login-card :is(h1, h2, strong) { color: #f1f4f6; }
+.cine-auth-card :is(p, small, label > span),
+.cine-admin-login-card :is(p, small, label > span) { color: #b7c0c8; }
+
+.cine-auth-input {
+  color: #f1f4f6 !important;
+  border-color: #3a454e !important;
+  background: #171b20 !important;
+}
+
+.cine-auth-input input {
+  color: #f1f4f6 !important;
+  background: transparent !important;
+}
+
+.cine-auth-input input::placeholder { color: #85919b !important; }
+.cine-auth-input:focus-within {
+  border-color: #5ee0d3 !important;
+  box-shadow: 0 0 0 3px rgba(94, 224, 211, .16) !important;
+}
+
+.cine-submit-button {
+  color: #072b28 !important;
+  background: #2ec4b6 !important;
+  box-shadow: none !important;
+}
+
+.cine-submit-button:hover { background: #43d0c3 !important; }
+
+@media (max-width: 720px) {
+  .app-shell .panel-head { align-items: flex-start; }
+  .app-shell .recharge-validity { width: 100%; }
+}
