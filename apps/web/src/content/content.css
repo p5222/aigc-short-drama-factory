@@ -114,6 +114,18 @@
 .content-package-output > header h2 { margin: 5px 0 0; color: var(--content-text); }
 .content-package-output > header em { padding: 5px 8px; border-radius: 4px; background: var(--content-accent-soft); }
 .content-package-output pre { max-height: 58vh; margin: 0; padding: 18px; overflow: auto; border: 1px solid var(--content-border); border-radius: 8px; color: var(--content-text); background: var(--content-subtle); font: 14px/1.75 var(--font-ui); white-space: pre-wrap; }
+.content-style-select { display: grid; gap: 7px; }
+.content-style-select select { min-height: 42px; padding: 0 12px; border: 1px solid var(--content-border); border-radius: 8px; color: var(--content-text); background: var(--content-surface); }
+.content-style-select small { color: var(--content-muted); }
+.content-chapter-layout { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 16px; }
+.content-chapter-list { display: grid; align-content: start; gap: 4px; }
+.content-chapter-list a { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 8px; padding: 10px; border-radius: 7px; color: var(--content-muted); text-decoration: none; }
+.content-chapter-list a:hover { color: var(--content-text); background: var(--content-subtle); }
+.content-chapter-list b { color: var(--content-accent); }
+.content-chapter-body { min-width: 0; }
+.content-chapter-body article + article { margin-top: 22px; padding-top: 22px; border-top: 1px solid var(--content-border); }
+.content-chapter-body h3 { margin: 0 0 6px; color: var(--content-text); }
+.content-chapter-outline { margin: 0 0 10px; color: var(--content-muted); font-size: 13px; }
 .content-entity-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
 .content-entity-summary article { min-height: 64px; padding: 12px; border: 1px solid var(--content-border); border-radius: 8px; color: var(--content-muted); background: var(--content-surface); display: grid; grid-template-columns: auto auto 1fr; align-items: center; gap: 8px; }
 .content-entity-summary article svg { color: var(--content-accent); }
@@ -122,4 +134,5 @@
 @media (max-width: 720px) {
   .content-package-output { padding: 0; }
   .content-entity-summary { grid-template-columns: 1fr; }
+  .content-chapter-layout { grid-template-columns: 1fr; }
 }

@@ -5,6 +5,19 @@ import { contentApi, type SourceDocumentInput } from "../lib/contentApi";
 import { buildProductionDraft, contentSteps, creationModes, isCurrentRequest, modeLabel, reconcileProjectId, sourceKindForMode, statusLabel, type RequestToken } from "./model";
 
 const emptyStyle: StyleProfile = { key: "", name: "", category: "", summary: "", characterRules: [], sceneRules: [], lightingRules: [], cameraRules: [], materialRules: [], negativeRules: [] };
+const styleOptions: Array<Pick<StyleProfile, "key" | "name" | "category" | "summary">> = [
+  { key: "donghua_3d", name: "3D古风玄幻国漫", category: "国漫 · 3D", summary: "角色建模精致，东方美学，柔和光影" },
+  { key: "anime_jp", name: "日系动漫（标准）", category: "动漫 · 2D", summary: "赛璐珞上色，线条清晰，五官精致" },
+  { key: "cinematic_real", name: "电影质感写实", category: "写实 · 影视", summary: "电影级调色，光影氛围浓厚" },
+  { key: "semi_real", name: "拟真人/半写实风", category: "写实 · 漫画", summary: "保留真人辨识度与动漫美化" },
+  { key: "dark_paint", name: "暗黑厚涂风", category: "实验 · 氛围", summary: "强烈明暗对比，适合悬疑与暗黑题材" }
+];
+
+function chapterize(content: string) {
+  const matches = [...content.matchAll(/(^|\n)\s*(第[一二三四五六七八九十百0-9]+章[^\n]*|Chapter\s+\d+[^\n]*)/gi)];
+  if (!matches.length) return [{ title: "正文", content }];
+  return matches.map((match, index) => ({ title: match[2].trim(), content: content.slice(match.index! + match[0].length, matches[index + 1]?.index ?? content.length).trim() }));
+}
 
 interface ContentWorkspaceProps {
   initialProjects: ContentProjectSummary[];
@@ -18,6 +31,7 @@ export function ContentWorkspace({ initialProjects, onReload, onEnterProduction 
   const [creating, setCreating] = useState(initialProjects.length === 0);
   const [createMode, setCreateMode] = useState<ContentProjectMode>("original");
   const [createTitle, setCreateTitle] = useState("");
+  const [createStyle, setCreateStyle] = useState(styleOptions[0]);
   const [sourceTitle, setSourceTitle] = useState("");
   const [sourceContent, setSourceContent] = useState("");
   const [tab, setTab] = useState<"input" | "output" | "diff">("input");
@@ -63,7 +77,7 @@ export function ContentWorkspace({ initialProjects, onReload, onEnterProduction 
     if (!createTitle.trim()) return;
     setBusy("create"); setError("");
     try {
-      const created = await contentApi.createProject({ title: createTitle.trim(), mode: createMode, styleProfile: emptyStyle });
+      const created = await contentApi.createProject({ title: createTitle.trim(), mode: createMode, styleProfile: { ...emptyStyle, ...createStyle } });
       setProjects((current) => [created, ...current]); setSelectedId(created.id); setCreating(false); setCreateTitle(""); setMessage("内容项目已创建");
     } catch (reason) { setError(reason instanceof Error ? reason.message : "创建失败"); }
     finally { setBusy(""); }
@@ -131,6 +145,7 @@ export function ContentWorkspace({ initialProjects, onReload, onEnterProduction 
     </main>
 
     <aside className="content-inspector">
+      {creating ? <label className="content-style-select"><span>视觉风格（用于后续分镜）</span><select value={createStyle.key} onChange={(event) => setCreateStyle(styleOptions.find((item) => item.key === event.target.value) ?? styleOptions[0])}>{styleOptions.map((style) => <option key={style.key} value={style.key}>{style.name} · {style.category}</option>)}</select><small>{createStyle.summary}</small></label> : null}
       <div className="content-panel-title"><div><strong>配置与评测</strong><small>跟随当前内容步骤</small></div></div>
       {selected ? <>
         <section><h2>当前配置</h2><dl className="content-meta"><div><dt>创作模式</dt><dd>{modeLabel(selected.mode)}</dd></div><div><dt>当前步骤</dt><dd>{contentSteps.find((step) => step.id === selected.activeStep)?.label}</dd></div><div><dt>内容风格</dt><dd>{selected.styleProfile?.name || "AI 自动匹配"}</dd></div></dl></section>

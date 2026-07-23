@@ -12,7 +12,7 @@ test("reconciles selection to a real project", () => {
 });
 
 test("maps mode, source kind and server status without inventing state", () => {
-  assert.equal(modeLabel("adaptation"), "小说改编");
+  assert.equal(modeLabel("adaptation"), "导入小说");
   assert.equal(sourceKindForMode("adaptation"), "novel");
   assert.equal(sourceKindForMode("same_genre"), "short_story");
   assert.equal(statusLabel("confirmed"), "已确认");

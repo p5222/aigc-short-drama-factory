@@ -1,9 +1,9 @@
 import type { ContentProjectMode, ContentProjectSummary, ContentStep, ContentStepStatus, CreateProjectInput } from "@aifilm/shared";
 
 export const creationModes: Array<{ id: ContentProjectMode; label: string; description: string }> = [
-  { id: "same_genre", label: "同类爆款", description: "以参考作品为素材，提炼结构后创作新故事" },
-  { id: "original", label: "原创故事", description: "从灵感、设定或主题开始搭建完整内容" },
-  { id: "adaptation", label: "小说改编", description: "导入已有小说，整理章节并改编为可生产剧本" }
+  { id: "same_genre", label: "同类创作", description: "先提炼同类爆款结构，再生成全新故事" },
+  { id: "original", label: "原创创作", description: "以编导视角，从主题、人物和冲突搭建故事" },
+  { id: "adaptation", label: "导入小说", description: "导入已有小说，自动拆章并改编为可生产剧本" }
 ];
 
 export const contentSteps: Array<{ id: ContentStep; label: string }> = [
