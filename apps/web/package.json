@@ -7,7 +7,7 @@
     "dev": "vite --host 0.0.0.0",
     "build": "tsc -p tsconfig.json && vite build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test:unit": "node --experimental-strip-types --test src/pages/cineHomeModel.test.mjs src/pages/projectWorkbenchModel.test.ts src/content/model.test.ts src/workbench/model.test.ts src/workbench/stages/deliveryModel.test.ts"
+    "test:unit": "node --experimental-strip-types --test src/pages/cineHomeModel.test.mjs src/pages/projectWorkbenchModel.test.ts src/pages/workbenchPresentation.test.ts src/content/model.test.ts src/workbench/model.test.ts src/workbench/stages/deliveryModel.test.ts"
   },
   "dependencies": {
     "@aifilm/shared": "workspace:*",

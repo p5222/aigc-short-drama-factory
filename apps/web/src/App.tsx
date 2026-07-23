@@ -347,7 +347,7 @@ export function App() {
   const page = useMemo(() => {
     switch (activePage) {
       case "workbench":
-        return <WorkbenchPage summary={summary} onStart={() => setActivePage("wizard")} onOpen={(projectId) => void openProject(projectId)} />;
+        return <WorkbenchPage summary={summary} onStart={() => setActivePage("wizard")} onOpen={(projectId) => void openProject(projectId)} onOpenTasks={() => setActivePage("tasks")} onRecharge={() => setActivePage("recharge")} />;
       case "content":
         return <ContentCreatorPage onEnterProduction={(draft) => {
           localStorage.setItem("aifilm_creation_draft", JSON.stringify(draft));
