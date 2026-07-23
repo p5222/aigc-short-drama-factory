@@ -357,6 +357,7 @@ export function App() {
         return (
           <WizardPage
             providers={providers}
+            onCreateContent={() => setActivePage("content")}
             onCreated={(projectId) => {
               void load().then(() => openProject(projectId));
             }}

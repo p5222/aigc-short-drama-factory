@@ -7,6 +7,7 @@ import { api } from "../lib/api";
 interface WizardPageProps {
   providers: ModelProvider[];
   onCreated: (projectId: string) => void;
+  onCreateContent: () => void;
 }
 
 type WizardStep = "story" | "settings" | "script";
@@ -52,10 +53,11 @@ const stylePresets = [
   "雨夜黑色电影"
 ];
 
-export function WizardPage({ providers, onCreated }: WizardPageProps) {
+export function WizardPage({ providers, onCreated, onCreateContent }: WizardPageProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [form, setForm] = useState<CreateProjectInput>(() => normalizeDraft(loadDraft() ?? defaultForm));
   const [step, setStep] = useState<WizardStep>("story");
+  const [entrySelected, setEntrySelected] = useState(Boolean(loadDraft()?.content));
   const [estimate, setEstimate] = useState<CreationEstimate | null>(null);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -242,6 +244,10 @@ export function WizardPage({ providers, onCreated }: WizardPageProps) {
     localStorage.setItem("aifilm_creation_draft", JSON.stringify(form));
     setMessage("草稿已保存在当前浏览器。");
     setError("");
+  }
+
+  if (!entrySelected) {
+    return <div className="page-stack creation-entry-page"><header><span>NEW MANJIAO</span><h1>新建漫剧</h1><p>选择内容从哪里开始，后续只展示对应流程。</p></header><div className="creation-entry-grid"><button type="button" onClick={onCreateContent}><Sparkles size={22} /><strong>创作新内容</strong><span>爆款拆解、章节大纲、每批 2-3 章创作，再衔接漫剧制作</span><ChevronRight size={18} /></button><button type="button" onClick={() => { setForm((current) => ({ ...current, sourceType: "novel", content: "" })); setEntrySelected(true); }}><BookOpenCheck size={22} /><strong>导入已有小说</strong><span>小说转剧本，再提取人物、场景并生成分镜</span><ChevronRight size={18} /></button><button type="button" onClick={() => { setForm((current) => ({ ...current, sourceType: "script", content: "" })); setEntrySelected(true); }}><FileText size={22} /><strong>导入已有剧本</strong><span>跳过小说改编，直接拆解场次、资产和镜头</span><ChevronRight size={18} /></button></div></div>;
   }
 
   return (

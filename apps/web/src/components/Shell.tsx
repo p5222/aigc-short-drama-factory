@@ -51,7 +51,6 @@ const sections: Array<{ label: string; items: Array<{ key: PageKey; label: strin
     label: "创作",
     items: [
       { key: "workbench", label: "工作台", icon: <Grid2X2 size={19} /> },
-      { key: "content", label: "内容创作", icon: <FileText size={19} /> },
       { key: "wizard", label: "新建漫剧", icon: <WandSparkles size={19} /> },
       { key: "scripts", label: "我的作品", icon: <BookOpen size={19} /> }
     ]
