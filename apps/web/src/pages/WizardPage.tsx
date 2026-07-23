@@ -247,7 +247,7 @@ export function WizardPage({ providers, onCreated, onCreateContent }: WizardPage
   }
 
   if (!entrySelected) {
-    return <div className="page-stack creation-entry-page"><header><span>NEW MANJIAO</span><h1>新建漫剧</h1><p>选择内容从哪里开始，后续只展示对应流程。</p></header><div className="creation-entry-grid"><button type="button" onClick={onCreateContent}><Sparkles size={22} /><strong>创作新内容</strong><span>爆款拆解、章节大纲、每批 2-3 章创作，再衔接漫剧制作</span><ChevronRight size={18} /></button><button type="button" onClick={() => { setForm((current) => ({ ...current, sourceType: "novel", content: "" })); setEntrySelected(true); }}><BookOpenCheck size={22} /><strong>导入已有小说</strong><span>小说转剧本，再提取人物、场景并生成分镜</span><ChevronRight size={18} /></button><button type="button" onClick={() => { setForm((current) => ({ ...current, sourceType: "script", content: "" })); setEntrySelected(true); }}><FileText size={22} /><strong>导入已有剧本</strong><span>跳过小说改编，直接拆解场次、资产和镜头</span><ChevronRight size={18} /></button></div></div>;
+    return <div className="page-stack creation-entry-page"><header><span>NEW MANJIAO</span><h1>新建漫剧</h1><p>选择创作内容，后续只展示与你当前任务相关的步骤。</p></header><div className="creation-entry-grid"><button type="button" onClick={onCreateContent}><Sparkles size={22} /><strong>创作新内容</strong><span>输入标题、小说名、风格或参考作品名，系统先识别方向并拆解同类爆款</span><ChevronRight size={18} /></button><button type="button" onClick={() => { setForm((current) => ({ ...current, sourceType: "novel", content: "" })); setEntrySelected(true); }}><BookOpenCheck size={22} /><strong>导入小说 / 剧本</strong><span>进入原稿类型选择：小说自动转剧本，已有剧本直接拆解场次和资产</span><ChevronRight size={18} /></button></div></div>;
   }
 
   return (
