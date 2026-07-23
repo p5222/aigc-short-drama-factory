@@ -919,6 +919,18 @@ app.get(
   })
 );
 
+app.use("/api/content", (req, res, next) => {
+  void resolveAuthUser(req)
+    .then((user) => {
+      if (!user) return res.status(401).json({ message: "登录已过期，请重新登录。" });
+      const authedReq = req as express.Request & { userId?: string; authUser?: { id: string; role: string; status: string } };
+      authedReq.userId = user.id;
+      authedReq.authUser = user;
+      next();
+    })
+    .catch(next);
+});
+
 app.get("/api/content/projects", asyncRoute(async (req, res) => {
   const userId = requestUserId(req);
   if (!userId) return res.status(401).json({ message: "请先登录。" });
