@@ -126,7 +126,7 @@ import { testVideoModelConnection } from "./providers/video.js";
 import { listVisualPipelines, testVisualPipeline } from "./providers/visualPipelineRegistry.js";
 import { generationQueue, generationQueueEvents, queueConnection, startGenerationWorker } from "./queue/generationQueue.js";
 import { ensureStorageBuckets, storageRoot } from "./storage/objectStorage.js";
-import { handleAddSource, handleCreateContentProject, handleGenerateContentPackage, handleGetContentPackage, handleListContentProjects } from "./content/routes.js";
+import { handleAddSource, handleCreateContentProject, handleDeleteContentProject, handleDevelopContentProject, handleGenerateContentPackage, handleGetContentPackage, handleListContentProjects } from "./content/routes.js";
 
 const app = express();
 const port = Number(process.env.API_PORT ?? 4000);
@@ -961,6 +961,19 @@ app.post("/api/content/projects/:id/generate", asyncRoute(async (req, res) => {
   res.json(await handleGenerateContentPackage(userId, paramId(req.params.id)));
 }));
 
+app.post("/api/content/projects/:id/develop", asyncRoute(async (req, res) => {
+  const userId = requestUserId(req);
+  if (!userId) return res.status(401).json({ message: "请先登录。" });
+  res.json(await handleDevelopContentProject(userId, paramId(req.params.id), req.body));
+}));
+
+app.delete("/api/content/projects/:id", asyncRoute(async (req, res) => {
+  const userId = requestUserId(req);
+  if (!userId) return res.status(401).json({ message: "请先登录。" });
+  await handleDeleteContentProject(userId, paramId(req.params.id));
+  res.status(204).end();
+}));
+
 app.patch(
   "/api/auth/profile",
   asyncRoute(async (req, res) => {
@@ -1083,6 +1096,19 @@ app.use("/api/admin", (req, res, next) => {
   }
   next();
 });
+
+app.get("/api/admin/content-projects", asyncRoute(async (_req, res) => {
+  const rows = await prisma.contentProject.findMany({
+    orderBy: { updatedAt: "desc" },
+    take: 100,
+    include: {
+      _count: { select: { sources: true, analyses: true, outlines: true, chapters: true, scripts: true } }
+    }
+  });
+  const users = await prisma.user.findMany({ where: { id: { in: [...new Set(rows.map((row) => row.userId))] } }, select: { id: true, name: true, email: true } });
+  const userMap = new Map(users.map((user) => [user.id, user]));
+  res.json(rows.map((row) => ({ id: row.id, title: row.title, mode: row.mode, status: row.status, activeStep: row.activeStep, styleProfile: row.styleProfile, updatedAt: row.updatedAt.toISOString(), user: userMap.get(row.userId), counts: row._count })));
+}));
 
 app.get(
   "/api/showcase/mine",

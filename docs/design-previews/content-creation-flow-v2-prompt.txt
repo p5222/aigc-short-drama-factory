@@ -1,0 +1,10 @@
+Use case: ui-mockup
+Asset type: production desktop web application UI design reference
+Primary request: Design a polished Chinese AI comic-drama content creation workspace that clearly guides a creator through five steps: creation intent, three popular-reference candidates, four-dimension hit analysis, chapter outline, and batched chapter writing. The first screen must never look like an empty document editor.
+Scene/backdrop: full desktop application viewport, light professional SaaS interface, no marketing hero
+Style/medium: high-fidelity product UI mockup, restrained Sub2API-like visual language, quiet operational workspace, crisp typography
+Composition/framing: 2048x1152 landscape. Left sidebar shows project and five-stage progress. Center workspace displays the current step "创作意图" with three selectable input modes: "已有标题", "题材方向", "参考作品"; a large intent input; target word-count and chapter-count controls; one primary button "识别并推荐爆款". Below it, a preview strip explains the next flow. Right inspector shows "当前计划", "模型与提示词", "后台同步" with concise statuses. Include a compact top bar with project title and autosave state.
+Color palette: light neutral gray-white surfaces, near-black text, teal accent, subtle blue-gray borders; strong readable contrast; no gradients
+Text (verbatim): "内容创作", "创作意图", "爆款参考", "四维拆解", "章节大纲", "分批正文", "已有标题", "题材方向", "参考作品", "识别并推荐爆款", "目标 20000 字", "10 章", "每批 2-3 章", "后台已同步"
+Constraints: Make the user's next action unmistakable. Show meaningful empty states and real workflow status. Use compact cards only for actual options. No nested cards. No black sidebars. No large empty textarea. No SVG illustrations. No decorative graphics. No mock charts. Ensure Chinese text is legible and hierarchy is clear.
+Avoid: purple gradients, glassmorphism, excessive rounded corners, oversized headings, dark canvas, floating cards, marketing layout, lorem ipsum, tiny low-contrast text, confusing three-mode project creation screen

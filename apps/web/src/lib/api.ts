@@ -75,6 +75,18 @@ export interface AuthResult {
   user: AuthUser;
 }
 
+export interface AdminContentProject {
+  id: string;
+  title: string;
+  mode: string;
+  status: string;
+  activeStep: string;
+  styleProfile: Record<string, unknown>;
+  updatedAt: string;
+  user?: { id: string; name: string; email?: string };
+  counts: { sources: number; analyses: number; outlines: number; chapters: number; scripts: number };
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return requestJson<T>(path, options);
 }
@@ -88,6 +100,7 @@ async function requestBlob(path: string, options?: RequestInit): Promise<Blob> {
 }
 
 export const api = {
+  adminContentProjects: () => request<AdminContentProject[]>("/admin/content-projects"),
   login: (input: { account: string; password: string }) =>
     request<AuthResult>("/auth/login", {
       method: "POST",

@@ -63,7 +63,7 @@ import type {
   VisualPipelineDescriptor,
   VisualPipelineTestResult
 } from "@aifilm/shared";
-import { api } from "../lib/api";
+import { api, type AdminContentProject } from "../lib/api";
 import { AdminEvaluationPage, AdminMasterDetail, AdminTablePage } from "../admin";
 
 type AdminActionResult = void | Promise<void>;
@@ -295,7 +295,7 @@ export function AdminPage({
       {error ? <p className="admin-toast danger">{error}</p> : null}
 
       {activeModule === "运营总览" ? <DashboardSection summary={summary} providers={providers} modelPrices={modelPrices} /> : null}
-      {activeModule === "创作现场管理" ? <ShowcaseWorksSection /> : null}
+      {activeModule === "创作现场管理" ? <><ContentProjectsAdminSection /><ShowcaseWorksSection /></> : null}
       {activeModule === "创作质量中心" ? <QualityCenterSection evaluation={evaluation} projects={qualityProjects} providers={providers} onRefresh={onRefresh} /> : null}
       {activeModule === "提示词评分" ? (
         <PromptScoringSection
@@ -438,6 +438,15 @@ function DashboardSection({ summary, providers, modelPrices }: { summary?: Admin
 
     </section>
   );
+}
+
+function ContentProjectsAdminSection() {
+  const [rows, setRows] = useState<AdminContentProject[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  useEffect(() => { void api.adminContentProjects().then(setRows).catch((reason) => setError(reason instanceof Error ? reason.message : "内容项目加载失败")).finally(() => setLoading(false)); }, []);
+  const stepLabels: Record<string, string> = { source: "创作意图", analysis: "爆款分析", strategy: "创作策略", outline: "章节大纲", chapter: "分批正文", script: "剧本", entity: "人物场景" };
+  return <section className="admin-v2-card admin-content-projects"><header className="admin-v2-card-head"><div><h2>内容创作流转</h2><p>与前台内容工作台共用真实项目、分析、大纲和章节数据。</p></div><span>{rows.length} 个项目</span></header>{loading ? <p className="admin-empty">正在读取内容项目...</p> : error ? <p className="admin-toast danger">{error}</p> : <div className="admin-content-project-list">{rows.map((row) => <article key={row.id}><div><strong>{row.title}</strong><small>{row.user?.name || row.user?.email || "未知创作者"} · {new Date(row.updatedAt).toLocaleString("zh-CN")}</small></div><span>{stepLabels[row.activeStep] || row.activeStep}</span><span className={`admin-content-status ${row.status}`}>{row.status}</span><dl><div><dt>分析</dt><dd>{row.counts.analyses}</dd></div><div><dt>大纲</dt><dd>{row.counts.outlines}</dd></div><div><dt>章节</dt><dd>{row.counts.chapters}</dd></div><div><dt>剧本</dt><dd>{row.counts.scripts}</dd></div></dl></article>)}</div>}</section>;
 }
 
 function ShowcaseWorksSection() {

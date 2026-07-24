@@ -4,6 +4,7 @@ import type { ContentProductionPackage, ContentProjectMode, ContentProjectSummar
 import { prisma } from "../db/client.js";
 import { assertUsableScriptOutput, callTextModelJson, extractSceneNames } from "../agents/generator.js";
 import { createToonflowScriptPlan, type ToonflowCharacterCard } from "../agents/toonflowAdapter.js";
+import { materializePrompt } from "../prompts/runtime.js";
 
 function mapProject(row: any): ContentProjectSummary {
   return {
@@ -31,6 +32,34 @@ export async function listContentProjects(userId: string) {
     }
   });
   return rows.map(mapProject);
+}
+
+export async function deleteContentProject(userId: string, contentProjectId: string) {
+  const result = await prisma.contentProject.deleteMany({ where: { id: contentProjectId, userId } });
+  if (!result.count) throw new Error("内容项目不存在");
+}
+
+export async function developContentProject(userId: string, contentProjectId: string, input: { intentType: "title" | "genre" | "references"; intent: string; targetWords: number; chapterCount: number; batchSize: number }) {
+  const project = await prisma.contentProject.findFirst({ where: { id: contentProjectId, userId } });
+  if (!project) throw new Error("内容项目不存在");
+  await prisma.contentProject.update({ where: { id: contentProjectId }, data: { activeStep: "analysis", status: "running" } });
+  try {
+    const analysisPrompt = materializePrompt("hit_story_analysis", { sources: input.intent, genre: input.intent, platform: "番茄小说与全网公开热门内容" });
+    const analysis = await callTextModelJson<{ works?: unknown[]; commonMechanisms?: unknown[]; transferableRules?: unknown[]; risks?: unknown[] }>({ system: analysisPrompt.systemPrompt, prompt: analysisPrompt.userPrompt, maxTokens: 5000, label: "爆款结构分析" });
+    const strategyPrompt = materializePrompt("same_genre_story_strategy", { analysis, targetWords: input.targetWords, chapterCount: input.chapterCount, styleProfile: project.styleProfile });
+    const outline = await callTextModelJson<{ premise?: string; characters?: unknown[]; outline?: unknown[]; originality?: unknown[] }>({ system: strategyPrompt.systemPrompt, prompt: strategyPrompt.userPrompt, maxTokens: 7000, label: "章节大纲" });
+    const analysisVersion = (await prisma.storyAnalysis.aggregate({ where: { contentProjectId }, _max: { version: true } }))._max.version ?? 0;
+    const outlineVersion = (await prisma.storyOutline.aggregate({ where: { contentProjectId }, _max: { version: true } }))._max.version ?? 0;
+    await prisma.$transaction([
+      prisma.storyAnalysis.create({ data: { id: `analysis_${crypto.randomUUID()}`, contentProjectId, version: analysisVersion + 1, status: "confirmed", result: JSON.parse(JSON.stringify({ ...analysis, intentType: input.intentType, intent: input.intent })) as Prisma.InputJsonValue, promptSnapshot: analysisPrompt.snapshot as unknown as Prisma.InputJsonValue } }),
+      prisma.storyOutline.create({ data: { id: `outline_${crypto.randomUUID()}`, contentProjectId, version: outlineVersion + 1, status: "confirmed", result: JSON.parse(JSON.stringify({ ...outline, targetWords: input.targetWords, chapterCount: input.chapterCount, batchSize: input.batchSize })) as Prisma.InputJsonValue, promptSnapshot: strategyPrompt.snapshot as unknown as Prisma.InputJsonValue } }),
+      prisma.contentProject.update({ where: { id: contentProjectId }, data: { activeStep: "outline", status: "confirmed" } })
+    ]);
+    return getContentProductionPackage(userId, contentProjectId);
+  } catch (error) {
+    await prisma.contentProject.update({ where: { id: contentProjectId }, data: { status: "failed" } });
+    throw error;
+  }
 }
 
 export async function createContentProject(
@@ -82,6 +111,9 @@ export async function getContentProductionPackage(userId: string, contentProject
     where: { id: contentProjectId, userId },
     include: {
       sources: { orderBy: { updatedAt: "desc" }, take: 1 },
+      analyses: { orderBy: { version: "desc" }, take: 1 },
+      outlines: { orderBy: { version: "desc" }, take: 1 },
+      chapters: { orderBy: [{ chapterNo: "asc" }, { version: "desc" }] },
       scripts: { orderBy: { version: "desc" }, take: 1 },
       entities: true
     }
@@ -89,9 +121,14 @@ export async function getContentProductionPackage(userId: string, contentProject
   if (!project) throw new Error("内容项目不存在");
   const source = project.sources[0];
   const script = project.scripts[0];
+  const analysis = project.analyses[0];
+  const outline = project.outlines[0];
   return {
     projectId: project.id,
     source: source ? { id: source.id, kind: source.kind as "novel" | "short_story" | "idea" | "script", title: source.title, content: source.content, updatedAt: source.updatedAt.toISOString() } : undefined,
+    analysis: analysis ? { id: analysis.id, version: analysis.version, status: analysis.status as ContentStepStatus, result: analysis.result as Record<string, unknown>, createdAt: analysis.createdAt.toISOString() } : undefined,
+    outline: outline ? { id: outline.id, version: outline.version, status: outline.status as ContentStepStatus, result: outline.result as Record<string, unknown>, createdAt: outline.createdAt.toISOString() } : undefined,
+    chapters: project.chapters.filter((item, index, all) => all.findIndex((candidate) => candidate.chapterNo === item.chapterNo) === index).map((item) => ({ id: item.id, chapterNo: item.chapterNo, title: item.title, status: item.status as ContentStepStatus, content: item.content, updatedAt: item.updatedAt.toISOString() })),
     script: script ? { id: script.id, version: script.version, status: script.status as ContentStepStatus, content: script.content, createdAt: script.createdAt.toISOString() } : undefined,
     entities: project.entities ? {
       characters: asEntityItems(project.entities.characters),

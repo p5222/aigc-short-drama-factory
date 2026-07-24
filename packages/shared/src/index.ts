@@ -527,6 +527,9 @@ export interface ContentProjectSummary {
 export interface ContentProductionPackage {
   projectId: string;
   source?: { id: string; kind: "novel" | "short_story" | "idea" | "script"; title: string; content: string; updatedAt: string };
+  analysis?: { id: string; version: number; status: ContentStepStatus; result: Record<string, unknown>; createdAt: string };
+  outline?: { id: string; version: number; status: ContentStepStatus; result: Record<string, unknown>; createdAt: string };
+  chapters?: Array<{ id: string; chapterNo: number; title: string; status: ContentStepStatus; content: string; updatedAt: string }>;
   script?: { id: string; version: number; status: ContentStepStatus; content: string; createdAt: string };
   entities?: {
     characters: Array<{ id: string; name: string; description: string }>;

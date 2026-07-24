@@ -21,5 +21,8 @@ export const contentApi = {
   addSource: (projectId: string, input: SourceDocumentInput) =>
     requestJson<SourceDocumentResult>(`/content/projects/${encodeURIComponent(projectId)}/sources`, { method: "POST", body: JSON.stringify(input) }),
   productionPackage: (projectId: string) => requestJson<ContentProductionPackage>(`/content/projects/${encodeURIComponent(projectId)}/package`),
-  generatePackage: (projectId: string) => requestJson<ContentProductionPackage>(`/content/projects/${encodeURIComponent(projectId)}/generate`, { method: "POST" })
+  generatePackage: (projectId: string) => requestJson<ContentProductionPackage>(`/content/projects/${encodeURIComponent(projectId)}/generate`, { method: "POST" }),
+  develop: (projectId: string, input: { intentType: "title" | "genre" | "references"; intent: string; targetWords: number; chapterCount: number; batchSize: number }) =>
+    requestJson<ContentProductionPackage>(`/content/projects/${encodeURIComponent(projectId)}/develop`, { method: "POST", body: JSON.stringify(input) }),
+  deleteProject: (projectId: string) => requestJson<void>(`/content/projects/${encodeURIComponent(projectId)}`, { method: "DELETE" })
 };
