@@ -35,5 +35,9 @@ git push -u server "HEAD:$branch"
 if ($LASTEXITCODE) { throw "Server branch push failed." }
 git push server HEAD:main
 if ($LASTEXITCODE) { throw "Server main push or automatic deployment failed." }
+$head = git rev-parse HEAD
+$deployedLine = git ls-remote server refs/heads/deployed
+$deployed = if ($deployedLine) { ($deployedLine -split "\s+")[0] } else { "" }
+if ($deployed -ne $head) { throw "Code was pushed, but server deployment did not confirm this commit." }
 
 Write-Host "SHIP_OK $(git rev-parse --short HEAD) - server main deployed"

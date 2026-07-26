@@ -5,6 +5,12 @@ REPO_DIR="/opt/git/aigc-short-drama-factory.git"
 APP_DIR="/opt/manjiao"
 BACKUP_ROOT="/opt/manjiao-backups"
 HELPER="$APP_DIR/deploy/manjiao_remote.sh"
+RUNTIME_HELPER="/tmp/manjiao_remote_runtime.sh"
+
+prepare_helper() {
+  tr -d '\r' < "$HELPER" > "$RUNTIME_HELPER"
+  chmod 700 "$RUNTIME_HELPER"
+}
 
 while read -r oldrev newrev refname; do
   [ "$refname" = "refs/heads/main" ] || continue
@@ -13,12 +19,14 @@ while read -r oldrev newrev refname; do
   log="/tmp/manjiao_git_deploy_${newrev:0:8}.log"
 
   echo "[deploy] backup -> $backup"
-  bash "$HELPER" backup "$APP_DIR" "$backup" | tee "$log"
+  prepare_helper
+  bash "$RUNTIME_HELPER" backup "$APP_DIR" "$backup" | tee "$log"
   git --git-dir="$REPO_DIR" archive --format=tar --output=/tmp/manjiao_release_HEAD.tar "$newrev"
-  bash "$HELPER" extract "$APP_DIR" | tee -a "$log"
+  bash "$RUNTIME_HELPER" extract "$APP_DIR" | tee -a "$log"
+  prepare_helper
 
-  if ! bash "$APP_DIR/deploy/manjiao_remote.sh" rebuild "$APP_DIR" | tee -a "$log"; then
-    bash "$APP_DIR/deploy/manjiao_remote.sh" rollback "$APP_DIR" "$backup" | tee -a "$log"
+  if ! bash "$RUNTIME_HELPER" rebuild "$APP_DIR" | tee -a "$log"; then
+    bash "$RUNTIME_HELPER" rollback "$APP_DIR" "$backup" | tee -a "$log"
     echo "[deploy] rebuild failed; rolled back" >&2
     exit 1
   fi
@@ -32,9 +40,10 @@ while read -r oldrev newrev refname; do
     fi
   done
   if [ "$healthy" != true ]; then
-    bash "$APP_DIR/deploy/manjiao_remote.sh" rollback "$APP_DIR" "$backup" | tee -a "$log"
+    bash "$RUNTIME_HELPER" rollback "$APP_DIR" "$backup" | tee -a "$log"
     echo "[deploy] health check failed; rolled back" >&2
     exit 1
   fi
+  git --git-dir="$REPO_DIR" update-ref refs/heads/deployed "$newrev"
   echo "[deploy] OK ${newrev:0:8}, backup=$backup"
 done
