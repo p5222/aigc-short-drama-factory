@@ -907,6 +907,28 @@ body.auth-surface {
   color: rgba(255, 255, 255, 0.38);
 }
 
+/* Chrome 自动填充会强制白底黑字，在深色玻璃卡片上出现"白框"。
+   用超长 transition 冻结自动填充背景 + 按主题指定文字色。 */
+.cine-auth-input input:-webkit-autofill,
+.cine-auth-input input:-webkit-autofill:hover,
+.cine-auth-input input:-webkit-autofill:focus,
+.cine-auth-input input:-webkit-autofill:active {
+  -webkit-text-fill-color: #fff;
+  caret-color: #fff;
+  transition: background-color 999999s ease-out 0s;
+  -webkit-box-shadow: 0 0 0 1000px rgba(16, 26, 23, 0.92) inset;
+  border-radius: 10px;
+}
+
+:root[data-theme="light"] .cine-auth-input input:-webkit-autofill,
+:root[data-theme="light"] .cine-auth-input input:-webkit-autofill:hover,
+:root[data-theme="light"] .cine-auth-input input:-webkit-autofill:focus,
+:root[data-theme="light"] .cine-auth-input input:-webkit-autofill:active {
+  -webkit-text-fill-color: #172522;
+  caret-color: #172522;
+  -webkit-box-shadow: 0 0 0 1000px #f2f7f6 inset;
+}
+
 .cine-password-toggle {
   flex: 0 0 30px;
   width: 30px;

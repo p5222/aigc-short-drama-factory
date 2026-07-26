@@ -130,19 +130,16 @@ import { ensureStorageBuckets, storageRoot } from "./storage/objectStorage.js";
 import { handleAddSource, handleAnalyzeContentProject, handleConfirmContentOutline, handleCreateContentProject, handleDeleteContentProject, handleDevelopContentProject, handleGenerateContentChapterBatch, handleGenerateContentOutline, handleGenerateContentPackage, handleGetContentPackage, handleGetContentVersions, handleListContentProjects, handleUpdateContentModelRoute } from "./content/routes.js";
 
 const app = express();
-// 生产在 nginx/Caddy 之后：不设置 trust proxy 时 req.ip 会是上游代理 IP，
-// 导致限流把所有用户合并成一个桶、会话 IP 记录也全部失真。
-// 默认信任 1 层反代，可用 TRUST_PROXY 覆盖（数字层数、布尔或 CIDR）。
 app.set("trust proxy", parseTrustProxy(process.env.TRUST_PROXY, process.env.NODE_ENV === "production"));
 const port = Number(process.env.API_PORT ?? 4000);
 
 function parseTrustProxy(raw: string | undefined, productionDefault: boolean): boolean | number | string {
   const value = raw?.trim();
-  if (!value) return productionDefault ? 1 : false; // 生产默认信任 1 层反代，开发默认关闭
+  if (!value) return productionDefault ? 1 : false;
   if (value === "true") return true;
   if (value === "false") return false;
   if (/^\d+$/.test(value)) return Number(value);
-  return value; // 允许传具体 CIDR / 子网，如 "127.0.0.1,10.0.0.0/8"
+  return value;
 }
 const authSessionTtlDays = Number(process.env.AUTH_SESSION_TTL_DAYS ?? 30);
 const rateLimitWindowMs = Number(process.env.API_RATE_LIMIT_WINDOW_MS ?? 60_000);
@@ -245,7 +242,8 @@ const projectRouteUpdateSchema = z.object({
 
 const registerSchema = z.object({
   name: z.string().optional(),
-  phone: z.string().regex(/^1[3-9]\d{9}$/, "请输入 11 位中国大陆手机号"),
+  // 手机号改为选填：支持 QQ 邮箱等纯邮箱注册；填了就必须是合法手机号。
+  phone: z.union([z.string().regex(/^1[3-9]\d{9}$/, "请输入 11 位中国大陆手机号"), z.literal("")]).optional(),
   email: z.string().email(),
   password: z.string().min(6)
 });
@@ -873,15 +871,15 @@ app.post(
     if (!parsed.success) return res.status(400).json(parsed.error.flatten());
 
     const email = parsed.data.email.trim().toLowerCase();
-    const phone = parsed.data.phone.trim();
-    const existing = await prisma.user.findFirst({ where: { OR: [{ email }, { phone }] } });
+    const phone = parsed.data.phone?.trim() || null;
+    const existing = await prisma.user.findFirst({ where: { OR: [{ email }, ...(phone ? [{ phone }] : [])] } });
     if (existing?.email === email) return res.status(409).json({ message: "该邮箱已注册，请直接登录。" });
-    if (existing?.phone === phone) return res.status(409).json({ message: "该手机号已注册，请直接登录。" });
+    if (phone && existing?.phone === phone) return res.status(409).json({ message: "该手机号已注册，请直接登录。" });
 
     const user = await prisma.user.create({
       data: {
         id: `user_${crypto.randomUUID()}`,
-        name: parsed.data.name?.trim() || `用户${phone.slice(-4)}`,
+        name: parsed.data.name?.trim() || (phone ? `用户${phone.slice(-4)}` : email.split("@")[0].slice(0, 20) || "创作者"),
         email,
         phone,
         passwordHash: await hashPassword(parsed.data.password),
@@ -2926,7 +2924,6 @@ void startBackgroundServices();
 app.listen(port, () => {
   console.log(`[api] http://localhost:${port}`);
 });
-
 
 
 

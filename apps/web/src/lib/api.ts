@@ -106,7 +106,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify(input)
     }),
-  register: (input: { phone: string; email: string; password: string }) =>
+  register: (input: { phone?: string; email: string; password: string }) =>
     request<AuthResult>("/auth/register", {
       method: "POST",
       body: JSON.stringify(input)

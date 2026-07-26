@@ -38,7 +38,7 @@ export const contentApi = {
   generateOutline: (projectId: string) => requestJson<ContentProductionPackage>(`/content/projects/${encodeURIComponent(projectId)}/outline/generate`, { method: "POST" }),
   confirmOutline: (projectId: string, result: Record<string, unknown>) => requestJson<ContentProductionPackage>(`/content/projects/${encodeURIComponent(projectId)}/outline/confirm`, { method: "POST", body: JSON.stringify({ result }) }),
   updateModelRoute: (projectId: string, input: { textProvider: string; textModel: string }) => requestJson<{ textProvider: string; textModel: string }>(`/content/projects/${encodeURIComponent(projectId)}/model-route`, { method: "PATCH", body: JSON.stringify(input) }),
-  generateChapters: (projectId: string, input: { startChapter: number; batchSize: number }) =>
+  generateChapters: (projectId: string, input: { startChapter: number; batchSize: number; regenerate?: boolean }) =>
     requestJson<ContentProductionPackage>(`/content/projects/${encodeURIComponent(projectId)}/chapters/generate`, { method: "POST", body: JSON.stringify(input) }),
   deleteProject: (projectId: string) => requestJson<void>(`/content/projects/${encodeURIComponent(projectId)}`, { method: "DELETE" })
 };

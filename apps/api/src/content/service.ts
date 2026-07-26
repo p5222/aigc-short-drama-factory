@@ -197,13 +197,16 @@ async function verifyEvidenceSources(sources: Array<{ title: string; url?: strin
   }));
 }
 
-export async function generateContentChapterBatch(userId: string, contentProjectId: string, input: { startChapter: number; batchSize: number }) {
+export async function generateContentChapterBatch(userId: string, contentProjectId: string, input: { startChapter: number; batchSize: number; regenerate?: boolean }) {
   const project = await prisma.contentProject.findFirst({ where: { id: contentProjectId, userId }, include: { outlines: { orderBy: { version: "desc" }, take: 1 }, chapters: { orderBy: [{ chapterNo: "asc" }, { version: "desc" }] } } });
   if (!project) throw new Error("内容项目不存在");
   const outline = normalizeDevelopmentOutline(project.outlines[0]?.result);
   const batchSize = Math.max(2, Math.min(3, input.batchSize));
   const generatedChapterNumbers = new Set(project.chapters.map((chapter) => chapter.chapterNo));
-  const goals = outline.chapters.filter((chapter) => chapter.chapterNo >= input.startChapter && !generatedChapterNumbers.has(chapter.chapterNo)).slice(0, batchSize);
+  // regenerate=true：只针对 startChapter 这一章重新生成（写入新版本，不影响其他章）。
+  const goals = input.regenerate
+    ? outline.chapters.filter((chapter) => chapter.chapterNo === input.startChapter)
+    : outline.chapters.filter((chapter) => chapter.chapterNo >= input.startChapter && !generatedChapterNumbers.has(chapter.chapterNo)).slice(0, batchSize);
   if (!goals.length) return getContentProductionPackage(userId, contentProjectId);
   await prisma.contentProject.update({ where: { id: contentProjectId }, data: { activeStep: "chapter", status: "running" } });
   let previousHandoff: unknown = project.chapters.filter((chapter, index, all) => all.findIndex((candidate) => candidate.chapterNo === chapter.chapterNo) === index).filter((chapter) => chapter.chapterNo < input.startChapter).at(-1)?.result ?? "这是第一章，无前章交接";

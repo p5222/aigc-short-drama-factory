@@ -62,8 +62,8 @@ const copy = {
     captchaPlaceholder: "请输入图中字符",
     remember: "记住我",
     forgot: "忘记密码?",
-    phone: "手机号",
-    phonePlaceholder: "请输入手机号",
+    phone: "手机号（选填）",
+    phonePlaceholder: "可留空，仅用邮箱注册",
     email: "邮箱",
     emailPlaceholder: "请输入邮箱地址",
     setPassword: "设置密码",
@@ -108,8 +108,8 @@ const copy = {
     captchaPlaceholder: "Enter the characters",
     remember: "Remember me",
     forgot: "Forgot password?",
-    phone: "Phone",
-    phonePlaceholder: "Enter phone number",
+    phone: "Phone (optional)",
+    phonePlaceholder: "Optional - email-only signup works",
     email: "Email",
     emailPlaceholder: "Enter email address",
     setPassword: "Set password",
@@ -653,8 +653,8 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
       setMessage(locale === "cn" ? "请输入手机号、邮箱或用户名。" : "Please enter phone, email or username.");
       return;
     }
-    if (activeMode === "register" && !phonePattern.test(cleanPhone)) {
-      setMessage(locale === "cn" ? "请输入有效的 11 位手机号。" : "Please enter a valid 11-digit phone number.");
+    if (activeMode === "register" && cleanPhone && !phonePattern.test(cleanPhone)) {
+      setMessage(locale === "cn" ? "手机号格式不正确；也可以留空，仅用邮箱注册。" : "Invalid phone number; leave it empty to register with email only.");
       return;
     }
     if (activeMode === "register" && !emailPattern.test(cleanEmail)) {
@@ -684,7 +684,7 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
       const result =
         activeMode === "login"
           ? await api.login({ account: cleanAccount, password })
-          : await api.register({ phone: cleanPhone, email: cleanEmail, password });
+          : await api.register({ phone: cleanPhone || undefined, email: cleanEmail, password });
 
       if (isAdmin && !["admin", "operator", "finance", "support"].includes(result.user.role)) {
         localStorage.removeItem("aifilm_auth_token");

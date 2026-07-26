@@ -45,6 +45,14 @@ git push -u origin HEAD
 
 ## 3. 每次开发与推送
 
+最短路径（仅修改已跟踪文件时）：
+
+```powershell
+pnpm push:safe -- "feat: describe the change"
+```
+
+该命令自动运行测试、类型检查、构建、diff 检查、提交和 push。发现未跟踪文件时会停止，先用 `git add <明确的新文件>` 确认后再运行。
+
 ```powershell
 git fetch origin
 git switch <branch>

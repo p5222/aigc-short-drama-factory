@@ -5,6 +5,7 @@ import { useLayoutEffect } from "react";
 import type {
   AdminUserRow,
   AdminSummary,
+  ContentProjectSummary,
   CreditAccount,
   CreditTransaction,
   EvaluationOverview,
@@ -26,6 +27,7 @@ import type {
 import { Shell, type PageKey } from "./components/Shell";
 import { ProductTour, type ProductTourStep } from "./components/ProductTour";
 import { api, type AuthUser } from "./lib/api";
+import { contentApi } from "./lib/contentApi";
 import { AdminPage } from "./pages/AdminPage";
 import { AdminShell } from "./admin";
 import { LedgerPage, RechargePage } from "./pages/CreditsPage";
@@ -106,6 +108,9 @@ export function App() {
   const [authReady, setAuthReady] = useState(false);
   const [summary, setSummary] = useState<WorkbenchSummary>();
   const [projects, setProjects] = useState<Project[]>([]);
+  const [contentProjects, setContentProjects] = useState<ContentProjectSummary[]>([]);
+  const [contentFocusId, setContentFocusId] = useState("");
+  const [openingProjectId, setOpeningProjectId] = useState("");
   const [tasks, setTasks] = useState<GenerationTask[]>([]);
   const [account, setAccount] = useState<CreditAccount>();
   const [transactions, setTransactions] = useState<CreditTransaction[]>([]);
@@ -247,7 +252,7 @@ export function App() {
     }
 
     try {
-      const [summaryRes, projectsRes, tasksRes, accountRes, txRes, ordersRes, plansRes, membershipPlansRes, providersRes, modelPricesRes, helpArticlesRes] =
+      const [summaryRes, projectsRes, tasksRes, accountRes, txRes, ordersRes, plansRes, membershipPlansRes, providersRes, modelPricesRes, helpArticlesRes, contentProjectsRes] =
         await Promise.all([
           api.workbench(),
           api.projects(),
@@ -259,11 +264,13 @@ export function App() {
           api.membershipPlans(),
           api.providers(),
           api.modelPrices(),
-          api.helpArticles()
+          api.helpArticles(),
+          contentApi.projects().catch(() => [] as ContentProjectSummary[])
         ]);
 
       setSummary(summaryRes);
       setProjects(projectsRes);
+      setContentProjects(contentProjectsRes);
       setTasks(tasksRes);
       setAccount(accountRes);
       setTransactions(txRes);
@@ -280,9 +287,19 @@ export function App() {
   }, [isAdminRoute, loadAdmin, user]);
 
   async function openProject(projectId: string) {
-    const nextWorkflow = await api.workflow(projectId);
-    setWorkflow(nextWorkflow);
-    setActivePage("project");
+    // 之前无 catch：workflow 请求一失败就静默吞掉，用户点击"没有任何反应"。
+    if (openingProjectId) return;
+    setOpeningProjectId(projectId);
+    setError("");
+    try {
+      const nextWorkflow = await api.workflow(projectId);
+      setWorkflow(nextWorkflow);
+      setActivePage("project");
+    } catch (err) {
+      setError(err instanceof Error ? `打开作品失败：${err.message}` : "打开作品失败，请稍后重试");
+    } finally {
+      setOpeningProjectId("");
+    }
   }
 
   async function refreshCurrentProject(projectId: string) {
@@ -349,7 +366,7 @@ export function App() {
       case "workbench":
         return <WorkbenchPage summary={summary} onStart={() => setActivePage("wizard")} onOpen={(projectId) => void openProject(projectId)} onOpenTasks={() => setActivePage("tasks")} onRecharge={() => setActivePage("recharge")} />;
       case "content":
-        return <ContentCreatorPage providers={providers} onEnterProduction={(draft) => {
+        return <ContentCreatorPage providers={providers} initialSelectedId={contentFocusId} onBack={() => setActivePage("scripts")} onEnterProduction={(draft) => {
           localStorage.setItem("aifilm_creation_draft", JSON.stringify(draft));
           setActivePage("wizard");
         }} />;
@@ -364,7 +381,7 @@ export function App() {
           />
         );
       case "scripts":
-        return <ScriptsPage projects={projects} onOpen={(projectId) => void openProject(projectId)} onNew={() => setActivePage("wizard")} onDelete={(projectId) => void api.deleteProject(projectId).then(() => load()) .catch((reason) => setError(reason instanceof Error ? reason.message : "删除作品失败"))} />;
+        return <ScriptsPage projects={projects} contentProjects={contentProjects} openingId={openingProjectId} onOpen={(projectId) => void openProject(projectId)} onOpenContent={(contentProjectId) => { setContentFocusId(contentProjectId); setActivePage("content"); }} onNew={() => setActivePage("wizard")} onNewContent={() => { setContentFocusId(""); setActivePage("content"); }} onDelete={(projectId) => void api.deleteProject(projectId).then(() => load()) .catch((reason) => setError(reason instanceof Error ? reason.message : "删除作品失败"))} />;
       case "project":
         return (
           <ProjectWorkbenchPage
@@ -419,7 +436,7 @@ export function App() {
       default:
         return null;
     }
-  }, [account, activePage, adminPlans, adminSummary, adminUsers, announcements, handleThemeChange, helpArticles, membershipPlans, modelPrices, orders, plans, projects, providers, redeemCodes, summary, tasks, templates, theme, transactions, workflow, load, user]);
+  }, [account, activePage, adminPlans, adminSummary, adminUsers, announcements, contentFocusId, contentProjects, handleThemeChange, helpArticles, membershipPlans, modelPrices, openingProjectId, orders, plans, projects, providers, redeemCodes, summary, tasks, templates, theme, transactions, workflow, load, user]);
 
   if (!authReady) {
     return <div className="app-loading">正在连接 AI 漫剧工作台...</div>;
