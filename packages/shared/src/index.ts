@@ -1133,6 +1133,8 @@ export interface BatchGenerationResult {
   project: Project;
   task: GenerationTask;
   assetsCreated: number;
+  /** 服务端筛选补充说明（如：不属于项目的分镜被忽略、批量上限截断等）。 */
+  message?: string;
 }
 
 export interface StoryboardExportRow {

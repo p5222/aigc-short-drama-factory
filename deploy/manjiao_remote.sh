@@ -28,21 +28,26 @@ case "$cmd" in
     rm -f /tmp/manjiao_release_HEAD.tar
     echo "EXTRACTED"
     ;;
-  merge_pipp)
+  merge_pipp|merge_env)
     cd "$RD"; touch .env.production
-    if [ ! -f /tmp/pipp.env ]; then echo "no pipp.env, skip"; exit 0; fi
+    SRC=/tmp/keys.env
+    [ -f "$SRC" ] || SRC=/tmp/pipp.env
+    if [ ! -f "$SRC" ]; then echo "no keys file, skip"; exit 0; fi
+    merged=0
     while IFS= read -r line; do
       case "$line" in ''|\#*) continue;; esac
+      case "$line" in *=*) ;; *) continue;; esac
       key="${line%%=*}"
       if grep -q "^${key}=" .env.production; then
         sed -i "s|^${key}=.*|${line}|" .env.production
       else
         echo "$line" >> .env.production
       fi
-    done < /tmp/pipp.env
-    rm -f /tmp/pipp.env
+      merged=$((merged+1))
+    done < "$SRC"
+    rm -f /tmp/keys.env /tmp/pipp.env
     if grep -q "^MANJIAO_TEXT_API_KEY=." .env.production; then echo "MANJIAO key present"; else echo "WARN: MANJIAO_TEXT_API_KEY empty"; fi
-    echo "PIPP_MERGED"
+    echo "ENV_MERGED ($merged keys)"
     ;;
   rebuild)
     cd "$RD"

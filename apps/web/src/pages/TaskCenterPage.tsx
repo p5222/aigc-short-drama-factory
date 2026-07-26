@@ -154,26 +154,54 @@ export function TaskCenterPage({
             <span>{filteredTasks.length} 条</span>
           </div>
           <div className="queue-task-list">
-            {filteredTasks.map((task) => (
-              <button
-                type="button"
-                key={task.id}
-                className={selectedTask?.id === task.id ? "queue-task-row active" : "queue-task-row"}
-                onClick={() => setSelectedTaskId(task.id)}
-              >
-                <span className="queue-task-type">{taskTypeIcon(task.type)}</span>
-                <span className="queue-task-main">
-                  <strong>{taskTitleText(task.title)}</strong>
-                  <small>{task.projectName ?? "未绑定作品"} · {task.provider || "未记录渠道"} / {task.model || "未记录模型"}</small>
-                  <span className="queue-progress-line"><i style={{ width: `${normalizeProgress(task.progress)}%` }} /></span>
-                </span>
-                <span className="queue-task-side">
-                  <em className={`queue-status ${task.status}`}>{taskStatusText(task.status)}</em>
-                  <small>{normalizeProgress(task.progress)}%</small>
-                </span>
-              </button>
-            ))}
-            {!filteredTasks.length ? <div className="queue-empty">当前筛选没有任务。切回“全部”可以查看历史记录。</div> : null}
+            {filteredTasks.map((task) => {
+              const failedLike = task.status === "failed" || task.status === "canceled" || task.status === "refunded";
+              const cancelableRow = Boolean(task.cancelable ?? (task.status === "pending" || task.status === "running"));
+              return (
+                <div
+                  role="button"
+                  tabIndex={0}
+                  key={task.id}
+                  className={selectedTask?.id === task.id ? "queue-task-row active" : "queue-task-row"}
+                  onClick={() => setSelectedTaskId(task.id)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      setSelectedTaskId(task.id);
+                    }
+                  }}
+                >
+                  <span className="queue-task-type">{taskTypeIcon(task.type)}</span>
+                  <span className="queue-task-main">
+                    <strong>{taskTitleText(task.title)}</strong>
+                    <small>{task.projectName ?? "未绑定作品"} · {task.provider || "未记录渠道"} / {task.model || "未记录模型"}</small>
+                    <span className="queue-progress-line"><i className={task.status === "running" ? "running" : undefined} style={{ width: `${Math.max(task.status === "running" ? 4 : 0, normalizeProgress(task.progress))}%` }} /></span>
+                    {task.status === "failed" && task.errorReason ? (
+                      <small className="queue-task-error"><AlertTriangle size={13} />{task.errorReason}</small>
+                    ) : null}
+                    {failedLike || cancelableRow ? (
+                      <span className="queue-task-actions">
+                        {failedLike ? (
+                          <button type="button" onClick={(event) => { event.stopPropagation(); onRetry(task.id); }}>
+                            <RotateCcw size={13} />重试
+                          </button>
+                        ) : null}
+                        {cancelableRow ? (
+                          <button type="button" className="danger" onClick={(event) => { event.stopPropagation(); onCancel(task.id); }}>
+                            <Square size={12} />取消
+                          </button>
+                        ) : null}
+                      </span>
+                    ) : null}
+                  </span>
+                  <span className="queue-task-side">
+                    <em className={`queue-status ${task.status}`}>{taskStatusText(task.status)}</em>
+                    <small>{normalizeProgress(task.progress)}%</small>
+                  </span>
+                </div>
+              );
+            })}
+            {!filteredTasks.length ? <div className="queue-empty">{emptyListText(activeFilter, activeStage, tasks.length)}</div> : null}
           </div>
         </div>
 
@@ -225,25 +253,43 @@ function TaskDetailPanel({
           <strong>{progress}%</strong>
           <span>{task.status === "running" ? "正在生成，请不要重复提交同一任务" : progressHint(task.status)}</span>
         </div>
-        <div className="queue-progress-bar"><i style={{ width: `${progress}%` }} /></div>
+        <div className="queue-progress-bar"><i className={task.status === "running" ? "running" : undefined} style={{ width: `${Math.max(task.status === "running" ? 4 : 0, progress)}%` }} /></div>
       </div>
 
-      <div className="queue-detail-grid">
-        <QueueDetail label="作品" value={task.projectName ?? "未记录"} />
-        <QueueDetail label="渠道" value={task.provider || "未记录"} />
-        <QueueDetail label="模型" value={task.model || "未记录"} />
-        <QueueDetail label="预计积分" value={`${task.estimatedCredits}`} />
-        <QueueDetail label="实际积分" value={`${task.finalCredits ?? "-"}`} />
-        <QueueDetail label="预计耗时" value={formatDuration(task.estimatedSeconds ?? estimateTaskSeconds(task))} />
-        <QueueDetail label="队列位置" value={queuePosition ? `第 ${queuePosition} 位` : task.status === "running" ? "执行中" : "-"} />
-        <QueueDetail label="任务 ID" value={task.jobId ?? task.id} />
-        <QueueDetail label="更新时间" value={formatTaskTime(task.updatedAt)} />
+      <div className="queue-detail-group">
+        <h3>作品与渠道</h3>
+        <div className="queue-detail-grid">
+          <QueueDetail label="所属作品" value={task.projectName ?? "未记录"} />
+          <QueueDetail label="任务类型" value={taskTypeText(task.type)} />
+          <QueueDetail label="生成渠道" value={task.provider || "未记录"} />
+          <QueueDetail label="使用模型" value={task.model || "未记录"} />
+        </div>
+      </div>
+
+      <div className="queue-detail-group">
+        <h3>积分</h3>
+        <div className="queue-detail-grid">
+          <QueueDetail label="预估冻结" value={`${task.estimatedCredits} 积分`} />
+          <QueueDetail label="实际扣费" value={task.finalCredits != null ? `${task.finalCredits} 积分` : "未结算"} />
+        </div>
+      </div>
+
+      <div className="queue-detail-group">
+        <h3>执行信息</h3>
+        <div className="queue-detail-grid">
+          <QueueDetail label="预计耗时" value={formatDuration(task.estimatedSeconds ?? estimateTaskSeconds(task))} />
+          <QueueDetail label="队列位置" value={queuePosition ? `第 ${queuePosition} 位` : task.status === "running" ? "执行中" : "-"} />
+          <QueueDetail label="创建时间" value={formatTaskTime(task.createdAt)} />
+          <QueueDetail label="更新时间" value={formatTaskTime(task.updatedAt)} />
+        </div>
+        <div className="queue-task-id" title={task.jobId ?? task.id}><span>任务 ID</span><code>{task.jobId ?? task.id}</code></div>
       </div>
 
       {task.errorReason ? (
         <div className="queue-error-box">
-          <strong>失败原因</strong>
+          <strong><AlertTriangle size={14} />失败原因</strong>
           <p>{task.errorReason}</p>
+          <p className="queue-error-hint">可直接重试；若同一渠道反复失败，建议在生产台切换模型渠道后再生成。</p>
         </div>
       ) : (
         <div className="queue-next-box">
@@ -389,6 +435,20 @@ function taskStatusText(status: TaskStatus) {
     refunded: "已退款"
   };
   return labels[status] ?? status;
+}
+
+function emptyListText(filter: QueueFilter, stage: TaskType | "all", totalTasks: number) {
+  if (!totalTasks) return "还没有生成任务。到「漫剧生产台」生成剧本、分镜或视频后，任务会实时出现在这里。";
+  const stagePrefix = stage === "all" ? "" : `「${taskTypeText(stage)}」阶段`;
+  const filterTexts: Record<QueueFilter, string> = {
+    all: `${stagePrefix}暂无任务记录。`,
+    active: `${stagePrefix}当前没有生成中的任务。`,
+    pending: `${stagePrefix}当前没有排队中的任务。`,
+    failed: `${stagePrefix}没有失败任务，一切正常。`,
+    succeeded: `${stagePrefix}还没有已完成的任务。`,
+    canceled: `${stagePrefix}没有已取消的任务。`
+  };
+  return `${filterTexts[filter]} 切回「全部」可查看完整历史。`;
 }
 
 function progressHint(status: TaskStatus) {

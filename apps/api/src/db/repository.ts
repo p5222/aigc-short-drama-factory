@@ -1425,12 +1425,22 @@ export async function runProjectImageTasks(
   };
 }
 
-export async function runProjectVideoTasks(projectId: string, userId = DEMO_USER_ID): Promise<BatchGenerationResult> {
+export async function runProjectVideoTasks(
+  projectId: string,
+  userId = DEMO_USER_ID,
+  options: { storyboardIds?: string[]; regenerate?: boolean } = {}
+): Promise<BatchGenerationResult> {
   const workflow = await getProjectWorkflow(projectId, userId);
   if (!workflow) throw new Error("项目不存在");
   const taskId = `task_video_${Date.now()}`;
   const imageAssetByShotId = new Map(workflow.assets.filter((asset) => asset.type === "image").map((asset) => [asset.id.replace(/^image_/, ""), asset]));
   const videoAssetByShotId = new Map(workflow.assets.filter((asset) => asset.type === "video").map((asset) => [asset.id.replace(/^video_/, ""), asset]));
+  const knownShotIds = new Set(workflow.storyboards.map((shot) => shot.id));
+  const requestedShotIds = [...new Set((options.storyboardIds ?? []).filter(Boolean))];
+  const selectedShotIds = new Set(requestedShotIds.filter((id) => knownShotIds.has(id)));
+  const unknownShotIds = requestedShotIds.filter((id) => !knownShotIds.has(id));
+  /** regenerate 仅在显式传入 storyboardIds 时生效，避免整项目误重生；不传 storyboardIds 时行为与原接口完全一致。 */
+  const regenerate = Boolean(options.regenerate) && selectedShotIds.size > 0;
   const videoProvider = workflow.project.videoProvider || process.env.VIDEO_PROVIDER || "dashscope-video";
   const videoProviderConfig = await prisma.modelProvider.findUnique({ where: { id: videoProvider } });
   const videoRouting = readProviderRoutingState(
@@ -1441,13 +1451,37 @@ export async function runProjectVideoTasks(projectId: string, userId = DEMO_USER
   const videoModelPool = videoRouting.mode === "manual"
     ? [videoModel]
     : uniqueModelPool([videoModel, ...videoRouting.modelPool, ...(videoProviderConfig?.models ?? [])]);
-  const shotsToGenerate = workflow.storyboards
-    .filter((shot) => !isPersistedPlayableVideoReference(videoAssetByShotId.get(shot.id)?.referenceUrl))
-    .filter((shot) => imageAssetByShotId.has(shot.id))
-    .slice(0, videoBatchLimit(workflow.storyboards.length, videoProvider));
+  const scopedShots = workflow.storyboards.filter((shot) => selectedShotIds.size === 0 || selectedShotIds.has(shot.id));
+  const skippedExistingShots = selectedShotIds.size && !regenerate
+    ? scopedShots.filter((shot) => imageAssetByShotId.has(shot.id) && isPersistedPlayableVideoReference(videoAssetByShotId.get(shot.id)?.referenceUrl))
+    : [];
+  const skippedNoFirstFrameShots = selectedShotIds.size ? scopedShots.filter((shot) => !imageAssetByShotId.has(shot.id)) : [];
+  const candidateShots = scopedShots
+    .filter((shot) => regenerate || !isPersistedPlayableVideoReference(videoAssetByShotId.get(shot.id)?.referenceUrl))
+    .filter((shot) => imageAssetByShotId.has(shot.id));
+  const shotsToGenerate = candidateShots.slice(0, videoBatchLimit(workflow.storyboards.length, videoProvider));
   if (!shotsToGenerate.length) {
+    if (selectedShotIds.size > 0) {
+      const reasons = [
+        skippedExistingShots.length ? `${skippedExistingShots.length} 个已有视频（如需重生请勾选重新生成）` : "",
+        skippedNoFirstFrameShots.length ? `${skippedNoFirstFrameShots.length} 个缺少分镜图首帧` : "",
+        unknownShotIds.length ? `${unknownShotIds.length} 个不属于该项目已被忽略` : ""
+      ].filter(Boolean);
+      throw new Error(`选中的分镜没有可生成视频的镜头${reasons.length ? `：${reasons.join("；")}` : ""}。`);
+    }
     throw new Error("没有可用于图生视频的分镜图。请先在“分镜图评估”里生成至少一张镜头首帧，再生成视频。");
   }
+  /** 仅在按镜头选择模式下补充说明；默认整项目模式的响应保持原样。 */
+  const filterNotices = selectedShotIds.size
+    ? [
+        unknownShotIds.length ? `${unknownShotIds.length} 个镜头不属于该项目，已忽略` : "",
+        skippedExistingShots.length ? `${skippedExistingShots.length} 个已有视频的镜头已跳过（可用“重新生成”产生新版本）` : "",
+        skippedNoFirstFrameShots.length ? `${skippedNoFirstFrameShots.length} 个镜头缺少分镜图首帧，已跳过` : "",
+        candidateShots.length > shotsToGenerate.length
+          ? `受视频批量上限限制，本次仅提交 ${shotsToGenerate.length}/${candidateShots.length} 个镜头，其余可再次提交`
+          : ""
+      ].filter(Boolean)
+    : [];
   const creditsPerSecond = await resolveVideoCreditPerSecond(videoProvider, videoModel);
   const credits = shotsToGenerate.reduce((sum, shot) => sum + Math.max(1, shot.duration) * creditsPerSecond, 0);
 
@@ -1460,7 +1494,8 @@ export async function runProjectVideoTasks(projectId: string, userId = DEMO_USER
     shotsToGenerate.map(async (shot) => {
       const imageAsset = imageAssetByShotId.get(shot.id);
       const existingVideoAsset = videoAssetByShotId.get(shot.id);
-      const queuedTaskId = existingVideoAsset?.referenceUrl && !isPersistedPlayableVideoReference(existingVideoAsset.referenceUrl)
+      /** 重新生成时不再续查旧上游任务，直接走全新生成；其余场景保持原有断点续查逻辑。 */
+      const queuedTaskId = !regenerate && existingVideoAsset?.referenceUrl && !isPersistedPlayableVideoReference(existingVideoAsset.referenceUrl)
         ? existingVideoAsset.referenceUrl
         : undefined;
       const queried = queuedTaskId
@@ -1517,6 +1552,25 @@ export async function runProjectVideoTasks(projectId: string, userId = DEMO_USER
       : "succeeded";
   const taskProgress = taskStatus === "succeeded" ? 100 : taskStatus === "failed" ? 0 : Math.max(35, Math.round((succeededVideoResults.length / Math.max(1, videoResults.length)) * 100));
   const taskErrorReason = buildVideoTaskErrorReason(videoResults);
+  /** 重新生成前把旧的可播放视频复制为带版本号的历史资产（`video_<shotId>` 主资产随后被新结果覆盖，旧视频得以保留）。 */
+  const archiveVersion = Date.now();
+  const archivedVideoAssets = regenerate
+    ? shotsToGenerate.flatMap((shot) => {
+        const existing = videoAssetByShotId.get(shot.id);
+        if (!existing || !isPersistedPlayableVideoReference(existing.referenceUrl)) return [];
+        return [{
+          id: `video_${shot.id}_v${archiveVersion}`,
+          projectId,
+          type: "video",
+          name: `${existing.name}（旧版本）`,
+          description: existing.description,
+          prompt: existing.prompt,
+          referenceUrl: existing.referenceUrl,
+          status: "succeeded",
+          relatedCharacterId: null
+        }];
+      })
+    : [];
 
   const result = await prisma.$transaction(async (tx) => {
     const account = await tx.creditAccount.findUniqueOrThrow({ where: { userId } });
@@ -1551,6 +1605,10 @@ export async function runProjectVideoTasks(projectId: string, userId = DEMO_USER
       status: item.videoUrl ? "succeeded" : item.result.status === "failed" || item.result.status === "timeout" || item.result.status === "canceled" ? "failed" : "running",
       relatedCharacterId: null
     }));
+
+    for (const archivedAsset of archivedVideoAssets) {
+      await tx.asset.upsert({ where: { id: archivedAsset.id }, create: archivedAsset, update: {} });
+    }
 
     let created = { count: 0 };
     for (const videoAsset of videoAssets) {
@@ -1607,7 +1665,8 @@ export async function runProjectVideoTasks(projectId: string, userId = DEMO_USER
   return {
     project: refreshed!.project,
     task: mapTask(result.task),
-    assetsCreated: result.created
+    assetsCreated: result.created,
+    ...(filterNotices.length ? { message: filterNotices.join("；") } : {})
   };
 }
 

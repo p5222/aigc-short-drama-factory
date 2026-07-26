@@ -1368,3 +1368,9 @@ body.auth-surface {
     padding: 26px 20px 28px;
   }
 }
+
+/* 备案信息行（参照通用站点页脚格式） */
+.cine-icp-line { display: inline-flex; flex-wrap: wrap; justify-content: center; gap: 4px; color: rgba(255,255,255,.5); font-size: 12px; }
+.cine-icp-line .cine-icp-link { color: rgba(255,255,255,.62); }
+:root[data-theme="light"] .cine-icp-line { color: #6b7a77; }
+:root[data-theme="light"] .cine-icp-line .cine-icp-link { color: #52645f; }

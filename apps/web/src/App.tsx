@@ -347,16 +347,23 @@ export function App() {
   }, [load]);
 
   useEffect(() => {
+    // 旧实现每 4 秒跑一次 load()（12+ 个接口），恰好打满每分钟 180 次限流，
+    // 触发"API 连接异常：请求过于频繁"。改为：只轮询轻量的 tasks（+当前项目 workflow），
+    // 8 秒一次，页面不可见时暂停；任务全部结束时做一次全量收尾刷新。
     const hasActiveTask = tasks.some((task) => task.status === "running" || task.status === "pending");
     if (!hasActiveTask && activePage !== "project") return;
 
     const timer = window.setInterval(() => {
-      void load().then(() => {
-        if (workflow?.project.id) {
-          void api.workflow(workflow.project.id).then(setWorkflow).catch(() => undefined);
-        }
-      });
-    }, 4000);
+      if (document.hidden) return;
+      void api.tasks().then((nextTasks) => {
+        setTasks(nextTasks);
+        const stillActive = nextTasks.some((task) => task.status === "running" || task.status === "pending");
+        if (hasActiveTask && !stillActive) void load();
+      }).catch(() => undefined);
+      if (activePage === "project" && workflow?.project.id) {
+        void api.workflow(workflow.project.id).then(setWorkflow).catch(() => undefined);
+      }
+    }, 8000);
 
     return () => window.clearInterval(timer);
   }, [activePage, load, tasks, workflow?.project.id]);

@@ -483,9 +483,10 @@ export const api = {
       method: "POST",
       body: JSON.stringify(input ?? {})
     }),
-  generateVideos: (projectId: string) =>
+  generateVideos: (projectId: string, input?: { storyboardIds?: string[]; regenerate?: boolean }) =>
     request<BatchGenerationResult>(`/projects/${projectId}/videos/generate`, {
-      method: "POST"
+      method: "POST",
+      ...(input ? { body: JSON.stringify(input) } : {})
     }),
   exportStoryboard: (projectId: string) => request<StoryboardExportRow[]>(`/projects/${projectId}/export/storyboard`),
   directorStoryboard: (projectId: string) => request<DirectorStoryboardRow[]>(`/projects/${projectId}/director-storyboard`),

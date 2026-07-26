@@ -127,7 +127,7 @@ import { testVideoModelConnection } from "./providers/video.js";
 import { listVisualPipelines, testVisualPipeline } from "./providers/visualPipelineRegistry.js";
 import { generationQueue, generationQueueEvents, queueConnection, startGenerationWorker } from "./queue/generationQueue.js";
 import { ensureStorageBuckets, storageRoot } from "./storage/objectStorage.js";
-import { handleAddSource, handleAnalyzeContentProject, handleConfirmContentOutline, handleCreateContentProject, handleDeleteContentProject, handleDevelopContentProject, handleGenerateContentChapterBatch, handleGenerateContentOutline, handleGenerateContentPackage, handleGetContentPackage, handleGetContentVersions, handleListContentProjects, handleUpdateContentModelRoute } from "./content/routes.js";
+import { handleAddSource, handleAnalyzeContentProject, handleConfirmContentOutline, handleCreateContentProject, handleDeleteContentProject, handleDevelopContentProject, handleGenerateContentChapterBatch, handleGenerateContentOutline, handleGenerateContentPackage, handleGetContentPackage, handleGetContentVersions, handleListContentProjects, handleUpdateContentChapter, handleUpdateContentModelRoute } from "./content/routes.js";
 
 const app = express();
 app.set("trust proxy", parseTrustProxy(process.env.TRUST_PROXY, process.env.NODE_ENV === "production"));
@@ -490,6 +490,11 @@ const characterImageGenerateSchema = z.object({
 const imageGenerateSchema = z.object({
   shotIds: z.array(z.string()).optional(),
   forceRegenerate: z.boolean().optional()
+});
+
+const videoGenerateSchema = z.object({
+  storyboardIds: z.array(z.string()).min(1).max(20).optional(),
+  regenerate: z.boolean().optional()
 });
 
 const evaluationStageSchema = z.enum(["script", "character", "storyboard", "image", "video"]);
@@ -1017,6 +1022,14 @@ app.patch("/api/content/projects/:id/model-route", asyncRoute(async (req, res) =
   res.json(await handleUpdateContentModelRoute(userId, paramId(req.params.id), req.body));
 }));
 
+app.patch("/api/content/projects/:id/chapters/:chapterNo", asyncRoute(async (req, res) => {
+  const userId = requestUserId(req);
+  if (!userId) return res.status(401).json({ message: "请先登录。" });
+  const chapterNo = Number(req.params.chapterNo);
+  if (!Number.isInteger(chapterNo) || chapterNo < 1) return res.status(400).json({ message: "章节号不合法" });
+  res.json(await handleUpdateContentChapter(userId, paramId(req.params.id), chapterNo, req.body));
+}));
+
 app.post("/api/content/projects/:id/chapters/generate", asyncRoute(async (req, res) => {
   const userId = requestUserId(req);
   if (!userId) return res.status(401).json({ message: "请先登录。" });
@@ -1400,7 +1413,9 @@ app.post(
 app.post(
   "/api/projects/:id/videos/generate",
   asyncRoute(async (req, res) => {
-    res.json(await runProjectVideoTasks(paramId(req.params.id), requestUserId(req)));
+    const parsed = videoGenerateSchema.safeParse(req.body ?? {});
+    if (!parsed.success) return res.status(400).json(parsed.error.flatten());
+    res.json(await runProjectVideoTasks(paramId(req.params.id), requestUserId(req), parsed.data));
   })
 );
 
@@ -2924,6 +2939,3 @@ void startBackgroundServices();
 app.listen(port, () => {
   console.log(`[api] http://localhost:${port}`);
 });
-
-
-

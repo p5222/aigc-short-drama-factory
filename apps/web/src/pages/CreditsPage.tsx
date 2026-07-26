@@ -1,17 +1,25 @@
 import { useMemo, useState } from "react";
-import { CheckCircle2, ChevronDown, ClipboardList, Coins, CreditCard, Gift, ReceiptText, WalletCards } from "lucide-react";
+import { CheckCircle2, ClipboardList, Coins, CreditCard, Gift, ReceiptText, Sparkles, WalletCards } from "lucide-react";
 import type { CreditAccount, CreditTransaction, MembershipPlan, ModelPrice, Plan } from "@aifilm/shared";
 import { api } from "../lib/api";
-import { MetricCard } from "../components/MetricCard";
+
+const modalityOrder: Record<string, number> = { text: 0, image: 1, video: 2, tts: 3, embedding: 4 };
 
 export function RechargePage({ plans, membershipPlans, modelPrices, onRefresh }: { plans: Plan[]; membershipPlans: MembershipPlan[]; modelPrices: ModelPrice[]; onRefresh: () => void }) {
   const [message, setMessage] = useState("");
   const [redeemCode, setRedeemCode] = useState("");
   const [error, setError] = useState("");
-  const [showModelDetails, setShowModelDetails] = useState(false);
   const defaultShopUrl = "https://pay.ldxp.cn/shop/ZHP28OV1";
   const enabledModelPrices = modelPrices.filter((price) => price.enabled);
   const usageReferences = useMemo(() => buildCreditUsageReferences(enabledModelPrices), [enabledModelPrices]);
+  const sortedModelPrices = useMemo(
+    () => [...enabledModelPrices].sort((a, b) =>
+      (modalityOrder[a.modality] ?? 9) - (modalityOrder[b.modality] ?? 9)
+      || a.unitCredits - b.unitCredits
+      || a.providerName.localeCompare(b.providerName)
+    ),
+    [enabledModelPrices]
+  );
 
   async function redeem() {
     setMessage("");
@@ -54,32 +62,47 @@ export function RechargePage({ plans, membershipPlans, modelPrices, onRefresh }:
           <span className="recharge-validity">积分永久有效 · 可用于所有 AI 生成能力</span>
         </div>
         <div className="plan-grid recharge-plan-grid" data-tour-id="recharge-plans">
-        {plans.map((plan) => (
-          <article className="plan-card" key={plan.id}>
-            {plan.badge ? <span className="badge">{plan.badge}</span> : null}
-            <span>{plan.name}</span>
-            <strong>¥{plan.price.toFixed(2)}</strong>
-            <ul>
-              {plan.features.map((feature) => (
-                <li key={feature}>{feature}</li>
-              ))}
-            </ul>
-            <button
-              className="primary-button"
-              onClick={() => openCheckout("recharge", { id: plan.id, name: plan.name, price: plan.price, shopUrl: plan.shopUrl })}
-            >
-              前往充值
-            </button>
-          </article>
-        ))}
+        {plans.map((plan) => {
+          const featured = Boolean(plan.badge && plan.badge.includes("推荐"));
+          const totalCredits = plan.credits + plan.bonusCredits;
+          return (
+            <article className={featured ? "plan-card recharge-card featured" : "plan-card recharge-card"} key={plan.id}>
+              {plan.badge ? (
+                <span className={featured ? "badge recharge-card-badge featured" : "badge recharge-card-badge"}>
+                  {featured ? <Sparkles size={13} /> : null}
+                  {plan.badge}
+                </span>
+              ) : null}
+              <span className="recharge-card-name">{plan.name}</span>
+              <div className="recharge-card-price">
+                <em>¥</em>
+                <strong>{formatPlanPrice(plan.price)}</strong>
+              </div>
+              <div className="recharge-card-credits">
+                <b>{totalCredits.toLocaleString()}</b>
+                <i>积分</i>
+                {plan.bonusCredits ? <small>含赠送 {plan.bonusCredits.toLocaleString()}</small> : null}
+              </div>
+              <ul className="recharge-card-features">
+                {plan.features.map((feature) => (
+                  <li key={feature}><CheckCircle2 size={14} />{feature}</li>
+                ))}
+              </ul>
+              <button
+                className="primary-button"
+                onClick={() => openCheckout("recharge", { id: plan.id, name: plan.name, price: plan.price, shopUrl: plan.shopUrl })}
+              >
+                前往充值
+              </button>
+            </article>
+          );
+        })}
         </div>
       </section>
       <section className="panel credit-usage-panel">
         <div className="panel-head">
-          <div><h2>积分消费参考</h2><small>实际消耗以生成时选择的模型、画质、时长和后台价格策略为准。</small></div>
-          <button className="ghost-button" type="button" onClick={() => setShowModelDetails((value) => !value)}>
-            <ClipboardList size={18} />{showModelDetails ? "收起模型明细" : "查看模型明细"}<ChevronDown size={16} />
-          </button>
+          <div><h2>积分消费参考</h2><small>按后台价格策略实时渲染；实际消耗以生成时选择的模型、画质与时长为准，生成先冻结、成功扣费、失败退回。</small></div>
+          <span className="recharge-validity"><ClipboardList size={16} /> 共 {enabledModelPrices.length} 条启用价格</span>
         </div>
         <div className="credit-usage-grid">
           {usageReferences.map((item) => (
@@ -93,21 +116,19 @@ export function RechargePage({ plans, membershipPlans, modelPrices, onRefresh }:
             </article>
           ))}
         </div>
-        {showModelDetails ? (
-          <div className="model-price-table compact-model-price-table">
-            <div className="model-price-row header"><span>渠道</span><span>模型</span><span>类型</span><span>计费单位</span><span>积分</span></div>
-            {enabledModelPrices.slice(0, 16).map((price) => (
-              <div className="model-price-row" key={price.id}>
-                <strong>{price.providerName}</strong>
-                <span>{price.model}</span>
-                <span className={`model-price-chip modality-${price.modality}`}>{priceModalityText(price.modality)}</span>
-                <span className="model-price-unit">{priceUnitText(price.unit)}</span>
-                <b>{price.unitCredits}</b>
-              </div>
-            ))}
-            {!enabledModelPrices.length ? <div className="empty-state">后台还没有启用的模型价格策略。</div> : null}
-          </div>
-        ) : null}
+        <div className="model-price-table compact-model-price-table credit-usage-table">
+          <div className="model-price-row header"><span>渠道</span><span>模型</span><span>类型</span><span>计费单位</span><span>积分</span></div>
+          {sortedModelPrices.map((price) => (
+            <div className="model-price-row" key={price.id}>
+              <strong>{price.providerName}</strong>
+              <span>{price.model}</span>
+              <span className={`model-price-chip modality-${price.modality}`}>{priceModalityText(price.modality)}</span>
+              <span className="model-price-unit">{priceUnitText(price.unit)}</span>
+              <b>{price.unitCredits}</b>
+            </div>
+          ))}
+          {!enabledModelPrices.length ? <div className="empty-state">后台还没有启用的模型价格策略。</div> : null}
+        </div>
       </section>
       {message ? <p className="success-text">{message}</p> : null}
       {error ? <p className="danger-text">{error}</p> : null}
@@ -160,6 +181,10 @@ export function RechargePage({ plans, membershipPlans, modelPrices, onRefresh }:
   );
 }
 
+function formatPlanPrice(price: number) {
+  return Number.isInteger(price) ? String(price) : price.toFixed(price * 10 % 1 ? 2 : 1);
+}
+
 function priceModalityText(value: ModelPrice["modality"]) {
   const labels: Record<string, string> = { text: "文本", image: "生图", video: "视频", tts: "配音", embedding: "向量" };
   return labels[value] ?? value;
@@ -188,11 +213,21 @@ function creditFor(prices: ModelPrice[], predicate: (price: ModelPrice) => boole
   return prices.find(predicate)?.unitCredits ?? fallback;
 }
 
+const ledgerPageSize = 20;
+
 export function LedgerPage({ account, transactions }: { account?: CreditAccount; transactions: CreditTransaction[] }) {
   const [filter, setFilter] = useState<CreditTransaction["type"] | "all">("all");
+  const [visibleCount, setVisibleCount] = useState(ledgerPageSize);
   const filteredTransactions = filter === "all" ? transactions : transactions.filter((tx) => tx.type === filter);
+  const visibleTransactions = filteredTransactions.slice(0, visibleCount);
+  const remainingCount = filteredTransactions.length - visibleTransactions.length;
   const recharged = transactions.filter((tx) => tx.amount > 0).reduce((sum, tx) => sum + tx.amount, 0);
   const consumed = Math.abs(transactions.filter((tx) => tx.amount < 0).reduce((sum, tx) => sum + tx.amount, 0));
+
+  function changeFilter(next: CreditTransaction["type"] | "all") {
+    setFilter(next);
+    setVisibleCount(ledgerPageSize);
+  }
 
   return (
     <div className="page-stack ledger-page">
@@ -219,11 +254,11 @@ export function LedgerPage({ account, transactions }: { account?: CreditAccount;
       </div>
       <section className="panel ledger-table-panel">
         <div className="panel-head">
-          <div><h2>流水记录</h2><small>共 {transactions.length} 条，当前显示 {filteredTransactions.length} 条。</small></div>
+          <div><h2>流水记录</h2><small>共 {transactions.length} 条，筛选后 {filteredTransactions.length} 条，已显示 {visibleTransactions.length} 条。</small></div>
         </div>
         <div className="ledger-filter-tabs">
           {ledgerFilters.map((item) => (
-            <button className={filter === item.id ? "active" : undefined} key={item.id} type="button" onClick={() => setFilter(item.id)}>
+            <button className={filter === item.id ? "active" : undefined} key={item.id} type="button" onClick={() => changeFilter(item.id)}>
               {item.label}
             </button>
           ))}
@@ -236,7 +271,7 @@ export function LedgerPage({ account, transactions }: { account?: CreditAccount;
             <span>说明</span>
             <span>时间</span>
           </div>
-          {filteredTransactions.map((tx) => (
+          {visibleTransactions.map((tx) => (
             <div className="task-row" key={tx.id}>
               <span className={`ledger-type-chip ${tx.type}`}>{transactionTypeLabel(tx.type)}</span>
               <strong className={tx.amount >= 0 ? "ledger-positive" : "ledger-negative"}>{tx.amount >= 0 ? "+" : ""}{tx.amount}</strong>
@@ -245,8 +280,19 @@ export function LedgerPage({ account, transactions }: { account?: CreditAccount;
               <span>{formatLedgerDate(tx.createdAt)}</span>
             </div>
           ))}
-          {!filteredTransactions.length ? <div className="empty-state">暂无匹配的积分流水。</div> : null}
+          {!filteredTransactions.length ? (
+            <div className="empty-state">
+              {filter === "all"
+                ? "暂无积分流水。充值入账或开始生成任务后，这里会出现每一笔冻结、扣费与退还记录。"
+                : `暂无「${ledgerFilters.find((item) => item.id === filter)?.label ?? ""}」类型的流水记录，切回「全部」查看完整历史。`}
+            </div>
+          ) : null}
         </div>
+        {remainingCount > 0 ? (
+          <button className="ghost-button ledger-load-more" type="button" onClick={() => setVisibleCount((value) => value + ledgerPageSize)}>
+            加载更多（还有 {remainingCount} 条）
+          </button>
+        ) : null}
       </section>
     </div>
   );

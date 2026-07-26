@@ -1,25 +1,21 @@
 import {
   BadgeCheck,
-  Bell,
   BookOpen,
   Camera,
   ChevronDown,
   ChevronRight,
   CircleHelp,
   ClipboardList,
-  Clock,
   Coins,
   CreditCard,
   FileText,
   Film,
-  Gauge,
   Headphones,
   KeyRound,
   LifeBuoy,
   ListChecks,
   LogOut,
   Mail,
-  MessageSquare,
   MonitorPlay,
   ReceiptText,
   Search,
@@ -37,19 +33,6 @@ import { api, type AuthUser } from "../lib/api";
 import type { PageKey } from "../components/Shell";
 
 const maxAvatarBytes = 20 * 1024;
-type ProfileTab = "account" | "works" | "orders" | "ledger" | "security";
-const profileTabs: Array<{
-  id: ProfileTab;
-  label: string;
-  icon: typeof UserRound;
-  count?: (input: { summary?: WorkbenchSummary; transactions: CreditTransaction[]; orders: RechargeOrder[] }) => number;
-}> = [
-  { id: "account", label: "账号", icon: UserRound },
-  { id: "works", label: "作品", icon: BookOpen, count: ({ summary }) => summary?.projects ?? 0 },
-  { id: "orders", label: "订单", icon: ReceiptText, count: ({ orders }) => orders.length },
-  { id: "ledger", label: "积分流水", icon: ClipboardList, count: ({ transactions }) => transactions.length },
-  { id: "security", label: "安全", icon: Clock }
-];
 
 export function StudioPage() {
   return (
@@ -82,10 +65,8 @@ export function ProfilePage({
   onUserUpdate: (user: AuthUser) => void;
 }) {
   const contact = user.email || user.phone || "未绑定联系方式";
-  const recentTransactions = transactions.slice(0, 5);
-  const recentOrders = orders.slice(0, 6);
-  const [activeTab, setActiveTab] = useState<ProfileTab>("account");
   const [editOpen, setEditOpen] = useState(false);
+  const [securityOpen, setSecurityOpen] = useState<"email" | "password" | "">("");
   const [profileName, setProfileName] = useState(user.name);
   const [avatarUrl, setAvatarUrl] = useState(user.avatarUrl ?? "");
   const [profileBusy, setProfileBusy] = useState(false);
@@ -224,73 +205,46 @@ export function ProfilePage({
     }
   }
 
-  const profileStats = [
-    { label: "作品", value: summary?.projects ?? 0 },
-    { label: "分镜", value: summary?.storyboards ?? 0 },
-    { label: "积分", value: account?.balance ?? summary?.credits ?? 0 },
-    { label: "累计充值", value: account?.totalRecharge ?? 0 }
-  ];
   const creditBalance = account?.balance ?? summary?.credits ?? 0;
   const creditTotal = Math.max(account?.totalRecharge ?? 0, creditBalance + (account?.totalConsume ?? 0));
   const creditPercent = creditTotal ? Math.min(100, Math.round((creditBalance / creditTotal) * 100)) : 0;
+  const recentTransactions = transactions.slice(0, 4);
+  const recentOrders = orders.slice(0, 3);
 
   return (
-    <div className="page-stack profile-page profile-console-page">
-      <section className="profile-hero profile-account-cover">
-        <div className="profile-identity">
-          <ProfileAvatar name={user.name} avatarUrl={user.avatarUrl} size="large" />
-          <div>
-            <span className="section-kicker">AI 漫剧 / 我的</span>
-            <h1>{user.name} {user.phone ? `@${user.phone}` : ""}</h1>
-            <p>已登录 · {maskContact(contact)}</p>
-            <div className="profile-badges">
-              <span><BadgeCheck size={15} />{roleLabel(user.role)}</span>
-              <span><ShieldCheck size={15} />{user.status === "active" ? "账号正常" : "账号停用"}</span>
-            </div>
-          </div>
+    <div className="page-stack profile-page profile-v2-page">
+      <div className="page-title row-title">
+        <div>
+          <h1>我的</h1>
+          <p>账号资料、积分与安全设置集中在这里管理。</p>
         </div>
-        <div className="profile-hero-stats">
-          {profileStats.map((item) => (
-            <div key={item.label}>
-              <strong>{item.value.toLocaleString()}</strong>
-              <span>{item.label}</span>
-            </div>
-          ))}
+        <div className="inline-actions">
+          <button className="ghost-button" type="button" onClick={onLogout}><LogOut size={17} />退出登录</button>
         </div>
-        <div className="profile-hero-actions">
-          <button className="ghost-button" onClick={() => { setActiveTab("account"); setEditOpen((value) => !value); }}><Camera size={18} />编辑资料</button>
-          <button className="icon-button" onClick={onLogout} aria-label="退出登录"><LogOut size={18} /></button>
-        </div>
-      </section>
+      </div>
 
-      <nav className="profile-tabs" aria-label="个人中心标签">
-        {profileTabs.map((tab) => (
-          <button className={activeTab === tab.id ? "active" : undefined} key={tab.id} type="button" onClick={() => setActiveTab(tab.id)}>
-            <tab.icon size={17} />
-            {tab.label}
-            {tab.count !== undefined ? <span>{tab.count({ summary, transactions, orders })}</span> : null}
-          </button>
-        ))}
-      </nav>
-
-      {activeTab === "account" ? (
-        <div className="profile-account-grid">
-          <section className="profile-section profile-account-info-card">
+      <div className="profile-v2-grid">
+        <div className="profile-v2-column">
+          <section className="panel profile-v2-card profile-v2-account">
             <div className="panel-head">
               <div>
                 <h2>账号信息</h2>
-                <small>基础资料、联系方式和当前账号状态。</small>
+                <small>头像、昵称与绑定的登录方式。</small>
               </div>
               <button className="ghost-button" type="button" onClick={() => setEditOpen((value) => !value)}>
-                <Camera size={16} />编辑
+                <Camera size={16} />{editOpen ? "收起编辑" : "编辑资料"}
               </button>
             </div>
-            <div className="profile-info-list">
-              <InfoRow label="昵称" value={user.name} />
-              <InfoRow label="用户名" value={user.phone || user.email || user.id} />
-              <InfoRow label="手机号" value={maskContact(user.phone || "未绑定")} />
-              <InfoRow label="邮箱" value={user.email || "未绑定"} />
-              <InfoRow label="账号状态" value={user.status === "active" ? "正常" : "停用"} />
+            <div className="profile-v2-identity">
+              <ProfileAvatar name={user.name} avatarUrl={user.avatarUrl} size="large" />
+              <div>
+                <strong>{user.name}</strong>
+                <span>{maskContact(contact)}</span>
+                <div className="profile-badges">
+                  <span><BadgeCheck size={15} />{roleLabel(user.role)}</span>
+                  <span><ShieldCheck size={15} />{user.status === "active" ? "账号正常" : "账号停用"}</span>
+                </div>
+              </div>
             </div>
             {editOpen ? (
               <div className="profile-inline-editor">
@@ -317,89 +271,93 @@ export function ProfilePage({
                 {profileError ? <p className="danger-text">{profileError}</p> : null}
               </div>
             ) : null}
-          </section>
-
-          <section className="profile-section profile-credit-overview-card">
-            <div className="panel-head">
-              <div>
-                <h2>积分概览</h2>
-                <small>可用积分、累计充值和累计消耗。</small>
+            <div className="profile-v2-bindings">
+              <div className="profile-v2-binding-row">
+                <span className="profile-v2-binding-icon"><UserRound size={17} /></span>
+                <div>
+                  <strong>手机号</strong>
+                  <small>{user.phone ? maskContact(user.phone) : "未绑定（注册时选填）"}</small>
+                </div>
+                <em className={user.phone ? "bound" : ""}>{user.phone ? "已绑定" : "未绑定"}</em>
               </div>
-              <button className="ghost-button" type="button" onClick={() => onNavigate("ledger")}>查看明细 →</button>
-            </div>
-            <div className="profile-credit-balance">
-              <strong>{creditBalance.toLocaleString()}</strong>
-              <span>积分</span>
-            </div>
-            <div className="profile-credit-progress" aria-label={`可用积分占比 ${creditPercent}%`}>
-              <span style={{ width: `${creditPercent}%` }} />
-            </div>
-            <div className="profile-credit-metrics">
-              <div><b>{(account?.totalRecharge ?? 0).toLocaleString()}</b><span>累计充值</span></div>
-              <div><b>{(account?.totalConsume ?? 0).toLocaleString()}</b><span>累计消耗</span></div>
-              <div><b>{creditBalance.toLocaleString()}</b><span>当前余额</span></div>
-            </div>
-            <div className="profile-credit-actions">
-              <button className="primary-button" type="button" onClick={() => onNavigate("recharge")}><CreditCard size={18} />立即充值</button>
-              <button className="ghost-button" type="button" onClick={() => setActiveTab("ledger")}><ClipboardList size={18} />查看流水</button>
+              <div className="profile-v2-binding-row">
+                <span className="profile-v2-binding-icon"><Mail size={17} /></span>
+                <div>
+                  <strong>邮箱</strong>
+                  <small>{user.email ? maskContact(user.email) : "未绑定，可用于登录和找回账号"}</small>
+                </div>
+                <button className="ghost-button" type="button" onClick={() => setSecurityOpen("email")}>{user.email ? "换绑" : "绑定"}</button>
+              </div>
+              <div className="profile-v2-binding-row">
+                <span className="profile-v2-binding-icon"><KeyRound size={17} /></span>
+                <div>
+                  <strong>登录密码</strong>
+                  <small>用于账号登录与敏感操作验证。</small>
+                </div>
+                <button className="ghost-button" type="button" onClick={() => setSecurityOpen("password")}>修改</button>
+              </div>
             </div>
           </section>
 
-          <section className="profile-section profile-account-security-card">
+          <section className="panel profile-v2-card profile-v2-security">
             <div className="panel-head">
               <div>
                 <h2>账号安全</h2>
-                <small>修改邮箱账号和登录密码，关键操作需要校验当前密码。</small>
+                <small>修改邮箱或密码都需要校验当前密码；改密码后其他会话会失效。</small>
               </div>
-              <button className="ghost-button" type="button" onClick={() => setActiveTab("security")}>
-                <ShieldCheck size={16} />查看登录状态
-              </button>
             </div>
-            <div className="profile-security-grid">
-              <div className="profile-security-form">
-                <div className="profile-security-form-head">
-                  <Mail size={20} />
-                  <div>
-                    <strong>邮箱账号</strong>
-                    <span>当前邮箱：{user.email || "未绑定"}</span>
-                  </div>
-                </div>
-                <label className="field">
-                  <span>新邮箱</span>
-                  <input
-                    type="email"
-                    value={emailForm.email}
-                    onChange={(event) => setEmailForm((value) => ({ ...value, email: event.target.value }))}
-                    autoComplete="email"
-                    placeholder="name@example.com"
-                  />
-                </label>
-                <label className="field">
-                  <span>当前密码</span>
-                  <input
-                    type="password"
-                    value={emailForm.currentPassword}
-                    onChange={(event) => setEmailForm((value) => ({ ...value, currentPassword: event.target.value }))}
-                    autoComplete="current-password"
-                    placeholder="确认本人操作"
-                  />
-                </label>
-                <button className="primary-button profile-security-submit" onClick={changeEmail} disabled={emailBusy} type="button">
-                  <Mail size={18} />{emailBusy ? "保存中" : "保存邮箱"}
-                </button>
-                {emailMessage ? <p className="success-text">{emailMessage}</p> : null}
-                {emailError ? <p className="danger-text">{emailError}</p> : null}
-              </div>
 
-              <div className="profile-security-form">
-                <div className="profile-security-form-head">
-                  <KeyRound size={20} />
-                  <div>
-                    <strong>修改密码</strong>
-                    <span>新密码至少 8 个字符，修改后其他会话会失效。</span>
-                  </div>
+            <div className={securityOpen === "email" ? "profile-v2-collapse open" : "profile-v2-collapse"}>
+              <button type="button" onClick={() => setSecurityOpen((value) => (value === "email" ? "" : "email"))}>
+                <Mail size={17} />
+                <span>
+                  <strong>修改邮箱账号</strong>
+                  <small>当前邮箱：{user.email || "未绑定"}</small>
+                </span>
+                <ChevronDown size={16} />
+              </button>
+              {securityOpen === "email" ? (
+                <div className="profile-v2-collapse-body">
+                  <label className="field">
+                    <span>新邮箱</span>
+                    <input
+                      type="email"
+                      value={emailForm.email}
+                      onChange={(event) => setEmailForm((value) => ({ ...value, email: event.target.value }))}
+                      autoComplete="email"
+                      placeholder="name@example.com"
+                    />
+                  </label>
+                  <label className="field">
+                    <span>当前密码</span>
+                    <input
+                      type="password"
+                      value={emailForm.currentPassword}
+                      onChange={(event) => setEmailForm((value) => ({ ...value, currentPassword: event.target.value }))}
+                      autoComplete="current-password"
+                      placeholder="确认本人操作"
+                    />
+                  </label>
+                  <button className="primary-button profile-security-submit" onClick={changeEmail} disabled={emailBusy} type="button">
+                    <Mail size={17} />{emailBusy ? "保存中" : "保存邮箱"}
+                  </button>
+                  {emailMessage ? <p className="success-text">{emailMessage}</p> : null}
+                  {emailError ? <p className="danger-text">{emailError}</p> : null}
                 </div>
-                <div className="profile-security-fields">
+              ) : null}
+            </div>
+
+            <div className={securityOpen === "password" ? "profile-v2-collapse open" : "profile-v2-collapse"}>
+              <button type="button" onClick={() => setSecurityOpen((value) => (value === "password" ? "" : "password"))}>
+                <KeyRound size={17} />
+                <span>
+                  <strong>修改登录密码</strong>
+                  <small>新密码至少 8 个字符。</small>
+                </span>
+                <ChevronDown size={16} />
+              </button>
+              {securityOpen === "password" ? (
+                <div className="profile-v2-collapse-body">
                   <label className="field">
                     <span>当前密码</span>
                     <input type="password" value={passwordForm.currentPassword} onChange={(event) => setPasswordForm((value) => ({ ...value, currentPassword: event.target.value }))} autoComplete="current-password" />
@@ -412,134 +370,81 @@ export function ProfilePage({
                     <span>确认新密码</span>
                     <input type="password" value={passwordForm.confirmPassword} onChange={(event) => setPasswordForm((value) => ({ ...value, confirmPassword: event.target.value }))} autoComplete="new-password" />
                   </label>
+                  <button className="primary-button profile-security-submit" onClick={changePassword} disabled={passwordBusy} type="button">
+                    <KeyRound size={17} />{passwordBusy ? "修改中" : "修改密码"}
+                  </button>
+                  {passwordMessage ? <p className="success-text">{passwordMessage}</p> : null}
+                  {passwordError ? <p className="danger-text">{passwordError}</p> : null}
                 </div>
-                <button className="primary-button profile-security-submit" onClick={changePassword} disabled={passwordBusy} type="button">
-                  <KeyRound size={18} />{passwordBusy ? "修改中" : "修改密码"}
-                </button>
-                {passwordMessage ? <p className="success-text">{passwordMessage}</p> : null}
-                {passwordError ? <p className="danger-text">{passwordError}</p> : null}
-              </div>
+              ) : null}
             </div>
           </section>
         </div>
-      ) : null}
 
-      {activeTab === "works" ? (
-        <section className="profile-section profile-list-panel">
-          <div className="panel-head">
-            <div>
-              <h2>我的作品</h2>
-              <small>最近更新的漫剧项目和分镜数量。</small>
-            </div>
-            <button className="ghost-button" onClick={() => onNavigate("scripts")}>进入作品库</button>
-          </div>
-          <div className="profile-ledger-list">
-            {(summary?.recentProjects ?? []).map((project) => (
-              <div className="profile-ledger-row profile-project-row" key={project.id}>
-                <div>
-                  <strong>{project.name}</strong>
-                  <span>{project.artStyle} · {project.videoRatio} · {project.status}</span>
-                </div>
-                <b>{project.creditsSpent} 积分</b>
-              </div>
-            ))}
-            {!summary?.recentProjects?.length ? <div className="empty-state">暂无作品，先去创建第一集吧。</div> : null}
-          </div>
-        </section>
-      ) : null}
-
-      {activeTab === "orders" ? (
-        <section className="profile-section profile-list-panel">
-          <div className="panel-head">
-            <div>
-              <h2>订单记录</h2>
-              <small>充值订单、支付状态和发票入口。</small>
-            </div>
-            <button className="ghost-button" type="button" onClick={() => onNavigate("recharge")}>去充值</button>
-          </div>
-          <div className="profile-ledger-list">
-            {recentOrders.map((order) => (
-              <div className="profile-ledger-row profile-order-row" key={order.id}>
-                <div>
-                  <strong>{order.planName}</strong>
-                  <span>{formatCny(order.amountCny)} · {order.credits + order.bonusCredits} 积分 · {formatDate(order.createdAt)}</span>
-                </div>
-                <b className={`order-${order.status}`}>{orderStatusLabel(order.status)}</b>
-              </div>
-            ))}
-            {!recentOrders.length ? <div className="empty-state">暂无订单。选择一个积分包后会在这里显示。</div> : null}
-          </div>
-        </section>
-      ) : null}
-
-      {activeTab === "ledger" ? (
-        <section className="profile-section profile-list-panel">
-          <div className="panel-head">
-            <div>
-              <h2>积分流水</h2>
-              <small>最近 5 条记录，完整记录在积分明细页。</small>
-            </div>
-            <button className="ghost-button" onClick={() => onNavigate("ledger")}>查看全部</button>
-          </div>
-          <div className="profile-ledger-list">
-            {recentTransactions.map((item) => (
-              <div className="profile-ledger-row" key={item.id}>
-                <div>
-                  <strong>{transactionDescriptionText(item.description)}</strong>
-                  <span>{transactionTypeLabel(item.type)} · {formatDate(item.createdAt)}</span>
-                </div>
-                <b className={item.amount >= 0 ? "positive" : "negative"}>{item.amount >= 0 ? "+" : ""}{item.amount}</b>
-              </div>
-            ))}
-            {!recentTransactions.length ? <div className="empty-state">暂无积分流水。</div> : null}
-          </div>
-        </section>
-      ) : null}
-
-      {activeTab === "security" ? (
-        <section className="profile-section profile-security-panel">
-          <div className="panel-head">
-            <div>
-              <h2>登录日志与安全</h2>
-              <small>当前会话、密码更新和基础安全信息。</small>
-            </div>
-          </div>
-          <div className="profile-login-list">
-            <div className="profile-ledger-row">
+        <div className="profile-v2-column profile-v2-side">
+          <section className="panel profile-v2-card profile-v2-credit">
+            <div className="panel-head">
               <div>
-                <strong>当前设备登录</strong>
-                <span>{formatDate(new Date().toISOString())} · 浏览器会话</span>
+                <h2>积分概览</h2>
+                <small>1 积分 ≈ 1 元人民币消费参考，充值积分永久有效。</small>
               </div>
-              <b className="positive">在线</b>
             </div>
-          </div>
-          <div className="profile-password-grid compact-password-grid">
-            <label className="field">
-              <span>当前密码</span>
-              <input type="password" value={passwordForm.currentPassword} onChange={(event) => setPasswordForm((value) => ({ ...value, currentPassword: event.target.value }))} autoComplete="current-password" />
-            </label>
-            <label className="field">
-              <span>新密码</span>
-              <input type="password" value={passwordForm.newPassword} onChange={(event) => setPasswordForm((value) => ({ ...value, newPassword: event.target.value }))} autoComplete="new-password" />
-            </label>
-            <label className="field">
-              <span>确认新密码</span>
-              <input type="password" value={passwordForm.confirmPassword} onChange={(event) => setPasswordForm((value) => ({ ...value, confirmPassword: event.target.value }))} autoComplete="new-password" />
-            </label>
-            <button className="primary-button profile-password-submit" onClick={changePassword} disabled={passwordBusy} type="button">
-              <KeyRound size={18} />{passwordBusy ? "修改中" : "修改密码"}
-            </button>
-          </div>
-          {passwordMessage ? <p className="success-text">{passwordMessage}</p> : null}
-          {passwordError ? <p className="danger-text">{passwordError}</p> : null}
-        </section>
-      ) : null}
+            <div className="profile-v2-balance">
+              <strong>{creditBalance.toLocaleString()}</strong>
+              <span>可用积分</span>
+            </div>
+            <div className="profile-v2-progress" aria-label={`可用积分占累计获得的 ${creditPercent}%`}>
+              <span style={{ width: `${creditPercent}%` }} />
+            </div>
+            <div className="profile-v2-credit-metrics">
+              <div><b>{(account?.totalRecharge ?? 0).toLocaleString()}</b><span>累计充值</span></div>
+              <div><b>{(account?.totalConsume ?? 0).toLocaleString()}</b><span>累计消耗</span></div>
+              <div><b>{(account?.frozenBalance ?? 0).toLocaleString()}</b><span>冻结中</span></div>
+            </div>
+            <div className="profile-v2-credit-actions">
+              <button className="primary-button" type="button" onClick={() => onNavigate("recharge")}><CreditCard size={17} />立即充值</button>
+              <button className="ghost-button" type="button" onClick={() => onNavigate("ledger")}><ClipboardList size={17} />积分明细</button>
+            </div>
+            <div className="profile-v2-recent">
+              <strong>最近动态</strong>
+              {recentTransactions.map((item) => (
+                <div className="profile-v2-recent-row" key={item.id}>
+                  <div>
+                    <span>{transactionDescriptionText(item.description)}</span>
+                    <small>{transactionTypeLabel(item.type)} · {formatDate(item.createdAt)}</small>
+                  </div>
+                  <b className={item.amount >= 0 ? "positive" : "negative"}>{item.amount >= 0 ? "+" : ""}{item.amount}</b>
+                </div>
+              ))}
+              {recentOrders.map((order) => (
+                <div className="profile-v2-recent-row" key={order.id}>
+                  <div>
+                    <span><ReceiptText size={13} /> {order.planName}</span>
+                    <small>{formatCny(order.amountCny)} · {(order.credits + order.bonusCredits).toLocaleString()} 积分 · {formatDate(order.createdAt)}</small>
+                  </div>
+                  <b className={`order-state order-${order.status}`}>{orderStatusLabel(order.status)}</b>
+                </div>
+              ))}
+              {!recentTransactions.length && !recentOrders.length ? <small className="profile-v2-recent-empty">暂无积分流水与订单记录。</small> : null}
+            </div>
+          </section>
 
-      <section className="profile-section profile-shortcut-strip">
-        <ProfileShortcut icon={<BookOpen size={20} />} title="继续创作" desc="进入我的作品" onClick={() => onNavigate("scripts")} />
-        <ProfileShortcut icon={<CreditCard size={20} />} title="积分充值" desc="查看套餐和消费参考" onClick={() => onNavigate("recharge")} />
-        <ProfileShortcut icon={<CircleHelp size={20} />} title="帮助中心" desc="查看操作帮助和工单入口" onClick={() => onNavigate("help")} />
-      </section>
+          <section className="panel profile-v2-card profile-v2-shortcuts">
+            <div className="panel-head">
+              <div>
+                <h2>快捷入口</h2>
+                <small>常用功能直达。</small>
+              </div>
+            </div>
+            <div className="profile-v2-shortcut-list">
+              <ProfileShortcut icon={<BookOpen size={19} />} title="我的作品" desc={`${summary?.projects ?? 0} 部漫剧 · 继续创作`} onClick={() => onNavigate("scripts")} />
+              <ProfileShortcut icon={<Film size={19} />} title="剪辑中心" desc="跨作品合成与导出" onClick={() => onNavigate("studio")} />
+              <ProfileShortcut icon={<ClipboardList size={19} />} title="生成队列" desc="查看任务进度与失败原因" onClick={() => onNavigate("tasks")} />
+              <ProfileShortcut icon={<CircleHelp size={19} />} title="帮助中心" desc="新手教程 · 积分规则 · 故障排查" onClick={() => onNavigate("help")} />
+            </div>
+          </section>
+        </div>
+      </div>
     </div>
   );
 }
@@ -601,9 +506,9 @@ const helpCategoryOptions: Array<HelpArticle["category"] | "all"> = ["all", "get
 const fallbackHelpArticles: HelpArticle[] = [
   {
     id: "fallback-start",
-    title: "我刚注册账号，第一次怎么开始做一集漫剧？",
-    summary: "从故事输入到导出成片的推荐路径。",
-    content: "推荐流程：\n1. 在首页点击「开始创作」，把故事大纲或小说片段粘贴进去。\n2. 选择画风、画幅和目标集数。\n3. 点击下一步，让 AI 拆出核心剧情、章节、人物。\n4. 进入分镜页检查角色、场景和镜头。\n5. 生成分镜图后，再生成对应镜头视频。\n6. 在导出页补字幕、配音和 BGM，下载成片。",
+    title: "我刚注册账号，第一次怎么做出一集漫剧？",
+    summary: "内容创作五步 + 生产台四阶段的完整路径。",
+    content: "先在「内容创作」完成五步：创作意图 → 结构拆解 → 大纲确认 → 正文创作 → 制作交接。\n然后在「我的作品」打开该作品，进入漫剧生产台的四个阶段：内容（剧本定稿）→ 资产（角色三视图与场景）→ 分镜（首帧图与图生视频）→ 成片（剪映式时间线排片段、配音、字幕）。\n最后在成片阶段或「剪辑中心」合成 MP4、生成配音和字幕并下载。",
     category: "getting_started",
     tags: ["新手必读", "创作流程"],
     enabled: true,
@@ -614,9 +519,9 @@ const fallbackHelpArticles: HelpArticle[] = [
   },
   {
     id: "fallback-billing",
-    title: "积分扣费、冻结和退款分别代表什么？",
-    summary: "解释积分流水里的常见状态。",
-    content: "充值或兑换会增加积分。开始生成任务时可能先冻结预估积分；任务成功后按实际消耗扣费；任务失败或取消时，未消耗的冻结积分会自动退回。你可以在「积分明细」查看每一笔记录。",
+    title: "积分的冻结、扣费和退还是怎么运作的？",
+    summary: "先冻结预估积分，成功扣实际消耗，失败自动退回。",
+    content: "1 积分约等于 1 元人民币消费参考，充值积分永久有效。\n提交生成任务时先按预估用量冻结积分；任务成功后按实际消耗正式扣费，多余部分退回；任务失败或取消时冻结积分自动退还。每一笔都可以在「积分明细」按类型筛选核对。",
     category: "billing",
     tags: ["积分", "账单"],
     enabled: true,
@@ -627,9 +532,9 @@ const fallbackHelpArticles: HelpArticle[] = [
   },
   {
     id: "fallback-role",
-    title: "角色长相不稳定，能换吗？",
-    summary: "优先固定角色身份卡和参考图。",
-    content: "可以调整，但建议先固定角色身份卡、发型、服装主色和关键配饰。后续分镜尽量引用已确认的角色参考图，不要在单个镜头里重新发明外貌。",
+    title: "角色长相不稳定，镜头之间脸不一致怎么办？",
+    summary: "先在资产阶段固定角色三视图，个别镜头可单独重生成。",
+    content: "先在生产台「资产」阶段确认角色三视图和身份卡，固定五官、发型、服装主色与配饰；分镜出图会引用已确认的参考图。\n如果只有个别镜头跑偏，在分镜阶段对该镜头单独重新生成即可，只按该镜头计费。",
     category: "workflow",
     tags: ["角色一致性", "出图"],
     enabled: true,

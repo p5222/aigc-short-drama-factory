@@ -33,3 +33,5 @@ _to_delete
 deploy/.env.*
 deploy/auto-rollback
 deploy/upload
+deploy/model-keys.local.txt
+*.local.txt

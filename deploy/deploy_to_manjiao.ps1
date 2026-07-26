@@ -82,7 +82,7 @@ try {
   }
 
   # ---- 2. Require an intentional commit + push ---------------------------
-  Step "2/8" "Verify clean commit and push GitHub"
+  Step "2/8" "Verify clean commit and push"
   $pending = (& git status --porcelain) | Out-String
   if ($pending.Trim()) {
     Die "working tree is not clean. Review, test, and commit intentionally before deploying."
@@ -97,7 +97,7 @@ try {
     Ok "pushed server Git $Branch and main"
   } else {
     & git push -u origin $Branch
-    if ($LASTEXITCODE -ne 0) { Die "GitHub push failed; server deploy stopped to keep GitHub and production aligned." }
+    if ($LASTEXITCODE -ne 0) { Die "GitHub push failed; deploy stopped." }
     Ok "pushed GitHub $Branch"
   }
 
@@ -125,23 +125,14 @@ try {
   & scp @SshOpts "$Archive" "${Server}:/tmp/manjiao_release_HEAD.tar"; if ($LASTEXITCODE -ne 0) { Die "upload archive failed." }
   RemoteRun "extract '$RemoteDir'"; if ($LASTEXITCODE -ne 0) { Die "extract failed." }
 
-  $pippKey = ""
-  $pippFile = Join-Path $ScriptRoot ".env.pipp"
-  if (Test-Path $pippFile) {
-    $m = Select-String -Path $pippFile -Pattern '^PIPP_TEXT_API_KEY=(.+)$'
-    if ($m) { $pippKey = $m.Matches.Groups[1].Value.Trim() }
+  # Sync model keys from local registry deploy\model-keys.local.txt (gitignored).
+  $keysFile = Join-Path $ScriptRoot "model-keys.local.txt"
+  if (Test-Path $keysFile) {
+    & scp @SshOpts "$keysFile" "${Server}:/tmp/keys.env" | Out-Null
+    RemoteRun "merge_env '$RemoteDir'"; if ($LASTEXITCODE -ne 0) { Warn "key merge returned non-zero; check .env.production later." } else { Ok "model keys synced from local registry." }
+  } else {
+    Warn "deploy\model-keys.local.txt not found; skipping key sync."
   }
-  if (-not $pippKey -and -not $NonInteractive) {
-    Write-Host "    Paste PIPP_TEXT_API_KEY (ripp.best key); empty = skip Pipp." -ForegroundColor Yellow
-    $pippKey = (Read-Host "    PIPP_TEXT_API_KEY").Trim()
-  }
-  if ($pippKey) {
-    $tmpPipp = Join-Path $ProjectRoot "tmp\pipp.env"
-    "PIPP_TEXT_BASE_URL=https://ripp.best`nPIPP_TEXT_MODEL=deepseek-v4-pro`nPIPP_TEXT_API_KEY=$pippKey`n" | Set-Content -Path $tmpPipp -NoNewline -Encoding ascii
-    & scp @SshOpts "$tmpPipp" "${Server}:/tmp/pipp.env" | Out-Null
-    Remove-Item $tmpPipp -Force
-    RemoteRun "merge_pipp '$RemoteDir'"; if ($LASTEXITCODE -ne 0) { Warn "Pipp merge returned non-zero; check .env.production later." } else { Ok "Pipp key in place." }
-  } else { Warn "Pipp skipped (other features unaffected)." }
 
   # ---- 7. Rebuild web + api (api rebuild runs db push -> new indexes) -----
   Step "7/8" "Rebuild frontend + backend (about 1-3 min)"

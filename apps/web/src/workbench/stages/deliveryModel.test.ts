@@ -1,7 +1,31 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { AssetItem, ExportJob, StoryboardShot } from "@aifilm/shared";
-import { buildDeliveryClipLayout, getDeliveryCandidates, getExportSummary, getNextPlayableShotId, normalizeShotDuration, normalizePersistedMediaUrl, reduceDeliveryAutoPlay, resolveSingleDeliveryCandidate } from "./deliveryModel.ts";
+import {
+  applyShotOrder,
+  buildDeliveryClipLayout,
+  buildShotMediaIndex,
+  clipLayout,
+  collectDeliveryEpisodes,
+  fitPxPerSecond,
+  formatTimecode,
+  getDeliveryCandidates,
+  getDeliveryStats,
+  getExportSummary,
+  getNextPlayableShotId,
+  getRemainingVideoShots,
+  getShotFailureMessage,
+  normalizeShotDuration,
+  normalizePersistedMediaUrl,
+  playheadOffset,
+  reduceDeliveryAutoPlay,
+  reorder,
+  resolveShotVideoStatus,
+  resolveSingleDeliveryCandidate,
+  rulerTicks,
+  videoUnitCredits,
+  waveformPoints
+} from "./deliveryModel.ts";
 
 const shot = (id: string, duration: number): StoryboardShot => ({ id, projectId: "p", episodeNo: 1, sceneNo: 1, shotNo: 1, duration, shotSize: "", cameraAngle: "", cameraMovement: "", characters: [], scene: "", pictureDesc: id, dialogue: "", voiceOver: "", environmentSound: "", soundEffect: "", imagePrompt: "", videoPrompt: "", referenceAssetIds: [], status: "succeeded" });
 const asset = (id: string, shotId: string, url?: string): AssetItem => ({ id: `video_${shotId}`, projectId: "p", type: "video", name: id, description: "", prompt: "", referenceUrl: url, status: url ? "succeeded" : "failed" });
@@ -52,4 +76,147 @@ test("normalizes persisted media source identity across relative and absolute UR
   assert.equal(normalizePersistedMediaUrl("/storage/clip.mp4?x=1#t", "https://manjiao.cloud"), normalizePersistedMediaUrl("https://manjiao.cloud/storage/clip.mp4?x=1#t", "https://manjiao.cloud"));
   assert.notEqual(normalizePersistedMediaUrl("https://cdn.other/storage/clip.mp4", "https://manjiao.cloud"), normalizePersistedMediaUrl("https://manjiao.cloud/storage/clip.mp4", "https://manjiao.cloud"));
   assert.notEqual(normalizePersistedMediaUrl("/storage/clip.mp4?x=1"), normalizePersistedMediaUrl("/storage/clip.mp4?x=2"));
+});
+
+/* ------------------------- Delivery V2 helper tests ------------------------ */
+
+const rawAsset = (partial: Partial<AssetItem> & Pick<AssetItem, "id" | "type" | "status">): AssetItem => ({
+  projectId: "p", name: partial.id, description: "", prompt: "", ...partial
+});
+
+test("clipLayout keeps width proportional to duration with a minimal clickable width", () => {
+  const layout = clipLayout([shot("a", 2), shot("b", 10)], 10);
+  assert.deepEqual(layout.map((clip) => clip.width), [20, 100]);
+  assert.deepEqual(layout.map((clip) => clip.start), [0, 2]);
+  assert.equal(clipLayout([shot("tiny", 1)], 8)[0]!.width, 16);
+});
+
+test("reorder moves items, clamps target and rejects invalid source", () => {
+  assert.deepEqual(reorder(["a", "b", "c"], 0, 2), ["b", "c", "a"]);
+  assert.deepEqual(reorder(["a", "b", "c"], 2, 0), ["c", "a", "b"]);
+  assert.deepEqual(reorder(["a", "b", "c"], 1, 99), ["a", "c", "b"]);
+  assert.deepEqual(reorder(["a", "b", "c"], 9, 0), ["a", "b", "c"]);
+  assert.deepEqual(reorder(["a", "b", "c"], 1, 1), ["a", "b", "c"]);
+});
+
+test("applyShotOrder ignores unknown ids and appends shots missing from the order", () => {
+  const shots = [shot("a", 1), shot("b", 1), shot("c", 1)];
+  assert.deepEqual(applyShotOrder(shots, ["c", "ghost", "a"]).map((item) => item.id), ["c", "a", "b"]);
+  assert.deepEqual(applyShotOrder(shots, []).map((item) => item.id), ["a", "b", "c"]);
+});
+
+test("fitPxPerSecond fills the container and clamps to the 8-40 zoom range", () => {
+  assert.equal(fitPxPerSecond(400, 20), 20);
+  assert.equal(fitPxPerSecond(100000, 10), 40);
+  assert.equal(fitPxPerSecond(40, 100), 8);
+  assert.equal(fitPxPerSecond(400, 0), 16);
+  assert.equal(fitPxPerSecond(0, 10), 16);
+});
+
+test("playheadOffset accumulates rendered widths and clamps progress inside the clip", () => {
+  const layout = clipLayout([shot("a", 2), shot("b", 3)], 10);
+  assert.equal(playheadOffset(layout, "a", 1, 10), 10);
+  assert.equal(playheadOffset(layout, "b", 1, 10), layout[0]!.width + 10);
+  assert.equal(playheadOffset(layout, "b", 99, 10), layout[0]!.width + layout[1]!.width);
+  assert.equal(playheadOffset(layout, "missing", 1, 10), 0);
+});
+
+test("rulerTicks covers the total duration in 4s steps including the trailing tick", () => {
+  assert.deepEqual(rulerTicks(10), [0, 4, 8, 12]);
+  assert.deepEqual(rulerTicks(8), [0, 4, 8]);
+  assert.deepEqual(rulerTicks(0), [0, 4]);
+  assert.deepEqual(rulerTicks(5, 2), [0, 2, 4, 6]);
+});
+
+test("formatTimecode renders m:ss and optional tenths", () => {
+  assert.equal(formatTimecode(0), "0:00");
+  assert.equal(formatTimecode(65), "1:05");
+  assert.equal(formatTimecode(3.46, true), "0:03.4");
+  assert.equal(formatTimecode(Number.NaN), "0:00");
+});
+
+test("resolveShotVideoStatus mirrors asset lifecycle including queued task references", () => {
+  assert.equal(resolveShotVideoStatus(undefined), "missing");
+  assert.equal(resolveShotVideoStatus(asset("a", "a", "https://cdn.test/a.mp4")), "succeeded");
+  assert.equal(resolveShotVideoStatus(asset("b", "b")), "failed");
+  assert.equal(resolveShotVideoStatus(rawAsset({ id: "video_c", type: "video", status: "running", referenceUrl: "task-1" })), "running");
+  assert.equal(resolveShotVideoStatus(rawAsset({ id: "video_d", type: "video", status: "succeeded", referenceUrl: "task-2" })), "running");
+});
+
+test("buildShotMediaIndex resolves audio and subtitle assets by shot id convention", () => {
+  const shots = [shot("a", 2), shot("b", 2)];
+  const assets = [
+    rawAsset({ id: "audio_a", type: "audio", status: "succeeded", referenceUrl: "/storage/a.mp3" }),
+    rawAsset({ id: "subtitle_b", type: "subtitle", status: "succeeded", referenceUrl: "/storage/b.srt" })
+  ];
+  assert.equal(buildShotMediaIndex(shots, assets, "audio").get("a")?.id, "audio_a");
+  assert.equal(buildShotMediaIndex(shots, assets, "audio").has("b"), false);
+  assert.equal(buildShotMediaIndex(shots, assets, "subtitle").get("b")?.id, "subtitle_b");
+});
+
+test("getDeliveryStats counts videos, falls back to full-track tts audio and detects subtitles", () => {
+  const shots = [shot("a", 2), shot("b", 4)];
+  const assets = [asset("a", "a", "https://cdn.test/a.mp4"), asset("b", "b")];
+  const none = getDeliveryStats(shots, assets, []);
+  assert.deepEqual([none.total, none.videoReady, none.audioCovered, none.hasTrackAudio, none.hasSubtitle], [2, 1, 0, false, false]);
+  const jobs: ExportJob[] = [
+    { id: "t", projectId: "p", type: "tts", status: "succeeded", audioUrl: "/storage/tts.mp3", createdAt: "", updatedAt: "" },
+    { id: "s", projectId: "p", type: "subtitle", status: "succeeded", subtitleUrl: "/storage/sub.srt", createdAt: "", updatedAt: "" }
+  ];
+  const full = getDeliveryStats(shots, assets, jobs);
+  assert.deepEqual([full.audioCovered, full.hasTrackAudio, full.hasSubtitle], [2, true, true]);
+  const perShot = getDeliveryStats(shots, [...assets, rawAsset({ id: "audio_a", type: "audio", status: "succeeded", referenceUrl: "/storage/a.mp3" })], jobs);
+  assert.equal(perShot.audioCovered, 1);
+});
+
+test("getRemainingVideoShots mirrors server eligibility: no playable video and an existing frame image", () => {
+  const shots = [shot("a", 2), shot("b", 2), shot("c", 2)];
+  const assets = [
+    asset("a", "a", "https://cdn.test/a.mp4"),
+    rawAsset({ id: "image_a", type: "image", status: "succeeded", referenceUrl: "/storage/a.png" }),
+    rawAsset({ id: "image_b", type: "image", status: "succeeded", referenceUrl: "/storage/b.png" })
+  ];
+  assert.deepEqual(getRemainingVideoShots(shots, assets).map((item) => item.id), ["b"]);
+});
+
+test("getShotFailureMessage prefers provider error on the asset, then task errorReason, then a safe default", () => {
+  const failed = rawAsset({ id: "video_a", type: "video", status: "failed", description: "余额不足：视频渠道拒绝任务" });
+  assert.equal(getShotFailureMessage(failed, []), "余额不足：视频渠道拒绝任务");
+  const defaultDescription = rawAsset({ id: "video_b", type: "video", status: "failed", description: "基于分镜图生成视频：某镜头" });
+  const tasks = [
+    { id: "t1", type: "video", title: "图生视频生成", provider: "p", model: "m", status: "failed", progress: 0, estimatedCredits: 0, errorReason: "上游超时", createdAt: "2025-01-01", updatedAt: "2025-01-01" },
+    { id: "t2", type: "video", title: "图生视频生成", provider: "p", model: "m", status: "failed", progress: 0, estimatedCredits: 0, errorReason: "配额已用尽", createdAt: "2025-01-02", updatedAt: "2025-01-02" }
+  ] as never[];
+  assert.equal(getShotFailureMessage(defaultDescription, tasks), "配额已用尽");
+  assert.equal(getShotFailureMessage(undefined, []), "生成失败，可重试");
+});
+
+test("videoUnitCredits matches provider+model first, falls back to model, hides when unknown", () => {
+  const prices = [
+    { id: "1", providerId: "dashscope-video", providerName: "百炼", modality: "video", model: "wan", unit: "video_second", unitCredits: 16, vendorCostCny: 0.2, enabled: true },
+    { id: "2", providerId: "other", providerName: "其他", modality: "video", model: "wan-turbo", unit: "video_second", unitCredits: 9, vendorCostCny: 0.1, enabled: true },
+    { id: "3", providerId: "off", providerName: "禁用", modality: "video", model: "off-model", unit: "video_second", unitCredits: 99, vendorCostCny: 1, enabled: false }
+  ] as never[];
+  assert.equal(videoUnitCredits(prices, "dashscope-video", "wan"), 16);
+  assert.equal(videoUnitCredits(prices, "unknown-provider", "wan-turbo"), 9);
+  assert.equal(videoUnitCredits(prices, "off", "off-model"), undefined);
+});
+
+test("collectDeliveryEpisodes dedupes episode numbers with a fallback range", () => {
+  const shots = [shot("a", 1), shot("b", 1), shot("c", 1)];
+  shots[0]!.episodeNo = 2; shots[1]!.episodeNo = 1; shots[2]!.episodeNo = 2;
+  assert.deepEqual(collectDeliveryEpisodes(shots), [1, 2]);
+  assert.deepEqual(collectDeliveryEpisodes([], 3), [1, 2, 3]);
+});
+
+test("waveformPoints is deterministic, bounded and polyline-ready", () => {
+  const first = waveformPoints("audio_a", 120, 28, 12);
+  assert.equal(first, waveformPoints("audio_a", 120, 28, 12));
+  assert.notEqual(first, waveformPoints("audio_b", 120, 28, 12));
+  const pairs = first.split(" ").map((pair) => pair.split(",").map(Number));
+  assert.equal(pairs.length, 13);
+  for (const [x, y] of pairs) {
+    assert.ok(x! >= 0 && x! <= 120);
+    assert.ok(y! >= 0 && y! <= 28);
+  }
 });

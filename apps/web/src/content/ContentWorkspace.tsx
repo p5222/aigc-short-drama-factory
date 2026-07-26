@@ -1,8 +1,9 @@
-import { ArrowLeft, ArrowRight, BookOpen, Check, CheckCircle2, ChevronDown, CircleAlert, Clapperboard, FileText, LoaderCircle, Map, Plus, RefreshCw, Sparkles, Trash2, UsersRound } from "lucide-react";
+import { ArrowLeft, ArrowRight, BookOpen, Check, CheckCircle2, CircleAlert, Clapperboard, FileText, LoaderCircle, Map, Plus, RefreshCw, Sparkles, Trash2, UsersRound } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import type { ContentProductionPackage, ContentProjectSummary, CreateProjectInput, ModelProvider, StyleProfile } from "@aifilm/shared";
 import { contentApi, type ContentVersionHistory, type SourceDocumentInput } from "../lib/contentApi";
-import { buildProductionDraft, chapterGenerationPlan, isCurrentRequest, modeLabel, reconcileProjectId, sourceKindForMode, statusLabel, type RequestToken } from "./model";
+import { ModelRoutePicker } from "../components/ModelRoutePicker";
+import { buildProductionDraft, chapterGenerationPlan, cleanModelText, isCurrentRequest, modeLabel, reconcileProjectId, sourceKindForMode, statusLabel, type RequestToken } from "./model";
 
 const emptyStyle: StyleProfile = { key: "", name: "", category: "", summary: "", characterRules: [], sceneRules: [], lightingRules: [], cameraRules: [], materialRules: [], negativeRules: [] };
 const styleOptions: Array<Pick<StyleProfile, "key" | "name" | "category" | "summary">> = [
@@ -73,7 +74,6 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, providers
   const requestSequence = useRef(0);
   const activeRequest = useRef<RequestToken | null>(null);
   const selected = projects.find((project) => project.id === selectedId);
-  const textProviders = providers.filter((provider) => provider.modality === "text" && provider.enabled);
 
   useEffect(() => setSelectedId((current) => reconcileProjectId(projects, current || initialSelectedId)), [projects, initialSelectedId]);
   useEffect(() => {
@@ -113,6 +113,9 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, providers
   const chapters = productionPackage?.chapters ?? [];
   const outline = outlineChapters(productionPackage);
   const generationPlan = chapterGenerationPlan(outline.map((item, index) => ({ chapterNo: Number(item.chapterNo ?? index + 1) })), chapters, batchSize);
+  const serverBusy = !busy && selected?.status === "running";
+  const working = Boolean(busy) || serverBusy;
+  const [editingChapter, setEditingChapter] = useState<{ chapterNo: number; title: string; content: string } | null>(null);
   const handoffSource = selected ? savedSources[selected.id] : undefined;
   const handoffContent = productionPackage?.script?.content.trim() || "";
   const wordCount = useMemo(() => sourceContent.replace(/\s/g, "").length, [sourceContent]);
@@ -123,6 +126,28 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, providers
     const latestGenerated = chapters.at(-1)?.chapterNo;
     setSelectedChapterNo((current) => numbers.includes(current) ? current : latestGenerated ?? numbers[0] ?? 1);
   }, [productionPackage?.outline?.id, chapters.length]);
+
+  useEffect(() => {
+    if (!selectedId || !serverBusy) return;
+    const timer = window.setInterval(() => {
+      if (document.hidden) return;
+      void contentApi.productionPackage(selectedId).then((result) => setPackages((current) => ({ ...current, [selectedId]: result }))).catch(() => undefined);
+      void onReload().then(setProjects).catch(() => undefined);
+    }, 6000);
+    return () => window.clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId, serverBusy]);
+
+  async function saveChapterEdit() {
+    if (!selected || !editingChapter || busy) return;
+    setBusy("save"); setError("");
+    try {
+      const result = await contentApi.updateChapter(selected.id, editingChapter.chapterNo, { title: editingChapter.title, content: editingChapter.content });
+      setPackages((current) => ({ ...current, [selected.id]: result }));
+      setEditingChapter(null); setMessage(`第 ${editingChapter.chapterNo} 章已保存`);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "保存失败"); }
+    finally { setBusy(""); }
+  }
 
   async function refresh() {
     setBusy("refresh"); setError("");
@@ -338,10 +363,7 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, providers
       })}
     </nav>
     <div className="cw2-top-actions">
-      {selected && !creating ? <label className="cw2-model-chip"><span>模型</span>
-        <select value={`${selected.textProvider}::${selected.textModel}`} onChange={(event) => { const [providerId, model] = event.target.value.split("::"); void changeModelRoute(providerId, model); }}>
-          {textProviders.flatMap((provider) => provider.models.map((model) => <option key={`${provider.id}::${model}`} value={`${provider.id}::${model}`}>{provider.name} · {model}</option>))}
-        </select><ChevronDown size={13} /></label> : null}
+      {selected && !creating ? <ModelRoutePicker modality="text" compact providers={providers} value={{ providerId: selected.textProvider, model: selected.textModel }} onChange={(providerId, model) => { void changeModelRoute(providerId, model); }} /> : null}
       <button type="button" className="cw2-icon-button" onClick={() => setCreating(true)} title="新建内容创作" aria-label="新建内容创作"><Plus size={16} /></button>
       <button type="button" className="cw2-icon-button" onClick={() => void refresh()} title="刷新" aria-label="刷新"><RefreshCw size={15} /></button>
       {selected && !creating ? <button type="button" className="cw2-icon-button danger" onClick={() => void removeContentProject(selected.id)} title="删除作品" aria-label="删除作品"><Trash2 size={15} /></button> : null}
@@ -367,11 +389,22 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, providers
       </div>
     </section>;
   } else if (viewStage === "intent") {
-    // 已有项目但结构拆解未完成（例如创建时失败）——给出重新拆解入口。
-    stageView = <section className="cw2-stage-scroll">
+    const intentRecord = asRecord(productionPackage?.analysis?.result);
+    stageView = productionPackage?.analysis ? <section className="cw2-stage-scroll">
+      <div className="cw2-stage-head"><h2>创作意图 <span className="cw2-tag">已完成</span></h2><small>本次创作的输入与生成参数（回看）</small></div>
+      <div className="cw2-intent-review">
+        <article><b>意图类型</b><p>{({ title: "已有标题", genre: "题材方向", references: "参考作品" } as Record<string, string>)[String(intentRecord.intentType)] ?? "已有标题"}</p></article>
+        <article style={{ gridColumn: "1 / -1" }}><b>意图内容</b><p>{String(intentRecord.intent ?? selected.title)}</p></article>
+        <article><b>目标字数</b><p>{Number(intentRecord.targetWords ?? 20000).toLocaleString()} 字</p></article>
+        <article><b>章节数量</b><p>{Number(intentRecord.chapterCount ?? 10)} 章</p></article>
+        <article><b>每批生成</b><p>{Number(intentRecord.batchSize ?? 2)} 章</p></article>
+        <article><b>视觉风格</b><p>{selected.styleProfile?.name || "AI 自动匹配"}</p></article>
+      </div>
+      <div className="cw2-actionbar"><span className="cw2-hint">意图决定爆款拆解与大纲的方向；要换方向请新建作品，避免覆盖已生成内容。</span></div>
+    </section> : <section className="cw2-stage-scroll">
       <div className="cw2-stage-head"><h2>结构拆解未完成 <span className="cw2-tag is-wait">待拆解</span></h2></div>
       <div className="cw2-paper cw2-paper-empty"><CircleAlert size={24} /><p>「{selected.title}」还没有完成爆款结构拆解。可以用作品标题重新发起，或删除后重新创建。</p>
-        <button type="button" className="content-primary-button" disabled={Boolean(busy)} onClick={() => void retryAnalyzeSelected()}>{busy === "generate" ? <LoaderCircle size={16} /> : <Sparkles size={16} />}用标题重新拆解</button>
+        <button type="button" className="content-primary-button" disabled={working} onClick={() => void retryAnalyzeSelected()}>{busy === "generate" ? <LoaderCircle size={16} /> : <Sparkles size={16} />}用标题重新拆解</button>
       </div>
     </section>;
   } else if (viewStage === "analysis" && productionPackage?.analysis) {
@@ -380,13 +413,13 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, providers
     stageView = <section className="cw2-stage-scroll">
       <div className="cw2-stage-head"><h2>爆款机制拆解 <span className="cw2-tag">分析 v{productionPackage.analysis.version}</span></h2><small>{evidence.mode === "model_search" ? "模型检索 · 已返回可核验来源" : "基于模型知识 · 非实时榜单"}</small></div>
       <div className="content-analysis-grid">
-        <article><b>爆款开头</b><p>{String(dimensions.opening || "等待完善")}</p></article>
-        <article><b>高潮</b><p>{String(dimensions.climax || "等待完善")}</p></article>
-        <article><b>反转</b><p>{String(dimensions.reversal || "等待完善")}</p></article>
-        <article><b>爽点</b><p>{String(dimensions.payoffs || "等待完善")}</p></article>
+        <article><b>爆款开头</b><p>{cleanModelText(dimensions.opening) || "等待完善"}</p></article>
+        <article><b>高潮</b><p>{cleanModelText(dimensions.climax) || "等待完善"}</p></article>
+        <article><b>反转</b><p>{cleanModelText(dimensions.reversal) || "等待完善"}</p></article>
+        <article><b>爽点</b><p>{cleanModelText(dimensions.payoffs) || "等待完善"}</p></article>
       </div>
       <div className="cw2-actionbar"><span className="cw2-hint">{currentStage === "analysis" ? "下一步只生成章节大纲，不会提前生成正文。" : "这是已完成步骤的回看。"}</span>
-        {currentStage === "analysis" ? <button type="button" className="content-primary-button" disabled={Boolean(busy)} onClick={() => void generateOutline()}>{busy === "generate" ? <LoaderCircle size={16} /> : <ArrowRight size={16} />}生成章节大纲</button> : <button type="button" className="content-secondary-button" disabled={Boolean(busy)} onClick={() => void generateOutline()}><RefreshCw size={14} />重新拆解并生成大纲</button>}
+        {currentStage === "analysis" ? <button type="button" className="content-primary-button" disabled={working} onClick={() => void generateOutline()}>{busy === "generate" ? <LoaderCircle size={16} /> : <ArrowRight size={16} />}生成章节大纲</button> : <button type="button" className="content-secondary-button" disabled={working} onClick={() => void generateOutline()}><RefreshCw size={14} />重新拆解并生成大纲</button>}
       </div>
     </section>;
   } else if (viewStage === "outline" && productionPackage?.outline) {
@@ -395,19 +428,30 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, providers
     const selectedGenerated = chapters.find((chapter) => chapter.chapterNo === selectedChapterNo);
     const selectedOutline = outline.find((item, index) => Number(item.chapterNo ?? index + 1) === selectedChapterNo);
     stageView = <section className="cw2-stage-scroll">
-      {selectedGenerated ? <>
+      {selectedGenerated && editingChapter?.chapterNo === selectedGenerated.chapterNo ? <>
+        <div className="cw2-stage-head"><h2>编辑第 {editingChapter.chapterNo} 章 <span className="cw2-tag is-wait">编辑中</span></h2><small>{editingChapter.content.replace(/\s/g, "").length.toLocaleString()} 字</small></div>
+        <article className="cw2-paper"><div className="cw2-paper-editor">
+          <input aria-label="章节标题" value={editingChapter.title} onChange={(event) => setEditingChapter((current) => current ? { ...current, title: event.target.value } : current)} maxLength={160} />
+          <textarea value={editingChapter.content} onChange={(event) => setEditingChapter((current) => current ? { ...current, content: event.target.value } : current)} />
+        </div></article>
+        <div className="cw2-actionbar"><span className="cw2-hint">修改会保存到当前版本并标记为已确认。</span>
+          <button type="button" className="content-secondary-button" disabled={busy === "save"} onClick={() => setEditingChapter(null)}>取消</button>
+          <button type="button" className="content-primary-button" disabled={busy === "save" || editingChapter.content.trim().length < 20} onClick={() => void saveChapterEdit()}>{busy === "save" ? <LoaderCircle size={15} /> : <Check size={15} />}保存修改</button>
+        </div>
+      </> : selectedGenerated ? <>
         <div className="cw2-stage-head"><h2>第 {selectedGenerated.chapterNo} 章 · {selectedGenerated.title} <span className="cw2-tag">正文已生成</span></h2><small>约 {selectedGenerated.content.replace(/\s/g, "").length.toLocaleString()} 字</small></div>
         <article className="cw2-paper"><div className="cw2-paper-scroll"><p>{selectedGenerated.content}</p></div></article>
       </> : <>
         <div className="cw2-stage-head"><h2>第 {selectedChapterNo} 章 · {String(selectedOutline?.title ?? "等待生成")} <span className="cw2-tag is-wait">等待生成</span></h2></div>
         <div className="cw2-paper cw2-paper-empty"><FileText size={24} /><p>{String(selectedOutline?.cliffhanger ?? "本章还未生成，可以继续生成下一批或一次生成全部剩余章节。")}</p></div>
       </>}
-      <div className="cw2-actionbar">
-        <span className="cw2-hint">{generationPlan.remainingCount ? `每批完成后自动保存 · 还剩 ${generationPlan.remainingCount} 章 · 中断可随时续生成` : "全部章节已生成，可在右侧进入制作交接"}</span>
-        {selectedGenerated ? <button type="button" className="content-secondary-button" disabled={Boolean(busy)} onClick={() => void regenerateChapter(selectedChapterNo)}><RefreshCw size={14} />重新生成本章</button> : null}
-        <button type="button" className="content-secondary-button" disabled={Boolean(busy) || !generationPlan.remainingCount} onClick={() => void generateNextChapters()}>{busy === "generate" ? <LoaderCircle size={15} /> : <Sparkles size={15} />}继续生成下一批（{Math.max(2, generationPlan.nextBatchSize) || 2} 章）</button>
-        <button type="button" className="content-primary-button" disabled={Boolean(busy) || !generationPlan.remainingCount} onClick={() => void generateAllChapters()}><ArrowRight size={15} />一键生成全部剩余 {generationPlan.remainingCount} 章</button>
-      </div>
+      {editingChapter ? null : <div className="cw2-actionbar">
+        <span className="cw2-hint">{serverBusy ? "服务器正在生成中，离开此页也会继续，完成后自动刷新…" : generationPlan.remainingCount ? `每批完成后自动保存 · 还剩 ${generationPlan.remainingCount} 章 · 中断可随时续生成` : "全部章节已生成，可在右侧进入制作交接"}</span>
+        {selectedGenerated ? <button type="button" className="content-secondary-button" disabled={working} onClick={() => setEditingChapter({ chapterNo: selectedGenerated.chapterNo, title: selectedGenerated.title, content: selectedGenerated.content })}><FileText size={14} />编辑本章</button> : null}
+        {selectedGenerated ? <button type="button" className="content-secondary-button" disabled={working} onClick={() => void regenerateChapter(selectedChapterNo)}><RefreshCw size={14} />重新生成本章</button> : null}
+        <button type="button" className="content-secondary-button" disabled={working || !generationPlan.remainingCount} onClick={() => void generateNextChapters()}>{working ? <LoaderCircle size={15} /> : <Sparkles size={15} />}继续生成下一批（{Math.max(2, generationPlan.nextBatchSize) || 2} 章）</button>
+        <button type="button" className="content-primary-button" disabled={working || !generationPlan.remainingCount} onClick={() => void generateAllChapters()}><ArrowRight size={15} />一键生成全部剩余 {generationPlan.remainingCount} 章</button>
+      </div>}
     </section>;
   } else {
     // handoff（含 script 已生成）
@@ -421,13 +465,13 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, providers
           <article><Sparkles size={18} /><strong>{productionPackage.entities?.props.length ?? 0}</strong><span>道具</span></article>
         </div>
         <div className="cw2-actionbar"><span className="cw2-hint">交接后仍可返回这里继续修改内容。</span>
-          <button type="button" className="content-secondary-button" disabled={Boolean(busy)} onClick={() => void generateScriptFromChapters()}><RefreshCw size={14} />按最新正文重生成剧本</button>
+          <button type="button" className="content-secondary-button" disabled={working} onClick={() => void generateScriptFromChapters()}><RefreshCw size={14} />按最新正文重生成剧本</button>
           <button type="button" className="content-primary-button" disabled={!handoffContent} onClick={enterProduction}>进入漫剧创作<ArrowRight size={16} /></button>
         </div>
       </> : <>
         <div className="cw2-stage-head"><h2>制作交接</h2><small>把正文转成可生产剧本，并提取人物 / 场景实体</small></div>
         <div className="cw2-paper cw2-paper-empty"><Clapperboard size={26} /><p>{chapters.length ? `已生成 ${chapters.length} 章正文。生成剧本与实体后即可进入漫剧创作。` : "先在「正文创作」生成章节，再回到这里生成剧本。"}</p>
-          <button type="button" className="content-primary-button" disabled={!chapters.length || Boolean(busy)} onClick={() => void generateScriptFromChapters()}>{busy === "generate" ? <LoaderCircle size={16} /> : <Sparkles size={16} />}把正文转为剧本与实体</button>
+          <button type="button" className="content-primary-button" disabled={!chapters.length || working} onClick={() => void generateScriptFromChapters()}>{busy === "generate" ? <LoaderCircle size={16} /> : <Sparkles size={16} />}把正文转为剧本与实体</button>
         </div>
       </>}
     </section>;
@@ -450,7 +494,7 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, providers
       <div className="cw2-todo"><span>视觉风格</span><em className="is-ok">{selected.styleProfile?.name || "自动匹配"}</em></div>
       {handoffContent
         ? <button type="button" className="content-primary-button cw2-full" onClick={enterProduction}>进入漫剧创作<ArrowRight size={15} /></button>
-        : <button type="button" className="content-secondary-button cw2-full" disabled={!chapters.length || Boolean(busy)} onClick={() => void generateScriptFromChapters()}>{busy === "generate" ? <LoaderCircle size={15} /> : <Clapperboard size={15} />}生成剧本后交接</button>}
+        : <button type="button" className="content-secondary-button cw2-full" disabled={!chapters.length || working} onClick={() => void generateScriptFromChapters()}>{busy === "generate" ? <LoaderCircle size={15} /> : <Clapperboard size={15} />}生成剧本后交接</button>}
       {handoffContent ? <small className="cw2-ok-note"><CheckCircle2 size={12} />交接会自动带入剧本、作品名与视觉风格</small> : null}
     </div>
     <div className="cw2-card">
@@ -485,7 +529,7 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, providers
         <p className="cw2-rail-meta">素材 {selected?.sourceCount ?? 0} · 大纲 v{productionPackage?.outline?.version ?? "-"} · 剧本 {selected?.scriptCount ?? 0}</p>
       </aside> : null}
       <main className="cw2-stage">
-        {(message || error) && !creating ? <div className={`cw2-notice ${error ? "is-error" : ""}`} role={error ? "alert" : "status"}>{busy ? <LoaderCircle size={14} className="cw2-spin" /> : error ? <CircleAlert size={14} /> : <Check size={14} />}<span>{error || message}</span></div> : null}
+         {(message || error || serverBusy) && !creating ? <div className={`cw2-notice ${error ? "is-error" : ""}`} role={error ? "alert" : "status"}>{busy ? <LoaderCircle size={14} className="cw2-spin" /> : error ? <CircleAlert size={14} /> : <Check size={14} />}<span>{error || (serverBusy ? "服务器正在生成中，可自由切换页面，完成后自动刷新。" : message)}</span></div> : null}
         {stageView}
       </main>
       {sidePanel}

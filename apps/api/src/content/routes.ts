@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { StyleProfile } from "@aifilm/shared";
-import { addSourceDocument, analyzeContentProject, confirmContentOutline, createContentProject, deleteContentProject, developContentProject, generateContentChapterBatch, generateContentOutline, generateContentProductionPackage, getContentProductionPackage, getContentProjectVersions, listContentProjects, updateContentModelRoute } from "./service.js";
+import { addSourceDocument, analyzeContentProject, confirmContentOutline, createContentProject, deleteContentProject, developContentProject, generateContentChapterBatch, generateContentOutline, generateContentProductionPackage, getContentProductionPackage, getContentProjectVersions, listContentProjects, updateContentChapter, updateContentModelRoute } from "./service.js";
 
 export const contentProjectInput = z.object({ title: z.string().trim().min(1).max(160), mode: z.enum(["same_genre", "original", "adaptation"]), styleProfile: z.record(z.string(), z.unknown()).optional(), textProvider: z.string().default("manjiao"), textModel: z.string().default("gpt-5.5") });
 export const sourceInput = z.object({ kind: z.enum(["novel", "short_story", "idea", "script"]), title: z.string().trim().min(1).max(160), content: z.string().min(1).max(500000) });
@@ -8,6 +8,7 @@ export const developInput = z.object({ intentType: z.enum(["title", "genre", "re
 export const chapterBatchInput = z.object({ startChapter: z.number().int().positive(), batchSize: z.number().int().min(2).max(3).default(2), regenerate: z.boolean().optional() });
 export const contentRouteInput = z.object({ textProvider: z.string().min(1), textModel: z.string().min(1) });
 export const outlineConfirmInput = z.object({ result: z.record(z.string(), z.unknown()).optional() });
+export const chapterEditInput = z.object({ title: z.string().trim().max(160).optional(), content: z.string().min(20).max(200000) });
 export async function handleListContentProjects(userId: string) { return listContentProjects(userId); }
 export async function handleCreateContentProject(userId: string, input: unknown) {
   const parsed = contentProjectInput.parse(input);
@@ -24,3 +25,4 @@ export async function handleConfirmContentOutline(userId: string, projectId: str
 export async function handleUpdateContentModelRoute(userId: string, projectId: string, input: unknown) { return updateContentModelRoute(userId, projectId, contentRouteInput.parse(input)); }
 export async function handleGenerateContentChapterBatch(userId: string, projectId: string, input: unknown) { return generateContentChapterBatch(userId, projectId, chapterBatchInput.parse(input)); }
 export async function handleDeleteContentProject(userId: string, projectId: string) { return deleteContentProject(userId, projectId); }
+export async function handleUpdateContentChapter(userId: string, projectId: string, chapterNo: number, input: unknown) { return updateContentChapter(userId, projectId, chapterNo, chapterEditInput.parse(input)); }

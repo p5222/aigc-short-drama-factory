@@ -19,6 +19,7 @@ import {
   normalizeImageOutputSize
 } from "@aifilm/shared";
 import { api } from "../../lib/api";
+import { ModelRoutePicker } from "../../components/ModelRoutePicker";
 import { MediaFrame } from "../components/MediaCanvas";
 import { ProductionWorkspace } from "../components/ProductionWorkspace";
 import {
@@ -357,6 +358,9 @@ function AssetImageRoute({
   onRefresh: (projectId: string) => Promise<ProjectWorkflow>;
 }) {
   const imageProviders = providers.filter((provider) => provider.modality === "image" && provider.enabled);
+  const pickerProviders = imageProviders
+    .map((provider) => ({ ...provider, models: provider.models.filter((model) => !failedImageModels.has(model)) }))
+    .filter((provider) => provider.models.length > 0);
   const [draft, setDraft] = useState(() => routeDraft(project, providers));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -366,12 +370,11 @@ function AssetImageRoute({
   const unitCredits = resolveImageUnitCredits(modelPrices, draft.imageProvider, draft.imageModel);
   const estimate = estimateImageCredits(unitCredits, draft.imageSize, draft.imageQuality);
 
-  useEffect(() => setDraft(routeDraft(project, providers)), [project.id, project.imageProvider, project.imageModel, project.imageSize, project.imageQuality, providers]);
-
-  function selectProvider(providerId: string) {
-    const pair = resolveImageRoutePair(providerId, undefined, providers, failedImageModels);
-    setDraft((current) => ({ ...current, ...pair }));
-  }
+  // 注意：providers 每次轮询都是新数组引用，放进依赖会导致用户改到一半的渠道/模型
+  // 每 4 秒被重置回项目默认值（表现为"切换模型自动跳回通义万相"）。
+  // 只在项目路由字段真正变化时重建草稿。
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => setDraft(routeDraft(project, providers)), [project.id, project.imageProvider, project.imageModel, project.imageSize, project.imageQuality]);
 
   async function applyAndGenerate() {
     if (!validPair) return;
@@ -390,7 +393,7 @@ function AssetImageRoute({
     setSaving(false);
   }
 
-  return <section className="wb-route-panel"><header><strong><SlidersHorizontal aria-hidden="true" />图片模型</strong><small>预计 {estimate} 积分</small></header><label><span>渠道</span><select value={draft.imageProvider} onChange={(event) => selectProvider(event.target.value)}>{imageProviders.filter((provider) => provider.models.some((model) => !failedImageModels.has(model))).map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}</select></label><label><span>模型</span><select value={draft.imageModel} onChange={(event) => setDraft((current) => ({ ...current, imageModel: event.target.value }))}>{models.map((model) => <option key={model} value={model}>{model}</option>)}</select></label><div className="wb-route-grid"><label><span>尺寸</span><select value={draft.imageSize} onChange={(event) => setDraft((current) => ({ ...current, imageSize: normalizeImageOutputSize(event.target.value) }))}>{imageOutputSizeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label><label><span>质量</span><select value={draft.imageQuality} onChange={(event) => setDraft((current) => ({ ...current, imageQuality: normalizeImageOutputQuality(event.target.value) }))}>{imageOutputQualityOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label></div><button className="wb-primary-button" type="button" disabled={disabled || pending || saving || (!refreshRequired && !validPair)} onClick={() => void (refreshRequired ? onRetryRefresh() : applyAndGenerate())}>{pending || saving ? <Loader2 className="wb-spin" aria-hidden="true" /> : refreshRequired ? <Save aria-hidden="true" /> : <WandSparkles aria-hidden="true" />}{refreshRequired ? "重试刷新" : actionLabel}</button>{error ? <p className="wb-action-feedback--error">{error}</p> : null}</section>;
+  return <section className="wb-route-panel"><header><strong><SlidersHorizontal aria-hidden="true" />图片模型</strong><small>预计 {estimate} 积分</small></header><div className="mrp-field"><span>渠道 / 模型</span><ModelRoutePicker modality="image" providers={pickerProviders} modelPrices={modelPrices} value={{ providerId: draft.imageProvider, model: draft.imageModel }} onChange={(providerId, model) => setDraft((current) => ({ ...current, ...resolveImageRoutePair(providerId, model, providers, failedImageModels) }))} /></div><div className="wb-route-grid"><label><span>尺寸</span><select value={draft.imageSize} onChange={(event) => setDraft((current) => ({ ...current, imageSize: normalizeImageOutputSize(event.target.value) }))}>{imageOutputSizeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label><label><span>质量</span><select value={draft.imageQuality} onChange={(event) => setDraft((current) => ({ ...current, imageQuality: normalizeImageOutputQuality(event.target.value) }))}>{imageOutputQualityOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label></div><button className="wb-primary-button" type="button" disabled={disabled || pending || saving || (!refreshRequired && !validPair)} onClick={() => void (refreshRequired ? onRetryRefresh() : applyAndGenerate())}>{pending || saving ? <Loader2 className="wb-spin" aria-hidden="true" /> : refreshRequired ? <Save aria-hidden="true" /> : <WandSparkles aria-hidden="true" />}{refreshRequired ? "重试刷新" : actionLabel}</button>{error ? <p className="wb-action-feedback--error">{error}</p> : null}</section>;
 }
 function FeedbackForm({ projectId, target, recentCount, disabled, onRefresh }: { projectId: string; target: ReturnType<typeof buildAssetFeedbackTarget>; recentCount: number; disabled: boolean; onRefresh: (projectId: string) => Promise<ProjectWorkflow> }) {
   const [rating, setRating] = useState(4);

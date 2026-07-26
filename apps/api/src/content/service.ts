@@ -227,6 +227,16 @@ export async function generateContentChapterBatch(userId: string, contentProject
   }
 }
 
+// R3：手动编辑章节正文/标题（改最新版本，状态置为 confirmed）。
+export async function updateContentChapter(userId: string, contentProjectId: string, chapterNo: number, input: { title?: string; content: string }) {
+  const project = await prisma.contentProject.findFirst({ where: { id: contentProjectId, userId }, select: { id: true } });
+  if (!project) throw new Error("内容项目不存在");
+  const latest = await prisma.storyChapter.findFirst({ where: { contentProjectId, chapterNo }, orderBy: { version: "desc" } });
+  if (!latest) throw new Error("章节不存在或尚未生成");
+  await prisma.storyChapter.update({ where: { id: latest.id }, data: { content: input.content, ...(input.title?.trim() ? { title: input.title.trim() } : {}), status: "confirmed" } });
+  return getContentProductionPackage(userId, contentProjectId);
+}
+
 function logContentStageFailure(stage: "analysis" | "outline" | "chapter", contentProjectId: string, project: { textProvider: string; textModel: string }, error: unknown) {
   const detail = error instanceof z.ZodError
     ? error.issues.slice(0, 8).map((issue) => ({ path: issue.path.join("."), code: issue.code, message: issue.message }))

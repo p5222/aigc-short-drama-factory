@@ -311,6 +311,9 @@ export function ProjectWorkbenchPage({ workflow, providers, modelPrices, theme, 
           onSaveStateChange={setSaveState}
         />
       ) : <DeliveryStage
+        workflow={workflow}
+        providers={providers}
+        modelPrices={modelPrices}
         railOpen={railOpen}
         inspectorOpen={inspectorOpen}
         onCloseRail={() => setRailOpen(false)}
@@ -320,6 +323,11 @@ export function ProjectWorkbenchPage({ workflow, providers, modelPrices, theme, 
         exportJobs={exportJobs}
         onExport={createExport}
         isBusy={isBusy}
+        activeShotId={workbenchState.activeShotId}
+        onSelectShot={(shotId) => dispatch({ type: "set-shot", shotId })}
+        selectedShotIds={workbenchState.selectedShotIds}
+        onSelectShots={(shotIds) => dispatch({ type: "set-selected-shots", shotIds })}
+        onSaveModelRoutes={saveModelRoutes}
       /> /* Legacy delivery board remains below for Task 8 cleanup. */}
       {/* <ProductionWorkspace
         rail={(

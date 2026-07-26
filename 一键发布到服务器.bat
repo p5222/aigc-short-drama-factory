@@ -1,28 +1,24 @@
 @echo off
-chcp 65001 >nul
 setlocal
 cd /d "%~dp0"
-title 一键发布到服务器
-
+title Ship project to server
 echo ============================================================
-echo  验证代码 - 提交 - 推送服务器 Git - 自动部署 - 健康检查
+echo  Test - Commit - Push server Git - Deploy - Health check
 echo ============================================================
 echo.
-set /p "MSG=请输入本次更新说明: "
+set /p "MSG=Commit message: "
 if "%MSG%"=="" (
-  echo [失败] 更新说明不能为空。
+  echo [ERROR] Commit message is required.
   goto :end
 )
-
 call pnpm ship:server -- "%MSG%"
 if errorlevel 1 (
   echo.
-  echo [失败] 发布未完成，请把上方错误发给开发智能体。
+  echo [FAILED] Check the error above.
 ) else (
   echo.
-  echo [成功] 代码已保存到服务器 Git，并已部署生产环境。
+  echo [SUCCESS] Server Git and production are updated.
 )
-
 :end
 echo.
 pause

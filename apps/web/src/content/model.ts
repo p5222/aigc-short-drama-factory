@@ -69,3 +69,46 @@ export function chapterGenerationPlan(
     remainingCount: remaining.length
   };
 }
+
+// R3: 旧版分析结果的 dimensions 里存的是原始 JSON 字符串（workBreakdown 等）。
+// 渲染前清洗为纯中文要点；新数据（已是纯文本）原样返回。
+const hiddenModelKeys = new Set(["workId", "evidenceType", "chapterRange", "avoidCopying"]);
+const preferredModelKeys = ["structuralRole", "usablePattern", "recommendedBeat", "goal", "summary", "description", "content", "value"];
+
+export function cleanModelText(value: unknown): string {
+  if (value == null) return "";
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (raw && !raw.startsWith("{") && !raw.startsWith("[")) return raw;
+  let parsed: unknown = typeof value === "string" ? undefined : value;
+  if (raw) {
+    try { parsed = JSON.parse(raw); } catch { parsed = undefined; }
+  }
+  if (parsed === undefined) {
+    const parts: string[] = [];
+    for (const key of preferredModelKeys) {
+      for (const match of raw.matchAll(new RegExp('"' + key + '"\\s*:\\s*"([^"]+)"', "g"))) {
+        const text = match[1].trim();
+        if (text && !parts.includes(text)) parts.push(text);
+      }
+    }
+    return parts.length ? parts.join("；").slice(0, 600) : raw.slice(0, 600);
+  }
+  const parts: string[] = [];
+  const visit = (current: unknown, depth: number) => {
+    if (parts.length >= 6 || depth > 5 || current == null) return;
+    if (typeof current === "string") {
+      const text = current.replace(/\s+/g, " ").trim();
+      if (text && !text.startsWith("{") && !parts.includes(text)) parts.push(text);
+      return;
+    }
+    if (typeof current !== "object") return;
+    if (Array.isArray(current)) { current.forEach((item) => visit(item, depth + 1)); return; }
+    const record = current as Record<string, unknown>;
+    for (const key of preferredModelKeys) if (key in record) visit(record[key], depth + 1);
+    for (const [key, item] of Object.entries(record)) {
+      if (!preferredModelKeys.includes(key) && !hiddenModelKeys.has(key)) visit(item, depth + 1);
+    }
+  };
+  visit(parsed, 0);
+  return parts.join("；").slice(0, 600);
+}

@@ -18,6 +18,7 @@ import {
   normalizeImageOutputSize
 } from "@aifilm/shared";
 import { api } from "../../lib/api";
+import { ModelRoutePicker } from "../../components/ModelRoutePicker";
 import { MediaFrame } from "../components/MediaCanvas";
 import { ProductionWorkspace } from "../components/ProductionWorkspace";
 import {
@@ -312,16 +313,14 @@ function LoadedShotStage({
       <header><h2>镜头参数</h2><small>{activeShot ? `场 ${activeShot.sceneNo} · 镜头 ${activeShot.shotNo}` : "未选择"}</small></header>
       {activeShot ? <ShotEditor state={draftState} onEdit={edit} onSave={saveShot} disabled={Boolean(pending)} /> : <p className="wb-empty-state">请选择镜头。</p>}
       {state.shotMode === "image" ? <section className="wb-shot-generation"><h3>首帧生成</h3><p>模型修改会同时更新项目默认模型。</p>
-        <RouteSelect label="渠道" value={imageRoute.imageProvider} options={imageProviders.map((provider) => ({ value: provider.id, label: provider.name }))} onChange={(value) => { const pair = resolveImageRoutePair(value, undefined, providers, failedImageModels); setImageRoute((current) => ({ ...current, ...pair })); }} />
-        <RouteSelect label="模型" value={imageRoute.imageModel} options={imageModels.map((model) => ({ value: model, label: model }))} onChange={(value) => setImageRoute((current) => ({ ...current, imageModel: value }))} />
+        <div className="wb-shot-route"><span>渠道 / 模型</span><ModelRoutePicker modality="image" providers={imageProviders.map((provider) => ({ ...provider, models: provider.models.filter((model) => !failedImageModels.has(model)) }))} modelPrices={modelPrices} value={{ providerId: imageRoute.imageProvider, model: imageRoute.imageModel }} onChange={(providerId, model) => { const pair = resolveImageRoutePair(providerId, model, providers, failedImageModels); setImageRoute((current) => ({ ...current, ...pair })); }} /></div>
         <div className="wb-shot-route-grid"><RouteSelect label="尺寸" value={imageRoute.imageSize} options={imageOutputSizeOptions.map((item) => ({ value: item.value, label: item.label }))} onChange={(value) => setImageRoute((current) => ({ ...current, imageSize: normalizeImageOutputSize(value) }))} /><RouteSelect label="质量" value={imageRoute.imageQuality} options={imageOutputQualityOptions.map((item) => ({ value: item.value, label: item.label }))} onChange={(value) => setImageRoute((current) => ({ ...current, imageQuality: normalizeImageOutputQuality(value) }))} /></div>
         <small>单个实际接收镜头约 {imageUnitEstimate} 积分 · 服务端按当前批次上限结算</small>
         <button className="wb-primary-button" type="button" disabled={!activeShot || Boolean(pending) || hasUnsavedDraft || !validImageRoute || selectedImageCount === 0} onClick={() => void generateImages(selectedIds.length ? "selected" : "current")}>{pending.startsWith("image:") ? <Loader2 className="wb-spin" /> : <WandSparkles />}{selectedIds.length ? `生成已选 ${selectedIds.length} 个首帧` : activeImage?.referenceUrl ? "当前首帧已生成" : "生成当前首帧"}</button>
         <button className="wb-secondary-button" type="button" disabled={!pendingShotIds.length || Boolean(pending) || hasUnsavedDraft || !validImageRoute} onClick={() => void generateImages("pending")}>生成全部待生成（{pendingShotIds.length}）</button>
       </section> : null}
       {state.shotMode === "video" ? <section className="wb-shot-generation"><h3>项目视频生成</h3><p>Release A 仅支持项目级全部待完成片段，不提供单镜头生成或重生成。</p>
-        <RouteSelect label="渠道" value={videoRoute.videoProvider} options={videoProviders.map((provider) => ({ value: provider.id, label: provider.name }))} onChange={(value) => { const provider = videoProviders.find((item) => item.id === value); setVideoRoute({ videoProvider: value, videoModel: provider?.models[0] ?? "" }); }} />
-        <RouteSelect label="模型" value={videoRoute.videoModel} options={videoModels.map((model) => ({ value: model, label: model }))} onChange={(value) => setVideoRoute((current) => ({ ...current, videoModel: value }))} />
+        <div className="wb-shot-route"><span>渠道 / 模型</span><ModelRoutePicker modality="video" providers={videoProviders} modelPrices={modelPrices} value={{ providerId: videoRoute.videoProvider, model: videoRoute.videoModel }} onChange={(providerId, model) => setVideoRoute({ videoProvider: providerId, videoModel: model })} /></div>
         <small>{eligibleVideoShotIds.length} 个符合条件片段 · 共 {videoSeconds}s · {videoUnit} 积分/秒，实际扣费以后端本批次结果为准</small>
         {!eligibleVideoShotIds.length ? <p>当前没有可生成片段。请先生成成功首帧，或等待现有视频任务完成。</p> : null}
         {latestVideoTask?.status === "failed" ? <p className="wb-action-feedback--error">项目视频任务失败：{latestVideoTask.errorReason || "未提供失败原因"}</p> : null}
