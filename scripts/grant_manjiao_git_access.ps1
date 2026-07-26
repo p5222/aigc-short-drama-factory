@@ -10,7 +10,9 @@ $temp = [System.IO.Path]::GetTempFileName()
 try {
   Set-Content -Path $temp -Value $key -NoNewline -Encoding ascii
   scp $temp manjiao:/tmp/manjiao_new_git_key.pub
-  ssh manjiao 'set -e; key=$(cat /tmp/manjiao_new_git_key.pub); rm -f /tmp/manjiao_new_git_key.pub; mkdir -p ~/.ssh; touch ~/.ssh/authorized_keys; chmod 700 ~/.ssh; chmod 600 ~/.ssh/authorized_keys; line="command=\"git-shell -c \\\"\$SSH_ORIGINAL_COMMAND\\\"\",no-agent-forwarding,no-port-forwarding,no-pty,no-user-rc,no-X11-forwarding $key"; grep -Fqx "$line" ~/.ssh/authorized_keys || echo "$line" >> ~/.ssh/authorized_keys; echo ACCESS_GRANTED'
+  scp (Join-Path $PSScriptRoot "..\deploy\grant_git_key.sh") manjiao:/tmp/grant_git_key.sh
+  ssh manjiao "tr -d '\r' < /tmp/grant_git_key.sh > /tmp/grant_git_key_runtime.sh && chmod 700 /tmp/grant_git_key_runtime.sh && /tmp/grant_git_key_runtime.sh /tmp/manjiao_new_git_key.pub"
+  if ($LASTEXITCODE) { throw "Server rejected the public key." }
 } finally {
   Remove-Item $temp -Force -ErrorAction SilentlyContinue
 }
