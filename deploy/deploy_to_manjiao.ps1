@@ -1,3 +1,9 @@
+param(
+  [switch]$SkipGitHub,
+  [switch]$SkipLocalVerify,
+  [switch]$NonInteractive
+)
+
 # =============================================================================
 # deploy_to_manjiao.ps1  (launched by deploy_to_manjiao.bat)
 # ASCII-only (Windows PowerShell 5.1 reads .ps1 as ANSI/GBK; non-ASCII breaks parsing).
@@ -60,7 +66,9 @@ try {
   # ---- 1. Local verify gate (best-effort; server build+rollback is the real net) --
   Step "1/8" "Local verify gate (typecheck + build)"
   $script:PnpmMode = Detect-Pnpm
-  if ($script:PnpmMode -eq "none") {
+  if ($SkipLocalVerify) {
+    Ok "already verified by caller"
+  } elseif ($script:PnpmMode -eq "none") {
     Warn "pnpm/corepack/npx not on PATH -> SKIP local verify."
     Warn "Safety net = server-side build + health check + auto-rollback (server builds anyway)."
   } else {
@@ -81,9 +89,17 @@ try {
   }
   if (-not $Branch) { Die "detached HEAD is not deployable; switch to a named branch first." }
   Ok "clean HEAD=$(& git rev-parse --short HEAD), branch=$Branch"
-  & git push -u origin $Branch
-  if ($LASTEXITCODE -ne 0) { Die "GitHub push failed; server deploy stopped to keep GitHub and production aligned." }
-  Ok "pushed GitHub $Branch"
+  if ($SkipGitHub) {
+    & git push -u server "HEAD:$Branch"
+    if ($LASTEXITCODE -ne 0) { Die "server Git push failed; deploy stopped." }
+    & git push server HEAD:main
+    if ($LASTEXITCODE -ne 0) { Die "server Git main push failed; deploy stopped." }
+    Ok "pushed server Git $Branch and main"
+  } else {
+    & git push -u origin $Branch
+    if ($LASTEXITCODE -ne 0) { Die "GitHub push failed; server deploy stopped to keep GitHub and production aligned." }
+    Ok "pushed GitHub $Branch"
+  }
 
   # ---- 3. Clean archive from committed HEAD ------------------------------
   Step "3/8" "Build clean archive from HEAD"
@@ -115,7 +131,7 @@ try {
     $m = Select-String -Path $pippFile -Pattern '^PIPP_TEXT_API_KEY=(.+)$'
     if ($m) { $pippKey = $m.Matches.Groups[1].Value.Trim() }
   }
-  if (-not $pippKey) {
+  if (-not $pippKey -and -not $NonInteractive) {
     Write-Host "    Paste PIPP_TEXT_API_KEY (ripp.best key); empty = skip Pipp." -ForegroundColor Yellow
     $pippKey = (Read-Host "    PIPP_TEXT_API_KEY").Trim()
   }

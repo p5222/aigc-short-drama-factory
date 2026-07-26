@@ -106,6 +106,42 @@ ssh manjiao "echo SSH_OK"
 
 脚本会执行本地验证、推送、服务器备份、上传、重建、健康检查和失败回滚。SSH 私钥必须由服务器管理员逐人发放；离职或设备丢失时从服务器 `~/.ssh/authorized_keys` 删除对应公钥。
 
+GitHub 不可用时的最短交付路径：
+
+```powershell
+pnpm ship:server -- "feat: describe the change"
+```
+
+该命令会提交已跟踪改动、push 到服务器私有 Git 仓库并部署生产。新文件需先执行 `git add <文件>`。其他电脑可直接获取服务器最新代码：
+
+```powershell
+git clone manjiao:/opt/git/aigc-short-drama-factory.git
+```
+
+服务器 Git 的 `main` 始终对应最近一次成功发起的服务器交付；GitHub 恢复后执行 `git push origin main` 完成同步。
+
+### 新设备首次授权
+
+新设备运行公开的接入脚本，生成设备专属 key：
+
+```powershell
+.\scripts\bootstrap_manjiao_git.ps1
+```
+
+把输出的 `.pub` 公钥文件安全地发给服务器管理员。管理员在已授权电脑运行：
+
+```powershell
+.\scripts\grant_manjiao_git_access.ps1 -PublicKeyFile C:\path\device.pub
+```
+
+授权后，新设备重新运行并直接 clone：
+
+```powershell
+.\scripts\bootstrap_manjiao_git.ps1 -CloneTo D:\aigc-short-drama-factory
+```
+
+该 key 被强制限制为 Git 命令，不能获得服务器终端、端口转发或任意命令权限。push `main` 后服务器 hook 自动部署并检查健康状态。
+
 ## 6. 最小交接记录
 
 每次交接至少说明：当前分支、最后 commit、已完成内容、未完成内容、测试结果、是否已部署、生产备份目录。不要用聊天记录替代仓库内文档和 commit。

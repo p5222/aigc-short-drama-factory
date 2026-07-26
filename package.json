@@ -11,7 +11,8 @@
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r --if-present test:unit",
-    "push:safe": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/safe_push.ps1"
+    "push:safe": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/safe_push.ps1",
+    "ship:server": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ship_server.ps1"
   },
   "devDependencies": {
     "typescript": "^5.9.3"
