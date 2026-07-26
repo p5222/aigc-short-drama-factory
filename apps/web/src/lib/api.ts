@@ -128,6 +128,7 @@ export const api = {
     }),
   workbench: () => request<WorkbenchSummary>("/workbench/summary"),
   projects: () => request<Project[]>("/projects"),
+  deleteProject: (id: string) => request<{ id: string; deleted: boolean }>(`/projects/${encodeURIComponent(id)}`, { method: "DELETE" }),
   pruneProjectsToLatest: () =>
     request<{ keptProjectId?: string; keptProjectName?: string; deletedProjects: number; deletedTasks: number; deletedTransactions: number }>(
       "/projects/prune-to-latest",

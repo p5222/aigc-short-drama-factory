@@ -1,13 +1,16 @@
+import { Trash2 } from "lucide-react";
 import type { Project } from "@aifilm/shared";
 
 export function ScriptsPage({
   projects,
   onOpen,
-  onNew
+  onNew,
+  onDelete
 }: {
   projects: Project[];
   onOpen: (projectId: string) => void;
   onNew: () => void;
+  onDelete: (projectId: string) => void;
 }) {
   return (
     <div className="page-stack">
@@ -38,6 +41,7 @@ export function ScriptsPage({
               <article className="project-card clickable" key={project.id} onClick={() => onOpen(project.id)}>
                 <div>
                   <strong>{project.name}</strong>
+                  <button className="icon-button danger" title="删除作品" aria-label={`删除作品 ${project.name}`} onClick={(event) => { event.stopPropagation(); if (window.confirm(`确认删除“${project.name}”？作品下的脚本、分镜、资产和生成任务都会删除。`)) onDelete(project.id); }}><Trash2 size={15} /></button>
                   <span>
                     {project.type} · {project.videoRatio}
                   </span>

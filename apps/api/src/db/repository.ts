@@ -222,6 +222,12 @@ export async function listProjects(userId = DEMO_USER_ID) {
   return (await prisma.project.findMany({ where: { userId }, orderBy: { updatedAt: "desc" } })).map(mapProject);
 }
 
+export async function deleteProject(projectId: string, userId = DEMO_USER_ID) {
+  const result = await prisma.project.deleteMany({ where: { id: projectId, userId } });
+  if (!result.count) throw new Error("项目不存在或无权删除");
+  return { id: projectId, deleted: true };
+}
+
 export async function updateProjectModelRoutes(
   projectId: string,
   userId = DEMO_USER_ID,
