@@ -1,8 +1,8 @@
 import { ArrowRight, BookOpen, Check, CheckCircle2, ChevronRight, CircleAlert, FileText, LoaderCircle, Plus, RefreshCw, Sparkles, UsersRound, Clapperboard, Map, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ContentProductionPackage, ContentProjectSummary, CreateProjectInput, ModelProvider, StyleProfile } from "@aifilm/shared";
-import { contentApi, type SourceDocumentInput } from "../lib/contentApi";
-import { buildProductionDraft, contentSteps, isCurrentRequest, modeLabel, reconcileProjectId, sourceKindForMode, statusLabel, type RequestToken } from "./model";
+import { contentApi, type ContentVersionHistory, type SourceDocumentInput } from "../lib/contentApi";
+import { buildProductionDraft, chapterGenerationPlan, contentSteps, isCurrentRequest, modeLabel, reconcileProjectId, sourceKindForMode, statusLabel, type RequestToken } from "./model";
 
 const emptyStyle: StyleProfile = { key: "", name: "", category: "", summary: "", characterRules: [], sceneRules: [], lightingRules: [], cameraRules: [], materialRules: [], negativeRules: [] };
 const styleOptions: Array<Pick<StyleProfile, "key" | "name" | "category" | "summary">> = [
@@ -45,6 +45,7 @@ export function ContentWorkspace({ initialProjects, providers, onReload, onEnter
   const [failedProjectId, setFailedProjectId] = useState("");
   const [savedSources, setSavedSources] = useState<Record<string, { title: string; content: string }>>({});
   const [packages, setPackages] = useState<Record<string, ContentProductionPackage>>({});
+  const [versions, setVersions] = useState<Record<string, ContentVersionHistory>>({});
   const requestSequence = useRef(0);
   const activeRequest = useRef<RequestToken | null>(null);
   const selected = projects.find((project) => project.id === selectedId);
@@ -71,6 +72,16 @@ export function ContentWorkspace({ initialProjects, providers, onReload, onEnter
     }).catch((reason) => active && setError(reason instanceof Error ? reason.message : "内容详情加载失败"));
     return () => { active = false; };
   }, [selectedId]);
+
+  const selectedPackage = selectedId ? packages[selectedId] : undefined;
+  useEffect(() => {
+    if (!selectedId) return;
+    let active = true;
+    void contentApi.versions(selectedId)
+      .then((result) => { if (active) setVersions((current) => ({ ...current, [selectedId]: result })); })
+      .catch(() => { /* 版本详情为增强信息，加载失败不阻断主流程 */ });
+    return () => { active = false; };
+  }, [selectedId, selectedPackage?.analysis?.version, selectedPackage?.outline?.version, selectedPackage?.chapters?.length, selectedPackage?.script?.version]);
 
   async function refresh() {
     setBusy("refresh"); setError("");
@@ -160,13 +171,35 @@ export function ContentWorkspace({ initialProjects, providers, onReload, onEnter
 
   async function generateNextChapters() {
     if (!selected || busy) return;
-    const nextChapter = Math.max(0, ...(productionPackage?.chapters ?? []).map((chapter) => chapter.chapterNo)) + 1;
-    setBusy("generate"); setError(""); setMessage(`正在生成第 ${nextChapter} 章起的正文`);
+    const outline = Array.isArray(productionPackage?.outline?.result.chapters) ? productionPackage.outline.result.chapters.map(asRecord).map((chapter, index) => ({ chapterNo: Number(chapter.chapterNo ?? index + 1) })) : [];
+    const plan = chapterGenerationPlan(outline, productionPackage?.chapters ?? [], batchSize);
+    if (!plan.remainingCount) return;
+    setBusy("generate"); setError(""); setMessage(`正在生成第 ${plan.nextChapter} 章起的正文`);
     try {
-      const result = await contentApi.generateChapters(selected.id, { startChapter: nextChapter, batchSize });
+      const result = await contentApi.generateChapters(selected.id, { startChapter: plan.nextChapter, batchSize: Math.max(2, plan.nextBatchSize) });
       setPackages((current) => ({ ...current, [selected.id]: result }));
       setProjects(await onReload()); setTab("output"); setMessage("新一批章节正文已生成");
     } catch (reason) { setError(reason instanceof Error ? reason.message : "章节生成失败"); }
+    finally { setBusy(""); }
+  }
+
+  async function generateAllChapters() {
+    if (!selected || busy || !productionPackage?.outline) return;
+    const outline = Array.isArray(productionPackage.outline.result.chapters) ? productionPackage.outline.result.chapters.map(asRecord).map((chapter, index) => ({ chapterNo: Number(chapter.chapterNo ?? index + 1) })) : [];
+    let current = productionPackage;
+    let plan = chapterGenerationPlan(outline, current.chapters ?? [], batchSize);
+    if (!plan.remainingCount) return;
+    setBusy("generate"); setError("");
+    try {
+      while (plan.remainingCount > 0) {
+        const completed = outline.length - plan.remainingCount;
+        setMessage(`正在生成全部正文 · ${completed}/${outline.length} 章已保存`);
+        current = await contentApi.generateChapters(selected.id, { startChapter: plan.nextChapter, batchSize: Math.max(2, plan.nextBatchSize) });
+        setPackages((packagesState) => ({ ...packagesState, [selected.id]: current }));
+        plan = chapterGenerationPlan(outline, current.chapters ?? [], batchSize);
+      }
+      setProjects(await onReload()); setTab("output"); setMessage(`全部 ${outline.length} 章正文已生成`);
+    } catch (reason) { setError(reason instanceof Error ? `${reason.message}；已完成章节已保存，可继续重试剩余章节。` : "全部章节生成中断"); }
     finally { setBusy(""); }
   }
 
@@ -218,13 +251,13 @@ export function ContentWorkspace({ initialProjects, providers, onReload, onEnter
     <aside className="content-rail">
       <div className="content-panel-title"><div><strong>作品与版本</strong><small>{projects.length} 个内容项目</small></div><button type="button" className="content-icon-button" onClick={() => setCreating(true)} aria-label="新建内容项目" title="新建"><Plus size={17} /></button></div>
       <div className="content-project-list">{projects.map((project) => <div key={project.id} className={`content-project-row ${project.id === selectedId ? "is-active" : ""}`}><button type="button" onClick={() => setSelectedId(project.id)}><span className="content-project-icon"><BookOpen size={16} /></span><span><strong>{project.title}</strong><small>{modeLabel(project.mode)} · {statusLabel(project.status)}</small></span><ChevronRight size={15} /></button><button type="button" className="content-project-delete" title="删除内容项目" aria-label={`删除 ${project.title}`} onClick={() => void removeContentProject(project.id)}><Trash2 size={14} /></button></div>)}</div>
-      {selected ? <section className="content-structure"><h2>章节与版本</h2><dl><div><dt>素材</dt><dd>{selected.sourceCount}</dd></div><div><dt>章节</dt><dd>{selected.chapterCount}</dd></div><div><dt>剧本</dt><dd>{selected.scriptCount}</dd></div></dl><p>当前 API 暂未提供章节和历史版本详情。</p></section> : null}
+      {selected ? <ContentVersionPanel selected={selected} history={versions[selected.id]} onOpenChapters={() => setTab("output")} /> : null}
     </aside>
 
     <main className="content-editor">
       {creating ? <><ContentCreationIntent intent={createTitle} intentType={intentType} targetWords={targetWords} chapterCount={chapterCount} batchSize={batchSize} busy={busy === "create"} canCancel={Boolean(projects.length)} onIntentChange={setCreateTitle} onIntentTypeChange={setIntentType} onTargetWordsChange={setTargetWords} onChapterCountChange={setChapterCount} onBatchSizeChange={setBatchSize} onCancel={() => setCreating(false)} onSubmit={() => void createProject()} />{error ? <div className="content-creation-error" role="alert"><CircleAlert size={17} /><div><strong>创作流程中断，项目已保留</strong><p>{error}</p><small>可以重试当前阶段，或删除这个失败项目后重新开始。</small><div className="content-inline-actions"><button type="button" className="content-secondary-button" onClick={() => void retryDevelop()} disabled={!failedProjectId || Boolean(busy)}><RefreshCw size={15} />重试当前阶段</button><button type="button" className="content-secondary-button" onClick={() => failedProjectId && void removeContentProject(failedProjectId)} disabled={!failedProjectId || Boolean(busy)}><Trash2 size={15} />删除失败项目</button></div></div></div> : null}</> : selected ? <>
         <nav className="content-editor-tabs" aria-label="编辑视图">{(["input", "output", "diff"] as const).map((item) => <button type="button" key={item} className={tab === item ? "is-active" : ""} onClick={() => setTab(item)}>{item === "input" ? "素材原文" : item === "output" ? "步骤输出" : "版本差异"}</button>)}</nav>
-        {tab === "input" ? <section className="content-document"><div className="content-document-head"><div><span>{modeLabel(selected.mode)}</span><h2>添加创作素材</h2></div><small>{wordCount.toLocaleString()} 字</small></div><label><span>素材标题</span><input value={sourceTitle} onChange={(event) => setSourceTitle(event.target.value)} maxLength={160} placeholder={selected.mode === "adaptation" ? "例如：原著第一卷" : "例如：故事核心设定"} /></label><label className="content-writing-field"><span>素材正文</span><textarea value={sourceContent} onChange={(event) => setSourceContent(event.target.value)} maxLength={500000} placeholder={selected.mode === "same_genre" ? "粘贴参考作品或结构素材…" : selected.mode === "adaptation" ? "粘贴需要改编的小说正文…" : "写下人物、冲突、世界观或故事灵感…"} /></label><div className="content-inline-actions"><span>{message || error}</span><button type="button" className="content-secondary-button" disabled={!handoffSource?.content || Boolean(busy)} onClick={() => void generatePackage()}>{busy === "generate" ? <LoaderCircle size={16} /> : <Sparkles size={16} />}{productionPackage?.script ? "重新生成剧本" : "生成剧本与实体"}</button><button type="button" className="content-primary-button" disabled={!sourceTitle.trim() || !sourceContent.trim() || busy === "save"} onClick={() => void saveSource()}>{busy === "save" ? <LoaderCircle size={16} /> : <FileText size={16} />}保存素材</button></div></section> : tab === "output" ? <ContentPackageOutput value={productionPackage} onGenerate={() => void generatePackage()} onGenerateOutline={() => void generateOutline()} onConfirmOutline={(result) => void confirmOutlineAndGenerate(result)} onGenerateChapters={() => void generateNextChapters()} busy={busy === "generate"} /> : <section className="content-unavailable"><FileText size={28} /><h2>暂无可比较版本</h2><p>生成第二版剧本后，这里将展示逐段差异；当前不会伪造版本内容。</p></section>}
+        {tab === "input" ? <section className="content-document"><div className="content-document-head"><div><span>{modeLabel(selected.mode)}</span><h2>添加创作素材</h2></div><small>{wordCount.toLocaleString()} 字</small></div><label><span>素材标题</span><input value={sourceTitle} onChange={(event) => setSourceTitle(event.target.value)} maxLength={160} placeholder={selected.mode === "adaptation" ? "例如：原著第一卷" : "例如：故事核心设定"} /></label><label className="content-writing-field"><span>素材正文</span><textarea value={sourceContent} onChange={(event) => setSourceContent(event.target.value)} maxLength={500000} placeholder={selected.mode === "same_genre" ? "粘贴参考作品或结构素材…" : selected.mode === "adaptation" ? "粘贴需要改编的小说正文…" : "写下人物、冲突、世界观或故事灵感…"} /></label><div className="content-inline-actions"><span>{message || error}</span><button type="button" className="content-secondary-button" disabled={!handoffSource?.content || Boolean(busy)} onClick={() => void generatePackage()}>{busy === "generate" ? <LoaderCircle size={16} /> : <Sparkles size={16} />}{productionPackage?.script ? "重新生成剧本" : "生成剧本与实体"}</button><button type="button" className="content-primary-button" disabled={!sourceTitle.trim() || !sourceContent.trim() || busy === "save"} onClick={() => void saveSource()}>{busy === "save" ? <LoaderCircle size={16} /> : <FileText size={16} />}保存素材</button></div></section> : tab === "output" ? <ContentPackageOutput value={productionPackage} onGenerate={() => void generatePackage()} onGenerateOutline={() => void generateOutline()} onConfirmOutline={(result) => void confirmOutlineAndGenerate(result)} onGenerateChapters={() => void generateNextChapters()} onGenerateAllChapters={() => void generateAllChapters()} busy={busy === "generate"} /> : <section className="content-unavailable"><FileText size={28} /><h2>暂无可比较版本</h2><p>生成第二版剧本后，这里将展示逐段差异；当前不会伪造版本内容。</p></section>}
       </> : <section className="content-unavailable"><BookOpen size={30} /><h2>创建第一个内容项目</h2><p>选择一种创作方式开始。</p><button type="button" className="content-primary-button" onClick={() => setCreating(true)}><Plus size={16} />新建项目</button></section>}
     </main>
 
@@ -272,10 +305,17 @@ function ContentCreationIntent({ intent, intentType, targetWords, chapterCount, 
   </section>;
 }
 
-function ContentPackageOutput({ value, onGenerate, onGenerateOutline, onConfirmOutline, onGenerateChapters, busy }: { value?: ContentProductionPackage; onGenerate: () => void; onGenerateOutline: () => void; onConfirmOutline: (result: Record<string, unknown>) => void; onGenerateChapters: () => void; busy: boolean }) {
+function ContentPackageOutput({ value, onGenerate, onGenerateOutline, onConfirmOutline, onGenerateChapters, onGenerateAllChapters, busy }: { value?: ContentProductionPackage; onGenerate: () => void; onGenerateOutline: () => void; onConfirmOutline: (result: Record<string, unknown>) => void; onGenerateChapters: () => void; onGenerateAllChapters: () => void; busy: boolean }) {
   const rawOutline = value?.outline?.result;
   const [outlineDraft, setOutlineDraft] = useState<Record<string, unknown>>(rawOutline ?? {});
+  const [selectedChapterNo, setSelectedChapterNo] = useState(1);
   useEffect(() => setOutlineDraft(rawOutline ?? {}), [value?.outline?.id, rawOutline]);
+  useEffect(() => {
+    const outline = Array.isArray(rawOutline?.chapters) ? rawOutline.chapters.map(asRecord) : [];
+    const chapterNumbers = outline.map((chapter, index) => Number(chapter.chapterNo ?? index + 1));
+    const latestGenerated = value?.chapters?.at(-1)?.chapterNo;
+    setSelectedChapterNo((current) => latestGenerated ?? (chapterNumbers.includes(current) ? current : chapterNumbers[0] ?? 1));
+  }, [value?.outline?.id, value?.chapters?.length, rawOutline]);
   if (value?.analysis && !value.outline) {
     const dimensions = asRecord(value.analysis.result.dimensions);
     const evidence = asRecord(value.analysis.result.evidence);
@@ -287,10 +327,51 @@ function ContentPackageOutput({ value, onGenerate, onGenerateOutline, onConfirmO
     const chapters = value.chapters ?? [];
     const confirmed = value.outline.status === "confirmed";
     const updateChapter = (index: number, key: string, nextValue: string) => setOutlineDraft((current) => ({ ...current, chapters: outline.map((item, itemIndex) => itemIndex === index ? { ...item, [key]: nextValue } : item) }));
-    return <section className="content-plan-output"><header><div><span>{confirmed ? "STEP 4 · 正文创作" : "STEP 3 · 大纲确认"}</span><h2>{String(outlineDraft.title ?? "原创内容方案")}</h2><small>{evidence.mode === "model_search" ? "模型检索 · 已返回可核验来源" : "基于模型知识 · 非实时榜单"}</small></div><em>{confirmed ? `${chapters.length}/${outline.length} 章已生成` : `大纲 v${value.outline.version}`}</em></header><div className="content-chapter-workspace"><aside><h3>章节 · {outline.length} 章</h3>{outline.map((item, index) => { const chapterNo = Number(item.chapterNo ?? index + 1); const generated = chapters.find((chapter) => chapter.chapterNo === chapterNo); return <article key={chapterNo} className={generated ? "is-generated" : ""}><b>{String(chapterNo).padStart(2, "0")}</b><span><strong>{String(item.title ?? `第${chapterNo}章`)}</strong><small>{generated ? "正文已生成" : String(item.cliffhanger ?? "等待生成")}</small></span></article>; })}{confirmed ? <button type="button" className="content-secondary-button" disabled={busy || chapters.length >= outline.length} onClick={onGenerateChapters}>{busy ? <LoaderCircle size={15} /> : <Sparkles size={15} />}{chapters.length >= outline.length ? "全部章节已生成" : "继续生成下一批"}</button> : null}</aside><div>{confirmed ? (chapters.length ? chapters.map((chapter) => <article className="content-chapter-body" key={chapter.id}><header><span>第 {chapter.chapterNo} 章</span><strong>{chapter.title}</strong></header><p>{chapter.content}</p></article>) : <div className="content-unavailable"><FileText size={24} /><h2>等待首批正文</h2><p>确认大纲后按每批 2–3 章生成，失败只需重试当前批次。</p></div>) : <div className="content-outline-editor">{outline.map((item, index) => <article key={Number(item.chapterNo ?? index + 1)}><header><b>{String(Number(item.chapterNo ?? index + 1)).padStart(2, "0")}</b><input aria-label={`第${index + 1}章标题`} value={String(item.title ?? "")} onChange={(event) => updateChapter(index, "title", event.target.value)} /></header><label><span>本章目标</span><textarea value={String(item.objective ?? "")} onChange={(event) => updateChapter(index, "objective", event.target.value)} /></label><label><span>冲突</span><textarea value={String(item.conflict ?? "")} onChange={(event) => updateChapter(index, "conflict", event.target.value)} /></label><label><span>章尾钩子</span><textarea value={String(item.cliffhanger ?? "")} onChange={(event) => updateChapter(index, "cliffhanger", event.target.value)} /></label></article>)}<div className="content-stage-actions"><button type="button" className="content-secondary-button" disabled={busy} onClick={onGenerateOutline}><RefreshCw size={15} />重新生成大纲</button><button type="button" className="content-primary-button" disabled={busy || !outline.length} onClick={() => onConfirmOutline(outlineDraft)}>{busy ? <LoaderCircle size={16} /> : <Check size={16} />}确认大纲并生成首批正文</button></div></div>}</div></div></section>;
+    const selectedIndex = Math.max(0, outline.findIndex((item, index) => Number(item.chapterNo ?? index + 1) === selectedChapterNo));
+    const selectedOutline = outline[selectedIndex];
+    const selectedGenerated = chapters.find((chapter) => chapter.chapterNo === selectedChapterNo);
+    const generationPlan = chapterGenerationPlan(outline.map((item, index) => ({ chapterNo: Number(item.chapterNo ?? index + 1) })), chapters, 2);
+    return <section className="content-plan-output content-focused-output">
+      <header><div><span>{confirmed ? "STEP 4 · 正文创作" : "STEP 3 · 大纲确认"}</span><h2>{String(outlineDraft.title ?? "原创内容方案")}</h2><small>{evidence.mode === "model_search" ? "模型检索 · 已返回可核验来源" : "基于模型知识 · 非实时榜单"}</small></div><em>{confirmed ? `${chapters.length}/${outline.length} 章已生成` : `大纲 v${value.outline.version}`}</em></header>
+      <div className="content-chapter-workspace">
+        <aside><h3>章节目录 <span>{outline.length} 章</span></h3><div className="content-chapter-index">{outline.map((item, index) => { const chapterNo = Number(item.chapterNo ?? index + 1); const generated = chapters.find((chapter) => chapter.chapterNo === chapterNo); return <button type="button" key={chapterNo} className={`${generated ? "is-generated" : ""} ${chapterNo === selectedChapterNo ? "is-selected" : ""}`} onClick={() => setSelectedChapterNo(chapterNo)}><b>{String(chapterNo).padStart(2, "0")}</b><span><strong>{String(item.title ?? `第${chapterNo}章`)}</strong><small>{generated ? "正文已生成" : String(item.cliffhanger ?? "等待生成")}</small></span></button>; })}</div></aside>
+        <div className="content-chapter-focus">{confirmed ? (selectedGenerated ? <article className="content-chapter-body"><header><span>第 {selectedGenerated.chapterNo} 章</span><strong>{selectedGenerated.title}</strong></header><div className="content-manuscript-scroll"><p>{selectedGenerated.content}</p></div></article> : <div className="content-unavailable content-chapter-empty"><FileText size={24} /><h2>第 {selectedChapterNo} 章等待生成</h2><p>可以继续生成下一批，或一次生成全部剩余章节。</p></div>) : selectedOutline ? <div className="content-outline-editor"><article><header><b>{String(selectedChapterNo).padStart(2, "0")}</b><input aria-label={`第${selectedChapterNo}章标题`} value={String(selectedOutline.title ?? "")} onChange={(event) => updateChapter(selectedIndex, "title", event.target.value)} /></header><label><span>本章目标</span><textarea value={String(selectedOutline.objective ?? "")} onChange={(event) => updateChapter(selectedIndex, "objective", event.target.value)} /></label><label><span>核心冲突</span><textarea value={String(selectedOutline.conflict ?? "")} onChange={(event) => updateChapter(selectedIndex, "conflict", event.target.value)} /></label><label><span>章尾钩子</span><textarea value={String(selectedOutline.cliffhanger ?? "")} onChange={(event) => updateChapter(selectedIndex, "cliffhanger", event.target.value)} /></label></article></div> : null}</div>
+      </div>
+      <div className="content-stage-actions"><span>{confirmed ? `每批完成后自动保存 · 还剩 ${generationPlan.remainingCount} 章` : "只显示当前章节，切换目录可逐章检查。"}</span><button type="button" className="content-secondary-button" disabled={busy} onClick={onGenerateOutline}><RefreshCw size={15} />重新生成</button>{confirmed ? <><button type="button" className="content-secondary-button" disabled={busy || !generationPlan.remainingCount} onClick={onGenerateChapters}>{busy ? <LoaderCircle size={15} /> : <Sparkles size={15} />}继续生成下一批</button><button type="button" className="content-primary-button" disabled={busy || !generationPlan.remainingCount} onClick={onGenerateAllChapters}><ArrowRight size={16} />生成全部剩余章节</button></> : <button type="button" className="content-primary-button" disabled={busy || !outline.length} onClick={() => onConfirmOutline(outlineDraft)}>{busy ? <LoaderCircle size={16} /> : <Check size={16} />}确认大纲并生成首批正文</button>}</div>
+    </section>;
   }
   if (!value?.script) return <section className="content-unavailable"><FileText size={28} /><h2>还没有生成剧本</h2><p>保存素材后，系统会根据小说或剧本类型生成可生产剧本并提取真实实体。</p><button type="button" className="content-primary-button" disabled={!value?.source || busy} onClick={onGenerate}>{busy ? <LoaderCircle size={16} /> : <Sparkles size={16} />}生成剧本与实体</button></section>;
   return <section className="content-package-output"><header><div><span>剧本 v{value.script.version}</span><h2>可生产剧本</h2></div><em>{value.script.status === "confirmed" ? "已确认" : statusLabel(value.script.status)}</em></header><pre>{value.script.content}</pre><div className="content-entity-summary"><article><UsersRound size={18} /><strong>{value.entities?.characters.length ?? 0}</strong><span>人物</span></article><article><Map size={18} /><strong>{value.entities?.scenes.length ?? 0}</strong><span>场景</span></article><article><Sparkles size={18} /><strong>{value.entities?.props.length ?? 0}</strong><span>道具</span></article></div></section>;
+}
+
+function ContentVersionPanel({ selected, history, onOpenChapters }: { selected: ContentProjectSummary; history?: ContentVersionHistory; onOpenChapters: () => void }) {
+  const chapterVersionTotal = history?.chapters.reduce((sum, chapter) => sum + chapter.versions.length, 0) ?? 0;
+  return <section className="content-structure">
+    <h2>章节与版本</h2>
+    <dl>
+      <div><dt>素材</dt><dd>{selected.sourceCount}</dd></div>
+      <div><dt>章节</dt><dd>{history ? history.chapters.length : selected.chapterCount}</dd></div>
+      <div><dt>剧本</dt><dd>{history ? history.scripts.length : selected.scriptCount}</dd></div>
+    </dl>
+    {!history ? <p className="content-version-hint">正在加载版本详情…</p> : (history.analyses.length || history.outlines.length || history.chapters.length || history.scripts.length) ? <div className="content-version-history">
+      {history.chapters.length ? <div className="content-version-group">
+        <h3>章节 <span>{history.chapters.length} 章 · {chapterVersionTotal} 个版本</span></h3>
+        <ul className="content-version-chapters">{history.chapters.map((chapter) => <li key={chapter.chapterNo}><button type="button" onClick={onOpenChapters} title="在步骤输出中查看该章"><b>{String(chapter.chapterNo).padStart(2, "0")}</b><span className="content-version-chapter-title">{chapter.title || `第${chapter.chapterNo}章`}</span>{chapter.versions.length > 1 ? <em className="content-version-badge">v{chapter.versions[0].version}</em> : null}<span className={`content-version-dot is-${chapter.latestStatus}`} /></button></li>)}</ul>
+      </div> : null}
+      {history.outlines.length ? <div className="content-version-group">
+        <h3>大纲 <span>{history.outlines.length} 版</span></h3>
+        <ul className="content-version-list">{history.outlines.map((outline) => <li key={outline.id}><b>v{outline.version}</b><span>{outline.title || "章节大纲"}</span><em>{statusLabel(outline.status as never)}</em></li>)}</ul>
+      </div> : null}
+      {history.analyses.length ? <div className="content-version-group">
+        <h3>结构拆解 <span>{history.analyses.length} 版</span></h3>
+        <ul className="content-version-list">{history.analyses.map((analysis) => <li key={analysis.id}><b>v{analysis.version}</b><span>爆款机制分析</span><em>{statusLabel(analysis.status as never)}</em></li>)}</ul>
+      </div> : null}
+      {history.scripts.length ? <div className="content-version-group">
+        <h3>剧本 <span>{history.scripts.length} 版</span></h3>
+        <ul className="content-version-list">{history.scripts.map((script) => <li key={script.id}><b>v{script.version}</b><span>可生产剧本</span><em>{statusLabel(script.status as never)}</em></li>)}</ul>
+      </div> : null}
+    </div> : <p className="content-version-hint">完成结构拆解 / 大纲 / 正文后，这里会列出各步骤的历史版本。</p>}
+  </section>;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

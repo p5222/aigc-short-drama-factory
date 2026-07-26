@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ContentProjectSummary } from "@aifilm/shared";
-import { buildProductionDraft, isCurrentRequest, modeLabel, reconcileProjectId, sourceKindForMode, statusLabel } from "./model.ts";
+import { buildProductionDraft, chapterGenerationPlan, isCurrentRequest, modeLabel, reconcileProjectId, sourceKindForMode, statusLabel } from "./model.ts";
 
 const project = (id: string): ContentProjectSummary => ({ id, title: id, mode: "original", status: "draft", activeStep: "source", styleProfile: { key: "", name: "", category: "", summary: "", characterRules: [], sceneRules: [], lightingRules: [], cameraRules: [], materialRules: [], negativeRules: [] }, textProvider: "manjiao", textModel: "gpt-5.5", updatedAt: "", sourceCount: 0, chapterCount: 0, scriptCount: 0, hasEntities: false });
 
@@ -32,4 +32,18 @@ test("hands completed content to production as a script without converting it ag
   assert.equal(draft.title, "逆光之城");
   assert.equal(draft.targetEpisodes, 3);
   assert.equal(draft.contentProjectId, "content-1");
+});
+
+test("plans the next chapter batch and all remaining chapters from persisted chapter numbers", () => {
+  const outline = [1, 2, 3, 4, 5].map((chapterNo) => ({ chapterNo }));
+  assert.deepEqual(chapterGenerationPlan(outline, [{ chapterNo: 1 }, { chapterNo: 2 }], 2), {
+    nextChapter: 3,
+    nextBatchSize: 2,
+    remainingCount: 3
+  });
+  assert.deepEqual(chapterGenerationPlan(outline, outline, 3), {
+    nextChapter: 6,
+    nextBatchSize: 0,
+    remainingCount: 0
+  });
 });

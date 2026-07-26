@@ -3,6 +3,8 @@
 ## 当前状态
 
 - 备案状态：已通过
+- ICP 主体备案号：`粤ICP备2026098451号`
+- 网站悬挂链接：`https://beian.miit.gov.cn/`
 - 恢复时间：2026-07-20（Asia/Shanghai）
 - 主站：https://manjiao.cloud/
 - 主站别名：https://www.manjiao.cloud/

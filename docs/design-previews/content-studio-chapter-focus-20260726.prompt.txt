@@ -1,0 +1,26 @@
+Create one polished 16:9 desktop SaaS product design board at 2048x1152 for a Chinese AI fiction creation workspace called 漫角. Show two adjacent product states in the same image: left half is "大纲确认", right half is "正文创作". This is a real operational workbench, not a marketing landing page.
+
+Visual direction: quiet premium productivity UI inspired by Linear, Notion and modern model-routing consoles; refined light theme with neutral white and very pale cool gray surfaces, charcoal text, muted gray secondary text, restrained emerald accent, thin borders, no gradients, no black sidebar, no decorative illustrations, no nested floating cards, 6px maximum radius. Dense but breathable, precise Chinese typography, 1440px desktop layout logic.
+
+Shared layout in both states:
+- compact top bar with project title, 4-step progress, saved state
+- narrow left project rail, then a chapter index rail with 10 clickable chapters
+- large central single-chapter workspace, only one chapter visible at a time
+- compact right inspector for model provider, model name, current stage, generation progress and retry status
+- selected chapter has a slim emerald marker and subtle tinted background
+
+Left state, 大纲确认:
+- selected chapter 03
+- central title input, then three clean labeled fields: 本章目标, 核心冲突, 章尾钩子
+- fields are comfortably sized but do not make the page vertically long
+- sticky bottom actions: 重新生成, 保存修改, 确认大纲并生成首批正文
+- chapter index shows short title plus one-line hook, no full chapter forms stacked vertically
+
+Right state, 正文创作:
+- selected chapter 03, chapters 01-02 marked 已生成, chapters 03-10 待生成
+- central manuscript reader/editor has fixed height with an internal scrollbar and readable novel typography
+- progress says 2/10 章已生成 and 本批 2 章
+- bottom action bar has secondary button "继续生成 2 章" and primary button "生成全部剩余章节"
+- show a discreet note that completed chapters are saved after each batch
+
+Use lucide-style familiar icons sparingly. Avoid raw JSON, huge headings, oversized cards, gradients, purple palettes, dark panels, SVG illustration, placeholder lorem ipsum, or text explaining how to use the product. Make the information hierarchy immediately understandable and implementation-ready.

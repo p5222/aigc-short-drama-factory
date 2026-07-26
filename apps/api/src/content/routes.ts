@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { StyleProfile } from "@aifilm/shared";
-import { addSourceDocument, analyzeContentProject, confirmContentOutline, createContentProject, deleteContentProject, developContentProject, generateContentChapterBatch, generateContentOutline, generateContentProductionPackage, getContentProductionPackage, listContentProjects, updateContentModelRoute } from "./service.js";
+import { addSourceDocument, analyzeContentProject, confirmContentOutline, createContentProject, deleteContentProject, developContentProject, generateContentChapterBatch, generateContentOutline, generateContentProductionPackage, getContentProductionPackage, getContentProjectVersions, listContentProjects, updateContentModelRoute } from "./service.js";
 
 export const contentProjectInput = z.object({ title: z.string().trim().min(1).max(160), mode: z.enum(["same_genre", "original", "adaptation"]), styleProfile: z.record(z.string(), z.unknown()).optional(), textProvider: z.string().default("manjiao"), textModel: z.string().default("gpt-5.5") });
 export const sourceInput = z.object({ kind: z.enum(["novel", "short_story", "idea", "script"]), title: z.string().trim().min(1).max(160), content: z.string().min(1).max(500000) });
@@ -15,6 +15,7 @@ export async function handleCreateContentProject(userId: string, input: unknown)
 }
 export async function handleAddSource(userId: string, projectId: string, input: unknown) { return addSourceDocument(userId, projectId, sourceInput.parse(input)); }
 export async function handleGetContentPackage(userId: string, projectId: string) { return getContentProductionPackage(userId, projectId); }
+export async function handleGetContentVersions(userId: string, projectId: string) { return getContentProjectVersions(userId, projectId); }
 export async function handleGenerateContentPackage(userId: string, projectId: string) { return generateContentProductionPackage(userId, projectId); }
 export async function handleDevelopContentProject(userId: string, projectId: string, input: unknown) { return developContentProject(userId, projectId, developInput.parse(input)); }
 export async function handleAnalyzeContentProject(userId: string, projectId: string, input: unknown) { return analyzeContentProject(userId, projectId, developInput.parse(input)); }

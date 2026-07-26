@@ -87,6 +87,7 @@ model Project {
   showcaseWorks ShowcaseWork[]
   createdAt    DateTime         @default(now())
   updatedAt    DateTime         @updatedAt
+  @@index([userId])
 }
 
 model ScriptDraft {
@@ -98,6 +99,7 @@ model ScriptDraft {
   synopsis  String
   version   Int      @default(1)
   createdAt DateTime @default(now())
+  @@index([projectId])
 }
 
 model Character {
@@ -117,6 +119,7 @@ model Character {
   consistencyLevel String   @default("medium")
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
+  @@index([projectId])
 }
 
 model Asset {
@@ -134,6 +137,7 @@ model Asset {
   feedbacks          UserFeedback[]
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
+  @@index([projectId])
 }
 
 model ShowcaseWork {
@@ -192,6 +196,7 @@ model Storyboard {
   status            String
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
+  @@index([projectId])
 }
 
 model GenerationTask {
@@ -216,6 +221,8 @@ model GenerationTask {
   analyticsEvents  AnalyticsEvent[]
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
+  @@index([userId])
+  @@index([projectId])
 }
 
 model AnalyticsEvent {
@@ -539,6 +546,8 @@ model CreditTransaction {
   balanceAfter Int
   description  String
   createdAt    DateTime @default(now())
+  @@index([userId])
+  @@index([projectId])
 }
 
 model RechargeOrder {
@@ -659,6 +668,7 @@ model RedeemCode {
   redemptions    RedeemRedemption[]
   createdAt      DateTime           @default(now())
   updatedAt      DateTime           @updatedAt
+  @@index([batchId])
 }
 
 model RedeemBatch {
@@ -712,6 +722,7 @@ model ModelPrice {
   enabled       Boolean       @default(true)
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
+  @@index([providerId])
 }
 
 model PromptTemplate {

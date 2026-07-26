@@ -55,3 +55,17 @@ export interface RequestToken { projectId: string; sequence: number }
 export function isCurrentRequest(current: RequestToken | null, completed: RequestToken): boolean {
   return current?.projectId === completed.projectId && current.sequence === completed.sequence;
 }
+
+export function chapterGenerationPlan(
+  outline: Array<{ chapterNo: number }>,
+  generated: Array<{ chapterNo: number }>,
+  batchSize: number
+) {
+  const completed = new Set(generated.map((chapter) => chapter.chapterNo));
+  const remaining = outline.map((chapter) => chapter.chapterNo).filter((chapterNo) => !completed.has(chapterNo));
+  return {
+    nextChapter: remaining[0] ?? ((outline.at(-1)?.chapterNo ?? 0) + 1),
+    nextBatchSize: Math.min(Math.max(2, batchSize), remaining.length),
+    remainingCount: remaining.length
+  };
+}

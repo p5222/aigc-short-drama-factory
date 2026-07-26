@@ -220,3 +220,63 @@
   .content-plan-controls label + label { border-left: 0; border-top: 1px solid var(--content-border); }
   .content-flow-preview { align-items: flex-start; flex-direction: column; }
 }
+
+/* Focused chapter workspace: one chapter at a time, persistent batch actions. */
+.content-focused-output { min-height: calc(100vh - 154px); grid-template-rows: auto minmax(0, 1fr) auto; gap: 14px; }
+.content-focused-output > header small { display: block; margin-top: 5px; color: var(--content-muted); font-size: 12px; }
+.content-focused-output .content-chapter-workspace { min-height: 0; height: clamp(500px, calc(100vh - 260px), 720px); overflow: hidden; border: 1px solid var(--content-border); border-radius: 7px; }
+.content-focused-output .content-chapter-workspace > aside { min-height: 0; padding: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); }
+.content-focused-output .content-chapter-workspace > aside h3 { display: flex; justify-content: space-between; align-items: center; min-height: 50px; margin: 0; padding: 0 14px; border-bottom: 1px solid var(--content-border); font-size: 14px; }
+.content-focused-output .content-chapter-workspace > aside h3 span { color: var(--content-muted); font-size: 11px; font-weight: 500; }
+.content-chapter-index { min-height: 0; overflow: auto; padding: 6px; }
+.content-chapter-index button { position: relative; display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 8px; width: 100%; padding: 10px 9px; border: 0; border-radius: 5px; color: var(--content-muted); background: transparent; text-align: left; cursor: pointer; }
+.content-chapter-index button::before { content: ""; position: absolute; inset: 7px auto 7px 0; width: 2px; border-radius: 2px; background: transparent; }
+.content-chapter-index button:hover { color: var(--content-text); background: color-mix(in srgb, var(--content-surface) 70%, transparent); }
+.content-chapter-index button.is-selected { color: var(--content-text); background: var(--content-accent-soft); }
+.content-chapter-index button.is-selected::before { background: var(--content-accent); }
+.content-chapter-index button > b { padding-top: 2px; color: var(--content-muted); font-size: 11px; }
+.content-chapter-index button.is-generated > b { color: var(--content-accent); }
+.content-chapter-index strong, .content-chapter-index small { display: block; overflow: hidden; text-overflow: ellipsis; }
+.content-chapter-index strong { color: inherit; font-size: 13px; white-space: nowrap; }
+.content-chapter-index small { margin-top: 3px; color: var(--content-muted); font-size: 11px; line-height: 1.35; white-space: nowrap; }
+.content-chapter-focus { min-height: 0; padding: 20px clamp(18px, 3vw, 34px) !important; overflow: hidden; }
+.content-chapter-focus .content-outline-editor, .content-chapter-focus .content-chapter-body { height: 100%; }
+.content-chapter-focus .content-outline-editor > article { height: 100%; box-sizing: border-box; display: grid; grid-template-rows: auto repeat(3, minmax(0, 1fr)); align-content: stretch; }
+.content-chapter-focus .content-outline-editor label { min-height: 0; }
+.content-chapter-focus .content-outline-editor textarea { height: 100%; min-height: 76px; resize: none; }
+.content-chapter-body { display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 0; }
+.content-manuscript-scroll { min-height: 0; margin-top: 18px; padding: 4px 20px 20px 0; overflow: auto; scrollbar-gutter: stable; }
+.content-manuscript-scroll p { max-width: 760px; margin: 0; white-space: pre-wrap; color: var(--content-text); font-size: 15px; line-height: 2; }
+.content-chapter-empty { min-height: 100%; }
+.content-focused-output > .content-stage-actions { position: static; min-height: 48px; margin: 0; padding: 10px 0 0; }
+
+@media (max-width: 720px) {
+  .content-focused-output { min-height: auto; }
+  .content-focused-output .content-chapter-workspace { height: auto; min-height: 620px; overflow: visible; }
+  .content-focused-output .content-chapter-workspace > aside { max-height: 250px; }
+  .content-chapter-focus { min-height: 420px; }
+  .content-focused-output > .content-stage-actions { align-items: stretch; flex-direction: column; }
+  .content-focused-output > .content-stage-actions > span { margin: 0; }
+}
+
+/* Codex-9 章节与版本历史面板 */
+.content-version-history { display: flex; flex-direction: column; gap: 14px; margin-top: 12px; max-height: 46vh; overflow: auto; padding-right: 4px; scrollbar-gutter: stable; }
+.content-version-group > h3 { display: flex; align-items: baseline; justify-content: space-between; margin: 0 0 8px; font-size: 12px; font-weight: 650; color: var(--content-text); }
+.content-version-group > h3 span { font-weight: 500; font-size: 11px; color: var(--content-muted); }
+.content-version-chapters { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.content-version-chapters button { width: 100%; display: grid; grid-template-columns: 24px minmax(0, 1fr) auto auto; align-items: center; gap: 8px; padding: 7px 8px; border: 1px solid var(--content-border); border-radius: 6px; background: var(--content-surface); color: var(--content-text); cursor: pointer; text-align: left; transition: border-color .15s, background .15s; }
+.content-version-chapters button:hover { border-color: var(--content-accent); background: var(--content-accent-soft); }
+.content-version-chapters button > b { color: var(--content-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.content-version-chapter-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
+.content-version-badge { font-style: normal; font-size: 10px; color: var(--content-accent); background: var(--content-accent-soft); padding: 1px 6px; border-radius: 999px; }
+.content-version-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--content-muted); }
+.content-version-dot.is-confirmed { background: var(--content-accent); }
+.content-version-dot.is-running { background: #f0a020; }
+.content-version-dot.is-failed { background: #e2544a; }
+.content-version-dot.is-draft { background: var(--content-muted); }
+.content-version-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.content-version-list li { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 6px; background: var(--content-subtle); font-size: 12px; }
+.content-version-list li > b { color: var(--content-accent); font-variant-numeric: tabular-nums; }
+.content-version-list li > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--content-text); }
+.content-version-list li > em { font-style: normal; font-size: 11px; color: var(--content-muted); }
+.content-version-hint { color: var(--content-muted); font-size: 12px; line-height: 1.6; margin-top: 10px; }

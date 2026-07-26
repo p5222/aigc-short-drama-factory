@@ -127,10 +127,23 @@ import { testVideoModelConnection } from "./providers/video.js";
 import { listVisualPipelines, testVisualPipeline } from "./providers/visualPipelineRegistry.js";
 import { generationQueue, generationQueueEvents, queueConnection, startGenerationWorker } from "./queue/generationQueue.js";
 import { ensureStorageBuckets, storageRoot } from "./storage/objectStorage.js";
-import { handleAddSource, handleAnalyzeContentProject, handleConfirmContentOutline, handleCreateContentProject, handleDeleteContentProject, handleDevelopContentProject, handleGenerateContentChapterBatch, handleGenerateContentOutline, handleGenerateContentPackage, handleGetContentPackage, handleListContentProjects, handleUpdateContentModelRoute } from "./content/routes.js";
+import { handleAddSource, handleAnalyzeContentProject, handleConfirmContentOutline, handleCreateContentProject, handleDeleteContentProject, handleDevelopContentProject, handleGenerateContentChapterBatch, handleGenerateContentOutline, handleGenerateContentPackage, handleGetContentPackage, handleGetContentVersions, handleListContentProjects, handleUpdateContentModelRoute } from "./content/routes.js";
 
 const app = express();
+// 生产在 nginx/Caddy 之后：不设置 trust proxy 时 req.ip 会是上游代理 IP，
+// 导致限流把所有用户合并成一个桶、会话 IP 记录也全部失真。
+// 默认信任 1 层反代，可用 TRUST_PROXY 覆盖（数字层数、布尔或 CIDR）。
+app.set("trust proxy", parseTrustProxy(process.env.TRUST_PROXY, process.env.NODE_ENV === "production"));
 const port = Number(process.env.API_PORT ?? 4000);
+
+function parseTrustProxy(raw: string | undefined, productionDefault: boolean): boolean | number | string {
+  const value = raw?.trim();
+  if (!value) return productionDefault ? 1 : false; // 生产默认信任 1 层反代，开发默认关闭
+  if (value === "true") return true;
+  if (value === "false") return false;
+  if (/^\d+$/.test(value)) return Number(value);
+  return value; // 允许传具体 CIDR / 子网，如 "127.0.0.1,10.0.0.0/8"
+}
 const authSessionTtlDays = Number(process.env.AUTH_SESSION_TTL_DAYS ?? 30);
 const rateLimitWindowMs = Number(process.env.API_RATE_LIMIT_WINDOW_MS ?? 60_000);
 const rateLimitMax = Number(process.env.API_RATE_LIMIT_MAX ?? 180);
@@ -954,6 +967,12 @@ app.get("/api/content/projects/:id/package", asyncRoute(async (req, res) => {
   const userId = requestUserId(req);
   if (!userId) return res.status(401).json({ message: "请先登录。" });
   res.json(await handleGetContentPackage(userId, paramId(req.params.id)));
+}));
+
+app.get("/api/content/projects/:id/versions", asyncRoute(async (req, res) => {
+  const userId = requestUserId(req);
+  if (!userId) return res.status(401).json({ message: "请先登录。" });
+  res.json(await handleGetContentVersions(userId, paramId(req.params.id)));
 }));
 
 app.post("/api/content/projects/:id/generate", asyncRoute(async (req, res) => {

@@ -281,6 +281,24 @@ body.auth-surface {
     0 0 80px rgba(0, 251, 166, 0.15);
 }
 
+.cine-icp-link {
+  position: fixed;
+  z-index: 18;
+  left: 50%;
+  bottom: max(10px, env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  padding: 4px 8px;
+  color: rgba(255, 255, 255, .68);
+  background: rgba(10, 13, 16, .38);
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1.2;
+  text-decoration: none;
+  backdrop-filter: blur(8px);
+}
+
+.cine-icp-link:hover { color: #fff; }
+
 .cine-center-copy {
   position: absolute;
   left: 32px;

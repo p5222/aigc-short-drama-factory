@@ -33,6 +33,7 @@ interface LoginPageProps {
 
 type AuthMode = "login" | "register";
 type Locale = PublicLocale;
+const ICP_NUMBER = import.meta.env.VITE_ICP_NUMBER?.trim() || "粤ICP备2026098451号";
 
 const phonePattern = /^1[3-9]\d{9}$/;
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -1132,6 +1133,8 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
           {t.start}
         </button>
       </section> : <PublicShowcase locale={locale} scenes={scenes} view={publicView} onStart={() => openAuth("login")} />}
+
+      <a className="cine-icp-link" href="https://beian.miit.gov.cn/" target="_blank" rel="noreferrer">{ICP_NUMBER}</a>
 
       {authOpen ? (
         <div className="cine-auth-modal" role="dialog" aria-modal="true" aria-label={activeMode === "login" ? t.login : t.register}>

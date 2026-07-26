@@ -9,7 +9,8 @@
     "dev:web": "pnpm --filter @aifilm/web dev",
     "dev:api": "pnpm --filter @aifilm/api dev",
     "build": "pnpm -r build",
-    "typecheck": "pnpm -r typecheck"
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r --if-present test:unit"
   },
   "devDependencies": {
     "typescript": "^5.9.3"

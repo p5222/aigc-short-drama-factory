@@ -14,8 +14,17 @@ export interface SourceDocumentResult extends SourceDocumentInput {
   updatedAt: string;
 }
 
+export interface ContentVersionHistory {
+  projectId: string;
+  analyses: Array<{ id: string; version: number; status: string; createdAt: string }>;
+  outlines: Array<{ id: string; version: number; status: string; title: string; createdAt: string }>;
+  chapters: Array<{ chapterNo: number; title: string; latestStatus: string; versions: Array<{ id: string; version: number; status: string; updatedAt: string }> }>;
+  scripts: Array<{ id: string; version: number; status: string; createdAt: string }>;
+}
+
 export const contentApi = {
   projects: () => requestJson<ContentProjectSummary[]>("/content/projects"),
+  versions: (projectId: string) => requestJson<ContentVersionHistory>(`/content/projects/${encodeURIComponent(projectId)}/versions`),
   createProject: (input: { title: string; mode: ContentProjectMode; styleProfile?: StyleProfile; textProvider?: string; textModel?: string }) =>
     requestJson<ContentProjectSummary>("/content/projects", { method: "POST", body: JSON.stringify(input) }),
   addSource: (projectId: string, input: SourceDocumentInput) =>
