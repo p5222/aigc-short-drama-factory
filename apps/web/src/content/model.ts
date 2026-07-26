@@ -7,8 +7,10 @@ export const creationModes: Array<{ id: ContentProjectMode; label: string; descr
 ];
 
 export const contentSteps: Array<{ id: ContentStep; label: string }> = [
-  { id: "source", label: "素材" }, { id: "analysis", label: "分析" }, { id: "strategy", label: "策略" },
-  { id: "outline", label: "大纲" }, { id: "chapter", label: "正文" }, { id: "script", label: "剧本" }, { id: "entity", label: "实体" }
+  { id: "source", label: "创作意图" },
+  { id: "analysis", label: "结构拆解" },
+  { id: "outline", label: "大纲确认" },
+  { id: "chapter", label: "正文创作" }
 ];
 
 export function reconcileProjectId(projects: ContentProjectSummary[], selectedId?: string): string {

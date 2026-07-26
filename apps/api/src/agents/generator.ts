@@ -320,7 +320,7 @@ async function callOpenAICompatible(body: Record<string, unknown>, options: Text
     return callGeminiInteraction(body, options);
   }
 
-  if (shouldUseResponsesApi(options)) {
+  if (shouldUseResponsesApi(options, provider)) {
     try {
       return await callResponsesApi(body, options);
     } catch (error) {
@@ -928,6 +928,7 @@ export function textModelName(options: Pick<CreateProjectInput, "textProvider" |
   if (options.textModel) return options.textModel;
   const provider = options.textProvider || defaultTextProviderId();
   if (provider === "dashscope-text" || provider === "bailian-text") return process.env.DASHSCOPE_TEXT_MODEL || process.env.BAILIAN_TEXT_MODEL || "qwen3.7-plus";
+  if (provider === "manjiao") return process.env.MANJIAO_TEXT_MODEL || "gpt-5.5";
   if (provider === "zml-text") return process.env.ZML_TEXT_MODEL || "gpt-5.5";
   if (provider === "doubao-text" || provider === "doubao") return process.env.DOUBAO_TEXT_MODEL || "doubao-seed-1-6-250615";
   if (provider === "google-ai-studio") return process.env.GEMINI_TEXT_MODEL || "gemini-3.1-pro-preview";
@@ -976,6 +977,7 @@ function providerDisplayName(providerId: string) {
     "bailian-text": "Alibaba Cloud Bailian / DashScope Text",
     deepseek: "DeepSeek official",
     "zml-text": "ZML upstream relay",
+    manjiao: "Manjiao relay",
     "doubao-text": "Doubao Ark text",
     "google-ai-studio": "Google AI Studio / Gemini",
     "openai-upstream": "OpenAI upstream relay",
@@ -987,12 +989,13 @@ function providerDisplayName(providerId: string) {
   return names[providerId] ?? providerId;
 }
 
-function shouldUseResponsesApi(options: Pick<CreateProjectInput, "textProvider"> = {}) {
+export function shouldUseResponsesApi(options: Pick<CreateProjectInput, "textProvider"> = {}, resolvedProvider?: string) {
   const provider = options.textProvider || "";
-  return provider === "openai-upstream" || (!provider && process.env.OPENAI_TEXT_WIRE_API === "responses");
+  return resolvedProvider === "openai-upstream" || (provider === "openai-upstream") || (!provider && !resolvedProvider && process.env.OPENAI_TEXT_WIRE_API === "responses");
 }
 
 function defaultTextProviderId() {
+  if (process.env.MANJIAO_TEXT_API_KEY) return "manjiao";
   if ((process.env.DASHSCOPE_TEXT_API_KEY || process.env.DASHSCOPE_API_KEY || process.env.BAILIAN_TEXT_API_KEY) && (process.env.DASHSCOPE_TEXT_BASE_URL || process.env.BAILIAN_TEXT_BASE_URL || process.env.OPENAI_COMPATIBLE_BASE_URL)) {
     return "dashscope-text";
   }
@@ -1029,6 +1032,15 @@ function resolveTextRuntime(options: TextRuntimeOptions = {}, providerOverride?:
       apiKey: options.apiKey || process.env.ZML_API_KEY,
       baseUrl: options.baseUrl || process.env.ZML_BASE_URL || "https://api.zmlmfling.com",
       model: options.textModel || process.env.ZML_TEXT_MODEL || model
+    };
+  }
+
+  if (provider === "manjiao") {
+    return {
+      provider,
+      apiKey: options.apiKey || process.env.MANJIAO_TEXT_API_KEY,
+      baseUrl: options.baseUrl || process.env.MANJIAO_BASE_URL || "https://api.zmlmfling.com",
+      model: options.textModel || process.env.MANJIAO_TEXT_MODEL || model
     };
   }
 
@@ -1084,6 +1096,8 @@ function resolveTextModelCandidates(options: TextRuntimeOptions, provider: strin
   const envPool =
     provider === "dashscope-text"
       ? process.env.DASHSCOPE_TEXT_MODEL_POOL || process.env.BAILIAN_TEXT_MODEL_POOL
+      : provider === "manjiao"
+        ? process.env.MANJIAO_TEXT_MODEL_POOL
       : provider === "openai-compatible"
         ? process.env.OPENAI_COMPATIBLE_MODEL_POOL
         : provider === "doubao-text"

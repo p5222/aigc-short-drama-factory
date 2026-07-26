@@ -33,6 +33,7 @@ import {
   deleteMembershipPlan,
   deleteModelPrice,
   deletePlan,
+  deleteProject,
   deletePlatformAnnouncement,
   deleteHelpArticle,
   deletePromptTemplate,
@@ -126,7 +127,7 @@ import { testVideoModelConnection } from "./providers/video.js";
 import { listVisualPipelines, testVisualPipeline } from "./providers/visualPipelineRegistry.js";
 import { generationQueue, generationQueueEvents, queueConnection, startGenerationWorker } from "./queue/generationQueue.js";
 import { ensureStorageBuckets, storageRoot } from "./storage/objectStorage.js";
-import { handleAddSource, handleCreateContentProject, handleDeleteContentProject, handleDevelopContentProject, handleGenerateContentPackage, handleGetContentPackage, handleListContentProjects } from "./content/routes.js";
+import { handleAddSource, handleAnalyzeContentProject, handleConfirmContentOutline, handleCreateContentProject, handleDeleteContentProject, handleDevelopContentProject, handleGenerateContentChapterBatch, handleGenerateContentOutline, handleGenerateContentPackage, handleGetContentPackage, handleListContentProjects, handleUpdateContentModelRoute } from "./content/routes.js";
 
 const app = express();
 const port = Number(process.env.API_PORT ?? 4000);
@@ -964,7 +965,50 @@ app.post("/api/content/projects/:id/generate", asyncRoute(async (req, res) => {
 app.post("/api/content/projects/:id/develop", asyncRoute(async (req, res) => {
   const userId = requestUserId(req);
   if (!userId) return res.status(401).json({ message: "请先登录。" });
-  res.json(await handleDevelopContentProject(userId, paramId(req.params.id), req.body));
+  try {
+    res.json(await handleDevelopContentProject(userId, paramId(req.params.id), req.body));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "模型生成失败";
+    res.status(422).json({ message: "内容生成失败", detail: message });
+  }
+}));
+
+app.post("/api/content/projects/:id/analyze", asyncRoute(async (req, res) => {
+  const userId = requestUserId(req);
+  if (!userId) return res.status(401).json({ message: "请先登录。" });
+  try { res.json(await handleAnalyzeContentProject(userId, paramId(req.params.id), req.body)); }
+  catch (error) { res.status(422).json({ message: "结构拆解失败", detail: error instanceof Error ? error.message : "模型生成失败" }); }
+}));
+
+app.post("/api/content/projects/:id/outline/generate", asyncRoute(async (req, res) => {
+  const userId = requestUserId(req);
+  if (!userId) return res.status(401).json({ message: "请先登录。" });
+  try { res.json(await handleGenerateContentOutline(userId, paramId(req.params.id))); }
+  catch (error) { res.status(422).json({ message: "大纲生成失败", detail: error instanceof Error ? error.message : "模型生成失败" }); }
+}));
+
+app.post("/api/content/projects/:id/outline/confirm", asyncRoute(async (req, res) => {
+  const userId = requestUserId(req);
+  if (!userId) return res.status(401).json({ message: "请先登录。" });
+  try { res.json(await handleConfirmContentOutline(userId, paramId(req.params.id), req.body)); }
+  catch (error) { res.status(422).json({ message: "大纲确认失败", detail: error instanceof Error ? error.message : "保存失败" }); }
+}));
+
+app.patch("/api/content/projects/:id/model-route", asyncRoute(async (req, res) => {
+  const userId = requestUserId(req);
+  if (!userId) return res.status(401).json({ message: "请先登录。" });
+  res.json(await handleUpdateContentModelRoute(userId, paramId(req.params.id), req.body));
+}));
+
+app.post("/api/content/projects/:id/chapters/generate", asyncRoute(async (req, res) => {
+  const userId = requestUserId(req);
+  if (!userId) return res.status(401).json({ message: "请先登录。" });
+  try {
+    res.json(await handleGenerateContentChapterBatch(userId, paramId(req.params.id), req.body));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "章节生成失败";
+    res.status(422).json({ message: "章节生成失败", detail: message });
+  }
 }));
 
 app.delete("/api/content/projects/:id", asyncRoute(async (req, res) => {
@@ -1195,6 +1239,10 @@ app.get(
     res.json({ project: workflow.project, storyboards: workflow.storyboards });
   })
 );
+
+app.delete("/api/projects/:id", asyncRoute(async (req, res) => {
+  res.json(await deleteProject(paramId(req.params.id), requestUserId(req)));
+}));
 
 app.get(
   "/api/projects/:id/workflow",

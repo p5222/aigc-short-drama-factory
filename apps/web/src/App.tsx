@@ -349,7 +349,7 @@ export function App() {
       case "workbench":
         return <WorkbenchPage summary={summary} onStart={() => setActivePage("wizard")} onOpen={(projectId) => void openProject(projectId)} onOpenTasks={() => setActivePage("tasks")} onRecharge={() => setActivePage("recharge")} />;
       case "content":
-        return <ContentCreatorPage onEnterProduction={(draft) => {
+        return <ContentCreatorPage providers={providers} onEnterProduction={(draft) => {
           localStorage.setItem("aifilm_creation_draft", JSON.stringify(draft));
           setActivePage("wizard");
         }} />;
@@ -364,7 +364,7 @@ export function App() {
           />
         );
       case "scripts":
-        return <ScriptsPage projects={projects} onOpen={(projectId) => void openProject(projectId)} onNew={() => setActivePage("wizard")} />;
+        return <ScriptsPage projects={projects} onOpen={(projectId) => void openProject(projectId)} onNew={() => setActivePage("wizard")} onDelete={(projectId) => void api.deleteProject(projectId).then(() => load()) .catch((reason) => setError(reason instanceof Error ? reason.message : "删除作品失败"))} />;
       case "project":
         return (
           <ProjectWorkbenchPage

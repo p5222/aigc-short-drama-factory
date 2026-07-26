@@ -734,6 +734,8 @@ model ContentProject {
   status             String   @default("draft")
   styleProfile       Json     @default("{}")
   activeStep         String   @default("source")
+  textProvider       String   @default("manjiao")
+  textModel          String   @default("gpt-5.5")
   productionProjectId String?
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt

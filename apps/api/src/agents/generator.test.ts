@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { CreateProjectInput } from "@aifilm/shared";
-import { assertUsableScriptOutput, buildScriptPrompt, extractSceneNames, normalizeScriptOutput } from "./generator.js";
+import { assertUsableScriptOutput, buildScriptPrompt, extractSceneNames, normalizeScriptOutput, shouldUseResponsesApi } from "./generator.js";
 import { analyzeScriptShotPlan, createToonflowStoryboardPlan } from "./toonflowAdapter.js";
 
 const baseInput: CreateProjectInput = {
@@ -63,4 +63,18 @@ test("empty model output is rejected instead of being persisted", () => {
 test("scene extraction always returns a usable scene", () => {
   assert.deepEqual(extractSceneNames("第1场：宫墙雨廊\n人物对白", "古装"), ["宫墙雨廊"]);
   assert.equal(extractSceneNames("只有对白，没有场景标题", "都市").length, 1);
+});
+
+test("responses wire mode never overrides a resolved non-OpenAI provider", () => {
+  const previous = process.env.OPENAI_TEXT_WIRE_API;
+  process.env.OPENAI_TEXT_WIRE_API = "responses";
+  try {
+    assert.equal(shouldUseResponsesApi({}, "dashscope-text"), false);
+    assert.equal(shouldUseResponsesApi({}, "manjiao"), false);
+    assert.equal(shouldUseResponsesApi({}, "openai-upstream"), true);
+    assert.equal(shouldUseResponsesApi({ textProvider: "openai-upstream" }, "openai-upstream"), true);
+  } finally {
+    if (previous === undefined) delete process.env.OPENAI_TEXT_WIRE_API;
+    else process.env.OPENAI_TEXT_WIRE_API = previous;
+  }
 });

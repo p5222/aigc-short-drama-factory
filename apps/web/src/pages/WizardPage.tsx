@@ -15,7 +15,7 @@ type RouteTestState = { loading: boolean; ok?: boolean; message?: string };
 
 const stepOrder: WizardStep[] = ["story", "settings", "script"];
 const preferredTextProviderIds = ["dashscope-text", "deepseek", "zml-text"];
-const preferredImageProviderIds = ["dashscope-image", "zml-image", "doubao-seedream"];
+const preferredImageProviderIds = ["manjiao-image", "dashscope-image", "zml-image", "doubao-seedream"];
 const preferredVideoProviderIds = ["dashscope-video", "zml-video", "doubao-video"];
 const failedImageModels = new Set(["wanx-v1", "wan2.5-t2i-preview"]);
 

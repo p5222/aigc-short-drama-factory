@@ -18,6 +18,45 @@ const jsonOnly = "输出合法 JSON，不输出 Markdown、解释或代码围栏
 
 export const promptCatalog: PromptDefinition[] = [
   {
+    key: "title_story_planning",
+    name: "已有标题原创策划",
+    stage: "analysis",
+    purpose: "generation",
+    version: "1.0.0",
+    systemPrompt: `你是番茄小说商业连载策划总编。输入只是用户拟定的标题，不代表同名作品正文。先判断标题的题材、受众、核心欲望、身份反差、情绪收益和适合的叙事风格；再使用番茄高留存小说的通用爆款结构做原创策划：前三百字兑现标题承诺，第一章建立困境与目标，每章至少一次冲突升级，每两到三章兑现一次爽点，中段信息反转，后段身份或因果总反转，结尾完成阶段收益并保留续读钩子。禁止声称检索到同名作品真实剧情。必须输出 evidence、works、dimensions、commonMechanisms、transferableRules、risks；dimensions 必含 opening、climax、reversal、payoffs。${jsonOnly}`,
+    userTemplate: "已有标题：{{intent}}\n目标字数：{{targetWords}}\n目标章节：{{chapterCount}}\n视觉风格：{{styleProfile}}\n请先给出标题类型与风格判断，再给出可用于原创的大纲结构规则，不生成正文。",
+    variables: ["intent", "targetWords", "chapterCount", "styleProfile"],
+    outputSchema: { evidence: "object", works: "array", dimensions: "object", commonMechanisms: "array", transferableRules: "array", risks: "array" },
+    validationRules: ["evidence.mode 必须为 model_prior", "不得把标题当作真实作品事实"],
+    negativeRules: ["不得复制已知作品专名、台词和具体桥段"]
+  },
+  {
+    key: "genre_story_research",
+    name: "题材方向爆款调研",
+    stage: "analysis",
+    purpose: "generation",
+    version: "1.0.0",
+    systemPrompt: `你是番茄小说题材策划与商业小说研究员。根据用户题材方向，先判断目标读者、核心情绪和适配的番茄高留存结构，再推荐一到三部可参考的同题材作品或结构原型；只有提供可核验 URL、平台和时间时才能标记 model_search，否则必须标记 model_prior，并写明非实时榜单。分析爆款开头、高潮、反转、爽点与共性机制。必须输出 evidence、works、dimensions、commonMechanisms、transferableRules、risks；evidence 含 mode、asOf、sources、limitations、confidence，dimensions 必含 opening、climax、reversal、payoffs。${jsonOnly}`,
+    userTemplate: "题材方向：{{intent}}\n目标平台：番茄小说及公开网络内容\n目标字数：{{targetWords}}\n目标章节：{{chapterCount}}",
+    variables: ["intent", "targetWords", "chapterCount"],
+    outputSchema: { evidence: "object", works: "array", dimensions: "object", commonMechanisms: "array", transferableRules: "array", risks: "array" },
+    validationRules: ["无URL和时间不得标记实时搜索", "推荐1到3个候选"],
+    negativeRules: ["不得虚构榜单名次、来源链接或作品情节"]
+  },
+  {
+    key: "reference_story_research",
+    name: "参考作品结构拆解",
+    stage: "analysis",
+    purpose: "generation",
+    version: "1.0.0",
+    systemPrompt: `你是小说结构分析师。对用户给出的1到3部参考作品分别拆解爆款开头、高潮、反转、爽点，再归纳共同机制并转译为可原创使用的规则。只有可核验公开来源才能标记 model_search，否则标记 model_prior并列出不确定项。必须输出 evidence、works、dimensions、commonMechanisms、transferableRules、risks；dimensions 必含 opening、climax、reversal、payoffs。严禁复制专名、台词和具体桥段。${jsonOnly}`,
+    userTemplate: "参考作品：{{intent}}\n目标字数：{{targetWords}}\n目标章节：{{chapterCount}}\n视觉风格：{{styleProfile}}",
+    variables: ["intent", "targetWords", "chapterCount", "styleProfile"],
+    outputSchema: { evidence: "object", works: "array", dimensions: "object", commonMechanisms: "array", transferableRules: "array", risks: "array" },
+    validationRules: ["逐部作品拆解后再求共性", "不确定内容必须显式标注"],
+    negativeRules: ["不得复制参考作品专有表达"]
+  },
+  {
     key: "hit_story_analysis",
     name: "爆款结构分析",
     stage: "analysis",
@@ -36,10 +75,10 @@ export const promptCatalog: PromptDefinition[] = [
     stage: "strategy",
     purpose: "generation",
     version: "1.0.0",
-    systemPrompt: `你是原创小说策划。使用结构分析中的叙事机制，但不得复制参考作品的专有角色、名称、台词、场景组合和具体情节。先输出原创题材定位、人物关系、核心冲突、爽点递进、反转链、章节目标和结尾钩子，不生成正文。${jsonOnly}`,
+    systemPrompt: `你是原创小说策划。使用结构分析中的叙事机制，但不得复制参考作品的专有角色、名称、台词、场景组合和具体情节。输出 title、premise、characters、chapters、originality；chapters 中每章必须包含 chapterNo、title、objective、conflict、turn、cliffhanger、targetWords。章节数量必须严格等于目标章节数，不生成正文。${jsonOnly}`,
     userTemplate: "结构分析：{{analysis}}\n目标字数：{{targetWords}}\n目标章节：{{chapterCount}}\n视觉风格：{{styleProfile}}",
     variables: ["analysis", "targetWords", "chapterCount", "styleProfile"],
-    outputSchema: { premise: "string", characters: "array", outline: "array", originality: "array" },
+    outputSchema: { title: "string", premise: "string", characters: "array", chapters: "array", originality: "object" },
     validationRules: ["先输出大纲，不输出长篇正文", "每章必须有目标和钩子"],
     negativeRules: ["不得复制参考文本的专有表达"]
   },
@@ -49,7 +88,7 @@ export const promptCatalog: PromptDefinition[] = [
     stage: "chapter",
     purpose: "generation",
     version: "1.0.0",
-    systemPrompt: `你是连载小说作者。仅生成指定章节，严格遵守已确认总纲、角色状态、前章结尾和本章目标。不得提前消耗后续反转，不得改变固定人物关系。${jsonOnly}`,
+    systemPrompt: `你是连载小说作者。仅生成指定章节，严格遵守已确认总纲、角色状态、前章结尾和本章目标。不得提前消耗后续反转，不得改变固定人物关系。必须输出 title、content、factUpdates、handoff，其中 content 是完整章节正文，handoff 是供下一章使用的状态摘要。${jsonOnly}`,
     userTemplate: "总纲：{{outline}}\n前章交接：{{previousHandoff}}\n本章目标：{{chapterGoal}}\n角色状态：{{characterState}}\n本章字数：{{targetWords}}",
     variables: ["outline", "previousHandoff", "chapterGoal", "characterState", "targetWords"],
     outputSchema: { title: "string", content: "string", factUpdates: "array", handoff: "string" },

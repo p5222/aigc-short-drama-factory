@@ -51,6 +51,7 @@ export interface ContentSceneRow {
   dialogue: string[];
   action: string;
   emotion: string;
+  shotId?: string;
 }
 
 export const RELEASE_A_CAPABILITIES: Readonly<WorkbenchCapabilities> = Object.freeze({
@@ -430,14 +431,8 @@ export function shouldReconcileStoryboardSelection(stage: WorkbenchStage): boole
 
 export function buildContentSceneRows(script: ScriptDraft | undefined, storyboards: StoryboardShot[]): ContentSceneRow[] {
   if (storyboards.length) {
-    const groups = new Map<string, StoryboardShot[]>();
-    for (const shot of storyboards) {
-      const key = `${shot.episodeNo}:${shot.sceneNo}`;
-      groups.set(key, [...(groups.get(key) ?? []), shot]);
-    }
-
-    return [...groups.entries()]
-      .map(([key, shots]) => buildStoryboardSceneRow(key, shots))
+    return storyboards
+      .map((shot) => buildStoryboardShotRow(shot))
       .sort((a, b) => a.episodeNo - b.episodeNo || a.sceneNo - b.sceneNo);
   }
 
@@ -543,31 +538,28 @@ function parseEpisodeNumber(value: string): number | null {
   return tens * 10 + ones;
 }
 
-function buildStoryboardSceneRow(key: string, shots: StoryboardShot[]): ContentSceneRow {
-  const ordered = [...shots].sort((a, b) => a.shotNo - b.shotNo);
-  const first = ordered[0];
-  const dialogue = ordered.flatMap((shot) => [shot.dialogue, shot.voiceOver].filter(Boolean)).slice(0, 5);
-  const characters = [...new Set(ordered.flatMap((shot) => shot.characters).filter(Boolean))];
-  const duration = ordered.reduce((sum, shot) => sum + (shot.duration || 0), 0);
+function buildStoryboardShotRow(shot: StoryboardShot): ContentSceneRow {
+  const key = `${shot.episodeNo}:${shot.sceneNo}:${shot.shotNo}`;
   return {
     id: `scene-${key}`,
     key: storyboardScene(key),
     source: "storyboard",
     sourceLabel: "已生成镜头",
-    episodeNo: first.episodeNo,
-    sceneNo: first.sceneNo,
-    title: first.scene || `场次 ${first.sceneNo}`,
-    location: inferLocation(first.scene),
-    timeOfDay: inferSceneTime(first.scene),
-    weather: inferSceneWeather(first.scene),
-    duration,
-    shots: ordered.length,
-    characters,
+    episodeNo: shot.episodeNo,
+    sceneNo: shot.shotNo,
+    title: `镜头 ${String(shot.shotNo).padStart(2, "0")} · ${shot.scene || `场景 ${shot.sceneNo}`}`,
+    location: inferLocation(shot.scene),
+    timeOfDay: inferSceneTime(shot.scene),
+    weather: inferSceneWeather(shot.scene),
+    duration: shot.duration || 0,
+    shots: 1,
+    characters: shot.characters.filter(Boolean),
     status: "ready",
-    lines: ordered.map((shot) => shot.pictureDesc).filter(Boolean).slice(0, 6),
-    dialogue,
-    action: ordered.map((shot) => shot.action || shot.cameraMovement || shot.pictureDesc).filter(Boolean).slice(0, 3).join(" / "),
-    emotion: ordered.find((shot) => shot.emotion?.trim())?.emotion?.trim() ?? ""
+    lines: [shot.pictureDesc].filter(Boolean),
+    dialogue: [shot.dialogue, shot.voiceOver].filter(Boolean),
+    action: shot.action || shot.cameraMovement || shot.pictureDesc,
+    emotion: shot.emotion?.trim() ?? "",
+    shotId: shot.id
   };
 }
 
@@ -614,7 +606,9 @@ function matchSceneBoundary(line: string): string | null {
     return bracket?.[1]?.trim() || remainder.replace(/^【|】$/g, "").trim();
   }
   const bracketed = line.match(/^\s*【([^】]+)】/);
-  return bracketed?.[1]?.trim() ?? null;
+  const title = bracketed?.[1]?.trim() ?? "";
+  if (/^(?:开场画面|剧情节拍\d*|动作|台词|旁白|情绪节奏|结尾钩子)$/.test(title)) return null;
+  return title || null;
 }
 
 function inferScriptSceneTitle(lines: string[], index: number): string {

@@ -618,7 +618,7 @@ test("uses only real shot emotion for content metadata", () => {
   assert.equal(buildContentSceneRows(undefined, [dialogueOnly])[0]?.emotion, "");
 
   const realEmotion = { ...shot("emotion", 1, 1), emotion: "紧张" };
-  assert.equal(buildContentSceneRows(undefined, [dialogueOnly, realEmotion])[0]?.emotion, "紧张");
+  assert.equal(buildContentSceneRows(undefined, [dialogueOnly, realEmotion]).find((row) => row.shotId === "emotion")?.emotion, "紧张");
 });
 
 test("reconciles content selection to one scene in the active episode", () => {
@@ -629,7 +629,13 @@ test("reconciles content selection to one scene in the active episode", () => {
   ]);
   const selection = reconcileContentSelection(1, storyboardScene("1:9"), [1, 2], rows);
   assert.equal(selection.activeEpisodeNo, 1);
-  assert.deepEqual(selection.activeSceneKey, storyboardScene("1:1"));
+  assert.deepEqual(selection.activeSceneKey, storyboardScene("1:1:1"));
+});
+
+test("keeps script structure labels inside one scene instead of treating them as scenes", () => {
+  const rows = buildContentSceneRows(script(["第1集", "【开场画面】", "雨夜宫墙。", "【动作】", "女主推门。", "【台词】", "女主：谁在那里？", "【旁白】", "风声骤停。"].join("\n")), []);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]?.lines.some((line) => line === "【动作】"), true);
 });
 
 test("keeps an explicitly selected empty second episode empty", () => {

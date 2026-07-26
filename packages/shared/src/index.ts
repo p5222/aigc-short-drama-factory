@@ -517,6 +517,8 @@ export interface ContentProjectSummary {
   status: ContentStepStatus;
   activeStep: ContentStep;
   styleProfile: StyleProfile;
+  textProvider: string;
+  textModel: string;
   updatedAt: string;
   sourceCount: number;
   chapterCount: number;

@@ -3,7 +3,7 @@ import test from "node:test";
 import type { ContentProjectSummary } from "@aifilm/shared";
 import { buildProductionDraft, isCurrentRequest, modeLabel, reconcileProjectId, sourceKindForMode, statusLabel } from "./model.ts";
 
-const project = (id: string): ContentProjectSummary => ({ id, title: id, mode: "original", status: "draft", activeStep: "source", styleProfile: { key: "", name: "", category: "", summary: "", characterRules: [], sceneRules: [], lightingRules: [], cameraRules: [], materialRules: [], negativeRules: [] }, updatedAt: "", sourceCount: 0, chapterCount: 0, scriptCount: 0, hasEntities: false });
+const project = (id: string): ContentProjectSummary => ({ id, title: id, mode: "original", status: "draft", activeStep: "source", styleProfile: { key: "", name: "", category: "", summary: "", characterRules: [], sceneRules: [], lightingRules: [], cameraRules: [], materialRules: [], negativeRules: [] }, textProvider: "manjiao", textModel: "gpt-5.5", updatedAt: "", sourceCount: 0, chapterCount: 0, scriptCount: 0, hasEntities: false });
 
 test("reconciles selection to a real project", () => {
   assert.equal(reconcileProjectId([project("a"), project("b")], "b"), "b");

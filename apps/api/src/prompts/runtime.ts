@@ -12,10 +12,11 @@ export function renderPrompt(template: string, variables: Record<string, unknown
 export function materializePrompt(key: string, variables: Record<string, unknown>, version?: PromptDefinition) {
   const definition = version ?? getPromptDefinition(key);
   if (!definition) throw new Error(`未找到提示词定义：${key}`);
+  const contract = `\n输出字段约束：${JSON.stringify(definition.outputSchema)}\n校验规则：${definition.validationRules.join("；")}\n禁止事项：${definition.negativeRules.join("；")}`;
   return {
     key: definition.key,
     version: definition.version,
-    systemPrompt: definition.systemPrompt,
+    systemPrompt: `${definition.systemPrompt}${contract}`,
     userPrompt: renderPrompt(definition.userTemplate, variables),
     outputSchema: definition.outputSchema,
     validationRules: definition.validationRules,
