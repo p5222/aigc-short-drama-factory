@@ -237,7 +237,8 @@ const projectRouteUpdateSchema = z.object({
   imageSize: z.string().nullable().optional(),
   imageQuality: z.string().nullable().optional(),
   videoProvider: z.string().nullable().optional(),
-  videoModel: z.string().nullable().optional()
+  videoModel: z.string().nullable().optional(),
+  segmentProfile: z.enum(["jimeng_15s", "doubao_10s"]).optional()
 });
 
 const registerSchema = z.object({
@@ -1296,7 +1297,8 @@ app.patch(
       imageSize: parsed.data.imageSize ?? undefined,
       imageQuality: parsed.data.imageQuality ?? undefined,
       videoProvider: parsed.data.videoProvider ?? undefined,
-      videoModel: parsed.data.videoModel ?? undefined
+      videoModel: parsed.data.videoModel ?? undefined,
+      segmentProfile: parsed.data.segmentProfile
     }));
   })
 );

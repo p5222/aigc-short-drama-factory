@@ -168,8 +168,8 @@ export interface StoryboardShot {
   startSeconds?: number;
   endSeconds?: number;
   boundaryType?: StoryboardBoundaryType;
-  startState?: Record<string, unknown>;
-  endState?: Record<string, unknown>;
+  startState?: Record<string, unknown> | string;
+  endState?: Record<string, unknown> | string;
   firstFramePrompt?: string;
   lastFramePrompt?: string;
   firstFrameAssetId?: string;

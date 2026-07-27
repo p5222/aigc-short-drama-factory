@@ -1,4 +1,5 @@
 import type { AssetItem, CharacterProfile, ProjectWorkflow, StoryboardShot } from "@aifilm/shared";
+import { renderProfiledVideoPrompt } from "../production/storyboardProfiles.js";
 
 type AssetLookup = Map<string, Pick<AssetItem, "id" | "name" | "type" | "description" | "prompt" | "referenceUrl" | "relatedCharacterId">>;
 
@@ -137,23 +138,13 @@ export function buildSeedanceVideoPrompt(input: {
   const firstAnchor = buildFirstFrameAnchor(input.shot, input.firstFrameAsset);
   const lastAnchor = buildLastFrameAnchor(input.shot);
   const handoff = buildContinuityHandoff(input.shot);
-  const duration = Math.max(1, Math.min(15, input.shot.duration || 5));
-  return [
-    `使用已锁定角色参考和场景参考生成 ${input.workflow.project.videoRatio} AI 真人短剧视频段。`,
-    references.length ? `参考资产：${references.map(referenceLabel).join("；")}。` : "",
-    `时长：${duration} 秒，优先保持一个连续微节拍。`,
-    `首帧锚点：${firstAnchor}`,
-    `镜头：${input.shot.shotSize} / ${input.shot.cameraAngle} / ${input.shot.cameraMovement || "稳定镜头"}。`,
-    `站位：${blocking}`,
-    `主动作：${input.shot.action || input.shot.pictureDesc}。`,
-    `情绪潜台词：${input.shot.emotion || "情绪推进但不夸张" }。`,
-    input.shot.dialogue ? `对白作为角色语音出现：${input.shot.dialogue}` : "",
-    input.shot.voiceOver ? `旁白作为画外音出现：${input.shot.voiceOver}` : "",
-    [input.shot.environmentSound, input.shot.soundEffect].filter(Boolean).length ? `声音：${[input.shot.environmentSound, input.shot.soundEffect].filter(Boolean).join("；")}` : "",
-    `尾帧锚点：${lastAnchor}`,
-    `连续性交接：${handoff}`,
-    "避免项：固定避免项：不要生成对白字幕、标题字、解释字、旁白字卡、水印；对白只作为角色语音出现；已指定的道具文字可以保留。本段特殊避免项：不要交换人物站位；不要改变服装发型；不要把道具换到错误的手；不要增加额外人物；不要越轴。"
-  ].filter(Boolean).join("\n");
+  return renderProfiledVideoPrompt({
+    profile: input.workflow.project.segmentProfile ?? "jimeng_15s",
+    shot: { ...input.shot, referenceAssetIds: references.map((asset) => asset.id) },
+    previousEndState: handoff,
+    firstFramePrompt: `${firstAnchor}；站位：${blocking}`,
+    lastFramePrompt: lastAnchor
+  });
 }
 
 export function createSceneCards(workflow: ProjectWorkflow): SceneCard[] {

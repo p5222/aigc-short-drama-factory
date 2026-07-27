@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import sharp from "sharp";
-import type { AdminUserRow, AssetItem, BatchGenerationResult, CreateProjectInput, GenerationTask, HelpArticle, PlatformAnnouncement, ProjectWorkflow, StoryboardExportRow, StoryboardShot, WorkbenchSummary } from "@aifilm/shared";
+import type { AdminUserRow, AssetItem, BatchGenerationResult, CreateProjectInput, GenerationTask, HelpArticle, PlatformAnnouncement, ProjectWorkflow, SegmentProfile, StoryboardExportRow, StoryboardShot, WorkbenchSummary } from "@aifilm/shared";
 import { textModelName, textProviderName } from "../agents/generator.js";
 import { buildSeedanceVideoPrompt, buildStoryboardFirstFramePrompt, createStoryboardProductionPackage } from "../agents/storyboardProduction.js";
 import { estimateCreation } from "../agents/workflow.js";
@@ -231,7 +231,7 @@ export async function deleteProject(projectId: string, userId = DEMO_USER_ID) {
 export async function updateProjectModelRoutes(
   projectId: string,
   userId = DEMO_USER_ID,
-  data: Partial<Pick<CreateProjectInput, "textProvider" | "textModel" | "imageProvider" | "imageModel" | "imageSize" | "imageQuality" | "videoProvider" | "videoModel">>
+  data: Partial<Pick<CreateProjectInput, "textProvider" | "textModel" | "imageProvider" | "imageModel" | "imageSize" | "imageQuality" | "videoProvider" | "videoModel">> & { segmentProfile?: SegmentProfile }
 ) {
   const project = await prisma.project.findFirst({ where: { id: projectId, userId } });
   if (!project) throw new Error("项目不存在");
@@ -244,7 +244,8 @@ export async function updateProjectModelRoutes(
     ...(data.imageSize !== undefined ? { imageSize: data.imageSize ? normalizeImageOutputSize(data.imageSize) : null } : {}),
     ...(data.imageQuality !== undefined ? { imageQuality: data.imageQuality ? normalizeImageOutputQuality(data.imageQuality) : null } : {}),
     ...(data.videoProvider !== undefined ? { videoProvider: data.videoProvider || null } : {}),
-    ...(data.videoModel !== undefined ? { videoModel: data.videoModel || null } : {})
+    ...(data.videoModel !== undefined ? { videoModel: data.videoModel || null } : {}),
+    ...(data.segmentProfile !== undefined ? { segmentProfile: data.segmentProfile } : {})
   };
 
   return mapProject(

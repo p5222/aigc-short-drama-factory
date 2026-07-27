@@ -49,6 +49,11 @@ export function mapProject(row: any): Project {
     videoModel: row.videoModel ?? undefined,
     status: row.status,
     episodes: row.episodes,
+    segmentProfile: row.segmentProfile ?? undefined,
+    episodeDurationSeconds: row.episodeDurationSeconds ?? undefined,
+    sourceCharactersPerEpisode: row.sourceCharactersPerEpisode ?? undefined,
+    allowExpansion: row.allowExpansion ?? undefined,
+    activeStoryboardVersion: row.activeStoryboardVersion ?? undefined,
     storyboards: row.storyboards,
     characters: row.characters,
     imageAssets: row.imageAssets,
@@ -497,7 +502,20 @@ export function mapStoryboard(row: any): StoryboardShot {
     imagePrompt: row.imagePrompt,
     videoPrompt: row.videoPrompt,
     referenceAssetIds: row.referenceAssetIds,
-    status: row.status
+    status: row.status,
+    segmentProfile: row.segmentProfile ?? undefined,
+    sequenceNo: row.sequenceNo ?? undefined,
+    startSeconds: row.startSeconds ?? undefined,
+    endSeconds: row.endSeconds ?? undefined,
+    boundaryType: row.boundaryType ?? undefined,
+    startState: row.startState ?? undefined,
+    endState: row.endState ?? undefined,
+    firstFramePrompt: row.firstFramePrompt ?? undefined,
+    lastFramePrompt: row.lastFramePrompt ?? undefined,
+    firstFrameAssetId: row.firstFrameAssetId ?? undefined,
+    lastFrameAssetId: row.lastFrameAssetId ?? undefined,
+    continuitySourceShotId: row.continuitySourceShotId ?? undefined,
+    promptVersion: row.promptVersion ?? undefined
   };
 }
 

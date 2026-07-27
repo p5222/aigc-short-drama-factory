@@ -94,8 +94,30 @@ function LoadedShotStage({
   const [refreshRequired, setRefreshRequired] = useState(false);
   const [imageRoute, setImageRoute] = useState(() => initialImageRoute(project, providers));
   const [videoRoute, setVideoRoute] = useState(() => initialVideoRoute(project, providers));
+  const [segmentProfile, setSegmentProfile] = useState(project.segmentProfile ?? "jimeng_15s");
   const operationSequence = useRef(0);
   const activeOperationRef = useRef<{ token: string; shotId: string } | null>(null);
+
+  useEffect(() => setSegmentProfile(project.segmentProfile ?? "jimeng_15s"), [project.segmentProfile]);
+
+  async function changeSegmentProfile(next: "jimeng_15s" | "doubao_10s") {
+    if (next === segmentProfile) return;
+    if (storyboards.length && !window.confirm(`切换为${next === "jimeng_15s" ? "即梦 15秒" : "豆包 10秒"}会保存新的项目生产规格；现有分镜不会删除。确认切换？`)) return;
+    const previous = segmentProfile;
+    setSegmentProfile(next);
+    setPending("segment-profile");
+    setError("");
+    try {
+      await api.updateProjectModelRoutes(project.id, { segmentProfile: next });
+      await onRefresh(project.id);
+      setMessage(`已选择${next === "jimeng_15s" ? "即梦 15秒" : "豆包 10秒"}生产方案。`);
+    } catch (cause) {
+      setSegmentProfile(previous);
+      setError(errorText(cause, "生产方案保存失败。"));
+    } finally {
+      setPending("");
+    }
+  }
 
   const selectedIds = state.selectedShotIds.filter((id) => storyboards.some((shot) => shot.id === id));
   const activeImage = activeShot ? imageMap.get(activeShot.id) : undefined;
@@ -288,7 +310,7 @@ function LoadedShotStage({
             <button className="wb-shot-check" type="button" aria-label={`${selectedIds.includes(shot.id) ? "取消选择" : "选择"}镜头 ${shot.shotNo}`} aria-pressed={selectedIds.includes(shot.id)} onClick={() => toggleSelected(shot.id)}>{selectedIds.includes(shot.id) ? <CheckSquare2 /> : <Square />}</button>
             <button className="wb-shot-select" type="button" disabled={Boolean(draftState.activeOperation)} onClick={() => selectShot(shot)}>
               <span>{image?.referenceUrl ? <img src={image.referenceUrl} alt="" loading="lazy" /> : <ImageIcon />}</span>
-              <span><strong>{formatShot(shot, index)}</strong><small>{shot.pictureDesc || "未提供画面描述"}</small><em>{videoStatusLabel(resolveVideoAssetStatus(video), image)} · {shot.duration}s</em></span>
+              <span><strong>{formatShot(shot, index)}</strong><small>{shot.pictureDesc || "未提供画面描述"}</small><em>{shot.boundaryType === "CONTINUE" ? "续接尾帧" : shot.boundaryType === "CUT_MATCH" ? "匹配切换" : shot.boundaryType === "CUT_SCENE" ? "新场景" : "未设转场"} · {videoStatusLabel(resolveVideoAssetStatus(video), image)} · {shot.duration}s</em></span>
             </button>
           </div>;
         })}
@@ -301,6 +323,10 @@ function LoadedShotStage({
           <ModeButton mode="table" current={state.shotMode} icon={<Table2 />} onSelect={(mode) => dispatch({ type: "set-shot-mode", mode })}>镜头表</ModeButton>
           <ModeButton mode="image" current={state.shotMode} icon={<ImageIcon />} onSelect={(mode) => dispatch({ type: "set-shot-mode", mode })}>分镜图</ModeButton>
           <ModeButton mode="video" current={state.shotMode} icon={<Film />} onSelect={(mode) => dispatch({ type: "set-shot-mode", mode })}>视频</ModeButton>
+        </div>
+        <div className="wb-shot-profile" role="radiogroup" aria-label="视频分镜方案">
+          <button type="button" role="radio" aria-checked={segmentProfile === "jimeng_15s"} className={segmentProfile === "jimeng_15s" ? "is-active" : undefined} disabled={Boolean(pending)} onClick={() => void changeSegmentProfile("jimeng_15s")}>即梦 15秒</button>
+          <button type="button" role="radio" aria-checked={segmentProfile === "doubao_10s"} className={segmentProfile === "doubao_10s" ? "is-active" : undefined} disabled={Boolean(pending)} onClick={() => void changeSegmentProfile("doubao_10s")}>豆包 10秒</button>
         </div>
         <small>{activeShot ? formatShot(activeShot, storyboards.indexOf(activeShot)) : "未选择镜头"}</small>
       </header>
