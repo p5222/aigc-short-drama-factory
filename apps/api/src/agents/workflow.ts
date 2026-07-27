@@ -1,9 +1,10 @@
 ﻿import type { CreateProjectInput, CreationEstimate, Project, StoryboardShot } from "@aifilm/shared";
-import { estimateImageCredits, normalizeImageOutputQuality, normalizeImageOutputSize } from "@aifilm/shared";
+import { analyzeProductionEpisodes, estimateImageCredits, normalizeImageOutputQuality, normalizeImageOutputSize } from "@aifilm/shared";
 
-export function estimateCreation(input: Pick<CreateProjectInput, "content" | "mode" | "targetEpisodes"> & Partial<Pick<CreateProjectInput, "textProvider" | "textModel" | "imageProvider" | "imageModel" | "imageSize" | "imageQuality" | "videoProvider" | "videoModel">> & { pricing?: Array<{ providerId?: string; model: string; modality: string; unitCredits: number; enabled?: boolean }> }): CreationEstimate {
+export function estimateCreation(input: Pick<CreateProjectInput, "content" | "sourceType" | "mode" | "targetEpisodes"> & Partial<Pick<CreateProjectInput, "textProvider" | "textModel" | "imageProvider" | "imageModel" | "imageSize" | "imageQuality" | "videoProvider" | "videoModel">> & { pricing?: Array<{ providerId?: string; model: string; modality: string; unitCredits: number; enabled?: boolean }> }): CreationEstimate {
   const words = input.content.trim().length;
-  const maxEpisodes = Math.max(1, Math.min(20, Math.ceil(Math.max(words, 800) / 2000)));
+  const sourceType = input.sourceType === "script" ? "script" : "novel";
+  const maxEpisodes = analyzeProductionEpisodes(input.content, sourceType).maxEpisodes;
   const suggestedEpisodes = Math.max(1, Math.min(maxEpisodes, input.targetEpisodes ?? maxEpisodes));
   const base = input.mode === "twenty_five_grid" ? 80 : input.mode === "director" ? 140 : 50;
   const shotsPerEpisode = input.mode === "twenty_five_grid" ? 25 : input.mode === "director" ? 16 : 9;
@@ -27,7 +28,7 @@ export function estimateCreation(input: Pick<CreateProjectInput, "content" | "mo
     estimatedCredits,
     mode: input.mode,
     notes: [
-      "每 2,000 字约估算为 1 集，短脑洞按 1 集计算。",
+      sourceType === "novel" ? "每约 20,000 字小说素材预算为 1 集约 3 分钟成片，短内容按 1 集计算。" : "已有剧本优先按明确集标题识别生产集数。",
       `当前可生成上限为 ${maxEpisodes} 集，本次选择 ${suggestedEpisodes} 集。`,
       `预计拆为 ${totalShots} 个镜头，文本、分镜图和视频会按当前模型价格表估算。`,
       `生图参数按 ${imageSize} / ${imageQuality} 估算，已按当前参数折算。`,

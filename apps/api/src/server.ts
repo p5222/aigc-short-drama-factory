@@ -218,7 +218,7 @@ const createProjectSchema = z.object({
   genre: z.string().default("短剧"),
   videoRatio: z.enum(["9:16", "16:9", "1:1"]).default("9:16"),
   artStyle: z.string().default("国漫写实"),
-  targetEpisodes: z.coerce.number().int().min(1).max(20).optional(),
+  targetEpisodes: z.coerce.number().int().min(1).max(100).optional(),
   textProvider: z.string().optional(),
   textModel: z.string().optional(),
   imageProvider: z.string().optional(),
@@ -1484,6 +1484,7 @@ app.post(
     const parsed = createProjectSchema
       .pick({
         content: true,
+        sourceType: true,
         mode: true,
         targetEpisodes: true,
         textProvider: true,
