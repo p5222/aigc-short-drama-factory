@@ -127,7 +127,7 @@ import { testVideoModelConnection } from "./providers/video.js";
 import { listVisualPipelines, testVisualPipeline } from "./providers/visualPipelineRegistry.js";
 import { generationQueue, generationQueueEvents, queueConnection, startGenerationWorker } from "./queue/generationQueue.js";
 import { ensureStorageBuckets, storageRoot } from "./storage/objectStorage.js";
-import { handleAddSource, handleAnalyzeContentProject, handleConfirmContentOutline, handleCreateContentProject, handleDeleteContentProject, handleDevelopContentProject, handleGenerateContentChapterBatch, handleGenerateContentOutline, handleGenerateContentPackage, handleGetContentPackage, handleGetContentVersions, handleListContentProjects, handleUpdateContentChapter, handleUpdateContentModelRoute } from "./content/routes.js";
+import { handleActivateEpisodeVersion, handleAddSource, handleAnalyzeContentProject, handleConfirmContentOutline, handleCreateContentProject, handleDeleteContentProject, handleDevelopContentProject, handleGenerateContentChapterBatch, handleGenerateContentOutline, handleGenerateContentPackage, handleGenerateEpisodes, handleGetContentPackage, handleGetContentVersions, handleListEpisodes, handleListEpisodeVersions, handleListContentProjects, handleRegenerateEpisode, handleUpdateContentChapter, handleUpdateContentModelRoute } from "./content/routes.js";
 
 const app = express();
 app.set("trust proxy", parseTrustProxy(process.env.TRUST_PROXY, process.env.NODE_ENV === "production"));
@@ -982,7 +982,37 @@ app.get("/api/content/projects/:id/versions", asyncRoute(async (req, res) => {
 app.post("/api/content/projects/:id/generate", asyncRoute(async (req, res) => {
   const userId = requestUserId(req);
   if (!userId) return res.status(401).json({ message: "请先登录。" });
-  res.json(await handleGenerateContentPackage(userId, paramId(req.params.id)));
+  res.json(await handleGenerateContentPackage(userId, paramId(req.params.id), req.body));
+}));
+
+app.get("/api/content/projects/:id/episodes", asyncRoute(async (req, res) => {
+  const userId = requestUserId(req);
+  if (!userId) return res.status(401).json({ message: "请先登录。" });
+  res.json(await handleListEpisodes(userId, paramId(req.params.id)));
+}));
+
+app.post("/api/content/projects/:id/episodes/generate", asyncRoute(async (req, res) => {
+  const userId = requestUserId(req);
+  if (!userId) return res.status(401).json({ message: "请先登录。" });
+  res.json(await handleGenerateEpisodes(userId, paramId(req.params.id), req.body));
+}));
+
+app.post("/api/content/projects/:id/episodes/:episodeNo/regenerate", asyncRoute(async (req, res) => {
+  const userId = requestUserId(req);
+  if (!userId) return res.status(401).json({ message: "请先登录。" });
+  res.json(await handleRegenerateEpisode(userId, paramId(req.params.id), Number(req.params.episodeNo)));
+}));
+
+app.get("/api/content/projects/:id/episodes/:episodeNo/versions", asyncRoute(async (req, res) => {
+  const userId = requestUserId(req);
+  if (!userId) return res.status(401).json({ message: "请先登录。" });
+  res.json(await handleListEpisodeVersions(userId, paramId(req.params.id), Number(req.params.episodeNo)));
+}));
+
+app.post("/api/content/projects/:id/episodes/:episodeNo/versions/:version/activate", asyncRoute(async (req, res) => {
+  const userId = requestUserId(req);
+  if (!userId) return res.status(401).json({ message: "请先登录。" });
+  res.json(await handleActivateEpisodeVersion(userId, paramId(req.params.id), Number(req.params.episodeNo), Number(req.params.version)));
 }));
 
 app.post("/api/content/projects/:id/develop", asyncRoute(async (req, res) => {

@@ -544,7 +544,7 @@ export interface PromptVersion {
 
 export type ContentProjectMode = "same_genre" | "original" | "adaptation";
 export type ContentStep = "source" | "analysis" | "strategy" | "outline" | "chapter" | "script" | "entity";
-export type ContentStepStatus = "draft" | "running" | "succeeded" | "failed" | "confirmed";
+export type ContentStepStatus = "draft" | "running" | "succeeded" | "failed" | "confirmed" | "stale";
 
 export interface StyleProfile {
   key: string;
@@ -579,6 +579,8 @@ export interface ContentProjectSummary {
 
 export interface ContentProductionPackage {
   projectId: string;
+  productionProjectId?: string;
+  episodes?: ProductionEpisode[];
   source?: { id: string; kind: "novel" | "short_story" | "idea" | "script"; title: string; content: string; updatedAt: string };
   analysis?: { id: string; version: number; status: ContentStepStatus; result: Record<string, unknown>; createdAt: string };
   outline?: { id: string; version: number; status: ContentStepStatus; result: Record<string, unknown>; createdAt: string };
