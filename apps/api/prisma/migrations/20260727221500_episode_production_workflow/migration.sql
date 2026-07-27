@@ -1,7 +1,9 @@
 ALTER TABLE "Project"
   ADD COLUMN "segmentProfile" TEXT NOT NULL DEFAULT 'jimeng_15s',
   ADD COLUMN "episodeDurationSeconds" INTEGER NOT NULL DEFAULT 180,
-  ADD COLUMN "sourceCharactersPerEpisode" INTEGER NOT NULL DEFAULT 20000;
+  ADD COLUMN "sourceCharactersPerEpisode" INTEGER NOT NULL DEFAULT 20000,
+  ADD COLUMN "allowExpansion" BOOLEAN NOT NULL DEFAULT false,
+  ADD COLUMN "activeStoryboardVersion" INTEGER NOT NULL DEFAULT 1;
 
 ALTER TABLE "ContentProject"
   ADD COLUMN "importKey" TEXT;

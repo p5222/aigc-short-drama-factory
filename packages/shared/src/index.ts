@@ -89,6 +89,8 @@ export interface Project {
   segmentProfile?: SegmentProfile;
   episodeDurationSeconds?: number;
   sourceCharactersPerEpisode?: number;
+  allowExpansion?: boolean;
+  activeStoryboardVersion?: number;
   storyboards: number;
   characters: number;
   imageAssets: number;

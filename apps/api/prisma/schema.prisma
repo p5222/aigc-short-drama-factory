@@ -71,6 +71,8 @@ model Project {
   segmentProfile String        @default("jimeng_15s")
   episodeDurationSeconds Int   @default(180)
   sourceCharactersPerEpisode Int @default(20000)
+  allowExpansion Boolean       @default(false)
+  activeStoryboardVersion Int  @default(1)
   storyboards  Int             @default(0)
   characters   Int             @default(0)
   imageAssets  Int             @default(0)
