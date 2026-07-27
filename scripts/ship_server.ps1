@@ -9,6 +9,11 @@ Set-Location $ProjectRoot
 
 if (-not (git branch --show-current)) { throw "Detached HEAD: switch to a branch first." }
 
+pnpm --filter @aifilm/api exec prisma generate --schema prisma/schema.prisma
+if ($LASTEXITCODE) { throw "Prisma client generation failed." }
+pnpm --filter @aifilm/shared build
+if ($LASTEXITCODE) { throw "Shared package build failed." }
+
 pnpm test
 if ($LASTEXITCODE) { throw "Tests failed." }
 pnpm typecheck
