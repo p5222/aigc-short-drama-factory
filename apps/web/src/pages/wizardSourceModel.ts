@@ -16,12 +16,12 @@ export function episodeScopeOptions(analysis: Pick<SourceEpisodeAnalysis, "maxEp
   ];
 }
 
-interface SampleEpisode { episodeNo: number; title: string; content: string }
+interface SampleEpisode { episodeNo: number; title: string; script?: string; content?: string }
 interface SampleManifest {
   title: string;
   sourceType: "script";
   episodes: SampleEpisode[];
-  assets?: { characters?: number; scenes?: number; props?: number };
+  assets?: { characters?: number | unknown[]; scenes?: number | unknown[]; props?: number | unknown[] };
 }
 
 export function parseSampleManifest(value: unknown) {
@@ -30,13 +30,19 @@ export function parseSampleManifest(value: unknown) {
   if (!record.title?.trim() || record.sourceType !== "script" || !Array.isArray(record.episodes) || !record.episodes.length) throw new Error("示例清单缺少剧集");
   record.episodes.forEach((episode, index) => {
     if (episode.episodeNo !== index + 1) throw new Error("示例剧集编号必须连续");
-    if (!episode.title?.trim() || !episode.content?.trim()) throw new Error(`示例第 ${index + 1} 集内容不完整`);
+    if (!episode.title?.trim() || !(episode.script ?? episode.content)?.trim()) throw new Error(`示例第 ${index + 1} 集内容不完整`);
   });
   return {
     title: record.title.trim(),
     sourceType: "script" as const,
-    content: record.episodes.map((episode) => `第${episode.episodeNo}集 ${episode.title}\n${episode.content.trim()}`).join("\n\n"),
+    content: record.episodes.map((episode) => `第${episode.episodeNo}集 ${episode.title}\n${(episode.script ?? episode.content ?? "").trim()}`).join("\n\n"),
     targetEpisodes: record.episodes.length,
-    assets: record.assets ?? {}
+    assets: record.assets
+      ? {
+          characters: Array.isArray(record.assets.characters) ? record.assets.characters.length : record.assets.characters ?? 0,
+          scenes: Array.isArray(record.assets.scenes) ? record.assets.scenes.length : record.assets.scenes ?? 0,
+          props: Array.isArray(record.assets.props) ? record.assets.props.length : record.assets.props ?? 0
+        }
+      : {}
   };
 }
