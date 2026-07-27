@@ -394,6 +394,7 @@ function providerEnvApiKey(providerId: string) {
   if (providerId === "dashscope-text") return process.env.DASHSCOPE_TEXT_API_KEY || process.env.DASHSCOPE_API_KEY || "";
   if (providerId === "google-gemini-image" || providerId === "google-ai-studio") return process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || "";
   if (providerId === "zml-image" || providerId === "zml-text") return process.env.ZML_API_KEY || "";
+  if (providerId === "ripp-image") return process.env.RIPP_IMAGE_API_KEY || "";
   return "";
 }
 

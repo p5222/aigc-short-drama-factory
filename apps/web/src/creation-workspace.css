@@ -37,6 +37,11 @@
 .route-mode-switch { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin: 14px 16px 10px; padding: 4px; border-radius: 6px; background: var(--cw-surface-subtle); }
 .route-mode-switch button { min-height: 34px; border: 0; border-radius: 4px; color: var(--cw-text-secondary); background: transparent; cursor: pointer; }
 .route-mode-switch button.is-active { color: #fff; background: var(--cw-accent); }
+.route-channel-detail .mrp-root { display: block; width: 100%; }
+.route-channel-detail .mrp-trigger { width: 100%; min-height: 42px; border-radius: 6px; }
+.route-channel-detail .mrp-trigger-model { max-width: none; text-align: left; }
+.route-channel-detail .mrp-caret { margin-left: auto; }
+.route-channel-detail .mrp-panel { right: 0; width: min(360px, 100%); }
 .model-route-channels { display: grid; gap: 8px; padding: 8px 14px 14px; }
 .route-channel { display: grid; grid-template-columns: 34px minmax(0, 1fr) minmax(70px, auto) 16px; align-items: center; gap: 9px; width: 100%; min-height: 66px; padding: 9px 11px; border: 1px solid var(--cw-border); border-radius: 6px; color: var(--cw-text); background: var(--cw-surface-subtle); text-align: left; cursor: pointer; }
 .route-channel.is-active { border-color: var(--cw-accent); background: var(--cw-accent-soft); }

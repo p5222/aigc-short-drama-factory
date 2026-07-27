@@ -929,7 +929,6 @@ export function textModelName(options: Pick<CreateProjectInput, "textProvider" |
   const provider = options.textProvider || defaultTextProviderId();
   if (provider === "dashscope-text" || provider === "bailian-text") return process.env.DASHSCOPE_TEXT_MODEL || process.env.BAILIAN_TEXT_MODEL || "qwen3.7-plus";
   if (provider === "manjiao") return process.env.MANJIAO_TEXT_MODEL || "gpt-5.5";
-  if (provider === "pipp") return process.env.PIPP_TEXT_MODEL || "deepseek-v4-pro";
   if (provider === "zml-text") return process.env.ZML_TEXT_MODEL || "gpt-5.5";
   if (provider === "doubao-text" || provider === "doubao") return process.env.DOUBAO_TEXT_MODEL || "doubao-seed-1-6-250615";
   if (provider === "google-ai-studio") return process.env.GEMINI_TEXT_MODEL || "gemini-3.1-pro-preview";
@@ -979,7 +978,6 @@ function providerDisplayName(providerId: string) {
     deepseek: "DeepSeek official",
     "zml-text": "ZML upstream relay",
     manjiao: "Manjiao relay",
-    pipp: "Pipp relay",
     "doubao-text": "Doubao Ark text",
     "google-ai-studio": "Google AI Studio / Gemini",
     "openai-upstream": "OpenAI upstream relay",
@@ -1046,14 +1044,6 @@ function resolveTextRuntime(options: TextRuntimeOptions = {}, providerOverride?:
     };
   }
 
-  if (provider === "pipp") {
-    return {
-      provider,
-      apiKey: options.apiKey || process.env.PIPP_TEXT_API_KEY,
-      baseUrl: options.baseUrl || process.env.PIPP_TEXT_BASE_URL || "https://ripp.best",
-      model: options.textModel || process.env.PIPP_TEXT_MODEL || "deepseek-v4-pro"
-    };
-  }
 
   if (provider === "doubao-text" || provider === "doubao") {
     return {
@@ -1109,8 +1099,6 @@ function resolveTextModelCandidates(options: TextRuntimeOptions, provider: strin
       ? process.env.DASHSCOPE_TEXT_MODEL_POOL || process.env.BAILIAN_TEXT_MODEL_POOL
       : provider === "manjiao"
         ? process.env.MANJIAO_TEXT_MODEL_POOL
-      : provider === "pipp"
-        ? process.env.PIPP_TEXT_MODEL_POOL
       : provider === "openai-compatible"
         ? process.env.OPENAI_COMPATIBLE_MODEL_POOL
         : provider === "doubao-text"

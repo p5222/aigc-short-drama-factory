@@ -18,8 +18,8 @@ const avatarPalette = ["#0b8f7b", "#4f6bed", "#b3591f", "#8a4fb8", "#c04f6e"];
 function providerLogoSrc(id: string, name: string, iconUrl?: string): string {
   if (iconUrl) return iconUrl;
   const key = `${id} ${name}`.toLowerCase();
-  if (/manjiao|openai|zml|gpt/.test(key)) return "/logo/openai.png";
-  if (/deepseek|pipp/.test(key)) return "/logo/deepseek-color.png";
+  if (/manjiao|openai|zml|gpt|ripp/.test(key)) return "/logo/openai.png";
+  if (/deepseek/.test(key)) return "/logo/deepseek-color.png";
   if (/dashscope|bailian|qwen|wan/.test(key)) return "/logo/qwen-color.png";
   if (/gemini|google/.test(key)) return "/logo/gemini-color.png";
   if (/claude/.test(key)) return "/logo/claude-color.png";

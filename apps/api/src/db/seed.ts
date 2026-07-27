@@ -21,6 +21,7 @@ const deprecatedProviderIds = [
   "jxb-text",
   "jxb-deepseek",
   "jxb-image",
+  "pipp",
   "domestic-image",
   "mock-image",
   "mock-video",
@@ -36,6 +37,7 @@ const deprecatedPriceIds = [
   "price_jxb_gpt55_text_run",
   "price_jxb_deepseek_v4pro_text_run",
   "price_jxb_gpt_image_2",
+  "price_pipp_deepseek_v4_pro",
   "price_tts_placeholder",
   "price_mock_image",
   "price_video_mock"
@@ -429,6 +431,11 @@ export async function ensureSeedData() {
       }
     });
   }
+
+  await prisma.modelProvider.updateMany({
+    where: { id: { in: ["zml-text", "zml-image"] } },
+    data: { enabled: false }
+  });
 
   await prisma.modelProvider.updateMany({
     where: { id: "dashscope-text" },

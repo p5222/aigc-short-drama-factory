@@ -15,6 +15,7 @@ export type CanonicalImageProviderId =
   | "dashscope-image"
   | "google-gemini-image"
   | "zml-image"
+  | "ripp-image"
   | "doubao-seedream"
   | "openai-compatible-image"
   | "mock-image";
@@ -23,6 +24,7 @@ export function normalizeImageProviderId(provider?: string | null): CanonicalIma
   if (provider === "dashscope" || provider === "dashscope-image") return "dashscope-image";
   if (provider === "google" || provider === "google-ai-studio" || provider === "google-gemini-image") return "google-gemini-image";
   if (provider === "zml" || provider === "zml-image" || provider === "zml-relay") return "zml-image";
+  if (provider === "ripp" || provider === "ripp-image") return "ripp-image";
   if (provider === "doubao" || provider === "doubao-seedream") return "doubao-seedream";
   if (provider === "openai-compatible" || provider === "openai-compatible-image" || provider === "relay" || provider === "relay-image") return "openai-compatible-image";
   return "mock-image";
@@ -33,6 +35,7 @@ export function defaultImageUnitCredits(provider?: string | null): number {
   if (canonical === "dashscope-image") return 8;
   if (canonical === "google-gemini-image") return 24;
   if (canonical === "zml-image") return 28;
+  if (canonical === "ripp-image") return 28;
   if (canonical === "doubao-seedream") return 8;
   if (canonical === "openai-compatible-image") return 30;
   return 5;

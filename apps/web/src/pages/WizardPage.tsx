@@ -3,6 +3,8 @@ import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode 
 import type { CreateProjectInput, CreationEstimate, ModelProvider } from "@aifilm/shared";
 import { imageOutputQualityOptions, imageOutputSizeOptions, imageParameterMultiplier, normalizeImageOutputQuality, normalizeImageOutputSize } from "@aifilm/shared";
 import { api } from "../lib/api";
+import { ModelRoutePicker } from "../components/ModelRoutePicker";
+import { analyzeSourceEpisodes, episodeScopeOptions, parseSampleManifest, type SourceEpisodeAnalysis } from "./wizardSourceModel";
 
 interface WizardPageProps {
   providers: ModelProvider[];
@@ -14,9 +16,9 @@ type WizardStep = "story" | "settings" | "script";
 type RouteTestState = { loading: boolean; ok?: boolean; message?: string };
 
 const stepOrder: WizardStep[] = ["story", "settings", "script"];
-const preferredTextProviderIds = ["dashscope-text", "deepseek", "zml-text"];
-const preferredImageProviderIds = ["manjiao-image", "dashscope-image", "zml-image", "doubao-seedream"];
-const preferredVideoProviderIds = ["dashscope-video", "zml-video", "doubao-video"];
+const preferredTextProviderIds = ["dashscope-text", "deepseek", "manjiao"];
+const preferredImageProviderIds = ["ripp-image", "manjiao-image", "dashscope-image", "doubao-seedream"];
+const preferredVideoProviderIds = ["dashscope-video", "doubao-video"];
 const failedImageModels = new Set(["wanx-v1", "wan2.5-t2i-preview"]);
 
 const defaultForm: CreateProjectInput = {
@@ -72,7 +74,8 @@ export function WizardPage({ providers, onCreated, onCreateContent }: WizardPage
   const [generationElapsed, setGenerationElapsed] = useState(0);
 
   const words = useMemo(() => form.content.trim().length, [form.content]);
-  const suggestedEpisodes = Math.max(1, Math.min(20, Math.ceil(Math.max(words, 800) / 2000)));
+  const episodeAnalysis = useMemo(() => analyzeSourceEpisodes(form.content, form.sourceType), [form.content, form.sourceType]);
+  const suggestedEpisodes = episodeAnalysis.maxEpisodes;
   const textProviders = useMemo(() => filterProviders(providers, "text", preferredTextProviderIds), [providers]);
   const imageProviders = useMemo(() => filterProviders(providers, "image", preferredImageProviderIds), [providers]);
   const videoProviders = useMemo(() => filterProviders(providers, "video", preferredVideoProviderIds), [providers]);
@@ -110,10 +113,11 @@ export function WizardPage({ providers, onCreated, onCreateContent }: WizardPage
 
   useEffect(() => {
     const current = form.targetEpisodes ?? 1;
-    if (current > suggestedEpisodes) {
-      setForm((draft) => ({ ...draft, targetEpisodes: suggestedEpisodes }));
+    const allowed = episodeScopeOptions(episodeAnalysis).map((option) => option.value);
+    if (!allowed.includes(current)) {
+      setForm((draft) => ({ ...draft, targetEpisodes: allowed.at(-1) ?? 1 }));
     }
-  }, [form.targetEpisodes, suggestedEpisodes]);
+  }, [episodeAnalysis, form.targetEpisodes]);
 
   function goTo(nextStep: WizardStep) {
     if (stepOrder.indexOf(nextStep) > 0 && !form.content.trim()) {
@@ -226,6 +230,29 @@ export function WizardPage({ providers, onCreated, onCreateContent }: WizardPage
     setImageRouteTest({ loading: false });
   }
 
+  async function loadBeijingMarriageSample() {
+    setError("");
+    setMessage("正在加载《北境婚书》示例...");
+    try {
+      const response = await fetch("/samples/beijing-marriage/manifest.json");
+      if (!response.ok) throw new Error(`示例加载失败（HTTP ${response.status}）`);
+      const sample = parseSampleManifest(await response.json());
+      setForm((current) => ({
+        ...current,
+        title: sample.title,
+        sourceType: sample.sourceType,
+        content: sample.content,
+        targetEpisodes: sample.targetEpisodes,
+        artStyle: "新三维国风、3D半写实商业CG",
+        videoRatio: "16:9"
+      }));
+      setMessage(`已导入《北境婚书》：${sample.targetEpisodes} 集，含 ${sample.assets.characters ?? 0} 个角色、${sample.assets.scenes ?? 0} 个场景、${sample.assets.props ?? 0} 个道具。`);
+    } catch (reason) {
+      setMessage("");
+      setError(reason instanceof Error ? reason.message : "示例加载失败");
+    }
+  }
+
   function selectVideoProvider(providerId: string) {
     const provider = videoProviders.find((item) => item.id === providerId);
     setForm({ ...form, videoProvider: providerId, videoModel: provider?.models[0] ?? form.videoModel });
@@ -286,9 +313,10 @@ export function WizardPage({ providers, onCreated, onCreateContent }: WizardPage
           modelMessage={modelMessage}
           words={words}
           suggestedEpisodes={suggestedEpisodes}
+          episodeAnalysis={episodeAnalysis}
           onChange={setForm}
           onImport={importTextFile}
-          onSample={() => setForm({ ...form, content: demoStory, title: form.title || "云上花店", sourceType: "short_story" })}
+          onSample={() => void loadBeijingMarriageSample()}
           onSave={saveDraft}
           onNext={nextStep}
         />
@@ -344,6 +372,7 @@ function StoryStep({
   form,
   words,
   suggestedEpisodes,
+  episodeAnalysis,
   onChange,
   onImport,
   onSample,
@@ -357,6 +386,7 @@ function StoryStep({
   modelMessage: string;
   words: number;
   suggestedEpisodes: number;
+  episodeAnalysis: SourceEpisodeAnalysis;
   onChange: (form: CreateProjectInput) => void;
   onImport: (event: ChangeEvent<HTMLInputElement>) => void;
   onSample: () => void;
@@ -405,7 +435,7 @@ function StoryStep({
             <FileUp size={18} />导入 .txt
           </button>
           <button className="ghost-button" onClick={onSample} type="button">
-            <Sparkles size={18} />样例故事
+            <Sparkles size={18} />导入示例：北境婚书
           </button>
           <button className="ghost-button" onClick={onSave} type="button">
             <Save size={18} />保存草稿
@@ -419,21 +449,18 @@ function StoryStep({
           <div className="import-summary-head"><h3>导入摘要</h3><span>{form.sourceType === "script" ? "剧本直拆" : "小说转剧本"}</span></div>
           <div className="mini-metrics import-metrics">
             <div><strong>{words.toLocaleString()}</strong><span>字数</span></div>
-            <div><strong>{suggestedEpisodes}</strong><span>最多可生成集数</span></div>
+            <div><strong>{suggestedEpisodes}</strong><span>结构支持集数</span></div>
           </div>
           <label className="field episode-select-field">
-            <span>想生成多少集？</span>
+            <span>本次生成范围</span>
             <select
               value={form.targetEpisodes ?? 1}
               onChange={(event) => onChange({ ...form, targetEpisodes: Number(event.target.value) })}
             >
-              {Array.from({ length: suggestedEpisodes }).map((_, index) => {
-                const episode = index + 1;
-                return <option key={episode} value={episode}>{episode} 集</option>;
-              })}
+              {episodeScopeOptions(episodeAnalysis).map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
             </select>
           </label>
-          <small>{form.sourceType === "script" ? "将按剧本中的场次结构拆分；集数用于控制本次生产范围。" : "约每 2,000 字估算为 1 集，选项会按当前字数自动限制。"}</small>
+          <small>{episodeAnalysis.summary}。选择范围只控制本次先生产多少集，不会把全部内容强行重切。</small>
           {words < 2000 ? <p className="warning-text">内容较短，系统会自动减少场次与镜头，避免剧情被过度拆分。</p> : null}
         </section>
 
@@ -573,7 +600,6 @@ function ScriptStep({
   onStart: () => void;
 }) {
   const imageMultiplier = imageParameterMultiplier(form.imageSize, form.imageQuality).toFixed(2);
-  const [routeMode, setRouteMode] = useState<"auto" | "custom">("auto");
   const [activeRoute, setActiveRoute] = useState<"text" | "image" | "video">("text");
   const scriptAssets = [
     { title: "全局设定", text: "世界观、题材、人设关系、主角动机和内容边界。", icon: <BrainCircuit size={18} />, meta: form.genre || "AI 自动识别" },
@@ -630,13 +656,10 @@ function ScriptStep({
             <div><span>模型路由</span><strong><i />自动路由正常</strong></div>
             <Route size={20} />
           </div>
-          <div className="route-mode-switch"><button className={routeMode === "auto" ? "is-active" : ""} onClick={() => setRouteMode("auto")} type="button">自动推荐</button><button className={routeMode === "custom" ? "is-active" : ""} onClick={() => setRouteMode("custom")} type="button">自定义</button></div>
-
           <div className="model-route-channels">
             <RouteChannel icon={<FileText size={17} />} title="文本推理" purpose="剧本解析、角色与场景提取" model={form.textModel || "自动选择"} active={activeRoute === "text"} onClick={() => setActiveRoute(activeRoute === "text" ? "image" : "text")} />
             {activeRoute === "text" ? <div className="route-channel-detail">
-              <label className="field"><span>供应商</span><select value={form.textProvider} onChange={(event) => onTextProvider(event.target.value)}>{textProviders.map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}</select></label>
-              <label className="field"><span>模型</span><select value={form.textModel} onChange={(event) => onChange({ ...form, textModel: event.target.value })}>{currentTextModels.map((model) => <option key={model} value={model}>{model}</option>)}</select></label>
+              <label className="field"><span>文本渠道与模型</span><ModelRoutePicker modality="text" providers={textProviders} value={{ providerId: form.textProvider || "", model: form.textModel || "" }} onChange={(providerId, model) => onChange({ ...form, textProvider: providerId, textModel: model })} /></label>
               <p>{cleanProviderHint(selectedTextProvider?.costHint, "用于剧本解析、角色卡和分镜拆解。")}</p>
               <button className="ghost-button full-button" onClick={onTestModel} disabled={isTestingModel} type="button">{isTestingModel ? "测试中..." : "测试文本模型"}</button>
               <RouteTestMessage state={textRouteTest} />
@@ -644,8 +667,7 @@ function ScriptStep({
 
             <RouteChannel icon={<Image size={17} />} title="图像生成" purpose="角色、场景与分镜首帧" model={form.imageModel || "自动选择"} active={activeRoute === "image"} onClick={() => setActiveRoute("image")} />
             {activeRoute === "image" ? <div className="route-channel-detail">
-              <label className="field"><span>供应商</span><select value={form.imageProvider} onChange={(event) => onImageProvider(event.target.value)}>{imageProviders.map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}</select></label>
-              <label className="field"><span>模型</span><select value={form.imageModel} onChange={(event) => onChange({ ...form, imageModel: event.target.value })}>{currentImageModels.map((model) => <option key={model} value={model}>{model}</option>)}</select></label>
+              <label className="field"><span>生图渠道与模型</span><ModelRoutePicker modality="image" providers={imageProviders} value={{ providerId: form.imageProvider || "", model: form.imageModel || "" }} onChange={(providerId, model) => onChange({ ...form, imageProvider: providerId, imageModel: model })} /></label>
               <div className="route-param-grid">
                 <label className="field"><span>分辨率</span><select value={normalizeImageOutputSize(form.imageSize)} onChange={(event) => onChange({ ...form, imageSize: event.target.value })}>{imageOutputSizeOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
                 <label className="field"><span>质量</span><select value={normalizeImageOutputQuality(form.imageQuality)} onChange={(event) => onChange({ ...form, imageQuality: event.target.value })}>{imageOutputQualityOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
@@ -657,8 +679,7 @@ function ScriptStep({
 
             <RouteChannel icon={<Video size={17} />} title="视频生成" purpose="后续分镜视频与片段生成" model={form.videoModel || "自动选择"} active={activeRoute === "video"} warning={!selectedVideoProvider?.enabled} onClick={() => setActiveRoute("video")} />
             {activeRoute === "video" ? <div className="route-channel-detail">
-              <label className="field"><span>供应商</span><select value={form.videoProvider} onChange={(event) => onVideoProvider(event.target.value)}>{videoProviders.map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}</select></label>
-              <label className="field"><span>模型</span><select value={form.videoModel} onChange={(event) => onChange({ ...form, videoModel: event.target.value })}>{currentVideoModels.map((model) => <option key={model} value={model}>{model}</option>)}</select></label>
+              <label className="field"><span>视频渠道与模型</span><ModelRoutePicker modality="video" providers={videoProviders} value={{ providerId: form.videoProvider || "", model: form.videoModel || "" }} onChange={(providerId, model) => onChange({ ...form, videoProvider: providerId, videoModel: model })} /></label>
               <p>{cleanProviderHint(selectedVideoProvider?.costHint, "用于项目创建后的镜头视频生成。")}</p>
             </div> : null}
           </div>
@@ -754,8 +775,9 @@ function cleanProviderHint(hint: string | undefined, fallback: string) {
 }
 
 function filterProviders(providers: ModelProvider[], modality: ModelProvider["modality"], preferredIds: string[]) {
-  const enabled = providers.filter((provider) => provider.modality === modality && provider.enabled);
-  const source = enabled.length ? enabled : providers.filter((provider) => provider.modality === modality);
+  const eligible = providers.filter((provider) => provider.modality === modality && !provider.id.toLowerCase().startsWith("zml"));
+  const enabled = eligible.filter((provider) => provider.enabled);
+  const source = enabled.length ? enabled : eligible;
   return [...source].sort((a, b) => {
     const aIndex = preferredIds.indexOf(a.id);
     const bIndex = preferredIds.indexOf(b.id);
@@ -782,8 +804,7 @@ function normalizeDraft(form: CreateProjectInput): CreateProjectInput {
 }
 
 function buildGenerationInput(form: CreateProjectInput): CreateProjectInput {
-  const words = form.content.trim().length;
-  const maxEpisodes = Math.max(1, Math.min(20, Math.ceil(Math.max(words, 800) / 2000)));
+  const maxEpisodes = analyzeSourceEpisodes(form.content, form.sourceType).maxEpisodes;
   return {
     ...normalizeDraft(form),
     title: form.title.trim() || autoTitle(form.content),
@@ -825,5 +846,3 @@ function loadDraft(): CreateProjectInput | null {
     return null;
   }
 }
-
-const demoStory = "林小朵继承了一家开在云上的花店。店里的花会在夜里发光，也能读出客人没有说出口的遗憾。第一位客人陈暮带着一枚旧戒指来到店里，他想买一束不会凋谢的花，却不肯说要送给谁。林小朵触碰花瓣时，看见了陈暮二十年前错过的爱情，也看见他即将在今晚做出最后的告别。她必须决定，是遵守花店不干预命运的规矩，还是帮他找回那个被时间藏起来的人。";

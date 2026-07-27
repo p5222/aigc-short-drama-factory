@@ -120,7 +120,7 @@ export async function generateImage(input: ImageGenerationInput): Promise<ImageG
 
   if (provider === "dashscope") return generateDashScopeImage(input);
   if (provider === "google-gemini-image") return generateGeminiImage(input);
-  if (provider === "zml-image" || provider === "manjiao-image") return generateOpenAICompatibleImage(input, provider);
+  if (provider === "zml-image" || provider === "manjiao-image" || provider === "ripp-image") return generateOpenAICompatibleImage(input, provider);
   if (provider === "doubao-seedream") return generateOpenAICompatibleImage(input, "doubao-seedream");
   if (provider === "openai-compatible") return generateOpenAICompatibleImage(input, provider);
 
@@ -415,6 +415,15 @@ function resolveImageRuntime(input: ImageGenerationInput, provider: string) {
     };
   }
 
+  if (provider === "ripp-image") {
+    return {
+      name: "Ripp / GPT Image 2",
+      apiKey: input.apiKey || process.env.RIPP_IMAGE_API_KEY,
+      baseUrl: input.baseUrl || process.env.RIPP_IMAGE_BASE_URL || "https://ripp.best",
+      model: normalizeRelayImageModel(input.model || process.env.RIPP_IMAGE_MODEL || "gpt-image-2")
+    };
+  }
+
   if (provider === "doubao-seedream") {
     return {
       name: "Doubao Seedream Image",
@@ -436,6 +445,7 @@ function normalizeImageProvider(provider: string) {
   if (["dashscope", "dashscope-image", "wanxiang", "qwen-image"].includes(provider)) return "dashscope";
   if (["google", "google-ai-studio", "google-gemini-image", "gemini-image", "gemini-3-pro-image", "gemini-3.1-flash-image"].includes(provider)) return "google-gemini-image";
   if (["zml", "zml-image", "zml-gpt-image", "zml-relay", "gpt-image-2"].includes(provider)) return "zml-image";
+  if (["ripp", "ripp-image"].includes(provider)) return "ripp-image";
   if (["manjiao", "manjiao-image", "manjiao-relay"].includes(provider)) return "manjiao-image";
   if (["doubao", "doubao-seedream", "seedream", "Doubao-Seedream-5.0-lite", "doubao-seedream-5-0-lite-260128"].includes(provider)) return "doubao-seedream";
   if (["openai-compatible", "openai-compatible-image", "relay", "relay-image", "image2", "gpt-image2", "openai-image"].includes(provider)) return "openai-compatible";
