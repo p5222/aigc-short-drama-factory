@@ -68,6 +68,9 @@ model Project {
   videoModel    String?
   status       String
   episodes     Int             @default(1)
+  segmentProfile String        @default("jimeng_15s")
+  episodeDurationSeconds Int   @default(180)
+  sourceCharactersPerEpisode Int @default(20000)
   storyboards  Int             @default(0)
   characters   Int             @default(0)
   imageAssets  Int             @default(0)
@@ -85,6 +88,7 @@ model Project {
   feedbacks    UserFeedback[]
   analyticsEvents AnalyticsEvent[]
   showcaseWorks ShowcaseWork[]
+  productionEpisodes ProductionEpisode[]
   createdAt    DateTime         @default(now())
   updatedAt    DateTime         @updatedAt
   @@index([userId])
@@ -194,6 +198,19 @@ model Storyboard {
   videoPrompt       String
   referenceAssetIds String[]
   status            String
+  segmentProfile    String?
+  sequenceNo        Int?
+  startSeconds      Float?
+  endSeconds        Float?
+  boundaryType      String?
+  startState        Json?
+  endState          Json?
+  firstFramePrompt  String?
+  lastFramePrompt   String?
+  firstFrameAssetId String?
+  lastFrameAssetId  String?
+  continuitySourceShotId String?
+  promptVersion     String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
   @@index([projectId])
@@ -748,6 +765,7 @@ model ContentProject {
   textProvider       String   @default("manjiao")
   textModel          String   @default("gpt-5.5")
   productionProjectId String?
+  importKey          String?  @unique
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
   sources            SourceDocument[]
@@ -756,9 +774,46 @@ model ContentProject {
   chapters           StoryChapter[]
   scripts            ScriptVersion[]
   entities           EntityCatalog?
+  episodes           ProductionEpisode[]
 
   @@index([userId, updatedAt])
   @@index([status])
+}
+
+model ProductionEpisode {
+  id                    String   @id
+  contentProjectId      String
+  productionProjectId   String?
+  episodeNo             Int
+  title                 String   @default("")
+  sourceStart           Int
+  sourceEnd             Int
+  sourceCharacterCount  Int
+  targetDurationSeconds Int      @default(180)
+  status                String   @default("draft")
+  activeScriptVersion   Int      @default(0)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+  contentProject        ContentProject @relation(fields: [contentProjectId], references: [id], onDelete: Cascade)
+  productionProject     Project? @relation(fields: [productionProjectId], references: [id], onDelete: SetNull)
+  scripts               EpisodeScriptVersion[]
+
+  @@unique([contentProjectId, episodeNo])
+  @@index([productionProjectId, episodeNo])
+}
+
+model EpisodeScriptVersion {
+  id               String   @id
+  episodeId        String
+  version          Int
+  status           String   @default("draft")
+  content          String
+  structuredResult Json     @default("{}")
+  promptSnapshot   Json     @default("{}")
+  createdAt        DateTime @default(now())
+  episode          ProductionEpisode @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+
+  @@unique([episodeId, version])
 }
 
 model SourceDocument {

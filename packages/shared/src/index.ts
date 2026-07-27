@@ -22,6 +22,8 @@ export type QualityEvaluationMode = "rules" | "hybrid" | "llm";
 export type EvaluationRunStatus = "running" | "completed" | "failed";
 export type AnnouncementType = "info" | "guide" | "update" | "warning";
 export type HelpArticleCategory = "getting_started" | "workflow" | "billing" | "account" | "troubleshooting" | "community";
+export type SegmentProfile = "jimeng_15s" | "doubao_10s";
+export type StoryboardBoundaryType = "CONTINUE" | "CUT_MATCH" | "CUT_SCENE";
 
 export interface PagedResult<T> {
   items: T[];
@@ -84,6 +86,9 @@ export interface Project {
   videoModel?: string;
   status: ProjectStatus;
   episodes: number;
+  segmentProfile?: SegmentProfile;
+  episodeDurationSeconds?: number;
+  sourceCharactersPerEpisode?: number;
   storyboards: number;
   characters: number;
   imageAssets: number;
@@ -155,6 +160,47 @@ export interface StoryboardShot {
   orientation?: string;
   spatialRelation?: string;
   emotion?: string;
+  segmentProfile?: SegmentProfile;
+  sequenceNo?: number;
+  startSeconds?: number;
+  endSeconds?: number;
+  boundaryType?: StoryboardBoundaryType;
+  startState?: Record<string, unknown>;
+  endState?: Record<string, unknown>;
+  firstFramePrompt?: string;
+  lastFramePrompt?: string;
+  firstFrameAssetId?: string;
+  lastFrameAssetId?: string;
+  continuitySourceShotId?: string;
+  promptVersion?: string;
+}
+
+export interface ProductionEpisode {
+  id: string;
+  contentProjectId: string;
+  productionProjectId?: string;
+  episodeNo: number;
+  title: string;
+  sourceStart: number;
+  sourceEnd: number;
+  sourceCharacterCount: number;
+  targetDurationSeconds: number;
+  status: ContentStepStatus;
+  activeScriptVersion: number;
+  scripts?: EpisodeScriptVersion[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface EpisodeScriptVersion {
+  id: string;
+  episodeId: string;
+  version: number;
+  status: ContentStepStatus;
+  content: string;
+  structuredResult: Record<string, unknown>;
+  promptSnapshot: Record<string, unknown>;
+  createdAt: string;
 }
 
 export interface ProjectWorkflow {
@@ -524,6 +570,8 @@ export interface ContentProjectSummary {
   chapterCount: number;
   scriptCount: number;
   hasEntities: boolean;
+  importKey?: string;
+  episodes?: ProductionEpisode[];
 }
 
 export interface ContentProductionPackage {

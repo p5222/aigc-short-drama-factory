@@ -20,7 +20,7 @@ longcat-audiodit-venv
 .venv
 .codex_artifacts
 uploads
-storage
+/storage/
 backups
 *.pid
 .agents
