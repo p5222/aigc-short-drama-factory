@@ -26,6 +26,7 @@ backups
 .agents
 .codex
 .superpowers
+.worktrees
 codex-product-design-plugin
 output
 _server_snapshot
