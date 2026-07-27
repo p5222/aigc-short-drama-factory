@@ -70,6 +70,10 @@ export function chapterGenerationPlan(
   };
 }
 
+export function chapterNavigationStage(_currentStage: "chapter" | "handoff"): "chapter" {
+  return "chapter";
+}
+
 // R3: 旧版分析结果的 dimensions 里存的是原始 JSON 字符串（workBreakdown 等）。
 // 渲染前清洗为纯中文要点；新数据（已是纯文本）原样返回。
 const hiddenModelKeys = new Set(["workId", "evidenceType", "chapterRange", "avoidCopying"]);

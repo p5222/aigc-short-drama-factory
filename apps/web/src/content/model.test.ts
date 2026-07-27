@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ContentProjectSummary } from "@aifilm/shared";
-import { buildProductionDraft, chapterGenerationPlan, isCurrentRequest, modeLabel, reconcileProjectId, sourceKindForMode, statusLabel } from "./model.ts";
+import { buildProductionDraft, chapterGenerationPlan, chapterNavigationStage, isCurrentRequest, modeLabel, reconcileProjectId, sourceKindForMode, statusLabel } from "./model.ts";
 
 const project = (id: string): ContentProjectSummary => ({ id, title: id, mode: "original", status: "draft", activeStep: "source", styleProfile: { key: "", name: "", category: "", summary: "", characterRules: [], sceneRules: [], lightingRules: [], cameraRules: [], materialRules: [], negativeRules: [] }, textProvider: "manjiao", textModel: "gpt-5.5", updatedAt: "", sourceCount: 0, chapterCount: 0, scriptCount: 0, hasEntities: false });
 
@@ -46,4 +46,9 @@ test("plans the next chapter batch and all remaining chapters from persisted cha
     nextBatchSize: 0,
     remainingCount: 0
   });
+});
+
+test("opens chapter content for editing even after a production script exists", () => {
+  assert.equal(chapterNavigationStage("handoff"), "chapter");
+  assert.equal(chapterNavigationStage("chapter"), "chapter");
 });

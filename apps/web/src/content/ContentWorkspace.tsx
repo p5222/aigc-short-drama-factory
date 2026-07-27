@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import type { ContentProductionPackage, ContentProjectSummary, CreateProjectInput, ModelProvider, StyleProfile } from "@aifilm/shared";
 import { contentApi, type ContentVersionHistory, type SourceDocumentInput } from "../lib/contentApi";
 import { ModelRoutePicker } from "../components/ModelRoutePicker";
-import { buildProductionDraft, chapterGenerationPlan, cleanModelText, isCurrentRequest, modeLabel, reconcileProjectId, sourceKindForMode, statusLabel, type RequestToken } from "./model";
+import { buildProductionDraft, chapterGenerationPlan, chapterNavigationStage, cleanModelText, isCurrentRequest, modeLabel, reconcileProjectId, sourceKindForMode, statusLabel, type RequestToken } from "./model";
 
 const emptyStyle: StyleProfile = { key: "", name: "", category: "", summary: "", characterRules: [], sceneRules: [], lightingRules: [], cameraRules: [], materialRules: [], negativeRules: [] };
 const styleOptions: Array<Pick<StyleProfile, "key" | "name" | "category" | "summary">> = [
@@ -464,7 +464,8 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, providers
           <article><Map size={18} /><strong>{productionPackage.entities?.scenes.length ?? 0}</strong><span>场景</span></article>
           <article><Sparkles size={18} /><strong>{productionPackage.entities?.props.length ?? 0}</strong><span>道具</span></article>
         </div>
-        <div className="cw2-actionbar"><span className="cw2-hint">交接后仍可返回这里继续修改内容。</span>
+        <div className="cw2-actionbar"><span className="cw2-hint">交接后仍可编辑任意章节；修改完成后重新生成剧本即可同步。</span>
+          <button type="button" className="content-secondary-button" disabled={working} onClick={() => setFocusStage("chapter")}><FileText size={14} />返回编辑正文</button>
           <button type="button" className="content-secondary-button" disabled={working} onClick={() => void generateScriptFromChapters()}><RefreshCw size={14} />按最新正文重生成剧本</button>
           <button type="button" className="content-primary-button" disabled={!handoffContent} onClick={enterProduction}>进入漫剧创作<ArrowRight size={16} /></button>
         </div>
@@ -518,7 +519,7 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, providers
           {outline.map((item, index) => {
             const chapterNo = Number(item.chapterNo ?? index + 1);
             const generated = chapters.find((chapter) => chapter.chapterNo === chapterNo);
-            return <button type="button" key={chapterNo} className={`cw2-chap ${generated ? "is-gen" : ""} ${chapterNo === selectedChapterNo ? "is-active" : ""}`} onClick={() => { setSelectedChapterNo(chapterNo); if (viewStage === "handoff" && !productionPackage?.script) setFocusStage("chapter"); }}>
+            return <button type="button" key={chapterNo} className={`cw2-chap ${generated ? "is-gen" : ""} ${chapterNo === selectedChapterNo ? "is-active" : ""}`} onClick={() => { setSelectedChapterNo(chapterNo); if (viewStage === "handoff") setFocusStage(chapterNavigationStage(viewStage)); }}>
               <b>{String(chapterNo).padStart(2, "0")}</b>
               <span>{String(item.title ?? `第${chapterNo}章`)}</span>
               <i className="cw2-dot" />
