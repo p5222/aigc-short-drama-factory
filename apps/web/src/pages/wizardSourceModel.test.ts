@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { analyzeSourceEpisodes, episodeScopeOptions, parseSampleManifest } from "./wizardSourceModel.ts";
 
-test("uses explicit novel chapters instead of collapsing them by total character count", () => {
+test("uses novel chapters as semantic boundaries while budgeting by source length", () => {
   const content = [1, 2, 3, 4, 5].map((chapter) => `第${chapter}章 标题\n${"正文".repeat(340)}`).join("\n\n");
   const analysis = analyzeSourceEpisodes(content, "novel");
-  assert.equal(analysis.maxEpisodes, 5);
+  assert.equal(analysis.maxEpisodes, 1);
   assert.equal(analysis.unitCount, 5);
   assert.equal(analysis.basis, "chapter");
 });
@@ -16,19 +16,21 @@ test("uses explicit episode headings for an existing script", () => {
   assert.equal(analysis.basis, "episode");
 });
 
-test("falls back to roughly 2000 characters only when no structure exists", () => {
-  const analysis = analyzeSourceEpisodes("故事".repeat(1700), "novel");
+test("falls back to roughly 20000 source characters only when no structure exists", () => {
+  const analysis = analyzeSourceEpisodes("故事".repeat(17_000), "novel");
   assert.equal(analysis.maxEpisodes, 2);
   assert.equal(analysis.basis, "length");
 });
 
-test("offers first episode, first two episodes and all detected episodes", () => {
+test("offers every incremental count and all remaining episodes", () => {
   assert.deepEqual(episodeScopeOptions({ maxEpisodes: 5 }), [
-    { value: 1, label: "先生成 1 集" },
-    { value: 2, label: "先生成前 2 集" },
-    { value: 5, label: "生成全部 5 集" }
+    { value: 1, label: "生成接下来 1 集" },
+    { value: 2, label: "生成接下来 2 集" },
+    { value: 3, label: "生成接下来 3 集" },
+    { value: 4, label: "生成接下来 4 集" },
+    { value: 5, label: "生成全部剩余 5 集" }
   ]);
-  assert.deepEqual(episodeScopeOptions({ maxEpisodes: 1 }), [{ value: 1, label: "生成全部 1 集" }]);
+  assert.deepEqual(episodeScopeOptions({ maxEpisodes: 1 }), [{ value: 1, label: "生成全部剩余 1 集" }]);
 });
 
 test("accepts a normal-flow sample only when its episodes are ordered", () => {

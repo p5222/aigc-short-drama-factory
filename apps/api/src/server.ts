@@ -127,7 +127,7 @@ import { testVideoModelConnection } from "./providers/video.js";
 import { listVisualPipelines, testVisualPipeline } from "./providers/visualPipelineRegistry.js";
 import { generationQueue, generationQueueEvents, queueConnection, startGenerationWorker } from "./queue/generationQueue.js";
 import { ensureStorageBuckets, storageRoot } from "./storage/objectStorage.js";
-import { handleAddSource, handleAnalyzeContentProject, handleConfirmContentOutline, handleCreateContentProject, handleDeleteContentProject, handleDevelopContentProject, handleGenerateContentChapterBatch, handleGenerateContentOutline, handleGenerateContentPackage, handleGetContentPackage, handleGetContentVersions, handleListContentProjects, handleUpdateContentChapter, handleUpdateContentModelRoute } from "./content/routes.js";
+import { handleActivateEpisodeVersion, handleAddSource, handleAnalyzeContentProject, handleConfirmContentOutline, handleCreateContentProject, handleDeleteContentProject, handleDevelopContentProject, handleGenerateContentChapterBatch, handleGenerateContentOutline, handleGenerateContentPackage, handleGenerateEpisodes, handleGetContentPackage, handleGetContentVersions, handleListEpisodes, handleListEpisodeVersions, handleListContentProjects, handleRegenerateEpisode, handleUpdateContentChapter, handleUpdateContentModelRoute } from "./content/routes.js";
 
 const app = express();
 app.set("trust proxy", parseTrustProxy(process.env.TRUST_PROXY, process.env.NODE_ENV === "production"));
@@ -218,7 +218,7 @@ const createProjectSchema = z.object({
   genre: z.string().default("短剧"),
   videoRatio: z.enum(["9:16", "16:9", "1:1"]).default("9:16"),
   artStyle: z.string().default("国漫写实"),
-  targetEpisodes: z.coerce.number().int().min(1).max(20).optional(),
+  targetEpisodes: z.coerce.number().int().min(1).max(100).optional(),
   textProvider: z.string().optional(),
   textModel: z.string().optional(),
   imageProvider: z.string().optional(),
@@ -237,7 +237,8 @@ const projectRouteUpdateSchema = z.object({
   imageSize: z.string().nullable().optional(),
   imageQuality: z.string().nullable().optional(),
   videoProvider: z.string().nullable().optional(),
-  videoModel: z.string().nullable().optional()
+  videoModel: z.string().nullable().optional(),
+  segmentProfile: z.enum(["jimeng_15s", "doubao_10s"]).optional()
 });
 
 const registerSchema = z.object({
@@ -981,7 +982,37 @@ app.get("/api/content/projects/:id/versions", asyncRoute(async (req, res) => {
 app.post("/api/content/projects/:id/generate", asyncRoute(async (req, res) => {
   const userId = requestUserId(req);
   if (!userId) return res.status(401).json({ message: "请先登录。" });
-  res.json(await handleGenerateContentPackage(userId, paramId(req.params.id)));
+  res.json(await handleGenerateContentPackage(userId, paramId(req.params.id), req.body));
+}));
+
+app.get("/api/content/projects/:id/episodes", asyncRoute(async (req, res) => {
+  const userId = requestUserId(req);
+  if (!userId) return res.status(401).json({ message: "请先登录。" });
+  res.json(await handleListEpisodes(userId, paramId(req.params.id)));
+}));
+
+app.post("/api/content/projects/:id/episodes/generate", asyncRoute(async (req, res) => {
+  const userId = requestUserId(req);
+  if (!userId) return res.status(401).json({ message: "请先登录。" });
+  res.json(await handleGenerateEpisodes(userId, paramId(req.params.id), req.body));
+}));
+
+app.post("/api/content/projects/:id/episodes/:episodeNo/regenerate", asyncRoute(async (req, res) => {
+  const userId = requestUserId(req);
+  if (!userId) return res.status(401).json({ message: "请先登录。" });
+  res.json(await handleRegenerateEpisode(userId, paramId(req.params.id), Number(req.params.episodeNo)));
+}));
+
+app.get("/api/content/projects/:id/episodes/:episodeNo/versions", asyncRoute(async (req, res) => {
+  const userId = requestUserId(req);
+  if (!userId) return res.status(401).json({ message: "请先登录。" });
+  res.json(await handleListEpisodeVersions(userId, paramId(req.params.id), Number(req.params.episodeNo)));
+}));
+
+app.post("/api/content/projects/:id/episodes/:episodeNo/versions/:version/activate", asyncRoute(async (req, res) => {
+  const userId = requestUserId(req);
+  if (!userId) return res.status(401).json({ message: "请先登录。" });
+  res.json(await handleActivateEpisodeVersion(userId, paramId(req.params.id), Number(req.params.episodeNo), Number(req.params.version)));
 }));
 
 app.post("/api/content/projects/:id/develop", asyncRoute(async (req, res) => {
@@ -1296,7 +1327,8 @@ app.patch(
       imageSize: parsed.data.imageSize ?? undefined,
       imageQuality: parsed.data.imageQuality ?? undefined,
       videoProvider: parsed.data.videoProvider ?? undefined,
-      videoModel: parsed.data.videoModel ?? undefined
+      videoModel: parsed.data.videoModel ?? undefined,
+      segmentProfile: parsed.data.segmentProfile
     }));
   })
 );
@@ -1484,6 +1516,7 @@ app.post(
     const parsed = createProjectSchema
       .pick({
         content: true,
+        sourceType: true,
         mode: true,
         targetEpisodes: true,
         textProvider: true,

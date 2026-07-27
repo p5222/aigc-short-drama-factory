@@ -18,7 +18,7 @@ export function reconcileProjectId(projects: ContentProjectSummary[], selectedId
 }
 
 export function statusLabel(status: ContentStepStatus): string {
-  return ({ draft: "草稿", running: "处理中", succeeded: "已完成", failed: "失败", confirmed: "已确认" })[status];
+  return ({ draft: "草稿", running: "处理中", succeeded: "已完成", failed: "失败", confirmed: "已确认", stale: "待更新" })[status];
 }
 
 export function modeLabel(mode: ContentProjectMode): string {

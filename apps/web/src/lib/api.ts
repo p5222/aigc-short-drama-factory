@@ -422,7 +422,7 @@ export const api = {
       method: "DELETE"
     }),
   workflow: (projectId: string) => request<ProjectWorkflow>(`/projects/${projectId}/workflow`),
-  updateProjectModelRoutes: (projectId: string, input: Partial<Pick<CreateProjectInput, "textProvider" | "textModel" | "imageProvider" | "imageModel" | "imageSize" | "imageQuality" | "videoProvider" | "videoModel">>) =>
+  updateProjectModelRoutes: (projectId: string, input: Partial<Pick<CreateProjectInput, "textProvider" | "textModel" | "imageProvider" | "imageModel" | "imageSize" | "imageQuality" | "videoProvider" | "videoModel">> & { segmentProfile?: "jimeng_15s" | "doubao_10s" }) =>
     request<Project>(`/projects/${projectId}/model-routes`, {
       method: "PATCH",
       body: JSON.stringify(input)

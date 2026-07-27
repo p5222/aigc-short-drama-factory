@@ -1,6 +1,6 @@
 import { ArrowLeft, ArrowRight, BookOpen, Check, CheckCircle2, CircleAlert, Clapperboard, FileText, LoaderCircle, Map, Plus, RefreshCw, Sparkles, Trash2, UsersRound } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactElement } from "react";
-import type { ContentProductionPackage, ContentProjectSummary, CreateProjectInput, ModelProvider, StyleProfile } from "@aifilm/shared";
+import { analyzeProductionEpisodes, episodeGenerationOptions, type ContentProductionPackage, type ContentProjectSummary, type CreateProjectInput, type ModelProvider, type StyleProfile } from "@aifilm/shared";
 import { contentApi, type ContentVersionHistory, type SourceDocumentInput } from "../lib/contentApi";
 import { ModelRoutePicker } from "../components/ModelRoutePicker";
 import { buildProductionDraft, chapterGenerationPlan, chapterNavigationStage, cleanModelText, isCurrentRequest, modeLabel, reconcileProjectId, sourceKindForMode, statusLabel, type RequestToken } from "./model";
@@ -59,6 +59,7 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, providers
   const [targetWords, setTargetWords] = useState(20000);
   const [chapterCount, setChapterCount] = useState(10);
   const [batchSize, setBatchSize] = useState(2);
+  const [episodeScope, setEpisodeScope] = useState<number | "all">("all");
   const [sourceTitle, setSourceTitle] = useState("");
   const [sourceContent, setSourceContent] = useState("");
   const [sourceOpen, setSourceOpen] = useState(false);
@@ -119,7 +120,15 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, providers
   const handoffSource = selected ? savedSources[selected.id] : undefined;
   const handoffContent = productionPackage?.script?.content.trim() || "";
   const wordCount = useMemo(() => sourceContent.replace(/\s/g, "").length, [sourceContent]);
+  const episodeSourceContent = useMemo(() => chapters.map((chapter) => `第${chapter.chapterNo}章 ${chapter.title}\n${chapter.content}`).join("\n\n") || handoffSource?.content || "", [chapters, handoffSource?.content]);
+  const episodeAnalysis = useMemo(() => analyzeProductionEpisodes(episodeSourceContent, "novel"), [episodeSourceContent]);
+  const completedEpisodeNos = productionPackage?.episodes?.filter((episode) => episode.activeScriptVersion > 0 && episode.status !== "stale").map((episode) => episode.episodeNo) ?? [];
+  const episodeOptions = episodeGenerationOptions(episodeAnalysis.maxEpisodes, completedEpisodeNos);
   const stageIndex = stageFlow.findIndex((item) => item.id === currentStage);
+
+  useEffect(() => {
+    if (!episodeOptions.some((option) => option.value === episodeScope)) setEpisodeScope(episodeOptions.at(-1)?.value ?? "all");
+  }, [episodeOptions.map((option) => option.value).join(","), episodeScope]);
 
   useEffect(() => {
     const numbers = outline.map((item, index) => Number(item.chapterNo ?? index + 1));
@@ -229,14 +238,14 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, providers
   }
 
   // 正文完成后一键把已生成章节转成剧本与实体（打通到制作交接的缺口）。
-  async function generateScriptFromChapters() {
+  async function generateScriptFromChapters(scope: number | "all" = episodeScope) {
     if (!selected || busy || !chapters.length) return;
     setBusy("generate"); setError(""); setMessage("正在把已生成正文转为可生产剧本…");
     try {
       const content = chapters.map((chapter) => `第${chapter.chapterNo}章 ${chapter.title}\n${chapter.content}`).join("\n\n");
       await contentApi.addSource(selected.id, { kind: "novel", title: selected.title, content });
       setSavedSources((current) => ({ ...current, [selected.id]: { title: selected.title, content } }));
-      const result = await contentApi.generatePackage(selected.id);
+      const result = await contentApi.generatePackage(selected.id, scope);
       setPackages((current) => ({ ...current, [selected.id]: result }));
       setProjects(await onReload());
       setFocusStage("handoff");
@@ -466,13 +475,15 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, providers
         </div>
         <div className="cw2-actionbar"><span className="cw2-hint">交接后仍可编辑任意章节；修改完成后重新生成剧本即可同步。</span>
           <button type="button" className="content-secondary-button" disabled={working} onClick={() => setFocusStage("chapter")}><FileText size={14} />返回编辑正文</button>
-          <button type="button" className="content-secondary-button" disabled={working} onClick={() => void generateScriptFromChapters()}><RefreshCw size={14} />按最新正文重生成剧本</button>
+          {episodeOptions.length ? <select className="cw2-mini-select" aria-label="选择生成集数" value={episodeScope} onChange={(event) => setEpisodeScope(event.target.value === "all" ? "all" : Number(event.target.value))}>{episodeOptions.map((option) => <option key={String(option.value)} value={option.value}>{option.label}</option>)}</select> : null}
+          <button type="button" className="content-secondary-button" disabled={working || !episodeOptions.length} onClick={() => void generateScriptFromChapters()}><RefreshCw size={14} />继续生成分集剧本</button>
           <button type="button" className="content-primary-button" disabled={!handoffContent} onClick={enterProduction}>进入漫剧创作<ArrowRight size={16} /></button>
         </div>
       </> : <>
         <div className="cw2-stage-head"><h2>制作交接</h2><small>把正文转成可生产剧本，并提取人物 / 场景实体</small></div>
         <div className="cw2-paper cw2-paper-empty"><Clapperboard size={26} /><p>{chapters.length ? `已生成 ${chapters.length} 章正文。生成剧本与实体后即可进入漫剧创作。` : "先在「正文创作」生成章节，再回到这里生成剧本。"}</p>
-          <button type="button" className="content-primary-button" disabled={!chapters.length || working} onClick={() => void generateScriptFromChapters()}>{busy === "generate" ? <LoaderCircle size={16} /> : <Sparkles size={16} />}把正文转为剧本与实体</button>
+          <select className="cw2-mini-select" aria-label="选择生成集数" value={episodeScope} onChange={(event) => setEpisodeScope(event.target.value === "all" ? "all" : Number(event.target.value))}>{episodeOptions.map((option) => <option key={String(option.value)} value={option.value}>{option.label}</option>)}</select>
+          <button type="button" className="content-primary-button" disabled={!chapters.length || working || !episodeOptions.length} onClick={() => void generateScriptFromChapters()}>{busy === "generate" ? <LoaderCircle size={16} /> : <Sparkles size={16} />}生成所选分集剧本</button>
         </div>
       </>}
     </section>;
