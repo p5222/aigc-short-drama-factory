@@ -21,9 +21,13 @@ if ($LASTEXITCODE) { throw "Diff check failed." }
 # Existing tracked files are included automatically. New files must be staged explicitly.
 git add -u
 $secretPattern = 'ghp_[A-Za-z0-9]+|github_pat_|sk-[A-Za-z0-9]{20,}|BEGIN [A-Z ]*PRIVATE KEY'
-if ((git diff --cached) -match $secretPattern) { throw "Possible secret found in staged changes." }
+$addedLines = git diff --cached --unified=0 | Where-Object { $_ -cmatch '^\+(?!\+\+)' }
+if ($addedLines -match $secretPattern) { throw "Possible secret found in staged changes." }
 
-if (-not (git diff --cached --quiet)) {
+git diff --cached --quiet
+$stagedDiffExitCode = $LASTEXITCODE
+if ($stagedDiffExitCode -gt 1) { throw "Unable to inspect staged changes." }
+if ($stagedDiffExitCode -eq 1) {
   git commit -m $Message
   if ($LASTEXITCODE) { throw "Commit failed." }
 }
