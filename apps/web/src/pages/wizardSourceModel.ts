@@ -1,57 +1,19 @@
-import type { CreateProjectInput } from "@aifilm/shared";
-
-export type EpisodeAnalysisBasis = "chapter" | "episode" | "scene" | "length";
-
-export interface SourceEpisodeAnalysis {
-  maxEpisodes: number;
-  unitCount: number;
-  basis: EpisodeAnalysisBasis;
-  summary: string;
-}
-
-const numberedHeading = /^\s*第\s*([0-9一二三四五六七八九十百零〇两]+)\s*([章集回])(?:\s|[：:、.．]|$)/gm;
-const sceneHeading = /^\s*(?:场景\s*)?(?:\d+[-.、]|第\s*[0-9一二三四五六七八九十百零〇两]+\s*场)(?:\s|[：:、.．]|$)/gm;
-
-function headingCount(content: string, kind: "章" | "集"): number {
-  const values = new Set<string>();
-  for (const match of content.matchAll(numberedHeading)) {
-    if (match[2] === kind || (kind === "集" && match[2] === "回")) values.add(match[1]);
-  }
-  return values.size;
-}
+import { analyzeProductionEpisodes, episodeGenerationOptions, type CreateProjectInput, type SourceEpisodeAnalysis } from "@aifilm/shared";
+export type { SourceEpisodeAnalysis } from "@aifilm/shared";
 
 export function analyzeSourceEpisodes(content: string, sourceType: CreateProjectInput["sourceType"]): SourceEpisodeAnalysis {
-  const normalized = content.trim();
-  const episodes = headingCount(normalized, "集");
-  if (sourceType === "script" && episodes > 0) {
-    return { maxEpisodes: Math.min(20, episodes), unitCount: episodes, basis: "episode", summary: `识别 ${episodes} 集剧本` };
-  }
-
-  const chapters = headingCount(normalized, "章");
-  if (chapters > 0) {
-    return { maxEpisodes: Math.min(20, chapters), unitCount: chapters, basis: "chapter", summary: `识别 ${chapters} 章，按一章一集` };
-  }
-
-  if (sourceType === "script") {
-    const scenes = new Set(Array.from(normalized.matchAll(sceneHeading), (match) => match[0].trim())).size;
-    if (scenes > 0) {
-      const maxEpisodes = Math.max(1, Math.min(20, Math.ceil(scenes / 4)));
-      return { maxEpisodes, unitCount: scenes, basis: "scene", summary: `识别 ${scenes} 个场次，建议 ${maxEpisodes} 集` };
-    }
-  }
-
-  const characters = normalized.replace(/\s/g, "").length;
-  const maxEpisodes = Math.max(1, Math.min(20, Math.ceil(Math.max(characters, 1) / 2000)));
-  return { maxEpisodes, unitCount: characters, basis: "length", summary: `未识别明确结构，按约 2000 字/集估算` };
+  return analyzeProductionEpisodes(content, sourceType === "script" ? "script" : "novel");
 }
 
-export function episodeScopeOptions(analysis: Pick<SourceEpisodeAnalysis, "maxEpisodes">) {
-  const maximum = Math.max(1, analysis.maxEpisodes);
-  if (maximum === 1) return [{ value: 1, label: "生成全部 1 集" }];
-  const options = [{ value: 1, label: "先生成 1 集" }];
-  if (maximum > 2) options.push({ value: 2, label: "先生成前 2 集" });
-  options.push({ value: maximum, label: `生成全部 ${maximum} 集` });
-  return options;
+export function episodeScopeOptions(analysis: Pick<SourceEpisodeAnalysis, "maxEpisodes">, completedEpisodeNos: number[] = []): Array<{ value: number; label: string }> {
+  const options = episodeGenerationOptions(analysis.maxEpisodes, completedEpisodeNos);
+  const all = options.find((option) => option.value === "all");
+  if (!all) return [];
+  const remaining = options.filter((option) => typeof option.value === "number").length;
+  return [
+    ...options.filter((option): option is { value: number; label: string } => typeof option.value === "number" && option.value < remaining),
+    { value: remaining, label: all.label }
+  ];
 }
 
 interface SampleEpisode { episodeNo: number; title: string; content: string }
