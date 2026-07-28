@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import type { BatchGenerationResult, CreateProjectInput, StoryboardShot } from "@aifilm/shared";
 import { estimateImageCredits, normalizeImageOutputQuality, normalizeImageOutputSize, normalizeImageProviderId, resolveImageUnitCredits } from "@aifilm/shared";
 import { generateProjectStoryboards, textModelName, textProviderName } from "../agents/generator.js";
-import { buildCharacterIdentityBoardPrompt, buildStoryboardFirstFramePrompt } from "../agents/storyboardProduction.js";
+import { buildCharacterIdentityBoardPrompt, buildStoryboardFirstFramePrompt, resolveStoryboardReferenceAssets } from "../agents/storyboardProduction.js";
 import { generateImage } from "../providers/dashscopeImage.js";
 import type { ImageGenerationResult } from "../providers/types.js";
 import { persistImageReference } from "../storage/objectStorage.js";
@@ -31,6 +31,12 @@ type CharacterReferenceGenerateInput = {
   forceRegenerate?: boolean;
 };
 
+export function mergeGeneratedStoryboardScope<T extends { episodeNo: number }>(existing: T[], generated: T[]) {
+  const generatedEpisodes = new Set(generated.map((shot) => shot.episodeNo));
+  return [...existing.filter((shot) => !generatedEpisodes.has(shot.episodeNo)), ...generated]
+    .sort((left, right) => left.episodeNo - right.episodeNo);
+}
+
 export async function runProjectStoryboardTasks(
   projectId: string,
   userId = DEMO_USER_ID,
@@ -48,6 +54,7 @@ export async function runProjectStoryboardTasks(
     genre: workflow.project.type,
     videoRatio: options.videoRatio || workflow.project.videoRatio,
     artStyle: options.artStyle || workflow.project.artStyle,
+    targetEpisodes: Math.max(1, workflow.project.episodes),
     textProvider: workflow.project.textProvider,
     textModel: workflow.project.textModel,
     imageProvider: workflow.project.imageProvider,
@@ -72,30 +79,16 @@ export async function runProjectStoryboardTasks(
   const taskId = "task_storyboard_" + Date.now();
 
   const result = await prisma.$transaction(async (tx) => {
-    await tx.storyboard.deleteMany({ where: { projectId } });
-    await tx.asset.deleteMany({
-      where: {
-        projectId,
-        OR: [{ type: { in: ["image", "video"] } }, { id: { startsWith: "scene_" + projectId + "_" } }]
-      }
-    });
+    const generatedEpisodes = [...new Set(generated.storyboards.map((shot) => shot.episodeNo))];
+    const replacedShots = await tx.storyboard.findMany({ where: { projectId, episodeNo: { in: generatedEpisodes } }, select: { id: true } });
+    if (replacedShots.length) {
+      await tx.asset.deleteMany({ where: { projectId, id: { in: replacedShots.flatMap((shot) => [`image_${shot.id}`, `video_${shot.id}`]) } } });
+    }
+    await tx.storyboard.deleteMany({ where: { projectId, episodeNo: { in: generatedEpisodes } } });
 
     const sceneAssets = generated.assets.filter((asset) => asset.type !== "role");
-    if (sceneAssets.length) {
-      await tx.asset.createMany({
-        data: sceneAssets.map((asset) => ({
-          id: asset.id,
-          projectId,
-          type: asset.type,
-          name: asset.name,
-          description: asset.description,
-          prompt: asset.prompt,
-          referenceUrl: asset.referenceUrl,
-          status: asset.status,
-          relatedCharacterId: asset.relatedCharacterId
-        })),
-        skipDuplicates: true
-      });
+    for (const asset of sceneAssets) {
+      await tx.asset.upsert({ where: { id: asset.id }, create: { id: asset.id, projectId, type: asset.type, name: asset.name, description: asset.description, prompt: asset.prompt, referenceUrl: asset.referenceUrl, status: asset.status, relatedCharacterId: asset.relatedCharacterId }, update: { name: asset.name, description: asset.description, prompt: asset.prompt, relatedCharacterId: asset.relatedCharacterId } });
     }
 
     if (generated.storyboards.length) {
@@ -153,7 +146,7 @@ export async function runProjectStoryboardTasks(
         artStyle: input.artStyle,
         videoRatio: input.videoRatio,
         status: "storyboarding",
-        storyboards: generated.storyboards.length,
+        storyboards: await tx.storyboard.count({ where: { projectId } }),
         imageAssets: totalAssets,
         creditsSpent: { increment: credits }
       }
@@ -239,10 +232,11 @@ export async function regenerateStoryboardShotImage(projectId: string, shotId: s
   const account = await prisma.creditAccount.findUniqueOrThrow({ where: { userId } });
   if (account.balance - account.frozenBalance < credits) throw new Error("Insufficient credits");
 
+  const resolvedReferences = resolveStoryboardReferenceAssets(workflow, shot, assetById);
   const imageResult = await generateImage({
     prompt: buildStoryboardFirstFramePrompt({ workflow, shot, assetById }),
     negativePrompt: "subtitle, watermark, logo, low quality, deformed hands, extra fingers, face drift, duplicate person",
-    referenceImageUrls: shot.referenceAssetIds.map((assetId) => assetById.get(assetId)?.referenceUrl).filter(Boolean) as string[],
+    referenceImageUrls: resolvedReferences.map((asset) => asset.referenceUrl).filter(Boolean) as string[],
     ratio: workflow.project.videoRatio,
     seed: 41000 + shot.shotNo,
     provider: imageProvider,

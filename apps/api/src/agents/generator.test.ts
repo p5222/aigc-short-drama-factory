@@ -65,6 +65,16 @@ test("scene extraction always returns a usable scene", () => {
   assert.equal(extractSceneNames("只有对白，没有场景标题", "都市").length, 1);
 });
 
+test("scene extraction recognizes production script environment lines", () => {
+  const script = [
+    "第1集 七日前的煜星",
+    "开场画面：黎明前的青黑屋内，炉火将熄，窗纸透出冷光。",
+    "场景描述：沈宅药房，药柜、铜秤和药炉形成固定空间锚点。",
+    "地点：沈宅后院雨廊"
+  ].join("\n");
+  assert.deepEqual(extractSceneNames(script, "古装"), ["黎明前的青黑屋内", "沈宅药房", "沈宅后院雨廊"]);
+});
+
 test("responses wire mode never overrides a resolved non-OpenAI provider", () => {
   const previous = process.env.OPENAI_TEXT_WIRE_API;
   process.env.OPENAI_TEXT_WIRE_API = "responses";

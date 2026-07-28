@@ -162,6 +162,8 @@ export function createToonflowStoryboardPlan(
     "允许每集相对建议值上下浮动 2 镜；不得为了凑数拆出无叙事作用的空镜，也不得把多个独立动作硬塞进同一镜头。",
     `逐集镜头计划：\n${shotPlanText}`,
     "每条必须包含：episodeNo, sceneNo, shotNo, duration, shotSize, cameraAngle, cameraMovement, characters, scene, pictureDesc, action, orientation, spatialRelation, dialogue, voiceOver, environmentSound, soundEffect, emotion, imagePrompt, videoPrompt。",
+    "五维度分镜检查：1)叙事功能与本镜目的；2)角色表演与情绪变化；3)空间站位、视线和动作路径；4)摄影构图、光线、声音与节奏；5)连续性、首帧锚点、尾帧状态和可生产性。五项都要落到可见或可听字段，不得只写抽象形容词。",
+    "每镜只承载一个主动作；重要动作独立成镜；对白原文保留；同一角色/场景/道具使用稳定名称和引用，禁止为了画面好看擅自换脸、换装、换环境或新增人物。",
     "导演增强：每条镜头必须能推导焦距和 FOV。默认焦距：建立/空间重置 24mm；行走/双人移动 35mm；对白中近景 50mm；情绪近景 85mm；道具/手部/机关 100mm。",
     "spatialRelation 必须写 screen-left/center/screen-right + foreground/midground/background；orientation 必须写视线方向、身体朝向、180度轴线、首帧锚点和尾帧锚点。",
     "videoPrompt 使用 Seedance 2.0 生产结构：首帧锚点、镜头焦距/FOV、人物站位、主动作、声音、尾帧锚点、避免项。避免项固定包含不要生成对白字幕、标题字、解释字、水印；对白只作为角色语音出现；不要站位互换；不要越轴。",

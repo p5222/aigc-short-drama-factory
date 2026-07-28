@@ -290,7 +290,7 @@ function LoadedAssetStage({
             providers={providers}
             modelPrices={modelPrices}
             disabled={!activeCharacter && !activeScene}
-            pending={pendingKey.startsWith("generate:") || pendingKey === "refresh"}
+            pending={pendingKey === `generate:${activeCharacter?.id ?? activeScene?.id}` || pendingKey === "refresh"}
             refreshRequired={Boolean(refreshRequired)}
             actionLabel={activeCharacter ? (identityAsset?.referenceUrl ? "重新生成身份板" : "生成身份板") : activeScene?.referenceUrl ? "重新生成场景图" : "生成场景图"}
             onGenerate={generateCurrent}

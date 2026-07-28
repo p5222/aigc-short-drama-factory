@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import sharp from "sharp";
 import type { AdminUserRow, AssetItem, BatchGenerationResult, CreateProjectInput, GenerationTask, HelpArticle, PlatformAnnouncement, ProjectWorkflow, SegmentProfile, StoryboardExportRow, StoryboardShot, WorkbenchSummary } from "@aifilm/shared";
 import { textModelName, textProviderName } from "../agents/generator.js";
-import { buildSeedanceVideoPrompt, buildStoryboardFirstFramePrompt, createStoryboardProductionPackage } from "../agents/storyboardProduction.js";
+import { buildSeedanceVideoPrompt, buildStoryboardFirstFramePrompt, createStoryboardProductionPackage, resolveStoryboardReferenceAssets } from "../agents/storyboardProduction.js";
 import { estimateCreation } from "../agents/workflow.js";
 import { estimateImageCredits, isPersistedPlayableVideoReference, normalizeImageOutputQuality, normalizeImageOutputSize, normalizeImageProviderId, resolveImageUnitCredits } from "@aifilm/shared";
 import { hashPassword } from "../auth/password.js";
@@ -1283,7 +1283,7 @@ export async function runProjectImageTasks(
         generateImage({
           prompt: buildStoryboardFirstFramePrompt({ workflow, shot, assetById }),
           negativePrompt: "字幕, 水印, Logo, 低清晰度, 畸形手, 多余手指, 换脸, 同款分身, 过暗, 欠曝, 模糊, 脏污画面",
-          referenceImageUrls: shot.referenceAssetIds.map((assetId) => assetById.get(assetId)?.referenceUrl).filter(Boolean) as string[],
+          referenceImageUrls: resolveStoryboardReferenceAssets(workflow, shot, assetById).map((asset) => asset.referenceUrl).filter(Boolean) as string[],
           ratio: workflow.project.videoRatio,
           seed: 30000 + index,
           provider: workflow.project.imageProvider,

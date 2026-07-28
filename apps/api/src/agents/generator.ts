@@ -577,6 +577,7 @@ export function buildScriptPrompt(input: CreateProjectInput) {
     builtin.userPrompt,
     `输出校验：${builtin.validationRules.join("；")}`,
     `禁止事项：${builtin.negativeRules.join("；")}`,
+    "剧本生产约束：同时检查故事价值与生产可执行性；每个场景必须写清人物目标、阻力、可见行动、可听声音和结尾状态；角色、场景、道具使用稳定名称，不得因分镜方便而新增未确认事实；默认禁止扩写。",
     plan.prompt
   ].join("\n\n");
 }
@@ -695,7 +696,12 @@ function normalizeOutput(
   }));
 
   const rawStoryboards = ensureStoryboards(output.storyboards, input);
-  const sceneNames = Array.from(new Set(rawStoryboards.map((shot) => safeText(shot.scene, "主场景"))));
+  const scriptSceneNames = extractSceneNames(script.content, input.genre);
+  const isGenericScene = (value: string) => /^(?:关键|主要|核心|主)?场景(?:\d+)?$/.test(value.replace(/\s+/g, ""));
+  const sceneNames = Array.from(new Set([
+    ...scriptSceneNames,
+    ...rawStoryboards.map((shot) => safeText(shot.scene, "主场景")).filter((scene) => !isGenericScene(scene))
+  ]));
   const sceneAssets = sceneNames.map<AssetItem>((scene, index) => ({
     id: `scene_${projectId}_${index + 1}`,
     projectId,
@@ -711,7 +717,8 @@ function normalizeOutput(
 
   const storyboards = rawStoryboards.slice(0, totalShots(input)).map<StoryboardShot>((shot, index) => {
     const visibleCharacters = toTextArray(shot.characters, characters.slice(0, 2).map((item) => item.name));
-    const scene = safeText(shot.scene, sceneNames[0] ?? "主场景");
+    const rawScene = safeText(shot.scene, sceneNames[0] ?? "主场景");
+    const scene = isGenericScene(rawScene) ? (sceneNames[0] ?? rawScene) : rawScene;
     const referenceAssetIds = [
       ...visibleCharacters.map((name) => roleAssetByName.get(name)).filter((id): id is string => Boolean(id)),
       sceneAssetByName.get(scene)
@@ -1240,12 +1247,12 @@ export function extractSceneNames(script: string, genre = "") {
     .map((line) => line.trim())
     .filter(Boolean)
     .flatMap((line) => {
-      const match = line.match(/^(?:第[一二三四五六七八九十百\d]+[场幕]|场景\s*[一二三四五六七八九十百\d]*|SCENE\s*\d*)[：:\s-]*(.+)$/i);
+      const match = line.match(/^(?:第[一二三四五六七八九十百\d]+[场幕]|场景(?:描述|地点)?\s*[一二三四五六七八九十百\d]*|开场画面|环境场景|SCENE\s*\d*)[：:\s-]*(.+)$/i);
       if (!match?.[1]) return [];
       const name = match[1].split(/[，。；;|]/)[0]?.trim();
       return name ? [name.slice(0, 48)] : [];
     });
-  const inline = Array.from(script.matchAll(/(?:地点|场景)[：:]\s*([^\n，。；;]{2,48})/g), (match) => match[1].trim());
+  const inline = Array.from(script.matchAll(/(?:地点|场景(?:描述)?|发生地点|环境)[：:]\s*([^\n，。；;]{2,48})/g), (match) => match[1].trim());
   const names = Array.from(new Set([...explicit, ...inline])).filter(Boolean).slice(0, 12);
   return names.length ? names : [pickScene(genre, script)];
 }

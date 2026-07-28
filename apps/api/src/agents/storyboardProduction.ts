@@ -106,7 +106,7 @@ export function buildStoryboardFirstFramePrompt(input: {
   assetById?: AssetLookup;
 }) {
   const assetById = input.assetById ?? new Map(input.workflow.assets.map((asset) => [asset.id, asset]));
-  const references = referencedAssets(input.shot, assetById);
+  const references = resolveStoryboardReferenceAssets(input.workflow, input.shot, assetById);
   const roleRefs = references.filter((asset) => asset.type === "role" || asset.type === "role_derivative");
   const sceneRefs = references.filter((asset) => asset.type === "scene" || asset.type === "prop");
   const blocking = describeShotBlocking(input.shot);
@@ -133,7 +133,7 @@ export function buildSeedanceVideoPrompt(input: {
   assetById?: AssetLookup;
 }) {
   const assetById = input.assetById ?? new Map(input.workflow.assets.map((asset) => [asset.id, asset]));
-  const references = referencedAssets(input.shot, assetById);
+  const references = resolveStoryboardReferenceAssets(input.workflow, input.shot, assetById);
   const blocking = describeShotBlocking(input.shot);
   const firstAnchor = buildFirstFrameAnchor(input.shot, input.firstFrameAsset);
   const lastAnchor = buildLastFrameAnchor(input.shot);
@@ -313,6 +313,26 @@ function referencedAssets(shot: StoryboardShot, assetById: AssetLookup) {
   return shot.referenceAssetIds
     .map((assetId) => assetById.get(assetId))
     .filter((asset): asset is NonNullable<ReturnType<AssetLookup["get"]>> => Boolean(asset?.referenceUrl || asset?.prompt || asset?.description));
+}
+
+export function resolveStoryboardReferenceAssets(workflow: ProjectWorkflow, shot: StoryboardShot, assetById = new Map(workflow.assets.map((asset) => [asset.id, asset])) as AssetLookup) {
+  const references = referencedAssets(shot, assetById);
+  const normalized = (value: string) => value.replace(/身份板|角色|关键场景|主场景|场景[:：]?/g, "").replace(/\s+/g, "").toLowerCase();
+  const add = (asset: AssetItem | undefined) => {
+    if (asset && !references.some((item) => item.id === asset.id)) references.push(asset);
+  };
+  for (const name of shot.characters ?? []) {
+    const character = workflow.characters.find((item) => normalized(name).includes(normalized(item.name)) || normalized(item.name).includes(normalized(name)));
+    if (!character) continue;
+    const candidates = workflow.assets.filter((asset) => asset.relatedCharacterId === character.id && (asset.type === "role" || asset.type === "role_derivative"));
+    add(candidates.find((asset) => asset.id === character.referenceAssetId && asset.referenceUrl) ?? candidates.find((asset) => asset.referenceUrl));
+  }
+  const sceneName = normalized(shot.scene ?? "");
+  const scene = workflow.assets
+    .filter((asset) => asset.type === "scene" || asset.type === "prop")
+    .find((asset) => sceneName.includes(normalized(asset.name)) || normalized(asset.name).includes(sceneName));
+  add(scene);
+  return references;
 }
 
 function referenceLabel(asset: Pick<AssetItem, "name" | "type" | "referenceUrl">) {
