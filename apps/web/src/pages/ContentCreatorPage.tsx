@@ -18,7 +18,7 @@ export function ContentCreatorPage({ providers, initialSelectedId, onBack, onEnt
 
   if (error && !projects) return <main className="content-page-state"><h1>内容创作暂时无法加载</h1><p>{error}</p><button type="button" onClick={() => { setError(""); void load().catch((reason) => setError(reason instanceof Error ? reason.message : "加载失败")); }}>重新加载</button></main>;
   if (!projects) return <main className="content-page-state" aria-busy="true"><p>正在加载内容项目…</p></main>;
-  return <ContentWorkspace initialProjects={projects} initialSelectedId={initialSelectedId} providers={providers} onReload={load} onBack={onBack} onEnterProduction={onEnterProduction} />;
+  return <ContentWorkspace initialProjects={projects} initialSelectedId={initialSelectedId === "__new__" ? undefined : initialSelectedId} startBlank={initialSelectedId === "__new__"} providers={providers} onReload={load} onBack={onBack} onEnterProduction={onEnterProduction} />;
 }
 
 export default ContentCreatorPage;

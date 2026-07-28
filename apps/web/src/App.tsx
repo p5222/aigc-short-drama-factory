@@ -369,26 +369,35 @@ export function App() {
   }, [activePage, load, tasks, workflow?.project.id]);
 
   const page = useMemo(() => {
+    const openFreshWizard = () => {
+      localStorage.removeItem("aifilm_creation_draft");
+      setActivePage("wizard");
+    };
+    const openFreshContent = () => {
+      setContentFocusId("__new__");
+      setActivePage("content");
+    };
     switch (activePage) {
       case "workbench":
-        return <WorkbenchPage summary={summary} onStart={() => setActivePage("wizard")} onOpen={(projectId) => void openProject(projectId)} onOpenTasks={() => setActivePage("tasks")} onRecharge={() => setActivePage("recharge")} />;
+        return <WorkbenchPage summary={summary} onStart={openFreshWizard} onOpen={(projectId) => void openProject(projectId)} onOpenTasks={() => setActivePage("tasks")} onRecharge={() => setActivePage("recharge")} />;
       case "content":
         return <ContentCreatorPage providers={providers} initialSelectedId={contentFocusId} onBack={() => setActivePage("scripts")} onEnterProduction={(draft) => {
           localStorage.setItem("aifilm_creation_draft", JSON.stringify(draft));
+          setContentFocusId("");
           setActivePage("wizard");
         }} />;
       case "wizard":
         return (
           <WizardPage
             providers={providers}
-            onCreateContent={() => setActivePage("content")}
+            onCreateContent={openFreshContent}
             onCreated={(projectId) => {
               void load().then(() => openProject(projectId));
             }}
           />
         );
       case "scripts":
-        return <ScriptsPage projects={projects} contentProjects={contentProjects} openingId={openingProjectId} onOpen={(projectId) => void openProject(projectId)} onOpenContent={(contentProjectId) => { setContentFocusId(contentProjectId); setActivePage("content"); }} onNew={() => setActivePage("wizard")} onNewContent={() => { setContentFocusId(""); setActivePage("content"); }} onDelete={(projectId) => void api.deleteProject(projectId).then(() => load()) .catch((reason) => setError(reason instanceof Error ? reason.message : "删除作品失败"))} />;
+        return <ScriptsPage projects={projects} contentProjects={contentProjects} openingId={openingProjectId} onOpen={(projectId) => void openProject(projectId)} onOpenContent={(contentProjectId) => { setContentFocusId(contentProjectId); setActivePage("content"); }} onNew={openFreshWizard} onNewContent={openFreshContent} onDelete={(projectId) => void api.deleteProject(projectId).then(() => load()) .catch((reason) => setError(reason instanceof Error ? reason.message : "删除作品失败"))} />;
       case "project":
         return (
           <ProjectWorkbenchPage
@@ -646,4 +655,3 @@ const creatorTourSteps: ProductTourStep[] = [
     placement: "bottom"
   }
 ];
-

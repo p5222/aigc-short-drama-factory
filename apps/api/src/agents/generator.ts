@@ -1278,8 +1278,17 @@ function ensureCharacters(characters?: PipelineCharacter[]) {
 }
 
 function ensureStoryboards(storyboards: PipelineStoryboard[] | undefined, input: CreateProjectInput) {
-  if (Array.isArray(storyboards) && storyboards.length) return storyboards;
-  return generateLocalOutput(input).storyboards;
+  const expectedEpisodes = Math.max(1, input.targetEpisodes ?? 1);
+  const expectedShotsPerEpisode = maxShots(input.mode);
+  const provided = Array.isArray(storyboards) ? storyboards : [];
+  const providedEpisodes = new Set(provided.map((shot) => Number(shot.episodeNo)).filter((episodeNo) => episodeNo >= 1 && episodeNo <= expectedEpisodes));
+  if (providedEpisodes.size >= expectedEpisodes) return provided;
+
+  // Models sometimes return a valid first episode while silently omitting later episodes.
+  // Fill only missing episode ranges with the deterministic local plan and preserve model output.
+  const fallback = generateLocalOutput(input).storyboards;
+  const missing = fallback.filter((shot) => !providedEpisodes.has(Number(shot.episodeNo)));
+  return [...provided, ...missing.slice(0, (expectedEpisodes - providedEpisodes.size) * expectedShotsPerEpisode)];
 }
 
 function toTextArray(value: unknown, fallback: string[]) {

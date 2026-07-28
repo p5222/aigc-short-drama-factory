@@ -43,16 +43,17 @@ function outlineChapters(pkg?: ContentProductionPackage): Array<Record<string, u
 interface ContentWorkspaceProps {
   initialProjects: ContentProjectSummary[];
   initialSelectedId?: string;
+  startBlank?: boolean;
   providers: ModelProvider[];
   onReload: () => Promise<ContentProjectSummary[]>;
   onBack?: () => void;
   onEnterProduction: (draft: CreateProjectInput & { contentProjectId?: string }) => void;
 }
 
-export function ContentWorkspace({ initialProjects, initialSelectedId, providers, onReload, onBack, onEnterProduction }: ContentWorkspaceProps) {
+export function ContentWorkspace({ initialProjects, initialSelectedId, startBlank = false, providers, onReload, onBack, onEnterProduction }: ContentWorkspaceProps) {
   const [projects, setProjects] = useState(initialProjects);
-  const [selectedId, setSelectedId] = useState(() => reconcileProjectId(initialProjects, initialSelectedId));
-  const [creating, setCreating] = useState(initialProjects.length === 0);
+  const [selectedId, setSelectedId] = useState(() => startBlank ? "" : reconcileProjectId(initialProjects, initialSelectedId));
+  const [creating, setCreating] = useState(startBlank || initialProjects.length === 0);
   const [createTitle, setCreateTitle] = useState("");
   const [createStyle, setCreateStyle] = useState(styleOptions[0]);
   const [intentType, setIntentType] = useState<"title" | "genre" | "references">("title");
@@ -76,7 +77,7 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, providers
   const activeRequest = useRef<RequestToken | null>(null);
   const selected = projects.find((project) => project.id === selectedId);
 
-  useEffect(() => setSelectedId((current) => reconcileProjectId(projects, current || initialSelectedId)), [projects, initialSelectedId]);
+  useEffect(() => { if (!startBlank) setSelectedId((current) => reconcileProjectId(projects, current || initialSelectedId)); }, [projects, initialSelectedId, startBlank]);
   useEffect(() => {
     activeRequest.current = null;
     setBusy((current) => current === "save" ? "" : current);
