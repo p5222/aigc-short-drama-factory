@@ -226,7 +226,9 @@ const createProjectSchema = z.object({
   imageSize: z.string().optional(),
   imageQuality: z.string().optional(),
   videoProvider: z.string().optional(),
-  videoModel: z.string().optional()
+  videoModel: z.string().optional(),
+  episodeScripts: z.array(z.object({ episodeNo: z.number().int().positive(), title: z.string(), content: z.string() })).optional(),
+  entityHints: z.object({ characters: z.array(z.string()).optional(), scenes: z.array(z.string()).optional(), props: z.array(z.string()).optional() }).optional()
 });
 
 const projectRouteUpdateSchema = z.object({

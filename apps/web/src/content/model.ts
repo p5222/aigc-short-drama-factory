@@ -29,7 +29,7 @@ export function sourceKindForMode(mode: ContentProjectMode): "novel" | "short_st
   return mode === "adaptation" ? "novel" : mode === "same_genre" ? "short_story" : "idea";
 }
 
-export function buildProductionDraft(project: ContentProjectSummary, content: string): CreateProjectInput & { contentProjectId: string } {
+export function buildProductionDraft(project: ContentProjectSummary, content: string, episodeScripts: CreateProjectInput["episodeScripts"] = [], entityHints: CreateProjectInput["entityHints"] = {}): CreateProjectInput & { contentProjectId: string } {
   return {
     title: project.title,
     sourceType: "script",
@@ -47,7 +47,9 @@ export function buildProductionDraft(project: ContentProjectSummary, content: st
     imageQuality: "medium",
     videoProvider: "dashscope-video",
     videoModel: "wan2.7-i2v-2026-04-25",
-    contentProjectId: project.id
+    contentProjectId: project.id,
+    episodeScripts,
+    entityHints
   };
 }
 

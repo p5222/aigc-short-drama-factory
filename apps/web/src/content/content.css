@@ -408,3 +408,7 @@
 .cw2-intent-review article { background: var(--content-surface); border: 1px solid var(--content-border); border-radius: 12px; padding: 14px 16px; }
 .cw2-intent-review article b { display: block; font-size: 11.5px; color: var(--content-muted); margin-bottom: 6px; }
 .cw2-intent-review article p { margin: 0; font-size: 13.5px; line-height: 1.7; }
+.cw2-episode-picker { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; padding: 10px 12px; border: 1px solid #d7e3e5; background: #f6fbfb; border-radius: 8px; }
+.cw2-episode-picker label { font-weight: 700; color: #23434a; }
+.cw2-episode-picker select { min-width: 220px; padding: 8px 10px; border: 1px solid #bfd4d7; border-radius: 6px; background: #fff; }
+.cw2-episode-picker span { color: #6a7d82; font-size: 12px; }

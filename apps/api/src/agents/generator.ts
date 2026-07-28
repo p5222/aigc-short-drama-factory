@@ -635,7 +635,8 @@ export function normalizeScriptOutput(
     relatedCharacterId: character.id
   }));
 
-  const sceneAssets = extractSceneNames(script.content, input.genre).map<AssetItem>((scene, index) => ({
+  const sceneNames = Array.from(new Set([...(input.entityHints?.scenes ?? []), ...extractSceneNames(script.content, input.genre)])).filter(Boolean);
+  const sceneAssets = sceneNames.map<AssetItem>((scene, index) => ({
     id: `scene_${projectId}_${index + 1}`,
     projectId,
     type: "scene",
@@ -696,7 +697,7 @@ function normalizeOutput(
   }));
 
   const rawStoryboards = ensureStoryboards(output.storyboards, input);
-  const scriptSceneNames = extractSceneNames(script.content, input.genre);
+  const scriptSceneNames = [...(input.entityHints?.scenes ?? []), ...extractSceneNames(script.content, input.genre)];
   const isGenericScene = (value: string) => /^(?:关键|主要|核心|主)?场景(?:\d+)?$/.test(value.replace(/\s+/g, ""));
   const sceneNames = Array.from(new Set([
     ...scriptSceneNames,
@@ -1249,11 +1250,14 @@ export function extractSceneNames(script: string, genre = "") {
     .flatMap((line) => {
       const match = line.match(/^(?:第[一二三四五六七八九十百\d]+[场幕]|场景(?:描述|地点)?\s*[一二三四五六七八九十百\d]*|开场画面|环境场景|SCENE\s*\d*)[：:\s-]*(.+)$/i);
       if (!match?.[1]) return [];
-      const name = match[1].split(/[，。；;|]/)[0]?.trim();
+      const name = (match[2] || match[1]).split(/[，。；;|]/)[0]?.trim();
       return name ? [name.slice(0, 48)] : [];
     });
   const inline = Array.from(script.matchAll(/(?:地点|场景(?:描述)?|发生地点|环境)[：:]\s*([^\n，。；;]{2,48})/g), (match) => match[1].trim());
-  const names = Array.from(new Set([...explicit, ...inline])).filter(Boolean).slice(0, 12);
+  const names = Array.from(new Set([...explicit, ...inline]))
+    .map((name) => name.replace(/^(?:场景描述|场景地点|开场画面|环境场景|地点|发生地点|环境)\s*[：:：-]?\s*/i, "").trim())
+    .filter((name) => name && !/^(?:场景|关键场景|主要场景|核心场景)$/i.test(name))
+    .slice(0, 12);
   return names.length ? names : [pickScene(genre, script)];
 }
 

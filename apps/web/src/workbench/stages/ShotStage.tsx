@@ -100,7 +100,7 @@ function LoadedShotStage({
 
   useEffect(() => setSegmentProfile(project.segmentProfile ?? "jimeng_15s"), [project.segmentProfile]);
 
-  async function changeSegmentProfile(next: "jimeng_15s" | "doubao_10s") {
+  async function changeSegmentProfile(next: "jimeng_15s") {
     if (next === segmentProfile) return;
     if (storyboards.length && !window.confirm(`切换为${next === "jimeng_15s" ? "即梦 15秒" : "豆包 10秒"}会保存新的项目生产规格；现有分镜不会删除。确认切换？`)) return;
     const previous = segmentProfile;
@@ -326,7 +326,6 @@ function LoadedShotStage({
         </div>
         <div className="wb-shot-profile" role="radiogroup" aria-label="视频分镜方案">
           <button type="button" role="radio" aria-checked={segmentProfile === "jimeng_15s"} className={segmentProfile === "jimeng_15s" ? "is-active" : undefined} disabled={Boolean(pending)} onClick={() => void changeSegmentProfile("jimeng_15s")}>即梦 15秒</button>
-          <button type="button" role="radio" aria-checked={segmentProfile === "doubao_10s"} className={segmentProfile === "doubao_10s" ? "is-active" : undefined} disabled={Boolean(pending)} onClick={() => void changeSegmentProfile("doubao_10s")}>豆包 10秒</button>
         </div>
         <small>{activeShot ? formatShot(activeShot, storyboards.indexOf(activeShot)) : "未选择镜头"}</small>
       </header>

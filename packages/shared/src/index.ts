@@ -1088,6 +1088,8 @@ export interface CreateProjectInput {
   videoModel?: string;
   baseUrl?: string;
   apiKey?: string;
+  episodeScripts?: Array<{ episodeNo: number; title: string; content: string }>;
+  entityHints?: { characters?: string[]; scenes?: string[]; props?: string[] };
 }
 
 export interface AdminSummary {

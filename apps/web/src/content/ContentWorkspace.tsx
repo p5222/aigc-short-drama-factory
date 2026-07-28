@@ -35,6 +35,11 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
+function activeEpisodeScript(episode: NonNullable<ContentProductionPackage["episodes"]>[number]) {
+  const active = episode.scripts?.find((script) => script.version === episode.activeScriptVersion) ?? episode.scripts?.[episode.scripts.length - 1];
+  return active?.content?.trim() || `第${episode.episodeNo}集尚未生成剧本`;
+}
+
 function outlineChapters(pkg?: ContentProductionPackage): Array<Record<string, unknown>> {
   const raw = pkg?.outline?.result;
   return Array.isArray(raw?.chapters) ? raw.chapters.map(asRecord) : [];
@@ -61,6 +66,7 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
   const [chapterCount, setChapterCount] = useState(10);
   const [batchSize, setBatchSize] = useState(2);
   const [episodeScope, setEpisodeScope] = useState<number | "all">("all");
+  const [handoffEpisodeNo, setHandoffEpisodeNo] = useState(1);
   const [sourceTitle, setSourceTitle] = useState("");
   const [sourceContent, setSourceContent] = useState("");
   const [sourceOpen, setSourceOpen] = useState(false);
@@ -120,6 +126,8 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
   const [editingChapter, setEditingChapter] = useState<{ chapterNo: number; title: string; content: string } | null>(null);
   const handoffSource = selected ? savedSources[selected.id] : undefined;
   const handoffContent = productionPackage?.script?.content.trim() || "";
+  const handoffEpisode = productionPackage?.episodes?.find((episode) => episode.episodeNo === handoffEpisodeNo) ?? productionPackage?.episodes?.[0];
+  const handoffEpisodeContent = handoffEpisode ? activeEpisodeScript(handoffEpisode) : handoffContent;
   const wordCount = useMemo(() => sourceContent.replace(/\s/g, "").length, [sourceContent]);
   const episodeSourceContent = useMemo(() => chapters.map((chapter) => `第${chapter.chapterNo}章 ${chapter.title}\n${chapter.content}`).join("\n\n") || handoffSource?.content || "", [chapters, handoffSource?.content]);
   const episodeAnalysis = useMemo(() => analyzeProductionEpisodes(episodeSourceContent, "novel"), [episodeSourceContent]);
@@ -346,7 +354,12 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
 
   function enterProduction() {
     if (!selected || !handoffContent) return;
-    onEnterProduction(buildProductionDraft(selected, handoffContent));
+    onEnterProduction(buildProductionDraft(
+      selected,
+      handoffContent,
+      (productionPackage?.episodes ?? []).map((episode) => ({ episodeNo: episode.episodeNo, title: episode.title, content: activeEpisodeScript(episode) })),
+      productionPackage?.entities ? { characters: productionPackage.entities.characters.map((item) => item.name), scenes: productionPackage.entities.scenes.map((item) => item.name), props: productionPackage.entities.props.map((item) => item.name) } : {}
+    ));
   }
 
   const history = selected ? versions[selected.id] : undefined;
@@ -468,7 +481,8 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
     stageView = <section className="cw2-stage-scroll">
       {productionPackage?.script ? <>
         <div className="cw2-stage-head"><h2>可生产剧本 <span className="cw2-tag">剧本 v{productionPackage.script.version}</span></h2><small>{statusLabel(productionPackage.script.status)}</small></div>
-        <article className="cw2-paper"><div className="cw2-paper-scroll"><pre>{productionPackage.script.content}</pre></div></article>
+        <div className="cw2-episode-picker"><label htmlFor="handoff-episode">查看剧集</label><select id="handoff-episode" value={handoffEpisode?.episodeNo ?? 1} onChange={(event) => setHandoffEpisodeNo(Number(event.target.value))}>{(productionPackage.episodes ?? []).map((episode) => <option key={episode.episodeNo} value={episode.episodeNo}>第{episode.episodeNo}集 · {episode.title}</option>)}</select><span>{handoffEpisode ? `${handoffEpisode.sourceCharacterCount.toLocaleString()} 字 · ${handoffEpisode.status}` : "完整剧本"}</span></div>
+        <article className="cw2-paper"><div className="cw2-paper-scroll"><pre>{handoffEpisodeContent}</pre></div></article>
         <div className="content-entity-summary">
           <article><UsersRound size={18} /><strong>{productionPackage.entities?.characters.length ?? 0}</strong><span>人物</span></article>
           <article><Map size={18} /><strong>{productionPackage.entities?.scenes.length ?? 0}</strong><span>场景</span></article>
