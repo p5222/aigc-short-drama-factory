@@ -7,7 +7,7 @@ import { generateImage } from "../providers/dashscopeImage.js";
 import type { ImageGenerationResult } from "../providers/types.js";
 import { persistImageReference } from "../storage/objectStorage.js";
 import { prisma } from "./client.js";
-import { mapProject, mapStoryboard, mapTask } from "./mappers.js";
+import { mapAsset, mapProject, mapStoryboard, mapTask } from "./mappers.js";
 import { DEMO_USER_ID } from "./seed.js";
 import { getProjectWorkflow } from "./repository.js";
 
@@ -214,6 +214,40 @@ export async function updateStoryboardShot(
 
   await prisma.asset.deleteMany({ where: { projectId, id: { in: ["image_" + shotId, "video_" + shotId] } } });
   return mapStoryboard(updated);
+}
+
+export async function captureStoryboardTailFrame(projectId: string, shotId: string, userId = DEMO_USER_ID, frameUrl: string) {
+  const workflow = await getProjectWorkflow(projectId, userId);
+  if (!workflow) throw new Error("Project not found");
+  const shot = workflow.storyboards.find((item) => item.id === shotId);
+  if (!shot) throw new Error("Storyboard shot not found");
+  const storedUrl = await persistImageReference(frameUrl, `tail-frame-${projectId}-${shot.episodeNo}-${shot.shotNo}`);
+  if (!storedUrl) throw new Error("尾帧截图保存失败");
+
+  const episodeShots = workflow.storyboards
+    .filter((item) => item.episodeNo === shot.episodeNo)
+    .sort((left, right) => (left.shotNo - right.shotNo) || (left.sceneNo - right.sceneNo));
+  const nextShot = episodeShots[episodeShots.findIndex((item) => item.id === shot.id) + 1];
+  const tailAssetId = `tailframe_${shot.id}`;
+  const result = await prisma.$transaction(async (tx) => {
+    const asset = await tx.asset.upsert({
+      where: { id: tailAssetId },
+      create: { id: tailAssetId, projectId, type: "image", name: `第${shot.episodeNo}集镜头${shot.shotNo}尾帧`, description: "创作者从已生成视频中截取的尾帧，用于下一镜头首帧承接。", prompt: shot.lastFramePrompt || shot.videoPrompt, referenceUrl: storedUrl, status: "succeeded" },
+      update: { referenceUrl: storedUrl, prompt: shot.lastFramePrompt || shot.videoPrompt, status: "succeeded" }
+    });
+    const updatedShot = await tx.storyboard.update({ where: { id: shot.id }, data: { lastFrameAssetId: tailAssetId } });
+    let updatedNextShot = undefined;
+    if (nextShot) {
+      await tx.asset.upsert({
+        where: { id: `image_${nextShot.id}` },
+        create: { id: `image_${nextShot.id}`, projectId, type: "image", name: `第${nextShot.episodeNo}集镜头${nextShot.shotNo}首帧（承接尾帧）`, description: "上一镜头尾帧截图，作为本镜头首帧参考。", prompt: nextShot.firstFramePrompt || nextShot.imagePrompt, referenceUrl: storedUrl, status: "succeeded" },
+        update: { name: `第${nextShot.episodeNo}集镜头${nextShot.shotNo}首帧（承接尾帧）`, referenceUrl: storedUrl, status: "succeeded" }
+      });
+      updatedNextShot = await tx.storyboard.update({ where: { id: nextShot.id }, data: { firstFrameAssetId: tailAssetId, continuitySourceShotId: shot.id } });
+    }
+    return { asset, updatedShot, updatedNextShot };
+  });
+  return { asset: mapAsset(result.asset), shot: mapStoryboard(result.updatedShot), nextShot: result.updatedNextShot ? mapStoryboard(result.updatedNextShot) : undefined };
 }
 
 export async function regenerateStoryboardShotImage(projectId: string, shotId: string, userId = DEMO_USER_ID): Promise<BatchGenerationResult> {

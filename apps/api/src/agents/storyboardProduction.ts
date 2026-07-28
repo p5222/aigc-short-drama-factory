@@ -134,6 +134,7 @@ export function buildSeedanceVideoPrompt(input: {
 }) {
   const assetById = input.assetById ?? new Map(input.workflow.assets.map((asset) => [asset.id, asset]));
   const references = resolveStoryboardReferenceAssets(input.workflow, input.shot, assetById);
+  const inheritedFirstFrame = input.shot.firstFrameAssetId ? assetById.get(input.shot.firstFrameAssetId) : undefined;
   const blocking = describeShotBlocking(input.shot);
   const firstAnchor = buildFirstFrameAnchor(input.shot, input.firstFrameAsset);
   const lastAnchor = buildLastFrameAnchor(input.shot);
@@ -142,7 +143,7 @@ export function buildSeedanceVideoPrompt(input: {
     profile: input.workflow.project.segmentProfile ?? "jimeng_15s",
     shot: { ...input.shot, referenceAssetIds: references.map((asset) => asset.id) },
     previousEndState: handoff,
-    firstFramePrompt: `${firstAnchor}；站位：${blocking}`,
+    firstFramePrompt: `${inheritedFirstFrame ? `继承上一镜头尾帧资产 ${inheritedFirstFrame.name}；` : ""}${firstAnchor}；站位：${blocking}`,
     lastFramePrompt: lastAnchor
   });
 }

@@ -456,6 +456,11 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(input)
     }),
+  captureStoryboardTailFrame: (projectId: string, shotId: string, frameUrl: string) =>
+    request<{ shot: StoryboardShot; nextShot?: StoryboardShot; asset: AssetItem }>(`/projects/${projectId}/storyboards/${shotId}/tail-frame`, {
+      method: "POST",
+      body: JSON.stringify({ frameUrl })
+    }),
   regenerateShotImage: (projectId: string, shotId: string) =>
     request<BatchGenerationResult>(`/projects/${projectId}/storyboards/${shotId}/image/regenerate`, {
       method: "POST"

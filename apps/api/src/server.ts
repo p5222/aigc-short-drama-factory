@@ -85,7 +85,7 @@ import {
   updateRedeemCode
 } from "./db/repository.js";
 import { prisma } from "./db/client.js";
-import { deleteCharacterReferenceImageV2, generateCharacterReferenceImages, generateSceneEnvironmentImage, regenerateStoryboardShotImage, runProjectStoryboardTasks, setCharacterReferenceImageV2, updateStoryboardShot } from "./db/storyboardActions.js";
+import { captureStoryboardTailFrame, deleteCharacterReferenceImageV2, generateCharacterReferenceImages, generateSceneEnvironmentImage, regenerateStoryboardShotImage, runProjectStoryboardTasks, setCharacterReferenceImageV2, updateStoryboardShot } from "./db/storyboardActions.js";
 import {
   createEvaluationDataset,
   createExperimentRun,
@@ -478,6 +478,10 @@ const storyboardUpdateSchema = z.object({
   soundEffect: z.string().optional(),
   imagePrompt: z.string().optional(),
   videoPrompt: z.string().optional()
+});
+
+const storyboardTailFrameSchema = z.object({
+  frameUrl: z.string().min(1).max(12_000_000)
 });
 
 const characterReferenceSchema = z.object({
@@ -1116,6 +1120,15 @@ app.patch(
     });
 
     res.json({ user: publicUser(user) });
+  })
+);
+
+app.post(
+  "/api/projects/:id/storyboards/:shotId/tail-frame",
+  asyncRoute(async (req, res) => {
+    const parsed = storyboardTailFrameSchema.safeParse(req.body ?? {});
+    if (!parsed.success) return res.status(400).json(parsed.error.flatten());
+    res.json(await captureStoryboardTailFrame(paramId(req.params.id), paramId(req.params.shotId), requestUserId(req), parsed.data.frameUrl));
   })
 );
 

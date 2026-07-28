@@ -27553,3 +27553,11 @@ body,
 :root:not([data-theme="light"]) .mrp-badge { color: var(--content-accent, var(--ui-accent, #20c7ad)); background: var(--content-accent-soft, var(--ui-accent-soft, rgba(32, 199, 173, .12))); }
 :root:not([data-theme="light"]) .mrp-check { color: var(--content-accent, var(--ui-accent, #20c7ad)); }
 :root:not([data-theme="light"]) .mrp-tag { border-color: var(--content-border, var(--ui-border, #2c343c)); color: var(--content-secondary, var(--ui-text-secondary, #b2bcc2)); }
+.wb-video-input-preview { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; margin: 12px 0; }
+.wb-video-input-preview > div { display: grid; gap: 6px; min-width: 0; }
+.wb-video-input-preview span { color: #63777c; font-size: 12px; font-weight: 700; }
+.wb-video-input-preview img { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 6px; background: #eef3f4; }
+.wb-video-input-preview strong { display: grid; place-items: center; min-height: 100px; background: #f1f5f5; color: #718387; border-radius: 6px; font-size: 12px; }
+.wb-video-input-preview pre { margin: 0; min-height: 100px; max-height: 170px; overflow: auto; padding: 9px; white-space: pre-wrap; font: 12px/1.55 inherit; color: #29434a; background: #f7faf9; border: 1px solid #dce8e8; border-radius: 6px; }
+.wb-tail-frame-button { display: block; width: 100%; margin-top: 8px; padding: 8px 10px; border: 1px solid #0b8f87; border-radius: 6px; background: #fff; color: #087d76; cursor: pointer; font-size: 12px; }
+.wb-tail-frame-button:disabled { opacity: .6; cursor: wait; }
