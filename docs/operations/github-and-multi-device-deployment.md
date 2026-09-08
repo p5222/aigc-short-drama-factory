@@ -14,7 +14,7 @@
 
 ## 1. 换一台电脑拉代码
 
-希望通过网页操作 Git，可使用仓库内的 [Git Workbench 便携版](../../tools/git-workbench/README.md)。Windows 双击 `tools/git-workbench/start-windows.bat`；macOS / Linux 运行 `sh tools/git-workbench/start-unix.sh`。工具在本机网页运行，每台电脑使用自己的 GitHub 登录，服务器发布仍使用本文第 5 节的独立命令。
+希望通过网页操作 Git，可使用仓库内的 [Git Workbench 便携版](../../tools/git-workbench/README.md)。工具左侧「操作手册 · 换电脑」提供完整步骤，也可打开 `http://127.0.0.1:4318/manual`。Windows 双击 `tools/git-workbench/start-windows.bat`；macOS / Linux 运行 `sh tools/git-workbench/start-unix.sh`。工具在本机网页运行，每台电脑使用自己的 GitHub 登录，服务器发布仍使用本文第 5 节的独立命令。
 
 安装 Git、Node.js 24、pnpm 11.7.0；本地运行后端还需要 Docker。使用自己的 GitHub 账号登录，账号必须有这个私有仓库的权限。
 
@@ -102,7 +102,7 @@ Windows 也可以使用 `scripts/bootstrap_manjiao_git.ps1` 辅助接入，它�
 
 ## 4. 腾讯云“只允许个人电脑”限制在哪里打开
 
-本次只读检查结果：服务器 UFW 已对所有来源开放 SSH、80、443；SSH 公钥登录已启用，密码登录已禁用；当前 authorized_keys 未发现 `from=` 来源限制。尚未读取腾讯云控制台规则，不能据此断言云端防火墙也已放开。
+本次只读检查结果：服务器 UFW 已对所有来源开放 SSH、80、443；SSH 公钥登录已启用，密码登录已禁用；当前 authorized_keys 未发现 `from=` 来源限制。2026-09-09 已进一步在腾讯云控制台核实：实例 `lhins-2fz9aroh` 共 3 条规则，TCP 22、80、443 均为「全部 IPv4 地址 / 允许」。云端没有绑定原电脑来源 IP，本次无需修改防火墙。换设备仍需授权新设备的 SSH 公钥。
 
 进入 [腾讯云轻量应用服务器控制台](https://console.cloud.tencent.com/lighthouse/instance)，选择 `43.139.101.102` → **防火墙** → 查看 Linux 登录 / SSH 的 TCP 22 规则：
 

@@ -170,7 +170,7 @@ const server = http.createServer(async (req, res) => {
       }
       return reply(res, 404, { error: '接口不存在。' });
     }
-    const routes = { '/': ['index.html', 'text/html; charset=utf-8'], '/app.js': ['app.js', 'text/javascript; charset=utf-8'], '/style.css': ['style.css', 'text/css; charset=utf-8'] };
+    const routes = { '/manual': ['handbook.html', 'text/html; charset=utf-8'], '/handbook.css': ['handbook.css', 'text/css; charset=utf-8'], '/': ['index.html', 'text/html; charset=utf-8'], '/app.js': ['app.js', 'text/javascript; charset=utf-8'], '/style.css': ['style.css', 'text/css; charset=utf-8'] };
     if (req.method !== 'GET' || !routes[url.pathname]) return reply(res, 404, { error: '页面不存在。' });
     const [file, type] = routes[url.pathname], data = (await readFile(path.join(home, 'public', file), 'utf8')).replace('__WORKBENCH_TOKEN__', token);
     res.writeHead(200, { 'Content-Type': type }); res.end(data);
