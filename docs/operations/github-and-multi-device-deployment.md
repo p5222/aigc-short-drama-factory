@@ -14,6 +14,8 @@
 
 ## 1. 换一台电脑拉代码
 
+希望通过网页操作 Git，可使用仓库内的 [Git Workbench 便携版](../../tools/git-workbench/README.md)。Windows 双击 `tools/git-workbench/start-windows.bat`；macOS / Linux 运行 `sh tools/git-workbench/start-unix.sh`。工具在本机网页运行，每台电脑使用自己的 GitHub 登录，服务器发布仍使用本文第 5 节的独立命令。
+
 安装 Git、Node.js 24、pnpm 11.7.0；本地运行后端还需要 Docker。使用自己的 GitHub 账号登录，账号必须有这个私有仓库的权限。
 
 ```bash

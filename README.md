@@ -13,6 +13,8 @@
 
 跨电脑开发、GitHub 分支协作和腾讯云发布请先阅读 [GitHub 与跨设备发布指南](./docs/operations/github-and-multi-device-deployment.md)。生产发布入口：`pnpm deploy:server`。
 
+需要图形操作时，使用 [Git Workbench 便携工作台](./tools/git-workbench/README.md)：支持在 Windows、macOS、Linux 克隆、拉取、建分支、审查文件、提交和推送。复制整个工具文件夹即可在其他电脑使用。
+
 ```bash
 pnpm install
 pnpm dev
