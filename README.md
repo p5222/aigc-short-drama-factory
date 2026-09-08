@@ -11,6 +11,8 @@
 
 ## 快速启动
 
+跨电脑开发、GitHub 分支协作和腾讯云发布请先阅读 [GitHub 与跨设备发布指南](./docs/operations/github-and-multi-device-deployment.md)。生产发布入口：`pnpm deploy:server`。
+
 ```bash
 pnpm install
 pnpm dev

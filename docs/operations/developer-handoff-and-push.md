@@ -1,5 +1,7 @@
 # 新电脑与开发智能体接手指南
 
+> 2026-09-09 更新：当前优先使用 [GitHub 与跨设备发布指南](./github-and-multi-device-deployment.md)，以 GitHub main 为发布来源，并用跨平台命令 `pnpm deploy:server` 发布。下文保留旧的 Windows / 服务器直推操作记录。
+
 ## 双击入口
 
 - `一键发布到服务器.bat`：日常代码提交、服务器 Git push 和生产部署。

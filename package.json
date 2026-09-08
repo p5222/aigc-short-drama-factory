@@ -12,7 +12,8 @@
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r --if-present test:unit",
     "push:safe": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/safe_push.ps1",
-    "ship:server": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ship_server.ps1"
+    "ship:server": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ship_server.ps1",
+    "deploy:server": "node scripts/deploy_from_github.mjs"
   },
   "devDependencies": {
     "typescript": "^5.9.3"

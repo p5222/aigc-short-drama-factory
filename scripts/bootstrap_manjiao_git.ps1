@@ -20,7 +20,7 @@ if ($config -notmatch '(?m)^Host manjiao-git\s*$') {
 Write-Host "Send this PUBLIC key to the server administrator:"
 Get-Content "$KeyPath.pub"
 
-ssh -o BatchMode=yes -o ConnectTimeout=8 manjiao-git "git --version" 2>$null
+git -c core.sshCommand="ssh -o BatchMode=yes -o ConnectTimeout=8" ls-remote ssh://manjiao-git/opt/git/aigc-short-drama-factory.git refs/heads/main
 if ($LASTEXITCODE -ne 0) {
   Write-Host "Not authorized yet. Ask the administrator to run grant_manjiao_git_access.ps1 with this .pub file, then rerun this command."
   exit 2
