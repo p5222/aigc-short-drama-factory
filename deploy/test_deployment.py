@@ -78,6 +78,7 @@ if [ -n "${TEST_READY_BODY:-}" ]; then printf '%s' "$TEST_READY_BODY"; else prin
         (self.app / "storage/customer.txt").write_text("persistent media")
 
     def tearDown(self):
+        self.doCleanups()
         self.temp.cleanup()
 
     def shim(self, name, source):
@@ -107,6 +108,83 @@ if [ -n "${TEST_READY_BODY:-}" ]; then printf '%s' "$TEST_READY_BODY"; else prin
 
     def deployed(self):
         return self.git("rev-parse", "refs/heads/deployed")
+
+    def root_owned_runtime_fixture(self):
+        # Run rsync as an ordinary release user against actual root-owned files.
+        # sudo is restricted to freshly created paths inside this test directory.
+        if not hasattr(os, "geteuid") or os.geteuid() == 0 or not shutil.which("sudo"):
+            self.skipTest("Root-owned legacy fixture needs an unprivileged Linux user with sudo")
+        if subprocess.run(["sudo", "-n", "true"], capture_output=True).returncode:
+            self.skipTest("Root-owned legacy fixture needs passwordless sudo")
+        files = {
+            ".pnpm-store/v11/files/legacy.bin": "cached dependency",
+            "apps/api/dist/storage/customer-upload.bin": "legacy customer media",
+            "apps/web/dist/assets/legacy.js": "live browser bundle",
+            "packages/shared/dist/index.js": "live shared module",
+        }
+        roots = [self.app / name for name in (".pnpm-store", "apps/api/dist", "apps/web/dist", "packages/shared/dist")]
+        for name, content in files.items():
+            target = self.app / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content)
+        for root in roots:
+            self.assertTrue(root.resolve().is_relative_to(self.base.resolve()))
+            for target in [*root.rglob("*"), root]:
+                target.chmod(0o755 if target.is_dir() else 0o644)
+        # Register cleanup before changing ownership so failed assertions are safe.
+        def restore_ownership():
+            for root in roots:
+                if not root.resolve().is_relative_to(self.base.resolve()) or root.is_symlink():
+                    raise AssertionError("Refusing fixture cleanup outside its temporary directory")
+            subprocess.run(["sudo", "-n", "chown", "-R", f"{os.getuid()}:{os.getgid()}", "--", *map(str, roots)], check=True)
+            for root in roots:
+                for target in [root, *root.rglob("*")]:
+                    target.chmod(0o755 if target.is_dir() else 0o644)
+        self.addCleanup(restore_ownership)
+        subprocess.run(["sudo", "-n", "chown", "-R", "0:0", "--", *map(str, roots)], check=True)
+        for root in roots:
+            self.assertEqual(root.stat().st_uid, 0)
+            self.assertFalse(os.access(root, os.W_OK), "The release user must not be able to modify the runtime directory")
+        # A broad storage exclusion would incorrectly skip this genuine source.
+        for directory, version in ((self.app, "old storage service"), (self.repo, "new storage service")):
+            source = directory / "apps/api/src/storage/service.js"
+            source.parent.mkdir(parents=True, exist_ok=True)
+            source.write_text(version)
+        self.git("add", "apps/api/src/storage/service.js")
+        self.git("commit", "-qm", "update storage source")
+        self.new = self.git("rev-parse", "HEAD")
+        return files
+
+    def assert_runtime_fixture_preserved(self, files):
+        for name, content in files.items():
+            target = self.app / name
+            self.assertEqual(target.read_text(), content)
+            self.assertEqual(target.stat().st_uid, 0)
+            self.assertEqual(target.stat().st_gid, 0)
+            self.assertEqual(target.stat().st_mode & 0o777, 0o644)
+        self.assertEqual((self.app / "storage/customer.txt").read_text(), "persistent media")
+        self.assertEqual((self.app / ".env.production").read_text(), "PRESERVE_TEST_VALUE=1\n")
+
+    def test_real_root_owned_legacy_outputs_survive_unprivileged_release(self):
+        files = self.root_owned_runtime_fixture()
+        result = self.run_hook()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.deployed(), self.new)
+        self.assertEqual((self.app / "version.txt").read_text(), "new")
+        self.assertEqual((self.app / "apps/api/src/storage/service.js").read_text(), "new storage service")
+        self.assertFalse((self.app / "obsolete.txt").exists())
+        self.assert_runtime_fixture_preserved(files)
+
+    def test_real_root_owned_legacy_outputs_survive_unprivileged_rollback(self):
+        files = self.root_owned_runtime_fixture()
+        result = self.run_hook(extra_env={"TEST_FAIL": "rebuild"})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("previous source readiness verified", result.stderr, result.stdout + result.stderr)
+        self.assertEqual(self.deployed(), self.old)
+        self.assertEqual((self.app / "version.txt").read_text(), "old")
+        self.assertEqual((self.app / "apps/api/src/storage/service.js").read_text(), "old storage service")
+        self.assertTrue((self.app / "obsolete.txt").exists())
+        self.assert_runtime_fixture_preserved(files)
 
     def test_database_backup_failure_leaves_live_release_unchanged(self):
         result = self.run_hook(extra_env={"TEST_FAIL": "backup"})

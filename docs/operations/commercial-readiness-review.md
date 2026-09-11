@@ -51,7 +51,17 @@
 
 新增 `tools/project-hub`，与原便携工具共存。目标入口 `https://manjiao.cloud/ops/`，独立登录、限定工作副本、多项目锁、GitHub分支/提交/推送、显式发布与同版本重试、完整revision核验及操作手册。18项Hub回归通过；本地登录、空态、无效仓库错误保留输入、375px表单已浏览器验证（截图09–11）。
 
-服务器隔离预检镜像已成功构建，实际UID10001。私有凭据已接入并在容器内验证GitHub账号p5222，专用Git-only SSH读取server main成功。生产平台服务与Caddy路由尚未公开，等待最终CI及上线验收。凭据/生成密码仅在忽略目录与服务器私有配置内，不入Git。
+服务器平台已于2026-09-12公开在 `/ops/`，使用UID10001、只读根文件系统与私有配置，未认证项目接口返回401。已实际登录、克隆私库、创建验收分支并推送GitHub，GitHub API核对提交一致；main拉取成功。截图12保存真实项目界面。平台包含独立账号、手册与可信服务器发布目标，凭据不入Git。
+
+PR1、PR2已合并，main为`ac58d2867f43a20ddcbc79acab07d9eb64d7dbd9`；对应CI全部成功，最新运行34640197003。平台运行代码83e3ae1与此合并提交的树一致。服务器一次GitHub TLS EOF使拉取失败；工作副本改用HTTP/1.1后重试成功。便携工具包已从05d3ca7归档，SHA256为`C0486F39BDF506DE3906D66388A44D809E43088E3B676914DE3480D7AE99CE9E`。
+
+## 首次线上发布发现与恢复
+
+从Project Hub发起ac58d286后，备份成功，源码同步及自动恢复遇到旧容器生成的root所有dist、.pnpm-store目录，rsync返回23。旧容器未替换，前台/admin/health维持200，deployed仍111b45e；不可将Git接收或任务结束标为已上线。
+
+本次完整备份位于服务器私有 `/opt/manjiao-backups/20260912_035144_ac58d2867f43_manjiao-deploy.ScGKUaBj`，校验全部通过。保护运行产物后的checksum预演显示源码与备份无差异；进一步发现旧tar未锚定的storage排除会漏掉源码目录，已从旧deployed的Git树补回缺失的`apps/api/src/storage/objectStorage.ts`并校验一致。未恢复数据库或客户素材，未重启容器。
+
+修复正在加入真实rsync权限与备份恢复回归：只在根目录排除持久数据，保留嵌套源码；同步保护dist与.pnpm-store且不改变owner/group。平台任务记录对accepted显示“已接收，待核验”，只有verified才显示“已核验”。新的生产发布尚需这些修复通过CI后重试与版本核验。
 
 创建报价现为真实文本渠道/模型/集数费用，确认maxCredits前不启动；缺失/无效/低额度、价格变化均无项目/任务/账目写入。
 
