@@ -3,6 +3,16 @@ const actionLabels = { clone: "克隆项目", fetch: "刷新远端", pull: "拉�
 const deploymentActions = new Set(["deploy", "retryDeploy", "verify"]);
 const statusLabels = { running: "执行中", succeeded: "已完成", failed: "失败", interrupted: "已中断" };
 
+export function operationStatusLabel(operation, jobs = []) {
+  if (operation?.status === "succeeded" && deploymentActions.has(operation.action)) {
+    const result = operation.result || (operation.id && jobs.find((job) => job.id === operation.id && job.projectId === operation.projectId && job.action === operation.action && job.status === operation.status)?.result);
+    if (result?.deployment === "verified") return "已核验";
+    if (result?.deployment === "accepted") return "已接收，待核验";
+    return "已执行，未核验";
+  }
+  return statusLabels[operation?.status] || operation?.status || "状态未知";
+}
+
 export function safeGithubUrl(value) {
   try {
     const url = new URL(value);
@@ -281,10 +291,10 @@ function initialize() {
     if (!jobs.some((job) => job.id === state.selectedJob)) state.selectedJob = jobs[0]?.id || "";
     select.replaceChildren();
     if (!jobs.length) { const option = element("option", "尚无任务"); option.value = ""; select.append(option); }
-    for (const job of jobs) { const option = element("option", `${when(job.createdAt)} · ${actionLabels[job.action] || job.action} · ${statusLabels[job.status] || job.status}`); option.value = job.id; select.append(option); }
+    for (const job of jobs) { const option = element("option", `${when(job.createdAt)} · ${actionLabels[job.action] || job.action} · ${operationStatusLabel(job)}`); option.value = job.id; select.append(option); }
     select.value = state.selectedJob;
     const job = jobs.find((item) => item.id === state.selectedJob);
-    $("job-state").textContent = job ? `${actionLabels[job.action] || job.action} · ${statusLabels[job.status] || job.status}` : "等待操作";
+    $("job-state").textContent = job ? `${actionLabels[job.action] || job.action} · ${operationStatusLabel(job)}` : "等待操作";
     $("job-state").className = `pill ${job ? `status-${job.status}` : ""}`;
     $("job-log").textContent = job ? (Array.isArray(job.log) ? job.log.join("\n") : String(job.log || "任务已登记，等待执行日志。")) : "本项目暂无执行任务。";
     $("job-result").textContent = job ? deploymentActions.has(job.action) ? deploymentSummary(job) : job.result?.message || (job.status === "interrupted" ? "执行因服务重启中断，请先刷新工作区和 GitHub 状态，再决定下一步。" : "") : "";
@@ -298,7 +308,7 @@ function initialize() {
     const { entries } = await request(`/projects/${encodeURIComponent(id)}/audit`);
     if (!state.authenticated || id !== state.projectId) return;
     $("audit-list").replaceChildren();
-    for (const entry of entries || []) $("audit-list").append(element("li", `${when(entry.createdAt)} · ${actionLabels[entry.action] || entry.action} · ${statusLabels[entry.status] || entry.status}${entry.message ? ` · ${entry.message}` : ""}`));
+    for (const entry of entries || []) $("audit-list").append(element("li", `${when(entry.createdAt)} · ${actionLabels[entry.action] || entry.action} · ${operationStatusLabel(entry, state.jobs)}${entry.message ? ` · ${entry.message}` : ""}`));
     if (!entries?.length) $("audit-list").append(element("li", "尚无操作记录。"));
   }
 

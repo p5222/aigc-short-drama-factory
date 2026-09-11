@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
-import { actionReadiness, deploymentSummary, reconcileSelection, safeGithubUrl } from "./public/app.js";
+import { actionReadiness, deploymentSummary, operationStatusLabel, reconcileSelection, safeGithubUrl } from "./public/app.js";
 
 const status = { branch: "main", clean: true, ahead: 0, behind: 0, project: { deployEnabled: true }, files: [] };
 test("server deployment and functional branch actions obey distinct prerequisites", () => {
@@ -31,6 +31,31 @@ test("accepted deployment never reports verified or successful online release", 
   assert.match(deploymentSummary({ status: "failed", result: { deployment: "verified" } }), /失败/);
   assert.match(deploymentSummary({ status: "interrupted" }), /已中断/);
   assert.match(deploymentSummary(null), /尚无/);
+});
+test("deployment task labels distinguish accepted code from verified online release", () => {
+  for (const action of ["deploy", "retryDeploy", "verify"]) {
+    const job = { action, status: "succeeded" };
+    assert.equal(operationStatusLabel({ ...job, result: { deployment: "accepted" } }), "已接收，待核验");
+    assert.equal(operationStatusLabel({ ...job, result: { deployment: "verified" } }), "已核验");
+    assert.equal(operationStatusLabel(job), "已执行，未核验");
+    assert.equal(operationStatusLabel({ ...job, result: { message: "操作完成。" } }), "已执行，未核验");
+    for (const [status, label] of [["running", "执行中"], ["failed", "失败"], ["interrupted", "已中断"]]) {
+      assert.equal(operationStatusLabel({ ...job, status, result: { deployment: "verified" } }), label);
+    }
+  }
+  assert.equal(operationStatusLabel({ action: "push", status: "succeeded", result: { deployment: "accepted" } }), "已完成");
+});
+test("audit deployment labels use only the matching successful task and stay unverified without evidence", () => {
+  const entry = { id: "deployment-1", projectId: "project-1", action: "deploy", status: "succeeded", message: "操作完成。" };
+  const job = { ...entry, result: { deployment: "accepted" } };
+  assert.equal(operationStatusLabel(entry, [job]), "已接收，待核验");
+  assert.equal(operationStatusLabel(entry, [{ ...job, result: { deployment: "verified" } }]), "已核验");
+  assert.equal(operationStatusLabel(entry), "已执行，未核验");
+  for (const changed of [{ id: "other-task" }, { projectId: "other-project" }, { action: "verify" }, { status: "failed" }]) {
+    assert.equal(operationStatusLabel(entry, [{ ...job, ...changed }]), "已执行，未核验");
+  }
+  assert.equal(operationStatusLabel({ ...entry, status: "failed" }, [job]), "失败");
+  assert.equal(operationStatusLabel({ ...entry, status: "interrupted" }, [job]), "已中断");
 });
 test("external GitHub links reject credentials, non-web schemes and lookalike domains", () => {
   assert.equal(safeGithubUrl("https://github.com/team/repo/compare/main...feature"), "https://github.com/team/repo/compare/main...feature");

@@ -70,8 +70,11 @@ sync_source() {
   private_workdir; mkdir -p "$WORK/source"
   tar -xzf "$1" -C "$WORK/source"
   test -f "$WORK/source/package.json"; test -f "$WORK/source/$COMPOSE_FILE"
-  rsync -a --checksum --delete --exclude='/.git/' --exclude='/.env' --exclude='/.env.*' \
-    --exclude='node_modules/' --exclude='/storage/' --exclude='/backups/' \
+  # Legacy bind-mounted containers created root-owned build output and caches.
+  # These are not release source; preserve them, including nested dist/storage.
+  rsync -a --no-owner --no-group --checksum --delete --exclude='/.git/' --exclude='/.env' --exclude='/.env.*' \
+    --exclude='node_modules/' --exclude='.pnpm-store/' --exclude='dist/' \
+    --exclude='/storage/' --exclude='/backups/' \
     --exclude='/outputs/' --exclude='/tmp/' --exclude='*.local.txt' \
     "$WORK/source/" "$RD/"
 }
@@ -87,7 +90,8 @@ case "$cmd" in
     "${COMPOSE[@]}" exec -T api sh -lc 'cd /app && tar -czf - storage' > "$BD/storage.tar.gz.partial"
     tar -tzf "$BD/storage.tar.gz.partial" > /dev/null
     mv "$BD/storage.tar.gz.partial" "$BD/storage.tar.gz"
-    tar --exclude=node_modules --exclude=.git --exclude=storage --exclude=backups --exclude=outputs --exclude=tmp -czf "$BD/source.tgz.partial" -C "$RD" .
+    # Only the root storage directory is persistent media; src/storage is code.
+    tar --exclude=node_modules --exclude=.git --exclude='./storage' --exclude='./backups' --exclude='./outputs' --exclude='./tmp' -czf "$BD/source.tgz.partial" -C "$RD" .
     tar -tzf "$BD/source.tgz.partial" > /dev/null
     mv "$BD/source.tgz.partial" "$BD/source.tgz"
     (cd "$BD" && sha256sum aigc_drama.dump storage.tar.gz source.tgz > SHA256SUMS)
