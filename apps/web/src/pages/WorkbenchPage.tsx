@@ -1,6 +1,8 @@
 import { AlertTriangle, ArrowRight, BookOpen, CheckCircle2, Clock3, Coins, Film, Plus, Sparkles } from "lucide-react";
 import type { WorkbenchSummary } from "@aifilm/shared";
 import { collectWorkbenchActions, formatRelativeUpdate, projectNextAction, projectStatusLabel, projectTone, taskStatusLabel } from "./workbenchPresentation";
+import { ChevronDown, Megaphone, Pin } from "lucide-react";
+import "./workbench-announcements.css";
 
 interface WorkbenchPageProps {
   summary?: WorkbenchSummary;
@@ -15,6 +17,7 @@ export function WorkbenchPage({ summary, onStart, onOpen, onOpenTasks, onRecharg
   const tasks = summary?.recentTasks ?? [];
   const actions = collectWorkbenchActions(projects, tasks);
   const latestProject = projects[0];
+  const announcements: Array<WorkbenchSummary["announcements"][number] & { pinned?: boolean }> = summary?.announcements ?? [];
 
   return (
     <div className="page-stack dashboard-page dashboard-action-page">
@@ -46,6 +49,32 @@ export function WorkbenchPage({ summary, onStart, onOpen, onOpenTasks, onRecharg
           <p>{actions.failed[0]?.errorReason || (actions.failed.length ? actions.failed[0].title : "当前没有失败任务")}</p>
           {actions.failed.length ? <button type="button" onClick={onOpenTasks}>查看原因<ArrowRight size={15} /></button> : null}
         </article>
+      </section>
+
+      <section className="panel workbench-notices" aria-labelledby="workbench-notices-heading">
+        <div className="panel-head">
+          <div><h2 id="workbench-notices-heading"><Megaphone size={18} aria-hidden="true" />平台公告</h2><small>平台更新与使用提醒</small></div>
+          <span className="workbench-notices-count">{announcements.length} 条</span>
+        </div>
+        <div className="workbench-notices-list">
+          {announcements.map((announcement) => (
+            <details className="workbench-notice" key={announcement.id}>
+              <summary>
+                <span className="workbench-notice-copy">
+                  <span className="workbench-notice-meta">
+                    {announcement.pinned === true ? <span className="workbench-notice-pin"><Pin size={12} aria-hidden="true" />置顶</span> : null}
+                    <span className="workbench-notice-type" data-type={announcement.type}>{({ info: "通知", guide: "使用指南", update: "功能更新", warning: "重要提醒" })[announcement.type] ?? "公告"}</span>
+                  </span>
+                  <strong>{announcement.title}</strong>
+                  <span className="workbench-notice-preview" aria-hidden="true">{announcement.body}</span>
+                </span>
+                <span className="workbench-notice-toggle" aria-hidden="true"><span className="workbench-notice-expand">展开全文</span><span className="workbench-notice-collapse">收起全文</span><ChevronDown size={16} /></span>
+              </summary>
+              <div className="workbench-notice-body">{announcement.body}</div>
+            </details>
+          ))}
+          {!announcements.length ? <p className="workbench-notices-empty">暂无公告</p> : null}
+        </div>
       </section>
 
       <div className="dashboard-work-grid">

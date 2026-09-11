@@ -47,6 +47,13 @@
   StoryboardShot,
   ShowcaseWork,
   ShowcaseWorkInput,
+  SupportTicketStatus,
+  SupportTicketList,
+  SupportTicketDetail,
+  SupportTicketMutationResult,
+  CreateSupportTicketInput,
+  ReplySupportTicketInput,
+  CloseSupportTicketInput,
   UserFeedback,
   VideoModelTestResult,
   OpenSourceAdapterInfo,
@@ -547,6 +554,22 @@ export const api = {
     request<VisualPipelineTestResult>("/admin/plugins/visual-pipelines/test", {
       method: "POST",
       body: JSON.stringify({ pipelineId })
-    })
+    }),
+  supportTickets: (page = 1, status: SupportTicketStatus | "all" = "all") =>
+    request<SupportTicketList>(`/support/tickets?page=${page}&pageSize=20${status === "all" ? "" : `&status=${status}`}`),
+  supportTicket: (id: string) => request<SupportTicketDetail>(`/support/tickets/${encodeURIComponent(id)}`),
+  createSupportTicket: (input: CreateSupportTicketInput) =>
+    request<SupportTicketMutationResult>("/support/tickets", { method: "POST", body: JSON.stringify(input) }),
+  replySupportTicket: (id: string, input: ReplySupportTicketInput) =>
+    request<SupportTicketMutationResult>(`/support/tickets/${encodeURIComponent(id)}/messages`, { method: "POST", body: JSON.stringify(input) }),
+  closeSupportTicket: (id: string, input: CloseSupportTicketInput) =>
+    request<SupportTicketMutationResult>(`/support/tickets/${encodeURIComponent(id)}/close`, { method: "POST", body: JSON.stringify(input) }),
+  adminSupportTickets: (page = 1, status: SupportTicketStatus | "all" = "all") =>
+    request<SupportTicketList>(`/admin/support/tickets?page=${page}&pageSize=20${status === "all" ? "" : `&status=${status}`}`),
+  adminSupportTicket: (id: string) => request<SupportTicketDetail>(`/admin/support/tickets/${encodeURIComponent(id)}`),
+  replyAdminSupportTicket: (id: string, input: ReplySupportTicketInput) =>
+    request<SupportTicketMutationResult>(`/admin/support/tickets/${encodeURIComponent(id)}/messages`, { method: "POST", body: JSON.stringify(input) }),
+  closeAdminSupportTicket: (id: string, input: CloseSupportTicketInput) =>
+    request<SupportTicketMutationResult>(`/admin/support/tickets/${encodeURIComponent(id)}/close`, { method: "POST", body: JSON.stringify(input) })
 };
 

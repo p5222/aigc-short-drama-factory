@@ -91,6 +91,7 @@ export function App() {
         { name: "用户管理", icon: UserRound },
         { name: "操作记录", icon: ReceiptText },
         { name: "平台公告", icon: Megaphone },
+        { name: "支持工单", icon: Bell },
         { name: "创作现场管理", icon: Video },
         { name: "创作质量中心", icon: ChartNoAxesCombined }
       ]
@@ -490,12 +491,13 @@ export function App() {
       case "ledger":
         return <LedgerPage account={account} transactions={transactions} />;
       case "settings":
-        return <SettingsPage />;
+        return <SettingsPage theme={theme} onThemeChange={handleThemeChange} onNavigate={setActivePage} />;
       case "help":
-        return <HelpPage articles={helpArticles} />;
+        return user ? <HelpPage articles={helpArticles} userId={user.id} /> : null;
       case "admin":
         return (
           <AdminPage
+            userId={user?.id ?? ""}
             summary={adminSummary}
             providers={providers}
             modelPrices={modelPrices}
@@ -578,6 +580,7 @@ export function App() {
         {error ? <div className="error-banner" role="alert">{error} <button type="button" onClick={() => void load().catch(() => undefined)}>重新加载</button></div> : null}
         <RoutePageBoundary routeId="admin" onBack={() => { window.location.href = "/"; }} backLabel="返回前台">
         <AdminPage
+          userId={user.id}
           summary={adminSummary}
           providers={providers}
           modelPrices={modelPrices}

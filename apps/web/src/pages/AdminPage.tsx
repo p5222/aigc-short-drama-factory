@@ -74,6 +74,8 @@ import { AdminAuditLogPage } from "../admin/AdminAuditLogPage";
 import { formatAdminMoney, formatAdminTaskSuccess } from "../admin/adminMetricsModel";
 import { providerTestAvailability, testSavedProvider } from "../admin/adminProviderTestModel";
 import { scopedAdminNotice } from "../admin/adminNoticeModel";
+import { announcementDateInput, announcementScheduleStatus, announcementStatusLabels, buildAnnouncementSchedule, selectAnnouncementRows } from "../admin/announcementScheduleModel";
+import { SupportAdminPanel } from "../support/SupportTicketPanel";
 
 const AdminActionContext = createContext({ pending: false, message: "", error: "", version: 0 });
 type ProviderTestResult = ModelTestResult | ImageModelTestResult | VideoModelTestResult;
@@ -86,13 +88,14 @@ type PipelineTestState = {
   result?: VisualPipelineTestResult;
 };
 
-const adminModules = ["运营总览", "用户管理", "平台公告", "创作现场管理", "创作质量中心", "提示词评分", "兑换码", "套餐会员", "订阅会员", "模型路由", "价格策略", "操作记录"];
+const adminModules = ["运营总览", "用户管理", "平台公告", "支持工单", "创作现场管理", "创作质量中心", "提示词评分", "兑换码", "套餐会员", "订阅会员", "模型路由", "价格策略", "操作记录"];
 
 const moduleCopy: Record<string, { title: string; subtitle: string }> = {
   操作记录: { title: "操作记录", subtitle: "查看管理员配置和运营操作的执行记录，用于核对变更、排查失败。" },
   运营总览: { title: "运营总览", subtitle: "查看用户、积分、模型成本和任务健康度。" },
   用户管理: { title: "用户管理", subtitle: "管理账号状态、身份权限、积分余额、密码重置和运营入账。" },
   平台公告: { title: "平台公告", subtitle: "维护前台工作台公告，并在子模块管理帮助中心教程与 FAQ。" },
+  支持工单: { title: "支持工单", subtitle: "查看创作者的问题、补充记录与处理回复。回复会保存在站内工单中。" },
   创作现场管理: { title: "创作现场管理", subtitle: "审核创作者提交的真实作品，维护封面、视频、精选和前台展示顺序。" },
   创作质量中心: { title: "创作质量中心", subtitle: "根据真实创作内容定位阶段瓶颈，对比模型与提示词版本，持续验证优化效果。" },
   兑换码: { title: "兑换码", subtitle: "批量生成唯一兑换码，控制额度、次数和启停状态。" },
@@ -104,6 +107,7 @@ const moduleCopy: Record<string, { title: string; subtitle: string }> = {
 };
 
 export function AdminPage({
+  userId,
   summary,
   providers,
   modelPrices,
@@ -118,6 +122,7 @@ export function AdminPage({
   qualityProjects,
   onRefresh
 }: {
+  userId: string;
   summary?: AdminSummary;
   providers: ModelProvider[];
   modelPrices: ModelPrice[];
@@ -305,9 +310,9 @@ export function AdminPage({
           <p>{current.subtitle}</p>
         </div>
         <div className="admin-v2-title-actions">
-          <button className="admin-icon-btn" disabled={actionPending} onClick={() => void actionRunner.current(async () => { await onRefresh(); }, "后台数据已刷新。") } title="刷新" aria-label="刷新后台数据">
+          {activeModule !== "支持工单" ? <button className="admin-icon-btn" disabled={actionPending} onClick={() => void actionRunner.current(async () => { await onRefresh(); }, "后台数据已刷新。") } title="刷新" aria-label="刷新后台数据">
             <RefreshCw size={18} />
-          </button>
+          </button> : null}
         </div>
       </header>
 
@@ -316,6 +321,7 @@ export function AdminPage({
 
       <fieldset className="admin-action-scope" disabled={actionPending}>
       {activeModule === "操作记录" ? <AdminAuditLogPage /> : null}
+      {activeModule === "支持工单" ? <SupportAdminPanel userId={userId} /> : null}
       {activeModule === "运营总览" ? <DashboardSection summary={summary} providers={providers} modelPrices={modelPrices} /> : null}
       {activeModule === "创作现场管理" ? <><ContentProjectsAdminSection /><ShowcaseWorksSection /></> : null}
       {activeModule === "创作质量中心" ? <QualityCenterSection evaluation={evaluation} projects={qualityProjects} providers={providers} onRefresh={refreshQualitySnapshot} /> : null}
@@ -2479,28 +2485,22 @@ function AnnouncementsSection({
   const [segment, setSegment] = useState("all");
   const [createOpen, setCreateOpen] = useState(false);
   const [submodule, setSubmodule] = useState<"announcements" | "help">("announcements");
-  const now = Date.now();
-  const rows = announcements.filter((item) => {
-    const matchedKeyword = `${item.title} ${item.body}`.toLowerCase().includes(keyword.toLowerCase());
-    const matchedType = type === "all" || item.type === type;
-    const matchedSegment =
-      segment === "all" ||
-      (segment === "active" && announcementIsLive(item, now)) ||
-      (segment === "pinned" && item.pinned) ||
-      (segment === "scheduled" && item.enabled && item.startsAt && new Date(item.startsAt).getTime() > now) ||
-      (segment === "expired" && item.endsAt && new Date(item.endsAt).getTime() < now) ||
-      (segment === "disabled" && !item.enabled) ||
-      item.type === segment;
-    return matchedKeyword && matchedType && matchedSegment;
-  });
-  const liveRows = announcements.filter((item) => announcementIsLive(item, now));
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  // Recompute membership only after an explicit filter change or a refreshed server list.
+  // The live clock below can update badges/counts without unmounting an unsaved row editor.
+  const rows = useMemo(() => selectAnnouncementRows(announcements, { keyword, type, segment }), [announcements, keyword, type, segment]);
+  const liveRows = announcements.filter((item) => announcementScheduleStatus(item, now) === "active");
   const railItems: AdminRailItem[] = [
     { id: "all", label: "全部公告", count: announcements.length, meta: "后台公告池", tone: "blue" },
     { id: "active", label: "前台生效", count: liveRows.length, meta: "工作台可见", tone: "green" },
     { id: "pinned", label: "置顶", count: announcements.filter((item) => item.pinned).length, meta: "优先展示", tone: "amber" },
-    { id: "scheduled", label: "定时发布", count: announcements.filter((item) => item.enabled && item.startsAt && new Date(item.startsAt).getTime() > now).length, meta: "等待开始", tone: "blue" },
-    { id: "expired", label: "已过期", count: announcements.filter((item) => item.endsAt && new Date(item.endsAt).getTime() < now).length, meta: "自动隐藏", tone: "danger" },
-    { id: "disabled", label: "停用", count: announcements.filter((item) => !item.enabled).length, meta: "不会展示", tone: "danger" },
+    { id: "scheduled", label: "定时发布", count: announcements.filter((item) => announcementScheduleStatus(item, now) === "scheduled").length, meta: "等待开始", tone: "blue" },
+    { id: "expired", label: "已过期", count: announcements.filter((item) => announcementScheduleStatus(item, now) === "expired").length, meta: "自动隐藏", tone: "danger" },
+    { id: "disabled", label: "停用", count: announcements.filter((item) => announcementScheduleStatus(item, now) === "disabled").length, meta: "不会展示", tone: "danger" },
     { id: "update", label: "更新", count: announcements.filter((item) => item.type === "update").length, meta: "版本/能力" },
     { id: "guide", label: "指引", count: announcements.filter((item) => item.type === "guide").length, meta: "教程/说明", tone: "violet" },
     { id: "warning", label: "提醒", count: announcements.filter((item) => item.type === "warning").length, meta: "故障/风险", tone: "amber" }
@@ -2538,7 +2538,7 @@ function AnnouncementsSection({
             </AdminToolbar>
             <div className="admin-announcement-list">
               {rows.map((item) => (
-                <AnnouncementRow key={item.id} announcement={item} onSave={onSave} onDelete={onDelete} />
+                <AnnouncementRow key={item.id} announcement={item} now={now} onSave={onSave} onDelete={onDelete} />
               ))}
               {!rows.length ? <EmptyHint text="没有匹配的公告。可以切换左侧分层，或新增一条前台公告。" /> : null}
             </div>
@@ -2761,14 +2761,20 @@ function helpCategoryLabel(value: HelpArticle["category"]) {
 
 function AnnouncementRow({
   announcement,
+  now,
   onSave,
   onDelete
 }: {
   announcement: PlatformAnnouncement;
+  now: number;
   onSave: (id: string, input: Partial<AnnouncementInput>) => AdminActionResult;
   onDelete: (id: string) => AdminActionResult;
 }) {
   const [draft, setDraft] = useState(() => announcementDraft(announcement));
+  const scheduleHintId = useId();
+  const scheduleErrorId = useId();
+  const schedule = buildAnnouncementSchedule(draft, announcement);
+  const status = announcementScheduleStatus(announcement, now);
   useEffect(() => setDraft(announcementDraft(announcement)), [announcement.id, announcement.updatedAt]);
   const dirty =
     draft.title !== announcement.title ||
@@ -2776,24 +2782,24 @@ function AnnouncementRow({
     draft.type !== announcement.type ||
     draft.enabled !== announcement.enabled ||
     draft.pinned !== announcement.pinned ||
-    draft.startsAt !== dateInputValue(announcement.startsAt) ||
-    draft.endsAt !== dateInputValue(announcement.endsAt);
+    draft.startsAt !== announcementDateInput(announcement.startsAt) ||
+    draft.endsAt !== announcementDateInput(announcement.endsAt);
   return (
     <article className="admin-announcement-card">
       <div className="admin-announcement-card-head">
         <span className={`admin-chip announcement-${draft.type}`}>{announcementTypeLabel(draft.type)}</span>
-        <StatusChip active={draft.enabled && announcementIsLive({ ...announcement, ...draft, startsAt: dateToIso(draft.startsAt) ?? undefined, endsAt: dateToIso(draft.endsAt) ?? undefined }, Date.now())} label={draft.enabled ? "展示中" : "停用"} />
+        <StatusChip active={status === "active"} label={announcementStatusLabels[status]} />
+        {dirty ? <span className="admin-chip">未保存</span> : null}
         {draft.pinned ? <span className="admin-status enabled">置顶</span> : null}
         <div className="admin-row-actions">
           <button className="admin-icon-btn" title={draft.enabled ? "停用" : "启用"} onClick={() => setDraft({ ...draft, enabled: !draft.enabled })}>{draft.enabled ? <ToggleRight size={18} /> : <ToggleLeft size={18} />}</button>
-          <button className={dirty ? "admin-text-btn primary" : "admin-text-btn"} disabled={!dirty || !draft.title.trim() || !draft.body.trim()} onClick={() => onSave(announcement.id, {
+          <button className={dirty ? "admin-text-btn primary" : "admin-text-btn"} disabled={!dirty || !draft.title.trim() || !draft.body.trim() || !schedule.ok} onClick={() => schedule.ok && onSave(announcement.id, {
             title: draft.title,
             body: draft.body,
             type: draft.type,
             enabled: draft.enabled,
             pinned: draft.pinned,
-            startsAt: dateToIso(draft.startsAt),
-            endsAt: dateToIso(draft.endsAt)
+            ...schedule.patch
           })}>保存</button>
           <button className="admin-icon-btn danger" title="删除公告" onClick={() => { if (window.confirm("确认删除这条平台公告？前台会立即不再展示。")) onDelete(announcement.id); }}><Trash2 size={16} /></button>
         </div>
@@ -2807,8 +2813,10 @@ function AnnouncementRow({
           <option value="warning">提醒</option>
         </select></label>
         <label><span>展示优先级</span><button className={draft.pinned ? "admin-secondary-btn compact active" : "admin-secondary-btn compact"} type="button" onClick={() => setDraft({ ...draft, pinned: !draft.pinned })}>{draft.pinned ? "已置顶" : "普通"}</button></label>
-        <label><span>开始日期</span><input type="date" value={draft.startsAt} onChange={(event) => setDraft({ ...draft, startsAt: event.target.value })} /></label>
-        <label><span>结束日期</span><input type="date" value={draft.endsAt} onChange={(event) => setDraft({ ...draft, endsAt: event.target.value })} /></label>
+        <label><span>开始日期（北京时间）</span><input type="date" value={draft.startsAt} aria-invalid={!schedule.ok && schedule.field === "startsAt"} aria-describedby={`${scheduleHintId}${!schedule.ok ? ` ${scheduleErrorId}` : ""}`} onChange={(event) => setDraft({ ...draft, startsAt: event.target.value })} /></label>
+        <label><span>结束日期（北京时间）</span><input type="date" value={draft.endsAt} aria-invalid={!schedule.ok && schedule.field === "endsAt"} aria-describedby={`${scheduleHintId}${!schedule.ok ? ` ${scheduleErrorId}` : ""}`} onChange={(event) => setDraft({ ...draft, endsAt: event.target.value })} /></label>
+        <small className="wide" id={scheduleHintId}>开始日零点生效，结束日全天有效；留空不设限制。未修改的日期保留原精确时刻。</small>
+        {!schedule.ok ? <p className="admin-toast danger wide" id={scheduleErrorId} role="alert">{schedule.error}</p> : null}
         <label className="wide"><span>公告内容</span><textarea value={draft.body} onChange={(event) => setDraft({ ...draft, body: event.target.value })} /></label>
       </div>
     </article>
@@ -2825,6 +2833,9 @@ function AnnouncementCreator({ onCreate }: { onCreate: (input: AnnouncementInput
     startsAt: "",
     endsAt: ""
   });
+  const scheduleHintId = useId();
+  const scheduleErrorId = useId();
+  const schedule = buildAnnouncementSchedule(draft);
   return (
     <div className="admin-modal-form admin-announcement-create-form">
       <div>
@@ -2839,18 +2850,19 @@ function AnnouncementCreator({ onCreate }: { onCreate: (input: AnnouncementInput
         <option value="update">更新</option>
         <option value="warning">提醒</option>
       </select></label>
-      <label className="admin-create-field"><span>开始日期</span><input type="date" value={draft.startsAt} onChange={(event) => setDraft({ ...draft, startsAt: event.target.value })} /></label>
-      <label className="admin-create-field"><span>结束日期</span><input type="date" value={draft.endsAt} onChange={(event) => setDraft({ ...draft, endsAt: event.target.value })} /></label>
+      <label className="admin-create-field"><span>开始日期（北京时间）</span><input type="date" value={draft.startsAt} aria-invalid={!schedule.ok && schedule.field === "startsAt"} aria-describedby={`${scheduleHintId}${!schedule.ok ? ` ${scheduleErrorId}` : ""}`} onChange={(event) => setDraft({ ...draft, startsAt: event.target.value })} /></label>
+      <label className="admin-create-field"><span>结束日期（北京时间）</span><input type="date" value={draft.endsAt} aria-invalid={!schedule.ok && schedule.field === "endsAt"} aria-describedby={`${scheduleHintId}${!schedule.ok ? ` ${scheduleErrorId}` : ""}`} onChange={(event) => setDraft({ ...draft, endsAt: event.target.value })} /></label>
+      <small className="wide" id={scheduleHintId}>开始日零点生效，结束日全天有效；留空不设限制。</small>
+      {!schedule.ok ? <p className="admin-toast danger wide" id={scheduleErrorId} role="alert">{schedule.error}</p> : null}
       <label className="admin-create-field checkbox-field"><span>前台展示</span><input type="checkbox" checked={draft.enabled} onChange={(event) => setDraft({ ...draft, enabled: event.target.checked })} /></label>
       <label className="admin-create-field checkbox-field"><span>置顶</span><input type="checkbox" checked={draft.pinned} onChange={(event) => setDraft({ ...draft, pinned: event.target.checked })} /></label>
-      <button className="admin-primary-btn" disabled={!draft.title.trim() || !draft.body.trim()} onClick={() => onCreate({
+      <button className="admin-primary-btn" disabled={!draft.title.trim() || !draft.body.trim() || !schedule.ok} onClick={() => schedule.ok && onCreate({
         title: draft.title,
         body: draft.body,
         type: draft.type,
         enabled: draft.enabled,
         pinned: draft.pinned,
-        startsAt: dateToIso(draft.startsAt),
-        endsAt: dateToIso(draft.endsAt)
+        ...schedule.patch
       })}>
         <Megaphone size={18} />发布公告
       </button>
@@ -2865,16 +2877,9 @@ function announcementDraft(announcement: PlatformAnnouncement) {
     type: announcement.type,
     enabled: announcement.enabled,
     pinned: announcement.pinned,
-    startsAt: dateInputValue(announcement.startsAt),
-    endsAt: dateInputValue(announcement.endsAt)
+    startsAt: announcementDateInput(announcement.startsAt),
+    endsAt: announcementDateInput(announcement.endsAt)
   };
-}
-
-function announcementIsLive(announcement: Pick<PlatformAnnouncement, "enabled" | "startsAt" | "endsAt">, now = Date.now()) {
-  if (!announcement.enabled) return false;
-  if (announcement.startsAt && new Date(announcement.startsAt).getTime() > now) return false;
-  if (announcement.endsAt && new Date(announcement.endsAt).getTime() < now) return false;
-  return true;
 }
 
 function announcementTypeLabel(value: PlatformAnnouncement["type"]) {
