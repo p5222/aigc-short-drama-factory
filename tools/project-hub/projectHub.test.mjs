@@ -36,7 +36,7 @@ test('server auth, real Git project isolation, selected commits and release veri
     await localGit(source, ['switch', '-c', 'feature/remote']); await writeFile(path.join(source, 'remote.txt'), 'remote branch\n'); await localGit(source, ['add', '.']); await localGit(source, ['commit', '-m', 'remote branch']); await localGit(source, ['push', bare, 'feature/remote']); await localGit(source, ['switch', 'main']);
     const config = { publicOrigin: origin, username: 'admin', passwordHash: await hashPassword(password), workspaceRoot: path.join(base, 'workspaces'), dataDir: path.join(base, 'data'), gitIdentity: { name: 'Hub Admin', email: 'hub@example.test' }, deployments: [{ githubUrl, remote: 'ssh://deployment-host/repository.git', verifyUrl: origin + '/ready' }] };
     const runGit = async (args, cwd, options) => {
-      operations.push({ args, cwd, network: options.network });
+      operations.push({ args, cwd, network: options.network, timeoutMs: options.timeoutMs });
       if (args[0] === 'clone') { await localGit(cwd, ['clone', '--', bare, args.at(-1)]); await localGit(args.at(-1), ['remote', 'set-url', 'origin', githubUrl]); return ''; }
       if (args[0] === 'fetch') { if (holdFetch) { markFetch?.(); await holdFetch; } return localGit(cwd, ['fetch', bare, '+refs/heads/*:refs/remotes/origin/*']); }
       if (args[0] === 'pull') return localGit(cwd, ['pull', '--ff-only', bare, args.at(-1)]);
@@ -84,7 +84,13 @@ test('server auth, real Git project isolation, selected commits and release veri
       first = await register('First'); second = await register('Second');
       assert.notEqual(first.id, second.id);
       const result = await request('/projects'); assert.equal(result.body.projects.length, 2); assert.equal(JSON.stringify(result.body).includes(base), false);
-      assert.equal((await request(`/projects/${first.id}/status`)).body.branch, 'main');
+      const initialStatus = (await request(`/projects/${first.id}/status`)).body;
+      assert.equal(initialStatus.branch, 'main');
+      assert.deepEqual(initialStatus.remoteBranches, ['feature/remote', 'main'], 'symbolic origin/HEAD must not appear as a fake origin branch');
+      const folder = path.join(config.workspaceRoot, first.id);
+      await localGit(folder, ['symbolic-ref', 'refs/remotes/origin/alias', 'refs/remotes/origin/main']);
+      await localGit(folder, ['update-ref', 'refs/remotes/origin/origin', 'HEAD']);
+      assert.deepEqual((await request(`/projects/${first.id}/status`)).body.remoteBranches, ['feature/remote', 'main', 'origin'], 'exclude symbolic aliases while preserving a real branch named origin');
       assert.equal((await request('/projects', { name: 'bad', githubUrl: 'https://token@github.com/owner/repo' })).status, 400);
       assert.equal((await request('/projects/not-a-uuid/status')).status, 404);
     });
@@ -153,6 +159,11 @@ test('server auth, real Git project isolation, selected commits and release veri
       const folder = path.join(config.workspaceRoot, second.id); await writeFile(path.join(folder, 'local-only.txt'), 'ahead\n'); await localGit(folder, ['add', '.']); await localGit(folder, ['commit', '-m', 'unmerged local main']);
       assert.equal((await action(second, { action: 'deploy' })).status, 'failed');
       assert.ok(operations.some(call => call.args[0] === 'push' && call.args[1] === 'ssh://deployment-host/repository.git' && call.network === false));
+      const deploymentPushes = operations.filter(call => call.args[0] === 'push' && call.args[1] === 'ssh://deployment-host/repository.git');
+      assert.ok(deploymentPushes.some(call => call.args.at(-1).endsWith(':refs/heads/main')));
+      assert.ok(deploymentPushes.some(call => call.args.at(-1).includes(':refs/heads/deploy-requests/')));
+      assert.ok(deploymentPushes.every(call => call.timeoutMs === 2_400_000), 'both deployment and retry must pass 40 minutes into the Git executor');
+      assert.ok(operations.filter(call => !deploymentPushes.includes(call)).every(call => call.timeoutMs === 600_000), 'ordinary Git operations retain the 10-minute timeout');
     });
     await t.test('persisted audit excludes credentials and restart marks in-flight records interrupted', async () => {
       await hub.drain(); await hub.close();
