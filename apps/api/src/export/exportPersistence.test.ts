@@ -15,6 +15,9 @@ test("export completion and shot invalidation commit consistently in PostgreSQL"
   assert.match(url.pathname, /^\/audit_api_[a-z0-9_]+$/i);
   process.env.AIFILM_LOAD_ENV_FILES = "false";
   const db = new PrismaClient({ datasourceUrl: databaseUrl });
+  const observerUrl = new URL(databaseUrl!);
+  observerUrl.searchParams.set("connection_limit", "1");
+  const observer = new PrismaClient({ datasourceUrl: observerUrl.toString() });
   const { getProjectWorkflow, persistProjectExportSuccess } = await import("../db/repository.js");
   const { updateStoryboardShot } = await import("../db/storyboardActions.js");
   const { runMediaTask } = await import("../billing/mediaTask.js");
@@ -61,11 +64,14 @@ test("export completion and shot invalidation commit consistently in PostgreSQL"
     ledger: await db.creditTransaction.findMany({ where: { projectId }, orderBy: { id: "asc" } })
   });
 
-  // Observe real PostgreSQL waiters, rather than assuming a sleep means two operations overlapped.
+  // All three writer connections may be occupied in CI. A separate one-connection observer
+  // reads pg_locks in a read-only transaction without competing for the writers' pool.
   async function awaitAdvisoryWaiters(blockerPid: number, expected: number) {
     const deadline = Date.now() + 5_000;
     while (Date.now() < deadline) {
-      const [row] = await db.$queryRaw<Array<{ count: number }>>`
+      const [row] = await observer.$transaction(async tx => {
+        await tx.$executeRaw`SET TRANSACTION READ ONLY`;
+        return tx.$queryRaw<Array<{ count: number }>>`
         SELECT count(*)::int AS count FROM pg_locks waiting
         JOIN pg_locks holding ON waiting.locktype = holding.locktype
           AND waiting.database IS NOT DISTINCT FROM holding.database
@@ -74,6 +80,7 @@ test("export completion and shot invalidation commit consistently in PostgreSQL"
           AND waiting.objsubid IS NOT DISTINCT FROM holding.objsubid
         WHERE holding.pid = ${blockerPid} AND holding.granted
           AND waiting.locktype = 'advisory' AND NOT waiting.granted`;
+      });
       if (row?.count === expected) return;
       await delay(10);
     }
@@ -278,7 +285,7 @@ test("export completion and shot invalidation commit consistently in PostgreSQL"
       assert.equal(await status(source.projectId), "completed");
     });
   } finally {
-    await db.user.deleteMany({ where: { id: userId } });
-    await db.$disconnect();
+    try { await db.user.deleteMany({ where: { id: userId } }); }
+    finally { await Promise.all([db.$disconnect(), observer.$disconnect()]); }
   }
 });
