@@ -23,8 +23,8 @@ export function createGitOperations(config, dependencies = {}) {
   const cleanup = value => scrub(value, [], [root, config.dataDir]);
   const err = (message, status = 400) => Object.assign(new Error(message), { status });
   const gitOptions = ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-c', 'commit.gpgsign=false', '-c', 'protocol.file.allow=never', '-c', 'protocol.ext.allow=never', '-c', 'credential.helper=', '-c', 'credential.https://github.com.helper=!gh auth git-credential'];
-  async function execute(args, cwd, { network = false, log = () => {} } = {}) {
-    if (dependencies.runGit) return dependencies.runGit(args, cwd, { network, log });
+  async function execute(args, cwd, { network = false, log = () => {}, timeoutMs = 600_000 } = {}) {
+    if (dependencies.runGit) return dependencies.runGit(args, cwd, { network, log, timeoutMs });
     let token = '';
     if (network && process.env.PROJECT_HUB_GITHUB_TOKEN_FILE) {
       try { token = (await readFile(process.env.PROJECT_HUB_GITHUB_TOKEN_FILE, 'utf8')).trim(); }
@@ -45,7 +45,7 @@ export function createGitOperations(config, dependencies = {}) {
       const child = spawn('git', [...gitOptions, ...args], { cwd, env, windowsHide: true, shell: false });
       let output = '', errors = '', ended = false;
       const finish = (error, data) => { if (ended) return; ended = true; clearTimeout(timer); error ? reject(error) : resolve(data); };
-      const timer = setTimeout(() => { child.kill('SIGKILL'); finish(err('Git 操作超时，请检查任务状态后再继续。')); }, 600_000);
+      const timer = setTimeout(() => { child.kill('SIGKILL'); finish(err('Git 操作超时，请检查任务状态后再继续。')); }, timeoutMs);
       child.stdout.on('data', chunk => { output += chunk; if (output.length > 8_000_000) { child.kill(); finish(err('Git 输出过大，请缩小操作范围。')); } });
       child.stderr.on('data', chunk => { errors = (errors + chunk).slice(-100_000); });
       child.on('error', () => finish(err('无法启动 Git，请检查服务配置。')));
@@ -103,7 +103,11 @@ export function createGitOperations(config, dependencies = {}) {
     const upstream = (await execute(['rev-parse', '--abbrev-ref', '@{upstream}'], folder).catch(() => '')).trim();
     const count = (await execute(['rev-list', '--left-right', '--count', 'HEAD...@{upstream}'], folder).catch(() => '0 0')).trim().split(/\s+/).map(Number);
     const lastDeployment = project.lastDeployment && { deployment: project.lastDeployment.deployment, commit: project.lastDeployment.commit, verification: project.lastDeployment.verification };
-    return { branch: current, head, upstream, ahead: count[0] || 0, behind: count[1] || 0, lastDeployment: lastDeployment || null, branches: lines(await execute(['for-each-ref', '--format=%(refname:short)', 'refs/heads'], folder)), remoteBranches: lines(await execute(['for-each-ref', '--format=%(refname:short)', 'refs/remotes/origin'], folder)).filter(v => v !== 'origin/HEAD').map(v => v.replace(/^origin\//, '')), files: changed, clean: changed.length === 0, prUrl: current && !/^(main|master)$/i.test(current) ? `${project.githubUrl}/compare/main...${encodeURIComponent(current)}?expand=1` : '' };
+    const remoteBranches = lines(await execute(['for-each-ref', '--format=%(refname)%00%(symref)', 'refs/remotes/origin'], folder))
+      .map(line => line.split('\0'))
+      .filter(([ref, symbolicTarget]) => !symbolicTarget && ref.startsWith('refs/remotes/origin/') && ref !== 'refs/remotes/origin/HEAD')
+      .map(([ref]) => ref.slice('refs/remotes/origin/'.length));
+    return { branch: current, head, upstream, ahead: count[0] || 0, behind: count[1] || 0, lastDeployment: lastDeployment || null, branches: lines(await execute(['for-each-ref', '--format=%(refname:short)', 'refs/heads'], folder)), remoteBranches, files: changed, clean: changed.length === 0, prUrl: current && !/^(main|master)$/i.test(current) ? `${project.githubUrl}/compare/main...${encodeURIComponent(current)}?expand=1` : '' };
   }
   async function diff(project, name) {
     const folder = await workspace(project), file = (await files(folder)).find(value => value.name === name);
@@ -193,11 +197,11 @@ export function createGitOperations(config, dependencies = {}) {
         if (input.expectedCommit !== head || previousDeployment?.deployment !== 'accepted' || previousDeployment.commit !== head) throw err('只能显式确认并重试此工作台此前已接受的同一发布版本。', 409);
         if (refs.main !== head) throw err('服务器 main 已发生变化，请检查当前版本；不能重试旧提交。', 409);
         const retryRef = `refs/heads/deploy-requests/${Date.now()}-${randomUUID()}`;
-        await execute(['push', target.remote, head + ':' + retryRef], folder, { log });
+        await execute(['push', target.remote, head + ':' + retryRef], folder, { log, timeoutMs: 2_400_000 });
         return { message: '服务器 Git 已接受同版本重试请求。', ...await verify(project, head, folder, retryRef) };
       }
       if (refs.main === head && refs.deployed !== head) throw err('服务器已接受此提交但发布尚未确认。请检查发布日志，修复后使用“重试同一版本发布”。', 409);
-      if (refs.main !== head) await execute(['push', target.remote, head + ':refs/heads/main'], folder, { log });
+      if (refs.main !== head) await execute(['push', target.remote, head + ':refs/heads/main'], folder, { log, timeoutMs: 2_400_000 });
       return { message: '服务器 Git 已接受发布提交。', ...await verify(project, head, folder) };
     }
     if (name === 'verify') {
