@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { assertProductionMediaProvider, runMediaTask } from "../billing/mediaTask.js";
 import type { BatchGenerationResult, CreateProjectInput, StoryboardShot } from "@aifilm/shared";
 import { estimateImageCredits, normalizeImageOutputQuality, normalizeImageOutputSize, normalizeImageProviderId, resolveImageUnitCredits } from "@aifilm/shared";
 import { generateProjectStoryboards, textModelName, textProviderName } from "../agents/generator.js";
@@ -67,18 +68,19 @@ export async function runProjectStoryboardTasks(
     : null;
   const runtimeInput = {
     ...input,
+    textModelPool: [textModelName(input)],
     baseUrl: textProviderConfig?.baseUrl ?? undefined,
     apiKey: textProviderConfig?.apiKey ?? undefined
   };
 
+  assertProductionMediaProvider(textProviderConfig, input.textProvider || "", textModelName(input), "text");
   const credits = await resolveTextRunCredits(input);
-  const account = await prisma.creditAccount.findUniqueOrThrow({ where: { userId } });
-  if (account.balance - account.frozenBalance < credits) throw new Error("Insufficient credits");
 
-  const generated = await generateProjectStoryboards(projectId, runtimeInput, workflow.script, workflow.characters);
-  const taskId = "task_storyboard_" + Date.now();
+  return runMediaTask({ userId, projectId, projectName: workflow.project.name, estimatedCredits: credits, type: "storyboard", scope: "storyboard", provider: textProviderName(input), model: textModelName(input), title: "分镜生成" }, async (billing) => {
+  const generated = await generateProjectStoryboards(projectId, runtimeInput, workflow.script!, workflow.characters);
+  if (process.env.NODE_ENV === "production" && generated.mode !== "real") throw new Error("真实分镜生成未成功，未使用占位分镜交付。");
 
-  const result = await prisma.$transaction(async (tx) => {
+  const result = await billing.complete(credits, async (tx) => {
     const generatedEpisodes = [...new Set(generated.storyboards.map((shot) => shot.episodeNo))];
     const replacedShots = await tx.storyboard.findMany({ where: { projectId, episodeNo: { in: generatedEpisodes } }, select: { id: true } });
     if (replacedShots.length) {
@@ -122,22 +124,6 @@ export async function runProjectStoryboardTasks(
       });
     }
 
-    const task = await tx.generationTask.create({
-      data: {
-        id: taskId,
-        userId,
-        projectId,
-        projectName: workflow.project.name,
-        type: "storyboard",
-        title: "Storyboard generation",
-        provider: generated.mode === "real" ? textProviderName(input) : "Local Generator",
-        model: generated.mode === "real" ? textModelName(input) : "local-storyboard-v1",
-        status: "succeeded",
-        progress: 100,
-        estimatedCredits: credits,
-        finalCredits: credits
-      }
-    });
 
     const totalAssets = await tx.asset.count({ where: { projectId } });
     await tx.project.update({
@@ -152,29 +138,14 @@ export async function runProjectStoryboardTasks(
       }
     });
 
-    await tx.creditAccount.update({
-      where: { userId },
-      data: { balance: { decrement: credits }, totalConsume: { increment: credits } }
-    });
 
-    await tx.creditTransaction.create({
-      data: {
-        id: "tx_" + Date.now() + "_storyboard",
-        userId,
-        projectId,
-        taskId,
-        type: "consume",
-        amount: -credits,
-        balanceAfter: account.balance - credits,
-        description: "Storyboard generation credits"
-      }
-    });
 
-    return { task, created: generated.storyboards.length };
+    return { created: generated.storyboards.length };
   });
 
   const project = await prisma.project.findFirstOrThrow({ where: { id: projectId, userId } });
   return { project: mapProject(project), task: mapTask(result.task), assetsCreated: result.created };
+  });
 }
 
 export async function updateStoryboardShot(
@@ -261,11 +232,11 @@ export async function regenerateStoryboardShotImage(projectId: string, shotId: s
   const imageSize = normalizeImageOutputSize(workflow.project.imageSize);
   const imageQuality = normalizeImageOutputQuality(workflow.project.imageQuality);
   const imageProviderConfig = await prisma.modelProvider.findUnique({ where: { id: imageProvider } });
+  assertProductionMediaProvider(imageProviderConfig, imageProvider, imageModel, "image");
   const assetById = new Map(workflow.assets.map((asset) => [asset.id, asset]));
   const credits = await resolveImageCredits(imageProvider, imageModel, imageSize, imageQuality);
-  const account = await prisma.creditAccount.findUniqueOrThrow({ where: { userId } });
-  if (account.balance - account.frozenBalance < credits) throw new Error("Insufficient credits");
 
+  return runMediaTask({ userId, projectId, projectName: workflow.project.name, estimatedCredits: credits, type: "image", scope: "image", title: "分镜首帧重新生成", provider: imageProvider, model: imageModel }, async (billing) => {
   const resolvedReferences = resolveStoryboardReferenceAssets(workflow, shot, assetById);
   const imageResult = await generateImage({
     prompt: buildStoryboardFirstFramePrompt({ workflow, shot, assetById }),
@@ -275,6 +246,7 @@ export async function regenerateStoryboardShotImage(projectId: string, shotId: s
     seed: 41000 + shot.shotNo,
     provider: imageProvider,
     model: imageModel,
+    modelPool: [imageModel],
     size: imageSize,
     quality: imageQuality,
     baseUrl: imageProviderConfig?.baseUrl ?? undefined,
@@ -293,24 +265,7 @@ export async function regenerateStoryboardShotImage(projectId: string, shotId: s
   }
   const storedImageUrl = await persistImageReference(imageResult.imageUrl, `shot-${projectId}-${shot.shotNo}`);
 
-  const taskId = "task_image_one_" + Date.now();
-  const result = await prisma.$transaction(async (tx) => {
-    const task = await tx.generationTask.create({
-      data: {
-        id: taskId,
-        userId,
-        projectId,
-        projectName: workflow.project.name,
-        type: "image",
-        title: "Single shot image regeneration",
-        provider: imageResult.provider || currentImageProviderName(imageProvider),
-        model: imageResult.model || currentImageModelName(imageProvider, imageModel),
-        status: "succeeded",
-        progress: 100,
-        estimatedCredits: credits,
-        finalCredits: credits
-      }
-    });
+  const result = await billing.complete(credits, async (tx) => {
 
     const fallback = createSvgDataUrl("Shot " + shot.shotNo, shot.pictureDesc, workflow.project.artStyle);
     const referenceUrl = storedImageUrl || imageResult.imageUrl || fallback;
@@ -333,13 +288,12 @@ export async function regenerateStoryboardShotImage(projectId: string, shotId: s
     await tx.storyboard.update({ where: { id: shot.id }, data: { status: "succeeded" } });
     const totalImageAssets = await tx.asset.count({ where: { projectId, type: { in: ["role", "role_derivative", "scene", "prop", "image", "cover"] } } });
     await tx.project.update({ where: { id: projectId }, data: { status: "asseting", imageAssets: totalImageAssets, creditsSpent: { increment: credits } } });
-    await tx.creditAccount.update({ where: { userId }, data: { balance: { decrement: credits }, totalConsume: { increment: credits } } });
-    await tx.creditTransaction.create({ data: { id: "tx_" + Date.now() + "_image_one", userId, projectId, taskId, type: "consume", amount: -credits, balanceAfter: account.balance - credits, description: "Single shot image regeneration credits" } });
-    return { task };
+    return {};
   });
 
   const project = await prisma.project.findFirstOrThrow({ where: { id: projectId, userId } });
   return { project: mapProject(project), task: mapTask(result.task), assetsCreated: 1 };
+  });
 }
 
 export async function generateSceneEnvironmentImage(projectId: string, assetId: string, userId = DEMO_USER_ID): Promise<BatchGenerationResult> {
@@ -353,10 +307,10 @@ export async function generateSceneEnvironmentImage(projectId: string, assetId: 
   const imageSize = normalizeImageOutputSize(workflow.project.imageSize);
   const imageQuality = normalizeImageOutputQuality(workflow.project.imageQuality);
   const imageProviderConfig = await prisma.modelProvider.findUnique({ where: { id: imageProvider } });
+  assertProductionMediaProvider(imageProviderConfig, imageProvider, imageModel, "image");
   const credits = await resolveImageCredits(imageProvider, imageModel, imageSize, imageQuality);
-  const account = await prisma.creditAccount.findUniqueOrThrow({ where: { userId } });
-  if (account.balance - account.frozenBalance < credits) throw new Error("Insufficient credits");
 
+  return runMediaTask({ userId, projectId, projectName: workflow.project.name, estimatedCredits: credits, type: "image", scope: "image", title: "场景参考图生成", provider: imageProvider, model: imageModel }, async (billing) => {
   const prompt = [
     "为 AI 漫剧生产生成一张 16:9 场景环境概念图。",
     `场景：${asset.name}。`,
@@ -372,6 +326,7 @@ export async function generateSceneEnvironmentImage(projectId: string, assetId: 
     seed: 63000 + Math.abs(asset.id.split("").reduce((sum, char) => sum + char.charCodeAt(0), 0)) % 1000,
     provider: imageProvider,
     model: imageModel,
+    modelPool: [imageModel],
     size: imageSize,
     quality: imageQuality,
     baseUrl: imageProviderConfig?.baseUrl ?? undefined,
@@ -388,48 +343,19 @@ export async function generateSceneEnvironmentImage(projectId: string, assetId: 
   }
   const storedImageUrl = await persistImageReference(imageResult.imageUrl, `scene-${projectId}-${asset.id}`);
   const referenceUrl = storedImageUrl || imageResult.imageUrl || createSvgDataUrl(asset.name, asset.description || "场景环境资产", workflow.project.artStyle);
-  const taskId = "task_scene_image_" + Date.now();
 
-  const result = await prisma.$transaction(async (tx) => {
-    const task = await tx.generationTask.create({
-      data: {
-        id: taskId,
-        userId,
-        projectId,
-        projectName: workflow.project.name,
-        type: "image",
-        title: `Scene environment image: ${asset.name}`,
-        provider: imageResult.provider || currentImageProviderName(imageProvider),
-        model: imageResult.model || currentImageModelName(imageProvider, imageModel),
-        status: "succeeded",
-        progress: 100,
-        estimatedCredits: credits,
-        finalCredits: credits
-      }
-    });
+  const result = await billing.complete(credits, async (tx) => {
     await tx.asset.update({
       where: { id: asset.id },
       data: { prompt, referenceUrl, status: "succeeded" }
     });
     await tx.project.update({ where: { id: projectId }, data: { status: "asseting", creditsSpent: { increment: credits } } });
-    await tx.creditAccount.update({ where: { userId }, data: { balance: { decrement: credits }, totalConsume: { increment: credits } } });
-    await tx.creditTransaction.create({
-      data: {
-        id: "tx_" + Date.now() + "_scene_image",
-        userId,
-        projectId,
-        taskId,
-        type: "consume",
-        amount: -credits,
-        balanceAfter: account.balance - credits,
-        description: "Scene environment image credits"
-      }
-    });
-    return { task };
+    return {};
   });
 
   const project = await prisma.project.findFirstOrThrow({ where: { id: projectId, userId } });
   return { project: mapProject(project), task: mapTask(result.task), assetsCreated: 1 };
+  });
 }
 
 export async function generateCharacterReferenceImages(projectId: string, userId = DEMO_USER_ID, input: CharacterReferenceGenerateInput = {}): Promise<BatchGenerationResult> {
@@ -447,11 +373,10 @@ export async function generateCharacterReferenceImages(projectId: string, userId
   const imageSize = normalizeImageOutputSize(workflow.project.imageSize);
   const imageQuality = normalizeImageOutputQuality(workflow.project.imageQuality);
   const imageProviderConfig = await prisma.modelProvider.findUnique({ where: { id: imageProvider } });
-  const selectedJobs = roleJobs.slice(0, characterImageBatchLimit(roleJobs.length, imageProvider));
+  assertProductionMediaProvider(imageProviderConfig, imageProvider, imageModel, "image");
+  let selectedJobs = roleJobs.slice(0, characterImageBatchLimit(roleJobs.length, imageProvider));
   const creditsPerAsset = await resolveImageCredits(imageProvider, imageModel, imageSize, imageQuality);
-  const credits = selectedJobs.length * creditsPerAsset;
-  const account = await prisma.creditAccount.findUniqueOrThrow({ where: { userId } });
-  if (account.balance - account.frozenBalance < credits) throw new Error("Insufficient credits");
+  let credits = selectedJobs.length * creditsPerAsset;
   if (!selectedJobs.length) {
     const task = await prisma.generationTask.create({
       data: {
@@ -473,8 +398,13 @@ export async function generateCharacterReferenceImages(projectId: string, userId
     return { project: mapProject(project), task: mapTask(task), assetsCreated: 0 };
   }
 
+  return runMediaTask({ userId, projectId, projectName: workflow.project.name, estimatedCredits: credits, type: "character", scope: "character", title: "角色参考图生成", provider: imageProvider, model: imageModel }, async (billing) => {
   const imageResults: ImageGenerationResult[] = [];
+  const storedImageUrls: Array<string | undefined> = [];
+  const successfulJobs: CharacterReferenceJob[] = [];
+  const failures: string[] = [];
   for (const [index, { asset, mode }] of selectedJobs.entries()) {
+    try {
     const identityReferenceUrl = asset.referenceUrl;
     const uploadedReferenceUrls = workflow.assets
       .filter((item) => item.type === "role_reference" && item.relatedCharacterId === asset.relatedCharacterId && item.referenceUrl)
@@ -486,8 +416,9 @@ export async function generateCharacterReferenceImages(projectId: string, userId
       referenceImageUrls: [...(identityReferenceUrl ? [identityReferenceUrl] : []), ...uploadedReferenceUrls].slice(0, 5),
       ratio: "16:9",
       seed: 52000 + index,
-      provider: workflow.project.imageProvider,
+      provider: imageProvider,
       model: imageModel,
+      modelPool: [imageModel],
       size: imageSize,
       quality: imageQuality,
       baseUrl: imageProviderConfig?.baseUrl ?? undefined,
@@ -499,23 +430,18 @@ export async function generateCharacterReferenceImages(projectId: string, userId
       }
       throw error;
     });
+    if (!result.imageUrl && !isMockImageProvider(imageProvider)) throw new Error("真实角色模型未返回图片");
+    const storedUrl = await persistImageReference(result.imageUrl, `character-${projectId}-${asset.name}`);
+    storedImageUrls.push(storedUrl);
     imageResults.push(result);
+    successfulJobs.push({ asset, mode });
+    } catch (error) { failures.push(`${asset.name}：${error instanceof Error ? error.message : "生成失败"}`); }
   }
-  const missingImageResult = imageResults.find((result) => !result.imageUrl);
-  if (missingImageResult && !isMockImageProvider(imageProvider)) {
-    throw new Error(
-      `真实角色参考图渠道未返回图片 URL：${missingImageResult.provider || imageProvider} / ${missingImageResult.model || imageModel}。请在后台“测试生图模型”查看上游任务状态。`
-    );
-  }
-  const storedImageUrls = await Promise.all(
-    imageResults.map((result, index) => persistImageReference(result.imageUrl, `character-${projectId}-${selectedJobs[index]?.asset.name ?? index + 1}`))
-  );
+  if (!successfulJobs.length) throw new Error(failures.join("；") || "没有成功生成的角色参考图");
+  selectedJobs = successfulJobs;
+  credits = successfulJobs.length * creditsPerAsset;
 
-  const taskId = "task_character_ref_" + Date.now();
-  const result = await prisma.$transaction(async (tx) => {
-    const task = await tx.generationTask.create({
-      data: { id: taskId, userId, projectId, projectName: workflow.project.name, type: "character", title: "Character reference image generation", provider: imageResults[0]?.provider || currentImageProviderName(imageProvider), model: imageResults[0]?.model || currentImageModelName(imageProvider, imageModel), status: "succeeded", progress: 100, estimatedCredits: credits, finalCredits: credits }
-    });
+  const result = await billing.complete(credits, async (tx) => {
 
     await Promise.all(selectedJobs.map(({ asset, mode }, index) => {
       const referenceUrl = storedImageUrls[index] || imageResults[index]?.imageUrl || createSvgDataUrl(asset.name, `${asset.description} 多视图角色设定表`, workflow.project.artStyle);
@@ -572,13 +498,12 @@ export async function generateCharacterReferenceImages(projectId: string, userId
 
     const totalImageAssets = await tx.asset.count({ where: { projectId, type: { in: ["role", "role_derivative", "scene", "prop", "image", "cover"] } } });
     await tx.project.update({ where: { id: projectId }, data: { status: "asseting", imageAssets: totalImageAssets, creditsSpent: { increment: credits } } });
-    await tx.creditAccount.update({ where: { userId }, data: { balance: { decrement: credits }, totalConsume: { increment: credits } } });
-    await tx.creditTransaction.create({ data: { id: "tx_" + Date.now() + "_role_ref", userId, projectId, taskId, type: "consume", amount: -credits, balanceAfter: account.balance - credits, description: "Character reference image credits" } });
-    return { task, created: selectedJobs.length };
-  });
+    return { created: selectedJobs.length };
+  }, { status: failures.length ? "failed" : "succeeded", errorReason: failures.length ? `已保留成功的 ${successfulJobs.length} 张参考图，仅成功项扣费。${failures.join("；")}` : null });
 
   const project = await prisma.project.findFirstOrThrow({ where: { id: projectId, userId } });
   return { project: mapProject(project), task: mapTask(result.task), assetsCreated: result.created };
+  });
 }
 
 export async function setCharacterReferenceImage(
@@ -773,12 +698,14 @@ async function removeAssetReferencesFromStoryboards(projectId: string, assetIds:
 }
 
 async function resolveTextRunCredits(input: CreateProjectInput) {
-  const price = await prisma.modelPrice.findFirst({ where: { modality: "text", model: textModelName(input), enabled: true } });
+  const price = await prisma.modelPrice.findFirst({ where: { providerId: input.textProvider, modality: "text", model: textModelName(input), enabled: true } });
+  if (!price && process.env.NODE_ENV === "production") throw new Error("该文本模型尚未配置价格，请联系管理员。");
   return price?.unitCredits ?? 50;
 }
 
 async function resolveImageCredits(provider: string, model: string, size?: string, quality?: string) {
   const price = await prisma.modelPrice.findFirst({ where: { providerId: normalizeImageProviderId(provider), model, enabled: true } });
+  if (!price && process.env.NODE_ENV === "production") throw new Error("该图片模型尚未配置价格，请联系管理员。");
   return estimateImageCredits(resolveImageUnitCredits(price ? [price] : [], provider, model), size, quality);
 }
 

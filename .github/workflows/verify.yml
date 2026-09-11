@@ -1,0 +1,91 @@
+name: Verify project
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: verify-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: audit_credits_ci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d audit_credits_ci"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      AIFILM_LOAD_ENV_FILES: "false"
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/audit_credits_ci?schema=public
+      REDIS_URL: redis://127.0.0.1:6379/15
+      AIFILM_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/audit_credits_ci?schema=public
+      AIFILM_TEST_COMMERCE_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/audit_commerce_ci?schema=public
+      AIFILM_TEST_API_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/audit_api_ci?schema=public
+      AIFILM_TEST_REDIS_URL: redis://127.0.0.1:6379/15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install host dependencies for deployment and real media integration tests
+        run: sudo apt-get update && sudo apt-get install -y rsync ffmpeg fonts-noto-cjk
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @aifilm/api db:generate
+      - run: pnpm --filter @aifilm/shared build
+      - name: Create the isolated integration schema without accepting data loss
+        run: pnpm --filter @aifilm/api db:push:deploy
+      - name: Create and initialize the separate commerce integration database
+        run: |
+          docker exec "${{ job.services.postgres.id }}" createdb -U postgres audit_commerce_ci
+          DATABASE_URL="$AIFILM_TEST_COMMERCE_DATABASE_URL" pnpm --filter @aifilm/api db:push:deploy
+      - name: Create and initialize the separate authenticated HTTP integration database
+        run: |
+          docker exec "${{ job.services.postgres.id }}" createdb -U postgres audit_api_ci
+          DATABASE_URL="$AIFILM_TEST_API_DATABASE_URL" pnpm --filter @aifilm/api db:push:deploy
+      - run: pnpm --filter @aifilm/shared --filter @aifilm/web --if-present test:unit
+      - name: Run API unit and real PostgreSQL/Redis integration tests
+        run: pnpm --filter @aifilm/api exec tsx --test --test-concurrency=1 src/**/*.test.ts
+      - run: pnpm typecheck
+      - run: pnpm build
+      - run: node --test tools/git-workbench/workbench.test.mjs
+      - name: Verify Project Hub authentication, real Git isolation, retry and persistent audit
+        run: node --test tools/project-hub/*.test.mjs
+      - name: Verify the scoped Caddy operations route
+        run: python3 -m unittest discover -s deploy/project-hub -p 'test_*.py' -v
+      - run: python3 -m unittest discover -s deploy -p test_deployment.py -v
+      - run: bash -n deploy/manjiao_remote.sh deploy/server_git_post_receive.sh deploy/backup_server_state.sh deploy/install_git_hook.sh
+      - name: Verify live Redis AOF migration preserves unsnapshotted queue data
+        shell: pwsh
+        run: ./deploy/test_redis_persistence.ps1
+      - name: Validate clean production image and FFmpeg
+        run: docker build -f deploy/Dockerfile -t manjiao-verify .
+      - name: Encode a real video with Chinese text and silent AAC audio
+        run: docker run --rm --network none -v "$PWD/deploy/ffmpeg_smoke.sh:/smoke.sh:ro" manjiao-verify sh /smoke.sh
+      - name: Build the isolated Project Hub image
+        run: docker build -f deploy/project-hub/Dockerfile -t project-hub-verify .
+      - name: Verify Project Hub runtime tools without network or credentials
+        run: >-
+          docker run --rm --network none --read-only --tmpfs /tmp:size=64m,mode=1777
+          --entrypoint sh project-hub-verify -ec
+          'test "$(id -u)" = 10001; test -f public/handbook.html;
+          node --check server.mjs; node --version; git --version; gh --version; ssh -V'

@@ -19,6 +19,7 @@ import gsap from "gsap";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent } from "react";
 import { api, type AuthUser } from "../lib/api";
+import { clearAuthToken, storeAuthToken } from "../lib/authStorage";
 import "./CineHome.css";
 import { PublicShowcase, type PublicLocale, type PublicView } from "./PublicShowcase";
 import { cineScenes as scenes } from "./cineScenes";
@@ -82,7 +83,7 @@ const copy = {
     hasAccount: "已有账户?",
     registerNow: "立即注册",
     backLogin: "返回登录",
-    authNote: "授权视频素材已本地化加载，进入项目后继续使用原有业务逻辑。",
+    authNote: "登录后可保存作品，生成素材并导出成片。",
     closeAuth: "关闭登录弹窗",
     adminTitle: "后台管理系统",
     adminIntro: "登录后管理用户、积分、兑换码、模型渠道和计费策略。",
@@ -128,7 +129,7 @@ const copy = {
     hasAccount: "Already have an account?",
     registerNow: "Sign up",
     backLogin: "Back to login",
-    authNote: "Authorized video assets load locally. Project logic stays unchanged after sign-in.",
+    authNote: "Sign in to save projects, generate assets and export your film.",
     closeAuth: "Close auth modal",
     adminTitle: "Admin Console",
     adminIntro: "Manage users, credits, redeem codes, model channels and pricing.",
@@ -690,12 +691,11 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
           : await api.register({ phone: cleanPhone || undefined, email: cleanEmail, password });
 
       if (isAdmin && !["admin", "operator", "finance", "support"].includes(result.user.role)) {
-        localStorage.removeItem("aifilm_auth_token");
+        clearAuthToken();
         throw new Error(locale === "cn" ? "当前账号没有后台管理权限，请使用管理员账号登录。" : "This account has no admin access.");
       }
 
-      if (remember) localStorage.setItem("aifilm_auth_remember", "1");
-      localStorage.setItem("aifilm_auth_token", result.token);
+      storeAuthToken(result.token, remember);
       onAuthed(result.token, result.user);
     } catch (error) {
       setCaptcha(createCaptcha());
@@ -940,7 +940,7 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
   }
 
   return (
-    <main className={`cine-home-page relative w-screen h-screen bg-black text-white ${publicView === "home" ? "overflow-hidden" : "cine-scroll-page"}`}>
+    <main className={`cine-home-page relative w-screen bg-black text-white ${publicView === "home" ? "" : "cine-scroll-page"}`}>
       <nav className={`cine-top-nav ${publicView === "home" ? "" : "solid"}`} aria-label="首页导航">
         <button className="cine-logo-text nav-logo" type="button" onClick={() => setPublicView("home")}>
           <span>漫角</span>
@@ -981,7 +981,7 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
       </nav>
 
       {publicView === "home" ? <section
-        className="cine-hero relative h-screen w-screen overflow-hidden"
+        className="cine-hero relative w-screen overflow-hidden"
         aria-label="漫角电影感首页"
         onMouseMove={(event) => handleHeroHoverTarget(event.target)}
         onPointerMove={(event) => handleHeroHoverTarget(event.target)}

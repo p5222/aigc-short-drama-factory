@@ -40,6 +40,7 @@ export interface VideoGenerationInput {
   modelPool?: string[];
   baseUrl?: string;
   apiKey?: string;
+  onTaskSubmitted?: (task: { taskId: string; provider: string; model: string }) => Promise<void>;
 }
 
 export interface VideoGenerationResult {

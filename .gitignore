@@ -8,6 +8,8 @@ dist
 .turbo
 .vite
 coverage
+__pycache__/
+*.pyc
 *.log
 outputs
 tmp

@@ -5,15 +5,18 @@ import { imageOutputQualityOptions, imageOutputSizeOptions, imageParameterMultip
 import { api } from "../lib/api";
 import { ModelRoutePicker } from "../components/ModelRoutePicker";
 import { analyzeSourceEpisodes, episodeScopeOptions, parseSampleManifest, type SourceEpisodeAnalysis } from "./wizardSourceModel";
+import { clearWizardDraft, readWizardDraft, saveWizardDraft } from "./wizardDraftStorage";
+import { buildEstimateInput, buildGenerationInput, creationBillingSignature, createCreationQuoteGate, isConfiguredModelRoute, normalizeWizardSourceType } from "./wizardRequestModel";
 
 interface WizardPageProps {
   providers: ModelProvider[];
+  canManageModels?: boolean;
   onCreated: (projectId: string) => void;
   onCreateContent: () => void;
 }
 
 type WizardStep = "story" | "settings" | "script";
-type RouteTestState = { loading: boolean; ok?: boolean; message?: string };
+type RouteTestState = { loading: boolean; ok?: boolean; message?: string; routeKey?: string };
 
 const stepOrder: WizardStep[] = ["story", "settings", "script"];
 const preferredTextProviderIds = ["dashscope-text", "deepseek", "manjiao"];
@@ -55,12 +58,20 @@ const stylePresets = [
   "雨夜黑色电影"
 ];
 
-export function WizardPage({ providers, onCreated, onCreateContent }: WizardPageProps) {
+export function WizardPage({ providers, canManageModels = false, onCreated, onCreateContent }: WizardPageProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const pendingModelTests = useRef(new Set<string>());
   const [form, setForm] = useState<CreateProjectInput>(() => normalizeDraft(loadDraft() ?? defaultForm));
   const [step, setStep] = useState<WizardStep>("story");
   const [entrySelected, setEntrySelected] = useState(Boolean(loadDraft()?.content));
-  const [estimate, setEstimate] = useState<CreationEstimate | null>(null);
+  const [estimateSnapshot, setEstimateSnapshot] = useState<{ signature: string; sequence: number; value: CreationEstimate } | null>(null);
+  const [isEstimating, setIsEstimating] = useState(false);
+  const quoteGate = useRef(createCreationQuoteGate());
+  const pendingQuote = useRef(false);
+  const startInFlight = useRef(false);
+  const billingSignature = useMemo(() => creationBillingSignature(normalizeDraft(form)), [form]);
+  quoteGate.current.select(billingSignature);
+  const estimate = estimateSnapshot && quoteGate.current.current(estimateSnapshot) ? estimateSnapshot.value : null;
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [modelMessage, setModelMessage] = useState("");
@@ -72,6 +83,12 @@ export function WizardPage({ providers, onCreated, onCreateContent }: WizardPage
   const [isTestingImageModel, setIsTestingImageModel] = useState(false);
   const [generationStartedAt, setGenerationStartedAt] = useState<number | null>(null);
   const [generationElapsed, setGenerationElapsed] = useState(0);
+
+  useEffect(() => { saveWizardDraft(form); }, [form]);
+  useEffect(() => {
+    setEstimateSnapshot(null);
+    setMessage(current => current.startsWith("本次文本解析将冻结") ? "" : current);
+  }, [billingSignature]);
 
   const words = useMemo(() => form.content.trim().length, [form.content]);
   const episodeAnalysis = useMemo(() => analyzeSourceEpisodes(form.content, form.sourceType), [form.content, form.sourceType]);
@@ -134,35 +151,45 @@ export function WizardPage({ providers, onCreated, onCreateContent }: WizardPage
   }
 
   async function estimateCost() {
+    if (pendingQuote.current || isGenerating) return null;
+    const signature = creationBillingSignature(normalizeDraft(form));
+    const ticket = quoteGate.current.begin(signature);
+    pendingQuote.current = true;
+    setIsEstimating(true);
+    setEstimateSnapshot(null);
+    setMessage("");
     setError("");
     try {
-      const result = await api.estimate({
-        content: form.content,
-        mode: form.mode,
-        targetEpisodes: form.targetEpisodes,
-        textProvider: form.textProvider,
-        textModel: form.textModel,
-        imageProvider: form.imageProvider,
-        imageModel: form.imageModel,
-        imageSize: form.imageSize,
-        imageQuality: form.imageQuality,
-        videoProvider: form.videoProvider,
-        videoModel: form.videoModel
-      });
-      setEstimate(result);
+      const result = await api.estimate(buildEstimateInput(normalizeDraft(form)));
+      if (!quoteGate.current.current(ticket)) return null;
+      setEstimateSnapshot({ ...ticket, value: result });
+      setMessage(`本次文本解析将冻结 ${result.estimatedCredits} 积分。请核对报价后再次点击确认创建；图片、视频和配音另行报价。`);
+      return result;
     } catch (err) {
-      setError(err instanceof Error ? err.message : "积分估算失败");
+      if (quoteGate.current.current(ticket)) setError(err instanceof Error ? err.message : "积分估算失败");
+      return null;
+    } finally {
+      pendingQuote.current = false;
+      setIsEstimating(false);
     }
   }
 
   async function start() {
-    const input = buildGenerationInput(form);
+    if (startInFlight.current || pendingQuote.current) return;
+    const input = buildGenerationInput(normalizeDraft(form));
     if (!input.content.trim()) {
       setError("请先粘贴小说、故事大纲或已有剧本。");
       setStep("story");
       return;
     }
 
+    if (!estimate) {
+      startInFlight.current = true;
+      try { await estimateCost(); } finally { startInFlight.current = false; }
+      return;
+    }
+
+    startInFlight.current = true;
     setIsGenerating(true);
     setGenerationStartedAt(Date.now());
     setGenerationElapsed(0);
@@ -170,49 +197,60 @@ export function WizardPage({ providers, onCreated, onCreateContent }: WizardPage
     setError("");
     void api.trackEvent({ eventName: "create_project_start", properties: { mode: input.mode, sourceType: input.sourceType, targetEpisodes: input.targetEpisodes } }).catch(() => undefined);
     try {
-      const result = await api.startCreation(input);
+      const result = await api.startCreation({ ...input, maxCredits: estimate.estimatedCredits });
       void api.trackEvent({ eventName: "create_project_success", projectId: result.project.id, entityType: "project", entityId: result.project.id, taskId: result.task.id, properties: { mode: result.mode } }).catch(() => undefined);
-      localStorage.removeItem("aifilm_creation_draft");
+      clearWizardDraft();
       setMessage(`已生成项目，模式：${result.mode === "real" ? "真实模型" : result.mode === "queued" ? "队列处理中" : "本地结构化"}`);
       onCreated(result.project.id);
     } catch (err) {
+      setEstimateSnapshot(null);
+      setMessage("");
       void api.trackEvent({ eventName: "create_project_fail", properties: { message: err instanceof Error ? err.message : "生成失败" } }).catch(() => undefined);
       setError(err instanceof Error ? err.message : "生成失败，请检查模型配置、数据库或积分余额。");
     } finally {
+      startInFlight.current = false;
       setIsGenerating(false);
       setGenerationStartedAt(null);
     }
   }
 
   async function testModel() {
+    if (!canManageModels || pendingModelTests.current.has("text")) return;
+    pendingModelTests.current.add("text");
+    const routeKey = JSON.stringify([form.textProvider, form.textModel]);
     setIsTestingModel(true);
     setModelMessage("");
-    setTextRouteTest({ loading: true });
+    setTextRouteTest({ loading: true, routeKey });
     setError("");
     try {
       const result = await api.modelTest({ textProvider: form.textProvider, textModel: form.textModel });
       setModelMessage(`${result.provider} / ${result.model}: ${result.message}`);
-      setTextRouteTest({ loading: false, ok: result.ok, message: `${result.provider} / ${result.model}: ${result.message}` });
+      setTextRouteTest({ loading: false, routeKey, ok: result.ok, message: `${result.provider} / ${result.model}: ${result.message}` });
     } catch (err) {
-      setTextRouteTest({ loading: false, ok: false, message: err instanceof Error ? err.message : "文本模型测试失败" });
+      setTextRouteTest({ loading: false, routeKey, ok: false, message: err instanceof Error ? err.message : "文本模型测试失败" });
     } finally {
       setIsTestingModel(false);
+      pendingModelTests.current.delete("text");
     }
   }
 
   async function testImageModel() {
+    if (!canManageModels || pendingModelTests.current.has("image")) return;
+    pendingModelTests.current.add("image");
+    const routeKey = JSON.stringify([form.imageProvider, form.imageModel]);
     setIsTestingImageModel(true);
     setImageModelMessage("");
-    setImageRouteTest({ loading: true });
+    setImageRouteTest({ loading: true, routeKey });
     setError("");
     try {
       const result = await api.imageModelTest({ imageProvider: form.imageProvider, imageModel: form.imageModel });
       setImageModelMessage(`${result.provider} / ${result.model}: ${result.message}`);
-      setImageRouteTest({ loading: false, ok: result.ok, message: `${result.provider} / ${result.model}: ${result.message}` });
+      setImageRouteTest({ loading: false, routeKey, ok: result.ok, message: `${result.provider} / ${result.model}: ${result.message}` });
     } catch (err) {
-      setImageRouteTest({ loading: false, ok: false, message: err instanceof Error ? err.message : "生图模型测试失败" });
+      setImageRouteTest({ loading: false, routeKey, ok: false, message: err instanceof Error ? err.message : "生图模型测试失败" });
     } finally {
       setIsTestingImageModel(false);
+      pendingModelTests.current.delete("image");
     }
   }
 
@@ -259,16 +297,23 @@ export function WizardPage({ providers, onCreated, onCreateContent }: WizardPage
   }
 
   async function importTextFile(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
+    const input = event.currentTarget;
+    const file = input.files?.[0];
     if (!file) return;
-    const text = await file.text();
-    setForm({ ...form, title: form.title || file.name.replace(/\.[^.]+$/, ""), content: text });
-    setEstimate(null);
-    event.currentTarget.value = "";
+    try {
+      const text = await file.text();
+      setForm((current) => ({ ...current, title: current.title || file.name.replace(/\.[^.]+$/, ""), content: text }));
+      setEstimateSnapshot(null);
+    } catch {
+      setError("读取文件失败，请重试或直接粘贴正文。");
+    } finally { input.value = ""; }
   }
 
   function saveDraft() {
-    localStorage.setItem("aifilm_creation_draft", JSON.stringify(form));
+    if (!saveWizardDraft(form, true)) {
+      setError("当前浏览器无法保存草稿，请复制正文到本地文档后再离开。");
+      return;
+    }
     setMessage("草稿已保存在当前浏览器。");
     setError("");
   }
@@ -332,6 +377,7 @@ export function WizardPage({ providers, onCreated, onCreateContent }: WizardPage
 
       {step === "script" ? (
         <ScriptStep
+          canManageModels={canManageModels}
           currentImageModels={currentImageModels}
           currentTextModels={currentTextModels}
           currentVideoModels={currentVideoModels}
@@ -343,8 +389,8 @@ export function WizardPage({ providers, onCreated, onCreateContent }: WizardPage
           isTestingImageModel={isTestingImageModel}
           isTestingModel={isTestingModel}
           modelMessage={modelMessage}
-          textRouteTest={textRouteTest}
-          imageRouteTest={imageRouteTest}
+          textRouteTest={textRouteTest.routeKey === JSON.stringify([form.textProvider, form.textModel]) ? textRouteTest : { loading: false }}
+          imageRouteTest={imageRouteTest.routeKey === JSON.stringify([form.imageProvider, form.imageModel]) ? imageRouteTest : { loading: false }}
           selectedImageProvider={selectedImageProvider}
           selectedTextProvider={selectedTextProvider}
           selectedVideoProvider={selectedVideoProvider}
@@ -359,6 +405,7 @@ export function WizardPage({ providers, onCreated, onCreateContent }: WizardPage
           error={error}
           generationElapsed={generationElapsed}
           isGenerating={isGenerating}
+          isEstimating={isEstimating}
           message={message}
           onStart={start}
         />
@@ -542,6 +589,7 @@ function SettingsStep({
 }
 function ScriptStep({
   form,
+  canManageModels,
   textProviders,
   imageProviders,
   selectedTextProvider,
@@ -566,10 +614,12 @@ function ScriptStep({
   error,
   generationElapsed,
   isGenerating,
+  isEstimating,
   message,
   onStart
 }: {
   form: CreateProjectInput;
+  canManageModels: boolean;
   textProviders: ModelProvider[];
   imageProviders: ModelProvider[];
   videoProviders: ModelProvider[];
@@ -596,6 +646,7 @@ function ScriptStep({
   error: string;
   generationElapsed: number;
   isGenerating: boolean;
+  isEstimating: boolean;
   message: string;
   onStart: () => void;
 }) {
@@ -607,7 +658,10 @@ function ScriptStep({
     { title: form.sourceType === "script" ? "剧本拆解" : "剧本改编", text: form.sourceType === "script" ? "保留原剧情，规范动作、台词、旁白和节奏。" : "把小说叙事转换为可拍摄的场景、动作、台词和旁白。", icon: <FileText size={18} />, meta: form.textModel || "待选择" },
     { title: "角色卡", text: "固定外貌、服装、性格、声线和一致性提示词。", icon: <UsersRound size={18} />, meta: form.videoRatio }
   ];
-  const routeReady = Boolean(form.textProvider && form.textModel && form.imageProvider && form.imageModel && form.videoProvider && form.videoModel);
+  const textRouteConfigured = isConfiguredModelRoute(textProviders, "text", form.textProvider, form.textModel);
+  const imageRouteConfigured = isConfiguredModelRoute(imageProviders, "image", form.imageProvider, form.imageModel);
+  const videoRouteConfigured = isConfiguredModelRoute(videoProviders, "video", form.videoProvider, form.videoModel);
+  const routeReady = textRouteConfigured && imageRouteConfigured && videoRouteConfigured;
 
   return (
     <div className="u-wizard-grid wizard-balance-grid wizard-script-redesign shot-plan-workspace">
@@ -618,7 +672,7 @@ function ScriptStep({
             <h2>确认内容如何进入漫剧制作</h2>
             <p>先完成剧本结构化和实体提取；镜头数量将在剧本解析后按每个真实场次自动建议。</p>
           </div>
-          <span className="plan-ready"><CheckCircle2 size={16} />制作配置已就绪</span>
+          <span className="plan-ready"><Route size={16} />{routeReady ? "当前制作配置" : "模型配置待完善"}</span>
         </div>
 
         <div className="production-runway">
@@ -636,13 +690,13 @@ function ScriptStep({
           ))}
         </div>
 
-        <EstimatePanel estimate={estimate} form={form} onEstimate={onEstimate} />
+        <EstimatePanel estimate={estimate} form={form} onEstimate={onEstimate} isEstimating={isEstimating} />
 
         <div className="inline-actions stretch wizard-script-actions">
-          <button className="ghost-button" onClick={onEstimate} type="button">按当前模型估算积分</button>
-          <button className="primary-button large" onClick={onStart} disabled={isGenerating || !routeReady} type="button">
+          <button className="ghost-button" onClick={onEstimate} disabled={isEstimating || isGenerating} type="button">{isEstimating ? "正在获取报价..." : "刷新本次文本报价"}</button>
+          <button className="primary-button large" onClick={onStart} disabled={isGenerating || isEstimating || !routeReady} type="button">
             {isGenerating ? <Loader2 size={18} className="spin-icon" /> : <WandSparkles size={18} />}
-            {isGenerating ? "正在建立项目..." : form.sourceType === "script" ? "解析剧本并创建项目" : "转换剧本并创建项目"}
+            {isGenerating ? "正在建立项目..." : isEstimating ? "正在获取报价..." : estimate ? `确认冻结 ${estimate.estimatedCredits} 积分并创建` : "获取文本报价并确认"}
           </button>
         </div>
         {isGenerating ? <OperationProgress title={form.sourceType === "script" ? "剧本拆解中" : "小说改编中"} elapsed={generationElapsed} detail="系统正在建立剧本、场次、角色、场景和镜头计划，请不要重复提交。" /> : null}
@@ -653,7 +707,7 @@ function ScriptStep({
       <aside className="u-side-stack">
         <section className="u-card route-card-clean route-card-polished recommended-route-card">
           <div className="recommended-route-head model-route-head">
-            <div><span>模型路由</span><strong><i />自动路由正常</strong></div>
+            <div><span>模型路由</span><strong>{routeReady ? "已选择平台配置" : "请检查模型选择"}</strong></div>
             <Route size={20} />
           </div>
           <div className="model-route-channels">
@@ -661,8 +715,7 @@ function ScriptStep({
             {activeRoute === "text" ? <div className="route-channel-detail">
               <label className="field"><span>文本渠道与模型</span><ModelRoutePicker modality="text" providers={textProviders} value={{ providerId: form.textProvider || "", model: form.textModel || "" }} onChange={(providerId, model) => onChange({ ...form, textProvider: providerId, textModel: model })} /></label>
               <p>{cleanProviderHint(selectedTextProvider?.costHint, "用于剧本解析、角色卡和分镜拆解。")}</p>
-              <button className="ghost-button full-button" onClick={onTestModel} disabled={isTestingModel} type="button">{isTestingModel ? "测试中..." : "测试文本模型"}</button>
-              <RouteTestMessage state={textRouteTest} />
+              {canManageModels ? <><button className="ghost-button full-button" onClick={onTestModel} disabled={isTestingModel || !textRouteConfigured} type="button">{isTestingModel ? "测试中..." : "测试文本模型"}</button><RouteTestMessage state={textRouteTest} /></> : null}
             </div> : null}
 
             <RouteChannel icon={<Image size={17} />} title="图像生成" purpose="角色、场景与分镜首帧" model={form.imageModel || "自动选择"} active={activeRoute === "image"} onClick={() => setActiveRoute("image")} />
@@ -673,8 +726,7 @@ function ScriptStep({
                 <label className="field"><span>质量</span><select value={normalizeImageOutputQuality(form.imageQuality)} onChange={(event) => onChange({ ...form, imageQuality: event.target.value })}>{imageOutputQualityOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
               </div>
               <p>{cleanProviderHint(selectedImageProvider?.costHint, "用于角色参考图、场景图和分镜首帧。")}</p>
-              <button className="ghost-button full-button" onClick={onTestImageModel} disabled={isTestingImageModel} type="button">{isTestingImageModel ? "测试中..." : "测试生图模型"}</button>
-              <RouteTestMessage state={imageRouteTest} />
+              {canManageModels ? <><button className="ghost-button full-button" onClick={onTestImageModel} disabled={isTestingImageModel || !imageRouteConfigured} type="button">{isTestingImageModel ? "测试中..." : "测试生图模型"}</button><RouteTestMessage state={imageRouteTest} /></> : null}
             </div> : null}
 
             <RouteChannel icon={<Video size={17} />} title="视频生成" purpose="后续分镜视频与片段生成" model={form.videoModel || "自动选择"} active={activeRoute === "video"} warning={!selectedVideoProvider?.enabled} onClick={() => setActiveRoute("video")} />
@@ -683,22 +735,23 @@ function ScriptStep({
               <p>{cleanProviderHint(selectedVideoProvider?.costHint, "用于项目创建后的镜头视频生成。")}</p>
             </div> : null}
           </div>
+          <p className="route-cost-note">这里只确认模型已列入平台配置，不代表连接已验证。{canManageModels ? "可测试文本与图像连接；视频会在生成时校验。" : "连接问题请联系管理员；实际可用性会在生成时校验。"}</p>
           <div className="route-cost-note"><CircleDollarSign size={15} /><span>创建前仅锁定路由，不产生扣费；实际按任务和后台价格结算。</span><strong>x{imageMultiplier}</strong></div>
         </section>
       </aside>
     </div>
   );
 }
-function EstimatePanel({ estimate, form, onEstimate }: { estimate: CreationEstimate | null; form: CreateProjectInput; onEstimate: () => void }) {
+function EstimatePanel({ estimate, form, onEstimate, isEstimating }: { estimate: CreationEstimate | null; form: CreateProjectInput; onEstimate: () => void; isEstimating: boolean }) {
   if (!estimate) {
     return (
       <div className="estimate u-estimate wizard-estimate-dock estimate-panel-polished">
         <div className="wizard-estimate-total">
-          <span>预估积分</span>
-          <strong>待计算</strong>
+          <span>本次文本解析冻结积分</span>
+          <strong>{isEstimating ? "报价中" : "待确认"}</strong>
         </div>
-        <p>点击后会按当前文本、生图、视频模型和后台价格策略估算，不会产生真实扣费。</p>
-        <button className="ghost-button" onClick={onEstimate} type="button">立即估算</button>
+        <p>按文本渠道、模型和本次集数获取报价。查看报价不扣积分，确认创建后才冻结；图片、视频和配音在对应步骤另行报价。</p>
+        <button className="ghost-button" onClick={onEstimate} disabled={isEstimating} type="button">获取文本报价</button>
       </div>
     );
   }
@@ -706,7 +759,7 @@ function EstimatePanel({ estimate, form, onEstimate }: { estimate: CreationEstim
   return (
     <div className="estimate u-estimate wizard-estimate-dock estimate-panel-polished ready">
       <div className="wizard-estimate-total">
-        <span>预估积分</span>
+        <span>本次文本解析冻结积分</span>
         <strong>{estimate.estimatedCredits}</strong>
       </div>
       <div className="wizard-estimate-breakdown">
@@ -718,7 +771,7 @@ function EstimatePanel({ estimate, form, onEstimate }: { estimate: CreationEstim
           </div>
         ))}
       </div>
-      <p>当前模型：{form.textProvider}/{form.textModel}，{form.imageProvider}/{form.imageModel}，生图参数 {normalizeImageOutputSize(form.imageSize)} / {normalizeImageOutputQuality(form.imageQuality)}。{estimate.assumptions ? `预计 ${estimate.assumptions.totalShots} 个镜头。` : ""}</p>
+      <p>文本模型：{estimate.breakdown?.[0]?.providerId || form.textProvider}/{estimate.breakdown?.[0]?.model || form.textModel}。本次处理 {estimate.suggestedEpisodes} 集。</p>
       {estimate.notes.slice(1).filter((note) => !note.includes("最终单价") && !note.includes("模型基准价")).map((note) => <p key={note}>{note}</p>)}
     </div>
   );
@@ -793,6 +846,7 @@ function normalizeDraft(form: CreateProjectInput): CreateProjectInput {
   return {
     ...defaultForm,
     ...form,
+    sourceType: normalizeWizardSourceType(form.sourceType),
     targetEpisodes: Math.max(1, form.targetEpisodes ?? 1),
     textProvider: form.textProvider || defaultForm.textProvider,
     textModel: form.textModel || defaultForm.textModel,
@@ -801,23 +855,6 @@ function normalizeDraft(form: CreateProjectInput): CreateProjectInput {
     imageSize: normalizeImageOutputSize(form.imageSize),
     imageQuality: normalizeImageOutputQuality(form.imageQuality)
   };
-}
-
-function buildGenerationInput(form: CreateProjectInput): CreateProjectInput {
-  const maxEpisodes = analyzeSourceEpisodes(form.content, form.sourceType).maxEpisodes;
-  return {
-    ...normalizeDraft(form),
-    title: form.title.trim() || autoTitle(form.content),
-    sourceType: form.sourceType === "script" ? "script" : "novel",
-    genre: form.genre.trim() || "AI 自动识别题材",
-    artStyle: form.artStyle.trim() || "AI 自动匹配画风",
-    targetEpisodes: Math.max(1, Math.min(maxEpisodes, form.targetEpisodes ?? 1))
-  };
-}
-
-function autoTitle(content: string) {
-  const firstLine = content.trim().split(/\r?\n/).find((line) => line.trim());
-  return firstLine ? firstLine.slice(0, 12) : "未命名漫剧";
 }
 
 function stepLabel(step: WizardStep) {
@@ -839,10 +876,5 @@ function stepHint(step: WizardStep, sourceType: CreateProjectInput["sourceType"]
 }
 
 function loadDraft(): CreateProjectInput | null {
-  try {
-    const raw = localStorage.getItem("aifilm_creation_draft");
-    return raw ? (JSON.parse(raw) as CreateProjectInput) : null;
-  } catch {
-    return null;
-  }
+  return readWizardDraft();
 }

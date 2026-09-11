@@ -1,15 +1,23 @@
 import crypto from "node:crypto";
+import type { Prisma } from "@prisma/client";
+import { lockCreditAccount } from "../billing/accountCredits.js";
+import { assertProductionMediaProvider, mediaCheckpoint, runMediaTask } from "../billing/mediaTask.js";
 import sharp from "sharp";
-import type { AdminUserRow, AssetItem, BatchGenerationResult, CreateProjectInput, GenerationTask, HelpArticle, PlatformAnnouncement, ProjectWorkflow, SegmentProfile, StoryboardExportRow, StoryboardShot, WorkbenchSummary } from "@aifilm/shared";
+import type { AdminSummary, AdminUserRow, AssetItem, BatchGenerationResult, CreateProjectInput, CreationEstimate, GenerationTask, HelpArticle, PlatformAnnouncement, ProjectWorkflow, SegmentProfile, StoryboardExportRow, StoryboardShot, WorkbenchSummary } from "@aifilm/shared";
 import { textModelName, textProviderName } from "../agents/generator.js";
 import { buildSeedanceVideoPrompt, buildStoryboardFirstFramePrompt, createStoryboardProductionPackage, resolveStoryboardReferenceAssets } from "../agents/storyboardProduction.js";
 import { estimateCreation } from "../agents/workflow.js";
 import { estimateImageCredits, isPersistedPlayableVideoReference, normalizeImageOutputQuality, normalizeImageOutputSize, normalizeImageProviderId, resolveImageUnitCredits } from "@aifilm/shared";
 import { hashPassword } from "../auth/password.js";
 import { buildDirectorStoryboardRow, createDirectorStoryboardPackage } from "../export/directorStoryboard.js";
+import { selectExportWorkflow } from "../export/exportSelection.js";
+import { lockTaskCredits, reserveTaskCredits, releaseTaskCredits } from "../billing/taskCredits.js";
 import { createSubtitleAsset, createTtsManifest, createVideoExportPackage, type MediaExportResult } from "../export/mediaExport.js";
+import { getOrCreatePaidNarration, quoteProjectNarration } from "../export/narrationBilling.js";
+import { assertVideoExportReady } from "../export/exportRequirements.js";
+import { probeFfmpeg } from "../export/videoComposer.js";
 import { generateImage } from "../providers/dashscopeImage.js";
-import type { ImageGenerationResult } from "../providers/types.js";
+import type { ImageGenerationResult, VideoGenerationResult } from "../providers/types.js";
 import { generateVideo, queryVideoTaskResult } from "../providers/video.js";
 import { persistImageBuffer, persistImageReference, persistVideoReference, readStoredAsset } from "../storage/objectStorage.js";
 import { prisma } from "./client.js";
@@ -41,19 +49,23 @@ import {
 } from "./mappers.js";
 
 export async function getWorkbenchSummary(userId = DEMO_USER_ID): Promise<WorkbenchSummary> {
-  const [user, projects, tasks, account, announcements] = await Promise.all([
+  const taskWhere = { userId, NOT: { id: { startsWith: "content_operation_" } } };
+  const [user, projects, tasks, account, announcements, projectCount, storyboardCount, runningTaskCount] = await Promise.all([
     prisma.user.findUniqueOrThrow({ where: { id: userId } }),
     prisma.project.findMany({ where: { userId }, orderBy: { updatedAt: "desc" }, take: 6 }),
-    prisma.generationTask.findMany({ where: { userId }, orderBy: { updatedAt: "desc" }, take: 8 }),
+    prisma.generationTask.findMany({ where: taskWhere, orderBy: { updatedAt: "desc" }, take: 8 }),
     prisma.creditAccount.findUniqueOrThrow({ where: { userId } }),
-    listPublicAnnouncements()
+    listPublicAnnouncements(),
+    prisma.project.count({ where: { userId } }),
+    prisma.storyboard.count({ where: { project: { userId } } }),
+    prisma.generationTask.count({ where: { ...taskWhere, status: { in: ["running", "pending"] } } })
   ]);
 
   return {
     userName: user.name,
-    projects: projects.length,
-    storyboards: projects.reduce((sum, project) => sum + project.storyboards, 0),
-    runningTasks: tasks.filter((task) => task.status === "running" || task.status === "pending").length,
+    projects: projectCount,
+    storyboards: storyboardCount,
+    runningTasks: runningTaskCount,
     credits: account.balance,
     recentProjects: projects.map(mapProject),
     recentTasks: tasks.map(mapTask),
@@ -384,80 +396,42 @@ export async function createRechargeOrder(userId = DEMO_USER_ID, input: { planId
 }
 
 export async function handleRechargeCallback(input: {
-  orderId: string;
-  userId?: string;
-  channel?: string;
-  providerTradeNo?: string;
-  amountCny?: number;
-  payload?: unknown;
+  orderId: string; userId?: string; channel?: string; providerTradeNo?: string; amountCny?: number; payload?: unknown;
 }) {
-  const now = new Date();
+  if (input.amountCny !== undefined && (!Number.isFinite(input.amountCny) || input.amountCny < 0)) throw new Error("支付金额无效");
+  const tradeNo = input.providerTradeNo?.trim() || undefined;
   return prisma.$transaction(async (tx) => {
-    const order = input.userId
-      ? await tx.rechargeOrder.findFirst({ where: { id: input.orderId, userId: input.userId } })
-      : await tx.rechargeOrder.findUnique({ where: { id: input.orderId } });
+    if (tradeNo) await tx.$queryRaw`SELECT true AS locked FROM pg_advisory_xact_lock(hashtext(${`payment:${tradeNo}`}))`;
+    await tx.$queryRaw`SELECT "id" FROM "RechargeOrder" WHERE "id" = ${input.orderId} FOR UPDATE`;
+    const order = await tx.rechargeOrder.findFirst({ where: { id: input.orderId, ...(input.userId ? { userId: input.userId } : {}) } });
     if (!order) throw new Error("充值订单不存在");
-
     if (input.channel && input.channel !== order.channel) throw new Error("Payment channel mismatch");
-    if (input.amountCny !== undefined && Math.abs(input.amountCny - order.amountCny) > 0.01) {
-      throw new Error("Payment amount mismatch");
+    if (input.amountCny !== undefined && Math.round(input.amountCny * 100) !== Math.round(order.amountCny * 100)) throw new Error("Payment amount mismatch");
+    if (tradeNo) {
+      const reused = await tx.paymentRecord.findFirst({ where: { channel: order.channel, providerTradeNo: tradeNo, orderId: { not: order.id }, status: "succeeded" } });
+      if (reused) throw new Error("该支付流水已关联其他订单");
+      if (order.providerTradeNo && order.providerTradeNo !== tradeNo) throw new Error("订单支付流水不匹配");
     }
-
-    const payment = await tx.paymentRecord.create({
-      data: {
-        id: `pay_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`,
-        orderId: order.id,
-        channel: input.channel || order.channel,
-        providerTradeNo: input.providerTradeNo,
-        amountCny: input.amountCny ?? order.amountCny,
-        status: "succeeded",
-        callbackPayload: input.payload ? JSON.stringify(input.payload).slice(0, 4000) : undefined
-      }
-    });
-
-    if (order.status !== "paid") {
-      const totalCredits = order.credits + order.bonusCredits;
-      const account = await tx.creditAccount.upsert({
-        where: { userId: order.userId },
-        update: {},
-        create: {
-          id: `credit_${order.userId}`,
-          userId: order.userId,
-          balance: 0,
-          frozenBalance: 0,
-          totalRecharge: 0,
-          totalConsume: 0
-        }
-      });
-      const updated = await tx.creditAccount.update({
-        where: { userId: order.userId },
-        data: {
-          balance: { increment: totalCredits },
-          totalRecharge: { increment: totalCredits }
-        }
-      });
-      await tx.creditTransaction.create({
-        data: {
-          id: `tx_${Date.now()}_order`,
-          userId: order.userId,
-          type: "recharge",
-          amount: totalCredits,
-          balanceAfter: updated.balance,
-          description: `充值订单 ${order.id} 入账：${order.planName}，支付前余额 ${account.balance}`
-        }
-      });
-      await tx.rechargeOrder.update({
-        where: { id: order.id },
-        data: {
-          status: "paid",
-          paidAt: now,
-          providerTradeNo: input.providerTradeNo
-        }
-      });
+    if (order.status === "paid") {
+      const payment = await tx.paymentRecord.findFirst({ where: { orderId: order.id, status: "succeeded" }, orderBy: { createdAt: "asc" } });
+      if (!payment) throw new Error("已支付订单缺少支付流水，请联系管理员核对");
+      return { order: mapRechargeOrder(order), payment: mapPaymentRecord(payment) };
     }
-
-    const refreshed = await tx.rechargeOrder.findUniqueOrThrow({ where: { id: order.id } });
-    return { order: mapRechargeOrder(refreshed), payment: mapPaymentRecord(payment) };
+    if (order.status !== "pending") throw new Error("订单当前状态不允许入账");
+    const credits = order.credits + order.bonusCredits;
+    if (!Number.isSafeInteger(credits) || credits < 0) throw new Error("订单积分配置无效");
+    const account = await lockCreditAccount(tx, order.userId);
+    const updated = await tx.creditAccount.update({ where: { userId: order.userId }, data: { balance: { increment: credits }, totalRecharge: { increment: credits } } });
+    const payment = await tx.paymentRecord.create({ data: {
+      id: `pay_${crypto.randomUUID()}`, orderId: order.id, channel: order.channel, providerTradeNo: tradeNo,
+      amountCny: order.amountCny, status: "succeeded", callbackPayload: input.payload ? JSON.stringify(input.payload).slice(0, 4000) : undefined
+    } });
+    await tx.creditTransaction.create({ data: {
+      id: `tx_${crypto.randomUUID()}`, userId: order.userId, type: "recharge", amount: credits, balanceAfter: updated.balance,
+      description: `充值订单 ${order.id} 入账：${order.planName}，支付前余额 ${account.balance}`
+    } });
+    const paid = await tx.rechargeOrder.update({ where: { id: order.id }, data: { status: "paid", paidAt: new Date(), providerTradeNo: tradeNo } });
+    return { order: mapRechargeOrder(paid), payment: mapPaymentRecord(payment) };
   });
 }
 
@@ -548,13 +522,23 @@ export async function createRedeemCodeBatch(input: {
 }
 
 export async function listAdminUsers(): Promise<AdminUserRow[]> {
-  const users = await prisma.user.findMany({
-    include: { credit: true, _count: { select: { projects: true } } },
-    orderBy: { createdAt: "desc" },
-    take: 100
-  });
+  return (await listAdminUsersPage({ pageSize: 100 })).items;
+}
 
-  return users.map((user) => ({
+export async function listAdminUsersPage(options: { page?: number; pageSize?: number; keyword?: string; role?: string; status?: string } = {}) {
+  const page = Math.max(1, Math.floor(Number(options.page) || 1));
+  const pageSize = Math.max(1, Math.min(100, Math.floor(Number(options.pageSize) || 20)));
+  const keyword = options.keyword?.trim().slice(0, 200);
+  const where: Prisma.UserWhereInput = {
+    ...(options.role && ["admin", "creator"].includes(options.role) ? { role: options.role } : {}),
+    ...(options.status && ["active", "disabled"].includes(options.status) ? { status: options.status } : {}),
+    ...(keyword ? { OR: [{ name: { contains: keyword, mode: "insensitive" } }, { email: { contains: keyword, mode: "insensitive" } }, { phone: { contains: keyword } }, { id: keyword }] } : {})
+  };
+  const [users, total] = await Promise.all([
+    prisma.user.findMany({ where, include: { credit: true, _count: { select: { projects: true } } }, orderBy: [{ createdAt: "desc" }, { id: "asc" }], skip: (page - 1) * pageSize, take: pageSize }),
+    prisma.user.count({ where })
+  ]);
+  const items = users.map((user) => ({
     id: user.id,
     name: user.name,
     email: user.email ?? undefined,
@@ -569,6 +553,7 @@ export async function listAdminUsers(): Promise<AdminUserRow[]> {
     hasPassword: Boolean(user.passwordHash),
     lastLoginAt: user.lastLoginAt?.toISOString()
   }));
+  return { items, total, page, pageSize };
 }
 
 export async function createAdminUser(input: {
@@ -587,10 +572,14 @@ export async function createAdminUser(input: {
   if (input.role && !["creator", "admin"].includes(input.role)) throw new Error("用户角色不在允许范围内");
   if (input.status && !["active", "disabled"].includes(input.status)) throw new Error("用户状态只能是 active 或 disabled");
 
-  const initialCredits = Math.max(0, Math.floor(input.initialCredits ?? 0));
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("邮箱格式不正确");
+  if (phone && !/^1[3-9]\d{9}$/.test(phone)) throw new Error("手机号格式不正确");
+  const initialCredits = input.initialCredits ?? 0;
+  if (!Number.isSafeInteger(initialCredits) || initialCredits < 0 || initialCredits > 2147483647) throw new Error("初始积分必须是有效非负整数");
   const passwordHash = await hashPassword(input.password);
   const userId = `user_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
   const user = await prisma.$transaction(async (tx) => {
+    if (input.role === "admin") await tx.$queryRaw`SELECT true AS locked FROM pg_advisory_xact_lock(hashtext('active-admin-membership'))`;
     const created = await tx.user.create({
       data: {
         id: userId,
@@ -615,7 +604,7 @@ export async function createAdminUser(input: {
     if (initialCredits > 0) {
       await tx.creditTransaction.create({
         data: {
-          id: `tx_${Date.now()}_new_user_credit`,
+          id: `tx_${crypto.randomUUID()}`,
           userId,
           type: "recharge",
           amount: initialCredits,
@@ -646,7 +635,8 @@ export async function createAdminUser(input: {
 
 export async function updateAdminUser(
   id: string,
-  data: Partial<{ name: string; role: string; status: string }>
+  data: Partial<{ name: string; role: string; status: string }>,
+  actorId?: string
 ) {
   const cleanData: Partial<{ name: string; role: string; status: string }> = {};
   if (data.name !== undefined) cleanData.name = data.name.trim();
@@ -660,7 +650,20 @@ export async function updateAdminUser(
   }
   if (cleanData.name === "") throw new Error("用户昵称不能为空");
 
-  const user = await prisma.user.update({ where: { id }, data: cleanData });
+  const user = await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT true AS locked FROM pg_advisory_xact_lock(hashtext('active-admin-membership'))`;
+    const current = await tx.user.findUnique({ where: { id } });
+    if (!current) throw new Error("用户不存在");
+    if (actorId === id && ((cleanData.role !== undefined && cleanData.role !== current.role) || cleanData.status === "disabled")) throw new Error("不能修改自己的管理员角色或停用当前操作账号，请由其他管理员处理。");
+    const losesAccess = current.role === "admin" && current.status === "active"
+      && ((cleanData.role !== undefined && cleanData.role !== "admin") || (cleanData.status !== undefined && cleanData.status !== "active"));
+    if (losesAccess && await tx.user.count({ where: { role: "admin", status: "active" } }) <= 1) throw new Error("至少保留一位启用的管理员，不能停用或降级最后一位管理员。");
+    const updated = await tx.user.update({ where: { id }, data: cleanData });
+    if ((cleanData.role !== undefined && cleanData.role !== current.role) || (cleanData.status !== undefined && cleanData.status !== current.status)) {
+      await tx.authSession.updateMany({ where: { userId: id, revokedAt: null }, data: { revokedAt: new Date() } });
+    }
+    return updated;
+  });
   return {
     id: user.id,
     name: user.name,
@@ -674,8 +677,12 @@ export async function updateAdminUser(
 export async function resetAdminUserPassword(id: string, password: string) {
   if (password.length < 12) throw new Error("Password must be at least 12 characters");
   const passwordHash = await hashPassword(password);
-  await prisma.authSession.updateMany({ where: { userId: id, revokedAt: null }, data: { revokedAt: new Date() } });
-  const user = await prisma.user.update({ where: { id }, data: { passwordHash } });
+  const user = await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${id} FOR UPDATE`;
+    const updated = await tx.user.update({ where: { id }, data: { passwordHash } });
+    await tx.authSession.updateMany({ where: { userId: id, revokedAt: null }, data: { revokedAt: new Date() } });
+    return updated;
+  });
   return {
     id: user.id,
     name: user.name,
@@ -687,8 +694,13 @@ export async function resetAdminUserPassword(id: string, password: string) {
   };
 }
 
-export async function listProviders() {
-  return Promise.all((await prisma.modelProvider.findMany({ orderBy: { createdAt: "asc" } })).map((row) => mapProvider(row)));
+export async function listProviders(includeAdminMetadata = false) {
+  const providers = await Promise.all((await prisma.modelProvider.findMany({ orderBy: { createdAt: "asc" } })).map((row) => mapProvider(row)));
+  if (includeAdminMetadata) return providers;
+  return providers.map((provider) => {
+    const { baseUrl: _baseUrl, apiKeyPreview: _apiKeyPreview, ...publicProvider } = provider;
+    return { ...publicProvider, capability: providerCapabilityBase(provider.capability, provider.modality) };
+  });
 }
 
 export async function listModelPrices() {
@@ -719,7 +731,18 @@ export async function updateModelPrice(
   id: string,
   data: Partial<{ unitCredits: number; vendorCostCny: number; enabled: boolean }>
 ) {
-  return mapModelPrice(await prisma.modelPrice.update({ where: { id }, data }));
+  validateModelPriceAmounts(data.unitCredits, data.vendorCostCny);
+  return mapModelPrice(await prisma.$transaction(async (tx) => {
+    const current = await tx.modelPrice.findUniqueOrThrow({ where: { id } });
+    await tx.$queryRaw`SELECT true AS locked FROM pg_advisory_xact_lock(hashtext(${`price:${current.providerId ?? current.providerName}:${current.model}`}))`;
+    if (data.enabled === true && await tx.modelPrice.findFirst({ where: { id: { not: id }, providerId: current.providerId, model: current.model, enabled: true } })) throw new Error("同一渠道与模型只能启用一条价格配置");
+    return tx.modelPrice.update({ where: { id }, data });
+  }));
+}
+
+function validateModelPriceAmounts(unitCredits?: number, vendorCostCny?: number) {
+  if (unitCredits !== undefined && (!Number.isSafeInteger(unitCredits) || unitCredits < 0 || unitCredits > 2147483647)) throw new Error("模型积分单价必须是有效非负整数");
+  if (vendorCostCny !== undefined && (!Number.isFinite(vendorCostCny) || vendorCostCny < 0)) throw new Error("模型成本必须是有效非负金额");
 }
 
 export async function createModelPrice(
@@ -734,24 +757,34 @@ export async function createModelPrice(
     enabled?: boolean;
   }
 ) {
-  return mapModelPrice(await prisma.modelPrice.create({
+  validateModelPriceAmounts(data.unitCredits, data.vendorCostCny);
+  const modality = normalizeModality(data.modality);
+  const model = data.model.trim();
+  if (!model || !data.providerName.trim()) throw new Error("渠道名称和模型 ID 不能为空");
+  if (data.unit && data.unit !== defaultBillingUnit(modality)) throw new Error("计费单位与模型类型不匹配");
+  return mapModelPrice(await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT true AS locked FROM pg_advisory_xact_lock(hashtext(${`price:${data.providerId ?? data.providerName}:${model}`}))`;
+    const provider = data.providerId ? await tx.modelProvider.findUniqueOrThrow({ where: { id: data.providerId } }) : null;
+    if (provider && (provider.modality !== modality || !provider.models.includes(model))) throw new Error("价格配置必须使用渠道已配置的模型和类型");
+    if (await tx.modelPrice.findFirst({ where: { providerId: data.providerId ?? null, ...(data.providerId ? {} : { providerName: data.providerName.trim() }), model } })) throw new Error("该渠道的模型价格已存在，请修改或重新启用原配置");
+    return tx.modelPrice.create({
     data: {
-      id: `price_${safeId(data.providerId || data.providerName)}_${safeId(data.model)}_${Date.now()}`,
+      id: `price_${crypto.randomUUID()}`,
       providerId: data.providerId,
       providerName: data.providerName.trim(),
-      modality: data.modality,
-      model: data.model.trim(),
+      modality,
+      model,
       unit: data.unit ?? defaultBillingUnit(data.modality),
-      unitCredits: Math.max(0, Math.floor(data.unitCredits)),
-      vendorCostCny: Math.max(0, data.vendorCostCny ?? 0),
+      unitCredits: data.unitCredits,
+      vendorCostCny: data.vendorCostCny ?? 0,
       enabled: data.enabled ?? true
     }
+    });
   }));
 }
 
 export async function deleteModelPrice(id: string) {
-  await prisma.modelPrice.delete({ where: { id } });
-  return { id, deleted: true };
+  return mapModelPrice(await prisma.modelPrice.update({ where: { id }, data: { enabled: false } }));
 }
 
 export async function createPlan(
@@ -810,10 +843,7 @@ export async function updateMembershipPlan(
 }
 
 export async function deleteMembershipPlan(id: string) {
-  const existing = await prisma.membershipPlan.findUnique({ where: { id } });
-  if (!existing) throw new Error("会员方案不存在");
-  await prisma.membershipPlan.delete({ where: { id } });
-  return mapMembershipPlan(existing);
+  return mapMembershipPlan(await prisma.membershipPlan.update({ where: { id }, data: { enabled: false } }));
 }
 
 function normalizePlanUpdate<T extends { shopUrl?: string | null; badge?: string | null; features?: string[] }>(data: T): T {
@@ -829,17 +859,21 @@ export async function updateRedeemCode(
   id: string,
   data: Partial<{ name: string; code: string; credits: number; maxRedemptions: number; enabled: boolean; startsAt: Date | null; endsAt: Date | null }>
 ) {
-  return mapRedeemCode(await prisma.redeemCode.update({ where: { id }, data }));
+  return mapRedeemCode(await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT "id" FROM "RedeemCode" WHERE "id" = ${id} FOR UPDATE`;
+    const current = await tx.redeemCode.findUniqueOrThrow({ where: { id } });
+    const clean = { ...data, ...(data.name !== undefined ? { name: data.name.trim() } : {}), ...(data.code !== undefined ? { code: data.code.trim().toUpperCase() } : {}) };
+    const next = { ...current, ...clean };
+    if (!next.name || !next.code) throw new Error("兑换码及名称不能为空");
+    if (!Number.isSafeInteger(next.credits) || next.credits <= 0 || next.credits > 2147483647) throw new Error("兑换积分必须是有效正整数");
+    if (!Number.isSafeInteger(next.maxRedemptions) || next.maxRedemptions < Math.max(1, current.usedCount) || next.maxRedemptions > 2147483647) throw new Error("兑换上限不能小于已兑换次数，且必须为有效正整数");
+    if (next.startsAt && next.endsAt && next.startsAt >= next.endsAt) throw new Error("兑换结束时间必须晚于开始时间");
+    return tx.redeemCode.update({ where: { id }, data: clean });
+  }));
 }
 
 export async function deleteRedeemCode(id: string) {
-  const code = await prisma.redeemCode.findUnique({ where: { id } });
-  if (!code) throw new Error("兑换码不存在");
-  if (code.usedCount > 0) {
-    return mapRedeemCode(await prisma.redeemCode.update({ where: { id }, data: { enabled: false } }));
-  }
-  await prisma.redeemCode.delete({ where: { id } });
-  return { id, deleted: true };
+  return mapRedeemCode(await prisma.redeemCode.update({ where: { id }, data: { enabled: false } }));
 }
 
 export async function updateProvider(
@@ -856,11 +890,15 @@ export async function updateProvider(
     routing: { mode?: "auto" | "manual"; preferredModel?: string | null; modelPool?: string[] };
   }>
 ) {
-  const existing = await prisma.modelProvider.findUnique({ where: { id } });
-  if (!existing) throw new Error("模型渠道不存在");
-  const cleanData = cleanProviderData(existing, data);
-  const updated = await prisma.modelProvider.update({ where: { id }, data: cleanData });
-  await ensureProviderPriceRows(updated.id, updated.name, updated.modality, updated.models);
+  const updated = await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT "id" FROM "ModelProvider" WHERE "id" = ${id} FOR UPDATE`;
+    const existing = await tx.modelProvider.findUnique({ where: { id } });
+    if (!existing) throw new Error("模型渠道不存在");
+    const cleanData = cleanProviderData(existing, data);
+    const provider = await tx.modelProvider.update({ where: { id }, data: cleanData });
+    await ensureProviderPriceRows(provider.id, provider.name, provider.modality, provider.models, undefined, undefined, tx);
+    return provider;
+  });
   return mapProvider(updated);
 }
 
@@ -884,13 +922,16 @@ export async function createProvider(
   const models = [...new Set(data.models.map((model) => model.trim()).filter(Boolean))];
   if (!models.length) throw new Error("至少填写一个模型 ID");
   const modality = normalizeModality(data.modality);
-  const provider = await prisma.modelProvider.create({
+  if (!data.name.trim()) throw new Error("渠道名称不能为空");
+  validateModelPriceAmounts(data.unitCredits, data.vendorCostCny);
+  const provider = await prisma.$transaction(async (tx) => {
+  const created = await tx.modelProvider.create({
     data: {
       id: providerId,
       name: data.name.trim(),
       modality,
       enabled: data.enabled ?? true,
-      baseUrl: data.baseUrl?.trim() || null,
+      baseUrl: normalizeProviderBaseUrl(data.baseUrl),
       iconUrl: data.iconUrl?.trim() || null,
       apiKey: data.apiKey?.trim() || null,
       models,
@@ -898,18 +939,14 @@ export async function createProvider(
       costHint: data.costHint?.trim() || "后台手动接入模型渠道。"
     }
   });
-  await ensureProviderPriceRows(provider.id, provider.name, provider.modality, provider.models, data.unitCredits, data.vendorCostCny);
+  await ensureProviderPriceRows(created.id, created.name, created.modality, created.models, data.unitCredits, data.vendorCostCny, tx);
+  return created;
+  });
   return mapProvider(provider);
 }
 
 export async function deleteProvider(id: string) {
-  const provider = await prisma.modelProvider.findUnique({ where: { id }, include: { prices: true } });
-  if (!provider) throw new Error("供应商不存在");
-  if (provider.prices.length > 0) {
-    return mapProvider(await prisma.modelProvider.update({ where: { id }, data: { enabled: false } }));
-  }
-  await prisma.modelProvider.delete({ where: { id } });
-  return { id, deleted: true };
+  return mapProvider(await prisma.modelProvider.update({ where: { id }, data: { enabled: false } }));
 }
 
 export async function updatePromptTemplate(
@@ -923,145 +960,96 @@ export async function deletePromptTemplate(id: string) {
   return mapTemplate(await prisma.promptTemplate.update({ where: { id }, data: { enabled: false } }));
 }
 
-export async function getAdminSummary(userId = DEMO_USER_ID) {
-  const [users, projects, tasks, creditAgg, refunds, prices] = await Promise.all([
+export async function getAdminSummary(_userId = DEMO_USER_ID): Promise<AdminSummary> {
+  // All-time ledger totals are separate from the explicitly China-time daily count.
+  const dayMs = 86_400_000;
+  const chinaOffsetMs = 8 * 60 * 60 * 1000;
+  const dayStart = new Date(Math.floor((Date.now() + chinaOffsetMs) / dayMs) * dayMs - chinaOffsetMs);
+  const taskWhere = { NOT: { id: { startsWith: "content_operation_" } } };
+  const [users, projects, tasksToday, groups, accountTotals, consumed, refunds, paidOrders] = await Promise.all([
     prisma.user.count(),
     prisma.project.count(),
-    prisma.generationTask.findMany(),
-    prisma.creditAccount.aggregate({ _sum: { totalConsume: true } }),
-    prisma.creditTransaction.aggregate({ where: { type: "refund" }, _sum: { amount: true } }),
-    prisma.modelPrice.findMany({ where: { enabled: true } })
+    prisma.generationTask.count({ where: { ...taskWhere, createdAt: { gte: dayStart, lt: new Date(dayStart.getTime() + dayMs) } } }),
+    prisma.generationTask.groupBy({ by: ["type", "provider", "model", "status"], where: taskWhere, _count: { _all: true }, _sum: { finalCredits: true } }),
+    prisma.creditAccount.findMany({ select: { userId: true, totalConsume: true } }),
+    prisma.creditTransaction.groupBy({ by: ["userId"], where: { type: "consume", amount: { lt: 0 } }, _sum: { amount: true } }),
+    prisma.creditTransaction.aggregate({ where: { type: "refund", amount: { gt: 0 } }, _sum: { amount: true } }),
+    prisma.rechargeOrder.aggregate({ where: { status: "paid", channel: { not: "mock" } }, _sum: { amountCny: true } })
   ]);
-  const done = tasks.filter((task) => task.status === "succeeded").length;
-  const failedTasks = tasks.filter((task) => task.status === "failed").length;
-  const providerCost = tasks.reduce((sum, task) => sum + estimateProviderCostForTask(task, prices), 0);
-  const creditsConsumed = creditAgg._sum.totalConsume ?? 0;
-  const creditsRevenueEstimate = estimateCreditsRevenueCny(creditsConsumed);
-  const costByStage = summarizeTaskCosts(tasks, prices, "stage");
-  const costByModel = summarizeTaskCosts(tasks, prices, "model");
-  return {
-    users,
-    projects,
-    tasksToday: tasks.length,
-    successRate: tasks.length ? Math.round((done / tasks.length) * 100) : 0,
-    creditsConsumed,
-    providerCost,
-    creditsRevenueEstimate,
-    refundCredits: Math.abs(refunds._sum.amount ?? 0),
-    failedTasks,
-    grossMarginEstimate: creditsRevenueEstimate - providerCost,
-    grossMarginRate: creditsRevenueEstimate ? Math.round(((creditsRevenueEstimate - providerCost) / creditsRevenueEstimate) * 100) : 0,
-    costByStage,
-    costByModel
-  };
-}
-
-function estimateCreditsRevenueCny(credits: number) {
-  return credits * Number(process.env.CREDIT_REVENUE_CNY_UNIT ?? 0.01);
-}
-
-function defaultVendorCostPerCredit(modality: string) {
-  if (modality === "video") return Number(process.env.DEFAULT_VIDEO_VENDOR_COST_PER_CREDIT ?? 0.006);
-  if (modality === "image" || modality === "character") return Number(process.env.DEFAULT_IMAGE_VENDOR_COST_PER_CREDIT ?? 0.004);
-  if (modality === "tts") return Number(process.env.DEFAULT_TTS_VENDOR_COST_PER_CREDIT ?? 0.002);
-  return Number(process.env.DEFAULT_TEXT_VENDOR_COST_PER_CREDIT ?? 0.0015);
-}
-
-function estimateProviderCostForTask(
-  task: { type: string; provider: string; model: string; finalCredits: number | null; estimatedCredits: number },
-  prices: Array<{ providerId: string | null; providerName: string; modality: string; model: string; unitCredits: number; vendorCostCny: number }>
-) {
-  const credits = task.finalCredits ?? task.estimatedCredits ?? 0;
-  const price = findTaskPrice(task, prices);
-  if (price?.unitCredits && price.vendorCostCny > 0) {
-    return (Math.max(0, credits) / Math.max(1, price.unitCredits)) * price.vendorCostCny;
+  const totalTasks = groups.reduce((sum, group) => sum + group._count._all, 0);
+  const done = groups.filter(group => group.status === "succeeded").reduce((sum, group) => sum + group._count._all, 0);
+  const failedTasks = groups.filter(group => group.status === "failed").reduce((sum, group) => sum + group._count._all, 0);
+  const completedTasks = done + failedTasks;
+  const consumptionByUser = new Map(consumed.map(row => [row.userId, Math.abs(row._sum.amount ?? 0)]));
+  const creditsConsumed = [...consumptionByUser.values()].reduce((sum, value) => sum + value, 0);
+  let unreconciledCredits = 0;
+  for (const account of accountTotals) {
+    unreconciledCredits += Math.abs(account.totalConsume - (consumptionByUser.get(account.userId) ?? 0));
+    consumptionByUser.delete(account.userId);
   }
-  return Math.max(0, credits) * defaultVendorCostPerCredit(task.type);
-}
-
-function summarizeTaskCosts(
-  tasks: Array<{ type: string; provider: string; model: string; status: string; finalCredits: number | null; estimatedCredits: number }>,
-  prices: Array<{ providerId: string | null; providerName: string; modality: string; model: string; unitCredits: number; vendorCostCny: number }>,
-  mode: "stage" | "model"
-) {
-  const groups = new Map<string, { stage: string; provider: string; model: string; modality: string; tasks: number; done: number; failed: number; credits: number; providerCost: number }>();
-  tasks.forEach((task) => {
-    const price = findTaskPrice(task, prices);
-    const key = mode === "stage" ? task.type : `${task.provider || price?.providerName || "-"}::${task.model || price?.model || "-"}::${task.type}`;
-    const current = groups.get(key) ?? {
-      stage: task.type,
-      provider: task.provider || price?.providerName || "-",
-      model: task.model || price?.model || "-",
-      modality: task.type,
-      tasks: 0,
-      done: 0,
-      failed: 0,
-      credits: 0,
-      providerCost: 0
-    };
-    const credits = task.finalCredits ?? task.estimatedCredits ?? 0;
-    current.tasks += 1;
-    current.done += task.status === "succeeded" ? 1 : 0;
-    current.failed += task.status === "failed" ? 1 : 0;
-    current.credits += credits;
-    current.providerCost += estimateProviderCostForTask(task, prices);
-    groups.set(key, current);
-  });
-  return Array.from(groups.values())
-    .map((group) => ({
-      ...(mode === "stage"
-        ? { stage: group.stage }
-        : { provider: group.provider, model: group.model, modality: group.modality }),
-      tasks: group.tasks,
-      credits: group.credits,
-      providerCost: Number(group.providerCost.toFixed(2)),
-      failed: group.failed,
-      successRate: group.tasks ? Math.round((group.done / group.tasks) * 100) : 0
-    }))
-    .sort((a, b) => b.providerCost - a.providerCost || b.credits - a.credits)
-    .slice(0, 12);
-}
-
-function findTaskPrice(
-  task: { type: string; provider: string; model: string },
-  prices: Array<{ providerId: string | null; providerName: string; modality: string; model: string; unitCredits: number; vendorCostCny: number }>
-) {
-  const modality = task.type === "image" || task.type === "character" ? "image" : task.type === "video" ? "video" : task.type === "tts" ? "tts" : "text";
-  return prices.find((price) => price.modality === modality && price.model === task.model && (price.providerId === task.provider || price.providerName === task.provider))
-    ?? prices.find((price) => price.modality === modality && price.model === task.model)
-    ?? prices.find((price) => price.modality === modality);
+  unreconciledCredits += [...consumptionByUser.values()].reduce((sum, value) => sum + value, 0);
+  const summarize = (mode: "stage" | "model") => {
+    const rows = new Map<string, { stage: string; provider: string; model: string; modality: string; tasks: number; credits: number; failed: number; done: number }>();
+    for (const group of groups) {
+      const key = mode === "stage" ? group.type : `${group.provider}::${group.model}::${group.type}`;
+      const row = rows.get(key) ?? { stage: group.type, provider: group.provider, model: group.model, modality: group.type, tasks: 0, credits: 0, failed: 0, done: 0 };
+      row.tasks += group._count._all;
+      row.credits += group._sum.finalCredits ?? 0;
+      if (group.status === "failed") row.failed += group._count._all;
+      if (group.status === "succeeded") row.done += group._count._all;
+      rows.set(key, row);
+    }
+    return [...rows.values()].map(row => ({ ...row, providerCost: null, successRate: row.done + row.failed ? Math.round(100 * row.done / (row.done + row.failed)) : 0 }))
+      .sort((a, b) => b.credits - a.credits || b.tasks - a.tasks).slice(0, 12);
+  };
+  return {
+    users, projects, tasksToday, totalTasks, completedTasks,
+    successRate: completedTasks ? Math.round(100 * done / completedTasks) : 0,
+    creditsConsumed, unreconciledCredits,
+    // Recharge receipts are cash inflow, not earned credit consumption revenue.
+    paidRechargeCny: Math.round((paidOrders._sum.amountCny ?? 0) * 100) / 100,
+    creditsRevenueEstimate: null,
+    providerCost: null,
+    providerCostStatus: "unavailable",
+    grossMarginEstimate: null,
+    grossMarginRate: null,
+    refundCredits: refunds._sum.amount ?? 0,
+    failedTasks,
+    metricTimezone: "Asia/Shanghai",
+    metricsNote: "累计实扣积分以 consume 流水为准；充值实收为已支付且非模拟订单金额，尚未按消耗确认收入；尚未接入供应商实际用量账单，成本与毛利不可计算。解冻积分不代表现金退款。今日任务按北京时间统计，成功率仅统计已成功或失败的生成任务，不含内部操作锁。",
+    costByStage: summarize("stage"),
+    costByModel: summarize("model")
+  };
 }
 
 export async function adjustUserCredits({
   userId,
   amount,
   description,
+  requestId,
   type = amount >= 0 ? "recharge" : "adjust"
 }: {
   userId: string;
   amount: number;
   description: string;
+  requestId?: string;
   type?: "recharge" | "adjust";
 }) {
-  if (!Number.isInteger(amount) || amount === 0) throw new Error("调整积分必须为非零整数");
+  if (!Number.isSafeInteger(amount) || amount === 0) throw new Error("调整积分必须为非零整数");
+  if (requestId !== undefined && (!requestId.trim() || requestId.length > 128)) throw new Error("请求标识必须是 1 到 128 个字符");
+  const transactionId = requestId ? `tx_admin_${crypto.createHash("sha256").update(`${userId}:${requestId}`).digest("hex")}` : `tx_${crypto.randomUUID()}`;
   const cleanDescription = description.trim() || (amount > 0 ? "后台手动充值" : "后台手动扣减");
 
   return prisma.$transaction(async (tx) => {
     const user = await tx.user.findUnique({ where: { id: userId } });
     if (!user) throw new Error("用户不存在");
 
-    const account = await tx.creditAccount.upsert({
-      where: { userId },
-      update: {},
-      create: {
-        id: `credit_${userId}`,
-        userId,
-        balance: 0,
-        frozenBalance: 0,
-        totalRecharge: 0,
-        totalConsume: 0
-      }
-    });
+    const account = await lockCreditAccount(tx, userId);
+    const replay = await tx.creditTransaction.findUnique({ where: { id: transactionId } });
+    if (replay) {
+      if (replay.userId !== userId || replay.amount !== amount || replay.type !== type || replay.description !== cleanDescription) throw new Error("该请求标识已用于不同的积分调整");
+      return mapCreditAccount(account);
+    }
 
     const nextBalance = account.balance + amount;
     if (nextBalance < account.frozenBalance || nextBalance < 0) throw new Error("调整后余额不能小于冻结积分或 0");
@@ -1077,7 +1065,7 @@ export async function adjustUserCredits({
 
     await tx.creditTransaction.create({
       data: {
-        id: `tx_${Date.now()}_admin_${Math.abs(amount)}`,
+        id: transactionId,
         userId,
         type,
         amount,
@@ -1096,8 +1084,11 @@ export async function redeemExperienceCode(userId = DEMO_USER_ID, rawCode: strin
   const now = new Date();
 
   return prisma.$transaction(async (tx) => {
-    const redeemCode = await tx.redeemCode.findUnique({ where: { code } });
+    await tx.$queryRaw`SELECT "id" FROM "RedeemCode" WHERE "code" = ${code} FOR UPDATE`;
+    const redeemCode = await tx.redeemCode.findUnique({ where: { code }, include: { batch: { select: { enabled: true } } } });
     if (!redeemCode || !redeemCode.enabled) throw new Error("兑换码不存在或已停用");
+    if (redeemCode.batch && !redeemCode.batch.enabled) throw new Error("兑换码批次已停用");
+    if (!Number.isSafeInteger(redeemCode.credits) || redeemCode.credits < 0) throw new Error("兑换码积分配置无效");
     if (redeemCode.startsAt && redeemCode.startsAt > now) throw new Error("兑换码尚未开始");
     if (redeemCode.endsAt && redeemCode.endsAt < now) throw new Error("兑换码已过期");
     if (redeemCode.usedCount >= redeemCode.maxRedemptions) throw new Error("兑换码额度已用完");
@@ -1105,18 +1096,7 @@ export async function redeemExperienceCode(userId = DEMO_USER_ID, rawCode: strin
     const existing = await tx.redeemRedemption.findFirst({ where: { userId, redeemCodeId: redeemCode.id } });
     if (existing) throw new Error("该兑换码已使用过");
 
-    const account = await tx.creditAccount.upsert({
-      where: { userId },
-      update: {},
-      create: {
-        id: `credit_${userId}`,
-        userId,
-        balance: 0,
-        frozenBalance: 0,
-        totalRecharge: 0,
-        totalConsume: 0
-      }
-    });
+    const account = await lockCreditAccount(tx, userId);
 
     const updated = await tx.creditAccount.update({
       where: { userId },
@@ -1133,7 +1113,7 @@ export async function redeemExperienceCode(userId = DEMO_USER_ID, rawCode: strin
 
     await tx.redeemRedemption.create({
       data: {
-        id: `redemption_${Date.now()}_${userId}`,
+        id: `redemption_${crypto.randomUUID()}`,
         redeemCodeId: redeemCode.id,
         userId,
         credits: redeemCode.credits
@@ -1142,7 +1122,7 @@ export async function redeemExperienceCode(userId = DEMO_USER_ID, rawCode: strin
 
     await tx.creditTransaction.create({
       data: {
-        id: `tx_${Date.now()}_redeem`,
+        id: `tx_${crypto.randomUUID()}`,
         userId,
         type: "recharge",
         amount: redeemCode.credits,
@@ -1155,27 +1135,49 @@ export async function redeemExperienceCode(userId = DEMO_USER_ID, rawCode: strin
   });
 }
 
-export async function createProjectAndTask(
-  input: CreateProjectInput,
-  userId = DEMO_USER_ID
-): Promise<{ projectId: string; taskId: string; task: GenerationTask; estimatedCredits: number }> {
+type CreationQuoteInput = Parameters<typeof estimateCreation>[0];
+
+async function resolveCreationTextInput<T extends CreationQuoteInput>(input: T) {
+  const providerId = input.textProvider || process.env.TEXT_PROVIDER;
+  const provider = providerId ? await prisma.modelProvider.findUnique({ where: { id: providerId } }) : null;
+  const model = input.textModel || readProviderRoutingState(provider?.capability, provider?.models ?? []).preferredModel || textModelName(input);
+  assertProductionMediaProvider(provider, providerId || "local", model, "text");
+  return { ...input, textProvider: providerId, textModel: model };
+}
+
+async function buildCreationStartQuote(input: CreationQuoteInput): Promise<CreationEstimate> {
   const baseEstimate = estimateCreation(input);
   const estimatedCredits = await resolveTextRunCredits(input, baseEstimate.suggestedEpisodes);
-  const estimate = { ...baseEstimate, estimatedCredits };
-  const projectId = `proj_${Date.now()}`;
-  const taskId = `task_${Date.now()}`;
+  return {
+    words: baseEstimate.words, suggestedEpisodes: baseEstimate.suggestedEpisodes, mode: baseEstimate.mode, estimatedCredits,
+    notes: [
+      ...baseEstimate.notes.slice(0, 2),
+      "本次仅冻结文本解析、全局设定、剧本整理、角色与场景提取的积分；成功后结算，最终失败解冻。",
+      "角色图、分镜图、视频和配音会在对应生成步骤单独报价与确认，本次不收取这些费用。"
+    ],
+    breakdown: [{ label: "文本解析与项目结构化", providerId: input.textProvider, model: input.textModel,
+      quantity: baseEstimate.suggestedEpisodes, unitCredits: estimatedCredits / baseEstimate.suggestedEpisodes,
+      totalCredits: estimatedCredits, hint: "按本次选择集数及实际文本渠道、模型的启用价格计费。" }]
+  };
+}
+
+export async function quoteCreationStart(input: CreationQuoteInput): Promise<CreationEstimate> {
+  return buildCreationStartQuote(await resolveCreationTextInput(input));
+}
+
+export async function createProjectAndTask(
+  input: CreateProjectInput,
+  userId = DEMO_USER_ID,
+  maxCredits = Number.POSITIVE_INFINITY
+): Promise<{ projectId: string; taskId: string; task: GenerationTask; estimatedCredits: number; estimate: CreationEstimate }> {
+  input = await resolveCreationTextInput(input);
+  const estimate = await buildCreationStartQuote(input);
+  if ((maxCredits !== Number.POSITIVE_INFINITY && !Number.isFinite(maxCredits)) || maxCredits < 0) throw new Error("积分确认上限无效，请重新获取报价。");
+  if (estimate.estimatedCredits > maxCredits) throw new Error("价格或创建内容已变化，请重新获取报价并确认冻结积分。");
+  const projectId = `proj_${crypto.randomUUID()}`;
+  const taskId = `task_${crypto.randomUUID()}`;
 
   const result = await prisma.$transaction(async (tx) => {
-    const account = await tx.creditAccount.findUniqueOrThrow({ where: { userId } });
-    if (account.balance - account.frozenBalance < estimate.estimatedCredits) {
-      throw new Error("积分余额不足");
-    }
-
-    await tx.creditAccount.update({
-      where: { userId },
-      data: { frozenBalance: { increment: estimate.estimatedCredits } }
-    });
-
     await tx.project.create({
       data: {
         id: projectId,
@@ -1207,6 +1209,8 @@ export async function createProjectAndTask(
         projectName: input.title || "未命名作品",
         type: "text",
         title: "核心剧情、剧本与角色卡生成",
+        jobId: `creation-${crypto.randomUUID()}`,
+        requestPayload: JSON.parse(JSON.stringify(input)),
         provider: textProviderName(input),
         model: textModelName(input),
         status: "pending",
@@ -1215,460 +1219,173 @@ export async function createProjectAndTask(
       }
     });
 
-    await tx.creditTransaction.create({
-      data: {
-        id: `tx_${Date.now()}`,
-        userId,
-        projectId,
-        taskId,
-        type: "freeze",
-        amount: -estimate.estimatedCredits,
-        balanceAfter: account.balance,
-        description: "生成任务冻结积分"
-      }
-    });
+    await reserveTaskCredits(tx, { taskId, userId, description: "生成任务冻结积分" });
 
     return task;
   });
 
-  return { projectId, taskId, task: mapTask(result), estimatedCredits: estimate.estimatedCredits };
+  return { projectId, taskId, task: mapTask(result), estimatedCredits: estimate.estimatedCredits, estimate };
 }
 
 export async function runProjectImageTasks(
-  projectId: string,
-  userId = DEMO_USER_ID,
-  options: { shotIds?: string[]; forceRegenerate?: boolean } = {}
+  projectId: string, userId = DEMO_USER_ID, options: { shotIds?: string[]; forceRegenerate?: boolean } = {}
 ): Promise<BatchGenerationResult> {
   const workflow = await getProjectWorkflow(projectId, userId);
   if (!workflow) throw new Error("项目不存在");
-  const existingImageAssetIds = new Set(workflow.assets.filter((asset) => asset.type === "image").map((asset) => asset.id));
-  const selectedShotIds = new Set(options.shotIds?.filter(Boolean) ?? []);
-  const imageProvider = workflow.project.imageProvider || process.env.IMAGE_PROVIDER || "mock";
-  const imageProviderConfig = await prisma.modelProvider.findUnique({ where: { id: imageProvider } });
-  const imageRouting = readProviderRoutingState(
-    imageProviderConfig?.capability,
-    imageProviderConfig?.models ?? [workflow.project.imageModel || currentImageModelName(imageProvider)].filter(Boolean)
-  );
-  const imageModel = workflow.project.imageModel || imageRouting.preferredModel || currentImageModelName(imageProvider);
-  const imageModelPool = imageRouting.mode === "manual"
-    ? [imageModel]
-    : uniqueModelPool([imageModel, ...imageRouting.modelPool, ...(imageProviderConfig?.models ?? [])]);
+  const selected = new Set(options.shotIds?.filter(Boolean) ?? []);
+  if (selected.size && !workflow.storyboards.some((shot) => selected.has(shot.id))) throw new Error("所选镜头不属于当前项目");
+  const existing = new Set(workflow.assets.filter((asset) => asset.type === "image" && asset.status === "succeeded").map((asset) => asset.id));
+  const provider = workflow.project.imageProvider || process.env.IMAGE_PROVIDER || "mock";
+  const config = await prisma.modelProvider.findUnique({ where: { id: provider } });
+  const model = workflow.project.imageModel || config?.models[0] || currentImageModelName(provider);
+  assertProductionMediaProvider(config, provider, model, "image");
   const assetById = new Map(workflow.assets.map((asset) => [asset.id, asset]));
-  const shotsPerEpisode = Math.max(1, Math.round(workflow.storyboards.length / Math.max(1, workflow.project.episodes)));
-  const candidateShots = workflow.storyboards
-    .filter((shot) => selectedShotIds.size === 0 || selectedShotIds.has(shot.id))
-    .filter((shot) => options.forceRegenerate || !existingImageAssetIds.has(`image_${shot.id}`));
-  const characterGate = assertCharacterGateForStoryboardImages(workflow, selectedShotIds.size > 0 || Boolean(options.forceRegenerate));
-  if (!characterGate.pass) throw new Error(characterGate.message);
-  const useNineGridCandidate = selectedShotIds.size === 0 && !options.forceRegenerate && shotsPerEpisode === 9 && candidateShots.length >= 9 && !isMockImageProvider(imageProvider);
-  const shotsToGenerate = candidateShots.slice(0, useNineGridCandidate ? 9 : imageBatchLimit(workflow.storyboards.length, imageProvider));
-  const imageSize = normalizeImageOutputSize(workflow.project.imageSize);
-  const imageQuality = normalizeImageOutputQuality(workflow.project.imageQuality);
-  const creditsPerShot = await resolveImageCreditPerShot(imageProvider, imageModel, imageSize, imageQuality);
-  const useNineGridSheet = useNineGridCandidate;
-  const billableImageCount = useNineGridSheet ? Math.ceil(shotsToGenerate.length / 9) : shotsToGenerate.length;
-  const credits = billableImageCount * creditsPerShot;
-
-  if (credits > 0) {
-    const account = await prisma.creditAccount.findUniqueOrThrow({ where: { userId } });
-    if (account.balance - account.frozenBalance < credits) throw new Error("积分余额不足");
-  }
-
-  const imageResults: ImageGenerationResult[] = useNineGridSheet
-    ? await generateNineGridSheetImages(projectId, workflow, shotsToGenerate, imageProvider, imageModel, imageModelPool, assetById, imageSize, imageQuality)
-    : [];
-  if (!useNineGridSheet) {
-    const generated = await Promise.all(
-      shotsToGenerate.map((shot, index) =>
-        generateImage({
-          prompt: buildStoryboardFirstFramePrompt({ workflow, shot, assetById }),
-          negativePrompt: "字幕, 水印, Logo, 低清晰度, 畸形手, 多余手指, 换脸, 同款分身, 过暗, 欠曝, 模糊, 脏污画面",
-          referenceImageUrls: resolveStoryboardReferenceAssets(workflow, shot, assetById).map((asset) => asset.referenceUrl).filter(Boolean) as string[],
-          ratio: workflow.project.videoRatio,
-          seed: 30000 + index,
-          provider: workflow.project.imageProvider,
-          model: imageModel,
-          modelPool: imageModelPool,
-          size: imageSize,
-          quality: imageQuality,
-          baseUrl: imageProviderConfig?.baseUrl ?? undefined,
-          apiKey: imageProviderConfig?.apiKey ?? undefined
-        }).catch((error) => {
-          if (isMockImageProvider(imageProvider)) {
-            console.warn("[image] mock provider fallback:", error);
-            return {
-              taskId: `mock_image_${Date.now()}_${index}`,
-              status: "succeeded" as const,
-              imageUrl: undefined,
-              provider: "Mock Image Adapter",
-              model: "mock-image-v1"
-            };
-          }
-          throw error;
-        })
-      )
-    );
-    imageResults.push(...generated);
-  }
-  const missingImageResult = imageResults.find((result) => !result.imageUrl);
-  if (missingImageResult && !isMockImageProvider(imageProvider)) {
-    throw new Error(
-      `真实生图渠道未返回图片 URL：${missingImageResult.provider || imageProvider} / ${missingImageResult.model || imageModel}。请在后台“测试生图模型”查看上游任务状态。`
-    );
-  }
-  const storedImageUrls = await Promise.all(
-    imageResults.map((result, index) =>
-      persistImageReference(result.imageUrl, `shot-${projectId}-${shotsToGenerate[index]?.shotNo ?? index + 1}`)
-    )
-  );
-  const taskId = `task_image_${Date.now()}`;
-
-  const result = await prisma.$transaction(async (tx) => {
-    const account = await tx.creditAccount.findUniqueOrThrow({ where: { userId } });
-    if (account.balance - account.frozenBalance < credits) throw new Error("积分余额不足");
-
-    const task = await tx.generationTask.create({
-      data: {
-        id: taskId,
-        userId,
-        projectId,
-        projectName: workflow.project.name,
-        type: "image",
-        title: useNineGridSheet ? "9宫格总图裁切生成" : "分镜图批量生成",
-        provider: imageResults[0]?.provider || currentImageProviderName(imageProvider),
-        model: imageResults[0]?.model || currentImageModelName(imageProvider, imageModel),
-        status: "succeeded",
-        progress: 100,
-        estimatedCredits: credits,
-        finalCredits: credits
+  const candidates = workflow.storyboards.filter((shot) => (!selected.size || selected.has(shot.id)) && (options.forceRegenerate || !existing.has(`image_${shot.id}`)));
+  const gate = assertCharacterGateForStoryboardImages(workflow, selected.size > 0 || Boolean(options.forceRegenerate));
+  if (!gate.pass) throw new Error(gate.message);
+  const nineGrid = !selected.size && !options.forceRegenerate && Math.round(workflow.storyboards.length / Math.max(1, workflow.project.episodes)) === 9 && candidates.length >= 9 && !isMockImageProvider(provider);
+  const shots = candidates.slice(0, nineGrid ? 9 : imageBatchLimit(workflow.storyboards.length, provider));
+  if (!shots.length) throw new Error("没有需要生成的分镜图；已有图片可选择单镜头重新生成。");
+  const size = normalizeImageOutputSize(workflow.project.imageSize);
+  const quality = normalizeImageOutputQuality(workflow.project.imageQuality);
+  const unitCredits = await resolveImageCreditPerShot(provider, model, size, quality);
+  const estimatedCredits = (nineGrid ? 1 : shots.length) * unitCredits;
+  return runMediaTask({ userId, projectId, projectName: workflow.project.name, type: "image", scope: "image", provider, model, estimatedCredits, title: nineGrid ? "九宫格分镜图生成" : "分镜图生成" }, async (billing) => {
+    const successes: Array<{ shot: StoryboardShot; url: string }> = [];
+    const failures: string[] = [];
+    if (nineGrid) {
+      const results = await generateNineGridSheetImages(projectId, workflow, shots, provider, model, [model], assetById, size, quality);
+      for (const [index, result] of results.entries()) {
+        if (!result.imageUrl) throw new Error("真实九宫格模型未返回图片");
+        const url = await persistImageReference(result.imageUrl, `shot-${projectId}-${shots[index]!.shotNo}`);
+        successes.push({ shot: shots[index]!, url: url || result.imageUrl });
       }
-    });
-
-    const imageAssets = shotsToGenerate.map((shot, index) => ({
-      id: `image_${shot.id}`,
-      projectId,
-      type: "image",
-      name: `镜头 ${shot.episodeNo}-${shot.sceneNo}-${shot.shotNo} 分镜图`,
-      description: shot.pictureDesc,
-      prompt: shot.imagePrompt,
-      referenceUrl: storedImageUrls[index] || imageResults[index]?.imageUrl || createSvgDataUrl(`镜头 ${index + 1}`, shot.pictureDesc, workflow.project.artStyle),
-      status: "succeeded",
-      relatedCharacterId: null
-    }));
-
-    let created = { count: 0 };
-    for (const imageAsset of imageAssets) {
-      await tx.asset.upsert({
-        where: { id: imageAsset.id },
-        create: imageAsset,
-        update: {
-          description: imageAsset.description,
-          prompt: imageAsset.prompt,
-          referenceUrl: imageAsset.referenceUrl,
-          status: "succeeded"
-        }
-      });
-      created = { count: created.count + 1 };
+      if (successes.length !== shots.length) throw new Error("九宫格图片裁切数量不完整，请重试。");
+    } else {
+      await Promise.all(shots.map(async (shot, index) => {
+        try {
+          const result = await generateImage({
+            prompt: buildStoryboardFirstFramePrompt({ workflow, shot, assetById }),
+            negativePrompt: "字幕, 水印, Logo, 低清晰度, 畸形手, 多余手指, 换脸, 同款分身, 过暗, 欠曝, 模糊",
+            referenceImageUrls: resolveStoryboardReferenceAssets(workflow, shot, assetById).map((asset) => asset.referenceUrl).filter(Boolean) as string[],
+            ratio: workflow.project.videoRatio, seed: 30000 + index, provider, model, modelPool: [model], size, quality,
+            baseUrl: config?.baseUrl ?? undefined, apiKey: config?.apiKey ?? undefined
+          });
+          if (!result.imageUrl && !isMockImageProvider(provider)) throw new Error("真实生图渠道未返回图片");
+          const source = result.imageUrl || createSvgDataUrl(`镜头 ${shot.shotNo}`, shot.pictureDesc, workflow.project.artStyle);
+          const url = await persistImageReference(source, `shot-${projectId}-${shot.shotNo}`);
+          successes.push({ shot, url: url || source });
+        } catch (error) { failures.push(`镜头 ${shot.shotNo}：${error instanceof Error ? error.message : "生成失败"}`); }
+      }));
     }
-
-    await tx.asset.updateMany({
-      where: { projectId, type: { in: ["role", "scene"] } },
-      data: { status: "succeeded" }
-    });
-
-    await tx.storyboard.updateMany({
-      where: { projectId, id: { in: shotsToGenerate.map((shot) => shot.id) } },
-      data: { status: "succeeded" }
-    });
-
-    const totalImageAssets = await tx.asset.count({
-      where: { projectId, type: { in: ["role", "role_derivative", "scene", "prop", "image", "cover"] } }
-    });
-
-    await tx.project.update({
-      where: { id: projectId },
-      data: {
-        status: "asseting",
-        imageAssets: totalImageAssets,
-        creditsSpent: { increment: credits }
-      }
-    });
-
-    await tx.creditAccount.update({
-      where: { userId },
-      data: {
-        balance: { decrement: credits },
-        totalConsume: { increment: credits }
-      }
-    });
-
-    await tx.creditTransaction.create({
-      data: {
-        id: `tx_${Date.now()}_image`,
-        userId,
-        projectId,
-        taskId,
-        type: "consume",
-        amount: -credits,
-        balanceAfter: account.balance - credits,
-        description: "分镜图批量生成扣费"
-      }
-    });
-
-    return { task, created: created.count };
+    if (!successes.length) throw new Error(failures.join("；") || "未生成可用图片");
+    const billed = (nineGrid ? 1 : successes.length) * unitCredits;
+    const result = await billing.complete(billed, async (tx) => {
+      for (const { shot, url } of successes) await tx.asset.upsert({ where: { id: `image_${shot.id}` },
+        create: { id: `image_${shot.id}`, projectId, type: "image", name: `镜头 ${shot.episodeNo}-${shot.shotNo} 分镜图`, description: shot.pictureDesc, prompt: shot.imagePrompt, referenceUrl: url, status: "succeeded" },
+        update: { description: shot.pictureDesc, prompt: shot.imagePrompt, referenceUrl: url, status: "succeeded" }
+      });
+      await tx.storyboard.updateMany({ where: { projectId, id: { in: successes.map(({ shot }) => shot.id) } }, data: { status: "succeeded" } });
+      const imageAssets = await tx.asset.count({ where: { projectId, type: { in: ["role", "role_derivative", "scene", "prop", "image", "cover"] } } });
+      await tx.project.update({ where: { id: projectId }, data: { status: "asseting", imageAssets, creditsSpent: { increment: billed } } });
+      return { created: successes.length };
+    }, { status: failures.length ? "failed" : "succeeded", errorReason: failures.length ? `成功 ${successes.length} 张，失败 ${failures.length} 张；只对成功项扣费。${failures.join("；")}` : null });
+    const refreshed = await getProjectWorkflow(projectId, userId);
+    return { project: refreshed!.project, task: mapTask(result.task), assetsCreated: result.created };
   });
-
-  const refreshed = await getProjectWorkflow(projectId, userId);
-  return {
-    project: refreshed!.project,
-    task: mapTask(result.task),
-    assetsCreated: result.created
-  };
 }
 
 export async function runProjectVideoTasks(
-  projectId: string,
-  userId = DEMO_USER_ID,
-  options: { storyboardIds?: string[]; regenerate?: boolean } = {}
+  projectId: string, userId = DEMO_USER_ID, options: { storyboardIds?: string[]; regenerate?: boolean } = {}
 ): Promise<BatchGenerationResult> {
   const workflow = await getProjectWorkflow(projectId, userId);
   if (!workflow) throw new Error("项目不存在");
-  const taskId = `task_video_${Date.now()}`;
-  const imageAssetByShotId = new Map(workflow.assets.filter((asset) => asset.type === "image").map((asset) => [asset.id.replace(/^image_/, ""), asset]));
-  const videoAssetByShotId = new Map(workflow.assets.filter((asset) => asset.type === "video").map((asset) => [asset.id.replace(/^video_/, ""), asset]));
-  const knownShotIds = new Set(workflow.storyboards.map((shot) => shot.id));
-  const requestedShotIds = [...new Set((options.storyboardIds ?? []).filter(Boolean))];
-  const selectedShotIds = new Set(requestedShotIds.filter((id) => knownShotIds.has(id)));
-  const unknownShotIds = requestedShotIds.filter((id) => !knownShotIds.has(id));
-  /** regenerate 仅在显式传入 storyboardIds 时生效，避免整项目误重生；不传 storyboardIds 时行为与原接口完全一致。 */
-  const regenerate = Boolean(options.regenerate) && selectedShotIds.size > 0;
-  const videoProvider = workflow.project.videoProvider || process.env.VIDEO_PROVIDER || "dashscope-video";
-  const videoProviderConfig = await prisma.modelProvider.findUnique({ where: { id: videoProvider } });
-  const videoRouting = readProviderRoutingState(
-    videoProviderConfig?.capability,
-    videoProviderConfig?.models ?? [workflow.project.videoModel || currentVideoModelName(videoProvider)].filter(Boolean)
-  );
-  const videoModel = workflow.project.videoModel || videoRouting.preferredModel || currentVideoModelName(videoProvider);
-  const videoModelPool = videoRouting.mode === "manual"
-    ? [videoModel]
-    : uniqueModelPool([videoModel, ...videoRouting.modelPool, ...(videoProviderConfig?.models ?? [])]);
-  const scopedShots = workflow.storyboards.filter((shot) => selectedShotIds.size === 0 || selectedShotIds.has(shot.id));
-  const skippedExistingShots = selectedShotIds.size && !regenerate
-    ? scopedShots.filter((shot) => imageAssetByShotId.has(shot.id) && isPersistedPlayableVideoReference(videoAssetByShotId.get(shot.id)?.referenceUrl))
-    : [];
-  const skippedNoFirstFrameShots = selectedShotIds.size ? scopedShots.filter((shot) => !imageAssetByShotId.has(shot.id)) : [];
-  const candidateShots = scopedShots
-    .filter((shot) => regenerate || !isPersistedPlayableVideoReference(videoAssetByShotId.get(shot.id)?.referenceUrl))
-    .filter((shot) => imageAssetByShotId.has(shot.id));
-  const shotsToGenerate = candidateShots.slice(0, videoBatchLimit(workflow.storyboards.length, videoProvider));
-  if (!shotsToGenerate.length) {
-    if (selectedShotIds.size > 0) {
-      const reasons = [
-        skippedExistingShots.length ? `${skippedExistingShots.length} 个已有视频（如需重生请勾选重新生成）` : "",
-        skippedNoFirstFrameShots.length ? `${skippedNoFirstFrameShots.length} 个缺少分镜图首帧` : "",
-        unknownShotIds.length ? `${unknownShotIds.length} 个不属于该项目已被忽略` : ""
-      ].filter(Boolean);
-      throw new Error(`选中的分镜没有可生成视频的镜头${reasons.length ? `：${reasons.join("；")}` : ""}。`);
-    }
-    throw new Error("没有可用于图生视频的分镜图。请先在“分镜图评估”里生成至少一张镜头首帧，再生成视频。");
-  }
-  /** 仅在按镜头选择模式下补充说明；默认整项目模式的响应保持原样。 */
-  const filterNotices = selectedShotIds.size
-    ? [
-        unknownShotIds.length ? `${unknownShotIds.length} 个镜头不属于该项目，已忽略` : "",
-        skippedExistingShots.length ? `${skippedExistingShots.length} 个已有视频的镜头已跳过（可用“重新生成”产生新版本）` : "",
-        skippedNoFirstFrameShots.length ? `${skippedNoFirstFrameShots.length} 个镜头缺少分镜图首帧，已跳过` : "",
-        candidateShots.length > shotsToGenerate.length
-          ? `受视频批量上限限制，本次仅提交 ${shotsToGenerate.length}/${candidateShots.length} 个镜头，其余可再次提交`
-          : ""
-      ].filter(Boolean)
-    : [];
-  const creditsPerSecond = await resolveVideoCreditPerSecond(videoProvider, videoModel);
-  const credits = shotsToGenerate.reduce((sum, shot) => sum + Math.max(1, shot.duration) * creditsPerSecond, 0);
-
-  if (credits > 0) {
-    const account = await prisma.creditAccount.findUniqueOrThrow({ where: { userId } });
-    if (account.balance - account.frozenBalance < credits) throw new Error("积分余额不足");
-  }
-
-  const videoResults = await Promise.all(
-    shotsToGenerate.map(async (shot) => {
-      const imageAsset = imageAssetByShotId.get(shot.id);
-      const existingVideoAsset = videoAssetByShotId.get(shot.id);
-      /** 重新生成时不再续查旧上游任务，直接走全新生成；其余场景保持原有断点续查逻辑。 */
-      const queuedTaskId = !regenerate && existingVideoAsset?.referenceUrl && !isPersistedPlayableVideoReference(existingVideoAsset.referenceUrl)
-        ? existingVideoAsset.referenceUrl
-        : undefined;
-      const queried = queuedTaskId
-        ? await queryVideoTaskResult({
-            taskId: queuedTaskId,
-            provider: videoProvider,
-            model: videoModel,
-            baseUrl: videoProviderConfig?.baseUrl ?? undefined,
-            apiKey: videoProviderConfig?.apiKey ?? undefined
-          }).catch((error) => ({
-            taskId: queuedTaskId,
-            status: "failed" as const,
-            videoUrl: undefined,
-            provider: currentVideoProviderName(videoProvider),
-            model: videoModel,
-            message: `视频任务查询失败：${error instanceof Error ? error.message : String(error)}`,
-            failureCategory: "unknown" as const,
-            retryable: true
-          }))
-        : undefined;
-      const result = queuedTaskId
-        ? queried ?? {
-            taskId: queuedTaskId,
-            status: "running" as const,
-            videoUrl: undefined,
-            provider: currentVideoProviderName(videoProvider),
-            model: videoModel,
-            message: "上游视频任务仍在生成中，稍后可继续刷新查询。"
-          }
-      : await generateVideo({
-            prompt: buildSeedanceVideoPrompt({ workflow, shot, firstFrameAsset: imageAsset, assetById: new Map(workflow.assets.map((asset) => [asset.id, asset])) }),
-            imageUrl: imageAsset?.referenceUrl,
-            ratio: workflow.project.videoRatio,
-            duration: shot.duration,
-            provider: videoProvider,
-            model: videoModel,
-            modelPool: videoModelPool,
-            baseUrl: videoProviderConfig?.baseUrl ?? undefined,
-            apiKey: videoProviderConfig?.apiKey ?? undefined
+  const known = new Set(workflow.storyboards.map((shot) => shot.id));
+  const requested = new Set(options.storyboardIds ?? []);
+  if (requested.size && ![...requested].some((id) => known.has(id))) throw new Error("所选镜头不属于当前项目");
+  const images = new Map(workflow.assets.filter((asset) => asset.type === "image").map((asset) => [asset.id.replace(/^image_/, ""), asset]));
+  const videos = new Map(workflow.assets.filter((asset) => asset.type === "video").map((asset) => [asset.id.replace(/^video_/, ""), asset]));
+  const pending = await prisma.generationTask.findMany({ where: { userId, projectId, jobId: { startsWith: "media:video:" }, status: { in: ["pending", "running"] } } });
+  const pendingShots = new Set(pending.map((task) => task.jobId!.slice("media:video:".length)));
+  const regenerate = Boolean(options.regenerate && requested.size);
+  const provider = workflow.project.videoProvider || process.env.VIDEO_PROVIDER || "dashscope-video";
+  const config = await prisma.modelProvider.findUnique({ where: { id: provider } });
+  const model = workflow.project.videoModel || config?.models[0] || currentVideoModelName(provider);
+  const candidates = workflow.storyboards.filter((shot) => (!requested.size || requested.has(shot.id)) && images.has(shot.id)
+    && (pendingShots.has(shot.id) || regenerate || !isPersistedPlayableVideoReference(videos.get(shot.id)?.referenceUrl)));
+  const shots = candidates.slice(0, videoBatchLimit(workflow.storyboards.length, provider));
+  if (!shots.length) throw new Error("没有可生成的镜头，请先生成首帧；已有视频需显式选择重新生成。");
+  const unitCredits = await resolveVideoCreditPerSecond(provider, model);
+  const outcomes: Array<{ task: GenerationTask; created: number }> = [];
+  const errors: string[] = [];
+  for (const shot of shots) {
+    try {
+      if (!pendingShots.has(shot.id)) assertProductionMediaProvider(config, provider, model, "video");
+      const result = await runMediaTask({
+        userId, projectId, projectName: workflow.project.name, type: "video", scope: `video:${shot.id}`,
+        title: `镜头 ${shot.episodeNo}-${shot.shotNo} 视频生成`, provider, model,
+        estimatedCredits: Math.max(1, shot.duration) * unitCredits, resume: true
+      }, async (billing) => {
+        let checkpoint = mediaCheckpoint(billing.task);
+        const runtimeProvider = typeof checkpoint.provider === "string" ? checkpoint.provider : provider;
+        const runtimeModel = typeof checkpoint.model === "string" ? checkpoint.model : model;
+        const runtimeConfig = runtimeProvider === provider ? config : await prisma.modelProvider.findUnique({ where: { id: runtimeProvider } });
+        let generated: VideoGenerationResult;
+        if (typeof checkpoint.remoteVideoUrl === "string") {
+          generated = { taskId: String(checkpoint.remoteTaskId || "stored-result"), status: "succeeded", videoUrl: checkpoint.remoteVideoUrl, provider: runtimeProvider, model: runtimeModel };
+        } else if (typeof checkpoint.remoteTaskId === "string") {
+          generated = await queryVideoTaskResult({ taskId: checkpoint.remoteTaskId, provider: runtimeProvider, model: runtimeModel, baseUrl: runtimeConfig?.baseUrl ?? undefined, apiKey: runtimeConfig?.apiKey ?? undefined });
+        } else {
+          await billing.checkpoint({ submissionStarted: true, provider: runtimeProvider, model: runtimeModel, shotId: shot.id });
+          generated = await generateVideo({
+            prompt: buildSeedanceVideoPrompt({ workflow, shot, firstFrameAsset: images.get(shot.id), assetById: new Map(workflow.assets.map((asset) => [asset.id, asset])) }),
+            imageUrl: images.get(shot.id)?.referenceUrl, ratio: workflow.project.videoRatio, duration: shot.duration,
+            provider: runtimeProvider, model: runtimeModel, modelPool: [runtimeModel], baseUrl: runtimeConfig?.baseUrl ?? undefined, apiKey: runtimeConfig?.apiKey ?? undefined,
+            onTaskSubmitted: async (remote) => {
+              checkpoint = { ...checkpoint, remoteTaskId: remote.taskId, provider: remote.provider, model: remote.model, shotId: shot.id };
+              await billing.checkpoint(checkpoint);
+            }
           });
-      const storedVideoUrl = await persistVideoReference(result.videoUrl, `video-${projectId}-${shot.shotNo}`);
-      return { shot, result, videoUrl: storedVideoUrl || result.videoUrl };
-    })
-  );
-
-  const hasQueuedVideo = videoResults.some((item) => !item.videoUrl);
-  const failedVideoResults = videoResults.filter((item) => item.result.status === "failed" || item.result.status === "timeout" || item.result.status === "canceled");
-  const succeededVideoResults = videoResults.filter((item) => item.videoUrl);
-  const billableCredits = succeededVideoResults.reduce((sum, item) => sum + Math.max(1, item.shot.duration) * creditsPerSecond, 0);
-  const taskStatus = failedVideoResults.length && !succeededVideoResults.length
-    ? "failed"
-    : hasQueuedVideo
-      ? "running"
-      : "succeeded";
-  const taskProgress = taskStatus === "succeeded" ? 100 : taskStatus === "failed" ? 0 : Math.max(35, Math.round((succeededVideoResults.length / Math.max(1, videoResults.length)) * 100));
-  const taskErrorReason = buildVideoTaskErrorReason(videoResults);
-  /** 重新生成前把旧的可播放视频复制为带版本号的历史资产（`video_<shotId>` 主资产随后被新结果覆盖，旧视频得以保留）。 */
-  const archiveVersion = Date.now();
-  const archivedVideoAssets = regenerate
-    ? shotsToGenerate.flatMap((shot) => {
-        const existing = videoAssetByShotId.get(shot.id);
-        if (!existing || !isPersistedPlayableVideoReference(existing.referenceUrl)) return [];
-        return [{
-          id: `video_${shot.id}_v${archiveVersion}`,
-          projectId,
-          type: "video",
-          name: `${existing.name}（旧版本）`,
-          description: existing.description,
-          prompt: existing.prompt,
-          referenceUrl: existing.referenceUrl,
-          status: "succeeded",
-          relatedCharacterId: null
-        }];
-      })
-    : [];
-
-  const result = await prisma.$transaction(async (tx) => {
-    const account = await tx.creditAccount.findUniqueOrThrow({ where: { userId } });
-    if (account.balance - account.frozenBalance < billableCredits) throw new Error("积分余额不足");
-
-    const task = await tx.generationTask.create({
-      data: {
-        id: taskId,
-        userId,
-        projectId,
-        projectName: workflow.project.name,
-        type: "video",
-        title: "图生视频生成",
-        provider: videoResults[0]?.result.provider || currentVideoProviderName(videoProvider),
-        model: videoResults[0]?.result.model || videoModel,
-        status: taskStatus,
-        progress: taskProgress,
-        estimatedCredits: credits,
-        finalCredits: billableCredits > 0 ? billableCredits : undefined,
-        errorReason: taskErrorReason
-      }
-    });
-
-    const videoAssets = videoResults.map((item) => ({
-      id: `video_${item.shot.id}`,
-      projectId,
-      type: "video",
-      name: `镜头 ${item.shot.episodeNo}-${item.shot.sceneNo}-${item.shot.shotNo} 视频`,
-      description: item.result.message || `基于分镜图生成视频：${item.shot.pictureDesc}`,
-      prompt: item.shot.videoPrompt,
-      referenceUrl: item.videoUrl || item.result.taskId,
-      status: item.videoUrl ? "succeeded" : item.result.status === "failed" || item.result.status === "timeout" || item.result.status === "canceled" ? "failed" : "running",
-      relatedCharacterId: null
-    }));
-
-    for (const archivedAsset of archivedVideoAssets) {
-      await tx.asset.upsert({ where: { id: archivedAsset.id }, create: archivedAsset, update: {} });
-    }
-
-    let created = { count: 0 };
-    for (const videoAsset of videoAssets) {
-      await tx.asset.upsert({
-        where: { id: videoAsset.id },
-        create: videoAsset,
-        update: {
-          description: videoAsset.description,
-          prompt: videoAsset.prompt,
-          referenceUrl: videoAsset.referenceUrl,
-          status: videoAsset.status
         }
-      });
-      created = { count: created.count + 1 };
-    }
-
-    const totalVideoAssets = await tx.asset.count({ where: { projectId, type: "video" } });
-
-    await tx.project.update({
-      where: { id: projectId },
-      data: {
-        status: "rendering",
-        videoClips: totalVideoAssets,
-        creditsSpent: { increment: billableCredits }
-      }
-    });
-
-    if (billableCredits > 0) {
-      await tx.creditAccount.update({
-        where: { userId },
-        data: {
-          balance: { decrement: billableCredits },
-          totalConsume: { increment: billableCredits }
+        if (!generated.videoUrl) {
+          const definitiveFailure = ["failed", "canceled"].includes(generated.status)
+            && ["auth", "config", "provider_failed", "canceled", "no_output"].includes(generated.failureCategory ?? "");
+          if (definitiveFailure) {
+            const failed = await billing.complete(0, async () => ({ created: 0 }), { status: "failed", errorReason: generated.message || "上游任务失败，积分已释放。" });
+            return { task: mapTask(failed.task), created: 0 };
+          }
+          const taskId = checkpoint.remoteTaskId || (["queued", "running"].includes(generated.status) ? generated.taskId : undefined);
+          const pendingTask = await billing.defer({ ...checkpoint, remoteTaskId: taskId, provider: runtimeProvider, model: runtimeModel,
+            shotId: shot.id, submissionStarted: true, lastError: generated.message, needsReconciliation: !taskId });
+          return { task: mapTask(pendingTask), created: 0 };
         }
+        await billing.checkpoint({ ...checkpoint, remoteVideoUrl: generated.videoUrl, provider: runtimeProvider, model: runtimeModel, shotId: shot.id });
+        const videoUrl = await persistVideoReference(generated.videoUrl, `video-${projectId}-${shot.shotNo}`);
+        if (!videoUrl) throw new Error("视频已生成但保存失败，请刷新继续保存。");
+        const completed = await billing.complete(billing.task.estimatedCredits, async (tx) => {
+          const existing = await tx.asset.findUnique({ where: { id: `video_${shot.id}` } });
+          if (existing && isPersistedPlayableVideoReference(existing.referenceUrl ?? undefined)) await tx.asset.create({ data: {
+            id: `video_${shot.id}_v${crypto.randomUUID()}`, projectId, type: "video", name: `${existing.name}（旧版本）`,
+            description: existing.description, prompt: existing.prompt, referenceUrl: existing.referenceUrl, status: "succeeded"
+          } });
+          await tx.asset.upsert({ where: { id: `video_${shot.id}` },
+            create: { id: `video_${shot.id}`, projectId, type: "video", name: `镜头 ${shot.episodeNo}-${shot.shotNo} 视频`, description: generated.message || shot.pictureDesc, prompt: shot.videoPrompt, referenceUrl: videoUrl, status: "succeeded" },
+            update: { description: generated.message || shot.pictureDesc, prompt: shot.videoPrompt, referenceUrl: videoUrl, status: "succeeded" }
+          });
+          const videoClips = await tx.asset.count({ where: { projectId, id: { in: workflow.storyboards.map((item) => `video_${item.id}`) }, status: "succeeded" } });
+          await tx.project.update({ where: { id: projectId }, data: { status: "rendering", videoClips, creditsSpent: { increment: billing.task.estimatedCredits } } });
+          return { created: 1 };
+        });
+        return { task: mapTask(completed.task), created: completed.created };
       });
-      await tx.creditTransaction.create({
-        data: {
-          id: `tx_${Date.now()}_video`,
-          userId,
-          projectId,
-          taskId,
-          type: "consume",
-          amount: -billableCredits,
-          balanceAfter: account.balance - billableCredits,
-          description: `图生视频生成扣费（${succeededVideoResults.length}/${videoResults.length} 条已返回可播放视频）`
-        }
-      });
-    }
-
-    return { task, created: created.count };
-  });
-
+      outcomes.push(result);
+    } catch (error) { errors.push(`镜头 ${shot.shotNo}：${error instanceof Error ? error.message : "生成失败"}`); }
+  }
+  if (!outcomes.length) throw new Error(errors.join("；") || "没有可处理的视频任务");
   const refreshed = await getProjectWorkflow(projectId, userId);
-  return {
-    project: refreshed!.project,
-    task: mapTask(result.task),
-    assetsCreated: result.created,
-    ...(filterNotices.length ? { message: filterNotices.join("；") } : {})
-  };
+  return { project: refreshed!.project, task: outcomes[outcomes.length - 1]!.task,
+    assetsCreated: outcomes.reduce((sum, result) => sum + result.created, 0),
+    message: [...errors, candidates.length > shots.length ? `本次处理 ${shots.length} 个镜头，其余可继续提交。` : "", outcomes.some((result) => result.task.status === "pending") ? "上游视频仍在生成；积分保持冻结，再次点击生成会查询原任务，不会重复提交。" : ""].filter(Boolean).join("；") };
 }
 
 async function resolveVideoCreditPerSecond(provider: string, model: string) {
@@ -1679,6 +1396,7 @@ async function resolveVideoCreditPerSecond(provider: string, model: string) {
       enabled: true
     }
   });
+  if (!price && process.env.NODE_ENV === "production") throw new Error("该视频模型尚未配置价格，请联系管理员。");
   return price?.unitCredits ?? videoCreditPerSecond(provider);
 }
 
@@ -1773,37 +1491,81 @@ export async function getExportJobForDownload(projectId: string, jobId: string, 
   return mapExportJob(job);
 }
 
+export async function quoteProjectExport(projectId: string, userId: string, type: "tts" | "subtitle" | "video_export", storyboardIds?: string[]) {
+  const fullWorkflow = await getProjectWorkflow(projectId, userId);
+  if (!fullWorkflow) throw new Error("项目不存在");
+  const workflow = selectExportWorkflow(fullWorkflow, storyboardIds);
+  if (type === "video_export") assertVideoExportReady(workflow);
+  if (type === "subtitle") return { type, providerId: "local-subtitle", providerName: "字幕导出", model: "srt", characters: 0, estimatedCredits: 0, unitCredits: 0, unit: "tts_character" as const, cached: false, cueCount: 0 };
+  return { type, ...await quoteProjectNarration(workflow, userId) };
+}
+
 export async function createProjectExportJob(
   projectId: string,
   userId = DEMO_USER_ID,
-  type: "tts" | "subtitle" | "video_export"
+  type: "tts" | "subtitle" | "video_export",
+  storyboardIds?: string[],
+  maxCredits = 0
 ) {
-  const workflow = await getProjectWorkflow(projectId, userId);
-  if (!workflow) throw new Error("项目不存在");
-  const job = await prisma.exportJob.create({
+  const fullWorkflow = await getProjectWorkflow(projectId, userId);
+  if (!fullWorkflow) throw new Error("项目不存在");
+  const workflow = selectExportWorkflow(fullWorkflow, storyboardIds);
+  if (!Number.isSafeInteger(maxCredits) || maxCredits < 0) throw new Error("请提供有效的导出积分上限");
+  if (type !== "subtitle" && (await quoteProjectNarration(workflow, userId)).estimatedCredits > maxCredits) throw new Error("配音价格或内容已变化，请重新获取报价并确认积分上限。");
+  if (type === "video_export") {
+    assertVideoExportReady(workflow);
+    if (!(await probeFfmpeg()).ready) throw new Error("成片服务缺少可用 FFmpeg，请管理员完成部署配置后重试");
+  }
+  const scope = crypto.createHash("sha256").update(JSON.stringify({ projectId, type, shots: workflow.storyboards, assets: workflow.assets.map(asset => [asset.id, asset.referenceUrl]) })).digest("hex").slice(0, 24);
+  const acquired = await prisma.$transaction(async tx => {
+    await tx.$queryRaw`SELECT true AS locked FROM pg_advisory_xact_lock(hashtext(${`export:${userId}:${scope}`}))`;
+    const current = await tx.exportJob.findFirst({ where: { userId, projectId, type, id: { startsWith: `export_${scope}_` }, status: "running" } });
+    if (current && current.updatedAt.getTime() > Date.now() - 120_000) return { job: current, acquired: false };
+    if (current) await tx.exportJob.update({ where: { id: current.id }, data: { status: "failed", errorReason: "导出进程中断，可重新导出，已完成的配音将复用。" } });
+    const job = await tx.exportJob.create({
     data: {
-      id: `export_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`,
+      id: `export_${scope}_${crypto.randomUUID()}`,
       userId,
       projectId,
       type,
       status: "running"
     }
+    });
+    return { job, acquired: true };
   });
+  const job = acquired.job;
+  if (!acquired.acquired) return mapExportJob(job);
+  const heartbeat = setInterval(() => {
+    void prisma.exportJob.updateMany({ where: { id: job.id, status: "running" }, data: { updatedAt: new Date() } }).catch(() => undefined);
+  }, 20_000);
+  heartbeat.unref();
 
   try {
+    const narration = type === "subtitle" ? undefined : await getOrCreatePaidNarration(workflow, userId, prisma, { maximumCredits: maxCredits });
     const exportResult =
       type === "tts"
-        ? await createTtsManifest(workflow)
+        ? await createTtsManifest(workflow, narration!)
         : type === "subtitle"
           ? await createSubtitleAsset(workflow)
-          : await createVideoExportPackage(workflow);
+          : await createVideoExportPackage(workflow, narration!);
 
-    const refreshed = await prisma.exportJob.update({
+    if (type === "video_export" && exportResult.outputKind !== "mp4") {
+      return mapExportJob(await prisma.exportJob.update({
+        where: { id: job.id },
+        data: { status: "failed", outputUrl: exportResult.outputUrl, errorReason: exportDiagnosticsMessage(type, exportResult, workflow.storyboards.map(shot => shot.id)) }
+      }));
+    }
+
+    const refreshed = await prisma.$transaction(async tx => {
+    await tx.$queryRaw`SELECT "id" FROM "ExportJob" WHERE "id" = ${job.id} FOR UPDATE`;
+    const current = await tx.exportJob.findUniqueOrThrow({ where: { id: job.id } });
+    if (current.status !== "running") throw new Error("导出已由新的请求接管，请刷新查看结果");
+    const updated = await tx.exportJob.update({
       where: { id: job.id },
       data: {
         status: "succeeded",
         outputUrl: exportResult.outputUrl,
-        errorReason: exportDiagnosticsMessage(type, exportResult)
+        errorReason: exportDiagnosticsMessage(type, exportResult, workflow.storyboards.map(shot => shot.id))
       }
     });
 
@@ -1823,7 +1585,7 @@ export async function createProjectExportJob(
           ? "已完成片段、配音和字幕封装的 MP4"
           : "FFmpeg 不可用或合成失败时生成的可复盘诊断清单";
 
-    await prisma.asset.create({
+    await tx.asset.create({
       data: {
         id: `asset_${type}_${Date.now()}_${crypto.randomUUID().slice(0, 6)}`,
         projectId,
@@ -1838,12 +1600,13 @@ export async function createProjectExportJob(
     });
 
     if (type === "video_export") {
-      await prisma.project.update({
+      await tx.project.update({
         where: { id: projectId },
         data: { status: isVideoMp4 ? "completed" : "rendering" }
       });
     }
-
+    return updated;
+    });
     return mapExportJob(refreshed);
   } catch (error) {
     const failed = await prisma.exportJob.update({
@@ -1854,10 +1617,10 @@ export async function createProjectExportJob(
       }
     });
     return mapExportJob(failed);
-  }
+  } finally { clearInterval(heartbeat); }
 }
 
-function exportDiagnosticsMessage(type: "tts" | "subtitle" | "video_export", result: MediaExportResult) {
+function exportDiagnosticsMessage(type: "tts" | "subtitle" | "video_export", result: MediaExportResult, storyboardIds: string[]) {
   const warningText = result.warnings?.length ? result.warnings.slice(0, 3).join("；") : "";
   const message = type === "video_export"
     ? result.outputKind === "mp4"
@@ -1868,6 +1631,7 @@ function exportDiagnosticsMessage(type: "tts" | "subtitle" | "video_export", res
       : "SRT 字幕资产已生成，可被最终 MP4 合成复用。";
   return JSON.stringify({
     kind: "export_diagnostics",
+    storyboardIds,
     message: warningText ? `${message} ${warningText}` : message,
     outputKind: result.outputKind,
     manifestUrl: result.manifestUrl,
@@ -1880,78 +1644,35 @@ function exportDiagnosticsMessage(type: "tts" | "subtitle" | "video_export", res
   });
 }
 
-export async function retryTask(taskId: string, userId = DEMO_USER_ID) {
-  const task = await prisma.generationTask.findFirst({ where: { id: taskId, userId } });
-  if (!task) throw new Error("任务不存在");
-  if (task.status === "succeeded") throw new Error("已成功任务不需要重试");
-  if (task.status === "pending" || task.status === "running") return mapTask(task);
+export async function retryTask(taskId: string, userId = DEMO_USER_ID, input?: CreateProjectInput) {
   return mapTask(await prisma.$transaction(async (tx) => {
-    if (task.type === "text" && task.finalCredits == null && task.estimatedCredits > 0) {
-      const account = await tx.creditAccount.findUniqueOrThrow({ where: { userId } });
-      if (account.balance - account.frozenBalance < task.estimatedCredits) throw new Error("积分余额不足，无法重试任务");
-      await tx.creditAccount.update({
-        where: { userId },
-        data: { frozenBalance: { increment: task.estimatedCredits } }
-      });
-      await tx.creditTransaction.create({
-        data: {
-          id: `tx_${Date.now()}_retry_freeze`,
-          userId,
-          projectId: task.projectId,
-          taskId,
-          type: "freeze",
-          amount: -task.estimatedCredits,
-          balanceAfter: account.balance,
-          description: "重试生成任务，重新冻结预计积分"
-        }
-      });
+    const { task } = await lockTaskCredits(tx, taskId, userId);
+    if (task.status === "succeeded") throw new Error("已成功任务不需要重试");
+    if (task.status === "pending" || task.status === "running") return task;
+    if (task.type !== "text" || !task.projectId || !task.jobId) {
+      throw new Error("请回到对应创作步骤重新生成此任务");
     }
-
+    await reserveTaskCredits(tx, { taskId, userId, description: "重试生成任务，重新冻结预计积分" });
     return tx.generationTask.update({
       where: { id: taskId },
-      data: { status: "pending", progress: 0, errorReason: null }
+      data: { status: "pending", progress: 0, errorReason: null,
+        jobId: `creation-${crypto.randomUUID()}`,
+        ...(input ? { requestPayload: JSON.parse(JSON.stringify(input)) } : {}) }
     });
   }));
 }
 
 export async function cancelTask(taskId: string, userId = DEMO_USER_ID) {
-  const task = await prisma.generationTask.findFirst({ where: { id: taskId, userId } });
-  if (!task) throw new Error("任务不存在");
-  if (task.status === "succeeded") throw new Error("已成功任务不能取消");
-  if (task.status === "canceled") return mapTask(task);
-
   return mapTask(await prisma.$transaction(async (tx) => {
-    const account = await tx.creditAccount.findUnique({ where: { userId } });
-    const refundable = task.finalCredits == null && account
-      ? Math.min(account.frozenBalance, Math.max(0, task.estimatedCredits))
-      : 0;
-
-    if (refundable > 0) {
-      await tx.creditAccount.update({
-        where: { userId },
-        data: { frozenBalance: { decrement: refundable } }
-      });
-      await tx.creditTransaction.create({
-        data: {
-          id: `tx_${Date.now()}_cancel_refund`,
-          userId,
-          projectId: task.projectId,
-          taskId,
-          type: "refund",
-          amount: refundable,
-          balanceAfter: account!.balance,
-          description: "任务取消，退回未消耗冻结积分"
-        }
-      });
-    }
-
+    const { task } = await lockTaskCredits(tx, taskId, userId);
+    if (/^(content|media):/.test(task.jobId ?? "")) throw new Error("此生成正在独立处理中，请在对应创作步骤查看结果或重试");
+    if (task.status === "succeeded") throw new Error("已成功任务不能取消");
+    if (task.status === "canceled") return task;
+    const release = await releaseTaskCredits(tx, { taskId, userId, description: "任务取消，退回本任务未消耗冻结积分" });
     return tx.generationTask.update({
       where: { id: taskId },
-      data: {
-        status: "canceled",
-        progress: 0,
-        errorReason: refundable > 0 ? `用户取消，已退回 ${refundable} 积分。` : "用户取消任务。"
-      }
+      data: { status: "canceled", progress: 0,
+        errorReason: release.credits > 0 ? `用户取消，已退回 ${release.credits} 积分。` : "用户取消任务。" }
     });
   }));
 }
@@ -2119,6 +1840,15 @@ function defaultProviderCapability(modality: string) {
   };
 }
 
+function normalizeProviderBaseUrl(value?: string | null) {
+  const clean = value?.trim();
+  if (!clean) return null;
+  let url: URL;
+  try { url = new URL(clean); } catch { throw new Error("渠道地址必须是有效的 HTTP(S) URL"); }
+  if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.hash) throw new Error("渠道地址只支持 HTTP(S)，且不能嵌入账号密码或片段");
+  return clean;
+}
+
 function cleanProviderData(
   current: { modality: string; models: string[]; capability: unknown },
   data: Partial<{
@@ -2138,9 +1868,9 @@ function cleanProviderData(
   if (data.name !== undefined) clean.name = data.name.trim();
   if (data.modality !== undefined) clean.modality = nextModality;
   if (data.enabled !== undefined) clean.enabled = data.enabled;
-  if (data.baseUrl !== undefined) clean.baseUrl = data.baseUrl?.trim() || null;
+  if (data.baseUrl !== undefined) clean.baseUrl = normalizeProviderBaseUrl(data.baseUrl);
   if (data.iconUrl !== undefined) clean.iconUrl = data.iconUrl?.trim() || null;
-  if (data.apiKey !== undefined) clean.apiKey = data.apiKey?.trim() || null;
+  if (data.apiKey !== undefined && !/^\*{3,}/.test(data.apiKey ?? "")) clean.apiKey = data.apiKey?.trim() || null;
   if (data.models !== undefined) clean.models = [...new Set(data.models.map((model) => model.trim()).filter(Boolean))];
   if (data.costHint !== undefined) clean.costHint = data.costHint.trim();
   if (clean.name === "") throw new Error("渠道名称不能为空");
@@ -2198,17 +1928,18 @@ async function ensureProviderPriceRows(
   modality: string,
   models: string[],
   unitCredits?: number,
-  vendorCostCny?: number
+  vendorCostCny?: number,
+  db: Prisma.TransactionClient = prisma
 ) {
-  const existing = await prisma.modelPrice.findMany({ where: { providerId }, select: { id: true, model: true } });
+  const existing = await db.modelPrice.findMany({ where: { providerId }, select: { id: true, model: true } });
   const existingModels = new Set(existing.map((price) => price.model));
-  await prisma.modelPrice.updateMany({
+  await db.modelPrice.updateMany({
     where: { providerId },
     data: { providerName, modality, unit: defaultBillingUnit(modality) }
   });
   const missing = models.filter((model) => !existingModels.has(model));
   if (!missing.length) return;
-  await prisma.modelPrice.createMany({
+  await db.modelPrice.createMany({
     data: missing.map((model) => ({
       id: `price_${safeId(providerId)}_${safeId(model)}_${crypto.randomUUID().slice(0, 6)}`,
       providerId,
@@ -2239,16 +1970,14 @@ function defaultVendorCost(modality: string) {
   return 0.001;
 }
 
-async function resolveTextRunCredits(input: CreateProjectInput, suggestedEpisodes: number) {
+async function resolveTextRunCredits(input: CreationQuoteInput, suggestedEpisodes: number) {
   const model = textModelName(input);
-  const price = await prisma.modelPrice.findFirst({
-    where: {
-      modality: "text",
-      model,
-      enabled: true
-    }
-  });
-  return (price?.unitCredits ?? estimateCreation(input).estimatedCredits) * Math.max(1, suggestedEpisodes);
+  const price = await prisma.modelPrice.findFirst({ where: {
+    modality: "text", model, providerId: input.textProvider || process.env.TEXT_PROVIDER || null, enabled: true
+  } });
+  if (!price && process.env.NODE_ENV === "production") throw new Error("该文本渠道与模型尚未配置启用价格，请联系管理员。");
+  const defaultUnit = estimateCreation(input).breakdown?.[0]?.unitCredits ?? 50;
+  return (price?.unitCredits ?? defaultUnit) * Math.max(1, suggestedEpisodes);
 }
 
 async function resolveImageBaseCreditPerShot(provider: string, model: string) {
@@ -2260,6 +1989,7 @@ async function resolveImageBaseCreditPerShot(provider: string, model: string) {
       enabled: true
     }
   });
+  if (!price && process.env.NODE_ENV === "production") throw new Error("该图片模型尚未配置价格，请联系管理员。");
   return resolveImageUnitCredits(price ? [price] : [], provider, model);
 }
 

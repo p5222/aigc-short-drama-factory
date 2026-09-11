@@ -28,6 +28,18 @@ export function buildDeliveryClipLayout(shots: StoryboardShot[], pixelsPerSecond
 
 export interface DeliveryCandidate { id: string; label: string; videoUrl: string; coverUrl: string; sourceAssetId?: string; durationLabel: string; }
 
+export function partitionDeliveryExportJobs(jobs: ExportJob[], storyboardIds: string[]) {
+  const current: ExportJob[] = [];
+  const history: ExportJob[] = [];
+  const other: ExportJob[] = [];
+  for (const job of [...jobs].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || b.createdAt.localeCompare(a.createdAt))) {
+    if (!job.storyboardIds?.length) history.push(job);
+    else if (storyboardIds.length === job.storyboardIds.length && storyboardIds.every((id, index) => id === job.storyboardIds![index])) current.push(job);
+    else other.push(job);
+  }
+  return { current, history, other };
+}
+
 export function getDeliveryCandidates(shots: StoryboardShot[], assets: AssetItem[], jobs: ExportJob[]): DeliveryCandidate[] {
   const cover = assets.find((asset) => asset.type === "image" && asset.referenceUrl)?.referenceUrl ?? "";
   const total = shots.reduce((sum, shot) => sum + normalizeShotDuration(shot.duration), 0);
@@ -69,6 +81,13 @@ export function reduceDeliveryAutoPlay(current: DeliveryAutoPlayTarget | null, a
 export function getExportSummary(jobs: ExportJob[]): { status: ExportJob["status"] | "idle"; messages: string[] } {
   const latest = [...jobs].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
   return { status: latest?.status ?? "idle" as const, messages: jobs.flatMap((job) => [...(job.warnings ?? []), job.errorReason].filter((message): message is string => Boolean(message))) };
+}
+
+/** Snapshot the exact visible episode/order and require a finished video for every clip. */
+export function getDeliveryExportState(shots: StoryboardShot[], assets: AssetItem[]) {
+  const videos = buildShotMediaIndex(shots, assets, "video");
+  const missingVideoCount = shots.filter((shot) => resolveShotVideoStatus(videos.get(shot.id)) !== "succeeded").length;
+  return { storyboardIds: shots.map((shot) => shot.id), missingVideoCount, canExportVideo: shots.length > 0 && missingVideoCount === 0 };
 }
 
 function formatClock(seconds: number) {
@@ -193,19 +212,20 @@ export interface DeliveryStats {
 export function getDeliveryStats(shots: StoryboardShot[], assets: AssetItem[], jobs: ExportJob[]): DeliveryStats {
   const videos = buildShotMediaIndex(shots, assets, "video");
   const audios = buildShotMediaIndex(shots, assets, "audio");
+  const subtitles = buildShotMediaIndex(shots, assets, "subtitle");
+  const scopedJobs = partitionDeliveryExportJobs(jobs, shots.map((shot) => shot.id)).current;
   const videoReady = shots.filter((shot) => resolveShotVideoStatus(videos.get(shot.id)) === "succeeded").length;
   const perShotAudio = shots.filter((shot) => {
     const audio = audios.get(shot.id);
     return audio?.status === "succeeded" && Boolean(audio.referenceUrl);
   }).length;
-  const hasTrackAudio = jobs.some((job) => job.type === "tts" && job.status === "succeeded" && Boolean(job.audioUrl || job.outputUrl))
-    || assets.some((asset) => asset.type === "audio" && asset.status === "succeeded" && Boolean(asset.referenceUrl));
-  const hasSubtitle = jobs.some((job) => job.type === "subtitle" && job.status === "succeeded" && Boolean(job.subtitleUrl || job.outputUrl))
-    || assets.some((asset) => asset.type === "subtitle" && Boolean(asset.referenceUrl));
+  const hasTrackAudio = scopedJobs.some((job) => job.status === "succeeded" && Boolean(job.audioUrl || (job.type === "tts" && job.outputUrl)));
+  const hasSubtitle = scopedJobs.some((job) => job.status === "succeeded" && Boolean(job.subtitleUrl || (job.type === "subtitle" && job.outputUrl)))
+    || (shots.length > 0 && shots.every((shot) => { const subtitle = subtitles.get(shot.id); return subtitle?.status === "succeeded" && Boolean(subtitle.referenceUrl); }));
   return {
     total: shots.length,
     videoReady,
-    audioCovered: perShotAudio > 0 ? perShotAudio : hasTrackAudio ? shots.length : 0,
+    audioCovered: hasTrackAudio ? shots.length : perShotAudio,
     hasTrackAudio,
     hasSubtitle
   };

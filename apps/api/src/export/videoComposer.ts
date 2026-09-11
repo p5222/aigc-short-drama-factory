@@ -4,9 +4,11 @@ import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AssetItem, ProjectWorkflow, StoryboardShot } from "@aifilm/shared";
 import { buildLingGuoSrt, buildLingGuoTtsManifest, createLingGuoProductionManifest } from "../agents/lingguoAdapter.js";
-import { persistAudioBuffer, storageRoot } from "../storage/objectStorage.js";
+import { persistAudioBuffer, persistVideoReference, storageRoot } from "../storage/objectStorage.js";
 import { generateEmbeddedMjpegVideo, writeEmbeddedExportBundle } from "./embeddedVideo.js";
 import { buildSrt } from "./subtitleTools.js";
+import { assertRealNarration, assertVideoExportReady } from "./exportRequirements.js";
+import { downloadPublicMedia } from "../storage/remoteDownload.js";
 
 type ExportSize = { width: number; height: number };
 type CommandResult = { exitCode: number | null; stdout: string; stderr: string; errorMessage?: string; timedOut: boolean };
@@ -53,6 +55,18 @@ export interface TtsAudioAsset {
   warnings: string[];
 }
 
+export interface TtsRuntime {
+  providerId: "dashscope-tts";
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+  defaultVoice: string;
+}
+
+type TtsSynthesisDependencies = {
+  requestCue?: (runtime: TtsRuntime, text: string, voice: string) => Promise<Buffer>;
+};
+
 export interface VideoCompositionResult {
   outputUrl: string;
   manifestUrl: string;
@@ -83,10 +97,11 @@ export function buildExportSrt(workflow: ProjectWorkflow) {
   return buildSrt(cues);
 }
 
-export async function createTtsAudioAsset(workflow: ProjectWorkflow): Promise<TtsAudioAsset> {
+export async function createTtsAudioAsset(workflow: ProjectWorkflow, runtime?: TtsRuntime, dependencies: TtsSynthesisDependencies = {}): Promise<TtsAudioAsset> {
   const session = await createExportSession(workflow.project.id, "tts");
   const cues = buildVoiceCues(workflow);
-  const synthesis = await synthesizeNarrationWav(session, workflow, cues);
+  const synthesis = await synthesizeNarrationWav(session, workflow, cues, runtime, dependencies);
+  assertRealNarration(synthesis.provider, cues.some(cue => Boolean(cue.text)));
   const audioUrl = await persistAudioBuffer(synthesis.buffer, `tts-${workflow.project.id}`, synthesis.ext);
   const manifest = await writeSessionText(session, "tts-manifest.json", JSON.stringify({
     ...buildLingGuoTtsManifest(workflow),
@@ -109,15 +124,17 @@ export async function createTtsAudioAsset(workflow: ProjectWorkflow): Promise<Tt
   };
 }
 
-export async function composeVideoExport(workflow: ProjectWorkflow): Promise<VideoCompositionResult> {
+export async function composeVideoExport(workflow: ProjectWorkflow, narration: TtsAudioAsset): Promise<VideoCompositionResult> {
+  assertVideoExportReady(workflow);
+  const ffmpeg = await probeFfmpeg();
+  if (!ffmpeg.ready) throw new Error("成片服务缺少可用 FFmpeg，请管理员完成部署配置后重试");
   const session = await createExportSession(workflow.project.id, "video-export");
   const warnings: string[] = [];
   const startedAt = Date.now();
   const size = resolveExportSize(workflow.project.videoRatio);
   const subtitle = await writeSessionText(session, "subtitles.srt", buildExportSrt(workflow));
-  const tts = await createTtsAudioAsset(workflow);
+  const tts = narration;
   warnings.push(...tts.warnings);
-  const ffmpeg = await probeFfmpeg();
   const clipPlans = buildClipPlans(workflow);
 
   if (!clipPlans.length) {
@@ -284,7 +301,7 @@ function buildClipPlans(workflow: ProjectWorkflow): ClipPlan[] {
       order: index + 1,
       shot,
       duration: normalizeDuration(shot.duration),
-      videoUrl: isPlayableMediaUrl(videoUrl) ? videoUrl : undefined,
+      videoUrl: video?.status === "succeeded" && isPlayableMediaUrl(videoUrl) ? videoUrl : undefined,
       imageUrl: image?.referenceUrl
     };
   });
@@ -305,22 +322,11 @@ async function renderClip(
       await encodeVideoClip(ffmpegBin, encoder, videoInput, output.path, clip.duration, size);
       return { order: clip.order, shotId: clip.shot.id, duration: clip.duration, sourceKind: "video", sourceUrl: clip.videoUrl, outputPath: output.path, outputUrl: output.url };
     } catch (error) {
-      warnings.push(`镜头 ${formatShotLabel(clip.shot)} 视频片段转码失败，已回退到首帧图：${formatError(error)}`);
+      throw new Error(`镜头 ${formatShotLabel(clip.shot)} 视频转码失败，请修复该镜头后重试：${formatError(error)}`);
     }
   }
 
-  const imageInput = clip.imageUrl ? await resolveMediaInput(clip.imageUrl, warnings) : undefined;
-  if (imageInput) {
-    try {
-      await encodeImageClip(ffmpegBin, encoder, imageInput, output.path, clip.duration, size);
-      return { order: clip.order, shotId: clip.shot.id, duration: clip.duration, sourceKind: "image", sourceUrl: clip.imageUrl, outputPath: output.path, outputUrl: output.url };
-    } catch (error) {
-      warnings.push(`镜头 ${formatShotLabel(clip.shot)} 首帧转视频失败，已回退到色卡片段：${formatError(error)}`);
-    }
-  }
-
-  await encodeColorCardClip(ffmpegBin, encoder, output.path, clip.duration, size);
-  return { order: clip.order, shotId: clip.shot.id, duration: clip.duration, sourceKind: "color_card", outputPath: output.path, outputUrl: output.url };
+  throw new Error(`镜头 ${formatShotLabel(clip.shot)} 视频文件不可读取，请重新生成或恢复素材后重试`);
 }
 
 async function encodeVideoClip(ffmpegBin: string, encoder: VideoEncoder, input: string, output: string, duration: number, size: ExportSize) {
@@ -425,7 +431,7 @@ async function muxFinalVideo(ffmpegBin: string, videoPath: string, audioUrl: str
       ], 180_000);
       return;
     } catch (error) {
-      warnings.push(`字幕轨封装失败，已生成带配音但不含字幕轨的 MP4：${formatError(error)}`);
+      throw new Error(`字幕轨封装失败，请修复后重新导出：${formatError(error)}`);
     }
   }
 
@@ -462,7 +468,10 @@ async function resolveVideoEncoder(ffmpegBin: string): Promise<VideoEncoder> {
 }
 
 async function resolveMediaInput(url: string, warnings: string[]) {
-  if (url.startsWith("http://") || url.startsWith("https://")) return url;
+  if (url.startsWith("http://") || url.startsWith("https://")) {
+    const persisted = await persistVideoReference(url, "export-source");
+    return persisted ? localStoragePath(persisted) : undefined;
+  }
   const local = localStoragePath(url);
   if (!local) {
     warnings.push(`素材不是本地 /storage 或 HTTP URL，无法直接交给 FFmpeg：${url.slice(0, 80)}`);
@@ -502,7 +511,7 @@ function createScratchNarrationWav(workflow: ProjectWorkflow, cues = buildVoiceC
   return pcm16Wav(samples, sampleRate);
 }
 
-function buildVoiceCues(workflow: ProjectWorkflow) {
+export function buildVoiceCues(workflow: ProjectWorkflow) {
   return workflow.storyboards.map((shot) => ({
     shotId: shot.id,
     duration: normalizeDuration(shot.duration),
@@ -515,58 +524,16 @@ function buildVoiceCues(workflow: ProjectWorkflow) {
 async function synthesizeNarrationWav(
   session: ExportSession,
   workflow: ProjectWorkflow,
-  cues = buildVoiceCues(workflow)
+  cues = buildVoiceCues(workflow),
+  runtime?: TtsRuntime,
+  dependencies: TtsSynthesisDependencies = {}
 ): Promise<{ buffer: Buffer; provider: string; ext: "wav" | "mp3"; warnings: string[] }> {
-  const requestedProvider = normalizeTtsProvider(process.env.TTS_PROVIDER || inferConfiguredTtsProvider());
-  if (requestedProvider === "dashscope-tts") {
-    try {
-      return await createDashScopeTtsNarration(session, cues);
-    } catch (error) {
-      return fallbackAfterOpenSourceTtsFailure(session, workflow, cues, `DashScope TTS 配音失败：${formatError(error)}`);
-    }
+  if (!cues.some(cue => Boolean(cue.text))) {
+    const samples = new Array(Math.max(1, Math.ceil(totalDuration(workflow) * 24000))).fill(0);
+    return { buffer: pcm16Wav(samples, 24000), provider: "silence", ext: "wav", warnings: [] };
   }
-  if (requestedProvider === "easyvoice") {
-    try {
-      return await createEasyVoiceNarration(session, cues);
-    } catch (error) {
-      return fallbackAfterOpenSourceTtsFailure(session, workflow, cues, `easyVoice 配音失败：${formatError(error)}`);
-    }
-  }
-  if (requestedProvider === "voicebox") {
-    try {
-      return await createVoiceboxNarration(cues);
-    } catch (error) {
-      return fallbackAfterOpenSourceTtsFailure(session, workflow, cues, `Voicebox 配音失败：${formatError(error)}`);
-    }
-  }
-  if (requestedProvider === "vibevoice") {
-    try {
-      return await createVibeVoiceNarration(cues);
-    } catch (error) {
-      return fallbackAfterOpenSourceTtsFailure(session, workflow, cues, `VibeVoice 自托管适配失败：${formatError(error)}`);
-    }
-  }
-  if (requestedProvider === "longcat-audiodit") {
-    try {
-      return await createLongCatAudioDitNarration(session, cues);
-    } catch (error) {
-      return fallbackAfterOpenSourceTtsFailure(session, workflow, cues, `LongCat-AudioDiT 配音失败：${formatError(error)}`);
-    }
-  }
-  const canUseWindowsSapi = process.platform === "win32" && (!requestedProvider || requestedProvider === "windows-sapi" || requestedProvider === "local-tts");
-  if (canUseWindowsSapi && cues.some((cue) => cue.text)) {
-    try {
-      return { buffer: await createWindowsSapiNarrationWav(session, cues), provider: "windows-sapi", ext: "wav", warnings: [] };
-    } catch (error) {
-      return {
-        buffer: createScratchNarrationWav(workflow, cues),
-        ext: "wav",
-        provider: "scratch-local-wav",
-        warnings: [`Windows SAPI 未生成可用音频，已退回占位音轨。生产环境建议配置 easyVoice/VibeVoice HTTP TTS 服务。${shortTtsFailure(error)}`]
-      };
-    }
-  }
-  return { buffer: createScratchNarrationWav(workflow, cues), provider: "scratch-local-wav", ext: "wav", warnings: [] };
+  if (!runtime || runtime.providerId !== "dashscope-tts") throw new Error("配音必须先获取有效渠道报价并冻结预算，请从项目导出入口操作。");
+  return createDashScopeTtsNarration(session, cues, runtime, dependencies);
 }
 
 async function createEasyVoiceNarration(session: ExportSession, cues: ReturnType<typeof buildVoiceCues>) {
@@ -825,8 +792,8 @@ function projectRootPath() {
   return resolve(dirname(fileURLToPath(import.meta.url)), "../../../../");
 }
 
-async function createDashScopeTtsNarration(session: ExportSession, cues: ReturnType<typeof buildVoiceCues>) {
-  const runtime = resolveDashScopeTtsRuntime();
+async function createDashScopeTtsNarration(session: ExportSession, cues: ReturnType<typeof buildVoiceCues>, options: TtsRuntime, dependencies: TtsSynthesisDependencies = {}) {
+  const runtime = resolveDashScopeTtsRuntime(options);
   const voicedCues = cues.filter((cue) => cue.text);
   if (!voicedCues.length) {
     return {
@@ -852,14 +819,18 @@ async function createDashScopeTtsNarration(session: ExportSession, cues: ReturnT
     requests
   }, null, 2));
 
-  const rendered = await Promise.all(requests.map(async (item) => ({
-    ...item,
-    wav: parsePcm16Wav(await requestDashScopeTtsCue(runtime, item.text, item.voice))
-  })));
-  const sampleRate = rendered[0]?.wav.sampleRate ?? 24_000;
+  const rendered = new Map<string, PcmWav>();
+  for (const item of requests) {
+    const bytes = dependencies.requestCue ? await dependencies.requestCue(options, item.text, item.voice) : await requestDashScopeTtsCue(runtime, item.text, item.voice);
+    rendered.set(item.shotId, parsePcm16Wav(bytes));
+  }
+  const sampleRate = rendered.values().next().value?.sampleRate ?? 24_000;
   const samples: number[] = [];
-  rendered.forEach((item) => {
-    samples.push(...fitCueSamples(resampleSamples(item.wav.samples, item.wav.sampleRate, sampleRate), item.duration, sampleRate));
+  cues.forEach((cue) => {
+    const wav = rendered.get(cue.shotId);
+    const source = wav ? resampleSamples(wav.samples, wav.sampleRate, sampleRate) : [];
+    if (source.length > Math.ceil(cue.duration * sampleRate)) throw new Error(`镜头 ${cue.shotId} 的实际配音超过 ${cue.duration} 秒，请缩短台词或延长镜头后重试。`);
+    for (const sample of fitCueSamples(source, cue.duration, sampleRate)) samples.push(sample);
   });
 
   return {
@@ -870,14 +841,16 @@ async function createDashScopeTtsNarration(session: ExportSession, cues: ReturnT
   };
 }
 
-function resolveDashScopeTtsRuntime() {
+function resolveDashScopeTtsRuntime(options: TtsRuntime) {
   const apiKey =
+    options.apiKey ||
     process.env.DASHSCOPE_TTS_API_KEY ||
     process.env.TTS_API_KEY ||
     process.env.DASHSCOPE_API_KEY ||
     process.env.DASHSCOPE_TEXT_API_KEY;
   if (!apiKey) throw new Error("Missing DASHSCOPE_TTS_API_KEY or DASHSCOPE_API_KEY for DashScope TTS");
   const baseUrl =
+    options.baseUrl ||
     process.env.DASHSCOPE_TTS_BASE_URL ||
     process.env.TTS_BASE_URL ||
     process.env.DASHSCOPE_BASE_URL ||
@@ -887,8 +860,8 @@ function resolveDashScopeTtsRuntime() {
     apiKey,
     baseUrl,
     endpoint: endpointFromBase(baseUrl, process.env.DASHSCOPE_TTS_PATH || "/services/aigc/multimodal-generation/generation"),
-    model: process.env.DASHSCOPE_TTS_MODEL || process.env.TTS_MODEL || "qwen3-tts-flash",
-    defaultVoice: process.env.DASHSCOPE_TTS_DEFAULT_VOICE || process.env.TTS_VOICE || "Cherry"
+    model: options.model,
+    defaultVoice: options.defaultVoice
   };
 }
 
@@ -902,6 +875,7 @@ async function requestDashScopeTtsCue(
   try {
     const response = await fetch(runtime.endpoint, {
       method: "POST",
+      redirect: "error",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${runtime.apiKey}`
@@ -917,16 +891,14 @@ async function requestDashScopeTtsCue(
       signal: controller.signal
     });
     const bytes = Buffer.from(await response.arrayBuffer());
-    if (!response.ok) throw new Error(`DashScope TTS HTTP ${response.status}: ${bytes.toString("utf8").slice(0, 500)}`);
+    if (!response.ok) throw new Error(`DashScope TTS HTTP ${response.status}，请检查模型渠道配置或稍后重试。`);
     const payload = JSON.parse(bytes.toString("utf8")) as {
       output?: { audio?: { url?: string } };
       data?: { audio?: { url?: string } };
     };
     const audioUrl = payload.output?.audio?.url || payload.data?.audio?.url;
-    if (!audioUrl) throw new Error(`DashScope TTS response did not include audio.url: ${bytes.toString("utf8").slice(0, 500)}`);
-    const audioResponse = await fetch(audioUrl);
-    const audioBytes = Buffer.from(await audioResponse.arrayBuffer());
-    if (!audioResponse.ok) throw new Error(`DashScope TTS audio download failed ${audioResponse.status}: ${audioBytes.toString("utf8").slice(0, 240)}`);
+    if (!audioUrl) throw new Error("DashScope TTS 返回结果中缺少音频地址");
+    const { bytes: audioBytes } = await downloadPublicMedia(audioUrl, 50 * 1024 * 1024);
     if (audioBytes.toString("ascii", 0, 4) !== "RIFF") throw new Error("DashScope TTS did not return WAV audio");
     return audioBytes;
   } finally {
@@ -1001,11 +973,27 @@ async function audioFromJsonResponse(bytes: Buffer, endpoint: string, apiKey?: s
   const audioUrl = findAudioUrl(data);
   if (!audioUrl) throw new Error(`TTS 服务返回 JSON，但未找到 audio/url 字段：${JSON.stringify(data).slice(0, 500)}`);
   const resolvedUrl = new URL(audioUrl, endpoint).toString();
-  const response = await fetch(resolvedUrl, { headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {} });
-  const contentType = response.headers.get("content-type") || "";
-  const audioBytes = Buffer.from(await response.arrayBuffer());
-  if (!response.ok) throw new Error(`下载 TTS 音频失败 ${response.status}: ${audioBytes.toString("utf8").slice(0, 300)}`);
-  return { buffer: audioBytes, ext: audioExtFromMime(contentType, audioBytes) };
+  // Only the explicitly configured service may receive its credential. A URL
+  // returned by a model cannot redirect credentials to another host or network.
+  if (new URL(resolvedUrl).origin !== new URL(endpoint).origin) {
+    const result = await downloadPublicMedia(resolvedUrl, 50 * 1024 * 1024);
+    return { buffer: result.bytes, ext: audioExtFromMime(result.contentType, result.bytes) };
+  }
+  const response = await fetch(resolvedUrl, {
+    headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {}, redirect: "error",
+    signal: AbortSignal.timeout(120_000)
+  });
+  if (!response.ok) throw new Error(`下载 TTS 音频失败（HTTP ${response.status}）`);
+  if (Number(response.headers.get("content-length") || 0) > 50 * 1024 * 1024) throw new Error("TTS 音频过大");
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
+    size += chunk.length;
+    if (size > 50 * 1024 * 1024) throw new Error("TTS 音频过大");
+    chunks.push(chunk);
+  }
+  const audioBytes = Buffer.concat(chunks);
+  return { buffer: audioBytes, ext: audioExtFromMime(response.headers.get("content-type") || "", audioBytes) };
 }
 
 function findAudioUrl(value: unknown): string | undefined {
@@ -1065,10 +1053,10 @@ function inferCueSpeaker(shot: StoryboardShot, rawText: string) {
 
 function resolveCueVoice(workflow: ProjectWorkflow, shot: StoryboardShot, rawText: string) {
   const speaker = inferCueSpeaker(shot, rawText);
-  const map = parseVoiceMap(process.env.LONGCAT_AUDIODIT_VOICE_MAP || process.env.DASHSCOPE_TTS_VOICE_MAP || process.env.EASYVOICE_VOICE_MAP || process.env.VOICEBOX_PROFILE_MAP || process.env.TTS_VOICE_MAP);
+  const map = parseVoiceMap(process.env.DASHSCOPE_TTS_VOICE_MAP || process.env.TTS_VOICE_MAP);
   if (map[speaker]) return map[speaker];
   const character = workflow.characters.find((item) => item.name === speaker) ?? workflow.characters.find((item) => shot.characters.includes(item.name));
-  return character?.voiceId || process.env.LONGCAT_AUDIODIT_DEFAULT_VOICE || process.env.DASHSCOPE_TTS_DEFAULT_VOICE || process.env.EASYVOICE_DEFAULT_VOICE || process.env.TTS_VOICE;
+  return character?.voiceId || process.env.DASHSCOPE_TTS_DEFAULT_VOICE || process.env.TTS_VOICE;
 }
 
 function parseVoiceMap(value?: string) {
@@ -1156,7 +1144,9 @@ function parsePcm16Wav(buffer: Buffer): PcmWav {
     const id = buffer.toString("ascii", offset, offset + 4);
     const size = buffer.readUInt32LE(offset + 4);
     const start = offset + 8;
+    if (start + size > buffer.length) throw new Error("配音 WAV 文件不完整");
     if (id === "fmt ") {
+      if (size < 16) throw new Error("配音 WAV 格式头无效");
       audioFormat = buffer.readUInt16LE(start);
       channels = buffer.readUInt16LE(start + 2);
       sampleRate = buffer.readUInt32LE(start + 4);
@@ -1167,7 +1157,7 @@ function parsePcm16Wav(buffer: Buffer): PcmWav {
     }
     offset = start + size + (size % 2);
   }
-  if (audioFormat !== 1 || bitsPerSample !== 16 || dataOffset < 0) {
+  if (audioFormat !== 1 || bitsPerSample !== 16 || dataOffset < 0 || channels < 1 || channels > 8 || sampleRate < 8000 || sampleRate > 192000 || dataSize < channels * 2) {
     throw new Error("仅支持 PCM 16-bit WAV TTS 输出");
   }
   const samples: number[] = [];
@@ -1292,7 +1282,7 @@ async function writeCompositionManifest(
     previewReady: data.status === "mp4_ready",
     cleanRoomImplementation: true,
     licenseNote: "Toonflow/字幕工具/easyVoice 仅作为流程和接口能力参考；本模块为项目内自研 TypeScript 编排、WAV/SRT/FFmpeg 调度和洁净兜底源码，未复制无明确许可证的第三方源码。",
-    ttsSourcePolicy: "优先使用阿里云百炼官方 Qwen TTS 云端合成；开源或本地 TTS 仅作为降级适配器，不再承担正式生产主链路。当前仍保留 scratch/windows-sapi fallback 以保证异常时可继续导出诊断资产。",
+    ttsSourcePolicy: "使用后台已启用并报价的 Qwen TTS 模型生成配音；失败时不替换渠道或生成占位语音。相同内容与声音配置复用已付费音轨。",
     ffmpegDeployment: {
       requiredForMp4: true,
       ready: data.ffmpeg.ready,

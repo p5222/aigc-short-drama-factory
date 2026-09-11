@@ -1,10 +1,10 @@
 # Git Workbench 便携版
 
-在 Windows、macOS、Linux 上运行的本地 GitHub 项目工作台。无 npm 依赖，无需安装到 Codex。整个文件夹可复制到其他电脑。
+本地 GitHub 项目工作台。无 npm 依赖，无需安装到 Codex；整个文件夹可复制到其他电脑。Windows 已验证运行，macOS / Linux 提供启动脚本，仍需在对应设备验收。
 
 ## 完整操作手册
 
-启动工具后，在左侧点击「操作手册 · 换电脑」，或打开 http://127.0.0.1:4318/manual 。未启动时也可直接双击 public/handbook.html 离线阅读。手册包括旧电脑提交、新电脑安装与登录、克隆、接续分支、运行项目、SSH 公钥授权、服务器发布和故障排查。
+启动工具后，在左侧点击「操作手册 · 换电脑」，或打开 http://127.0.0.1:4318/manual 。未启动时也可直接双击 public/handbook.html 离线阅读。手册包括旧电脑提交、新电脑安装与登录、克隆、接续分支、运行项目、SSH 公钥授权、服务器发布、失败重试、回滚、冲突处理和密钥管理。浏览器打印可保存 PDF。
 
 ## 新电脑第一次使用
 
@@ -38,6 +38,10 @@ GitHub 拉取 / 推送不等于生产上线。合并 PR 后，已授权发布设
     pnpm deploy:server
 
 新电脑的 SSH 公钥授权步骤见项目 docs/operations/github-and-multi-device-deployment.md。生产数据、素材和环境密钥不通过 Git 同步。
+
+首次升级由管理员按 [部署升级说明](../../deploy/UPGRADE.md) 安装新版 hook。新版发布校验备份并加锁，拒绝破坏性 schema 同步，用 `/ready` 检查数据库、Redis 与任务执行器就绪；普通重启不做 schema 修改。`--check` 只读，不能证明写权限或部署完成。最终核对 GitHub、服务器 deployed 与公网 revision，并完成 [发布验收单](../../docs/operations/release-acceptance.md)。
+
+发布失败后保留日志路径，由管理员修复原因；同一提交使用 `pnpm deploy:server --retry`。正常回退用 revert PR 发布新提交，紧急源码恢复不会恢复数据库。具体流程见手册第 08 节。旧便携 ZIP 不会自动获得这次手册和项目脚本更新，应从对应的新版本复制整个工具目录。
 
 ## 网络代理（按需）
 

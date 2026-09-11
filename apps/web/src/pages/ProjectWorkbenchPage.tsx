@@ -56,7 +56,8 @@ import { ShotStage } from "../workbench/stages/ShotStage";
 import { DeliveryStage } from "../workbench/stages/DeliveryStage";
 import { TaskDrawer } from "../workbench/components/TaskDrawer";
 import { EvaluationDrawer } from "../workbench/components/EvaluationDrawer";
-import { resolveSingleDeliveryCandidate } from "../workbench/stages/deliveryModel";
+import { type DeliveryCandidate } from "../workbench/stages/deliveryModel";
+import { buildShowcaseCandidates, createShowcaseSubmitGuard, resolveShowcaseSelection, showcaseCandidateKey } from "./showcasePublishModel";
 import { generateCharacterImages, generateStoryboards, generateImages, generateVideos, createExportJob, generateQualityReports, submitFeedback } from "../workbench/workbenchActions";
 import { createWorkbenchState, resolveCharacterIdentityAsset, shouldReconcileStoryboardSelection, workbenchReducer, type WorkbenchStage, type WorkbenchTheme } from "../workbench/model";
 import { buildTimelineClipLayout } from "./projectWorkbenchModel";
@@ -97,6 +98,7 @@ export function ProjectWorkbenchPage({ workflow, providers, modelPrices, theme, 
   const [operation, setOperation] = useState<OperationState>(null);
   const [operationElapsed, setOperationElapsed] = useState(0);
   const [publishOpen, setPublishOpen] = useState(false);
+  const [publishCandidate, setPublishCandidate] = useState<DeliveryCandidate>();
   const [exportJobs, setExportJobs] = useState<ExportJob[]>([]);
   const [productionPackage, setProductionPackage] = useState<StoryboardProductionPackage | null>(null);
   const [previewImage, setPreviewImage] = useState<{ url: string; title: string } | null>(null);
@@ -222,25 +224,40 @@ export function ProjectWorkbenchPage({ workflow, providers, modelPrices, theme, 
   }
 
   async function refreshProject() {
-    await onRefresh(project.id);
-    void api.exportJobs(project.id).then(setExportJobs).catch(() => setExportJobs([]));
-    void api.storyboardProductionPackage(project.id).then(setProductionPackage).catch(() => setProductionPackage(null));
+    const refreshed = await onRefresh(project.id);
+    await api.exportJobs(project.id).then(setExportJobs);
+    void api.storyboardProductionPackage(project.id).then(setProductionPackage).catch(() => undefined);
+    return refreshed;
   }
 
-  async function createExport(type: "tts" | "subtitle" | "video_export") {
+  async function createExport(type: "tts" | "subtitle" | "video_export", storyboardIds?: string[], maxCredits?: number) {
     setIsBusy(true);
+    setError("");
     beginOperation("export", type === "video_export" ? "MP4 合成中" : type === "tts" ? "配音生成中" : "字幕生成中", "正在整理镜头、台词、时长和素材。");
     try {
-      const job = await createExportJob(project.id, { type });
-      setExportJobs((current) => [job, ...current.filter((item) => item.id !== job.id)]);
-      setMessage(job.outputUrl ? "导出资产已生成。" : `导出任务状态：${job.status}`);
-      await refreshProject();
+      const job = await createExportJob(project.id, { type, storyboardIds, maxCredits });
+      setExportJobs(current => [job, ...current.filter(item => item.id !== job.id)]);
+      if (job.status === "failed") {
+        setMessage("");
+        throw new Error(job.errorReason || "导出未完成，请查看导出记录中的原因，修复后重试。");
+      }
+      setMessage(job.status === "succeeded" && job.outputUrl ? "导出资产已生成。" : `导出任务状态：${job.status}`);
+      await refreshProject().catch(() => setError("导出已完成，项目刷新失败。请刷新查看最新资产。"));
     } catch (err) {
       setError(err instanceof Error ? err.message : "导出任务失败");
+      throw err;
     } finally {
       setIsBusy(false);
       setOperation(null);
     }
+  }
+
+  async function createLegacyExport(type: "tts" | "subtitle" | "video_export") {
+    try {
+      const quote = await api.quoteExport(project.id, { type });
+      if (!window.confirm(`本次导出预计 ${quote.estimatedCredits} 积分${quote.cached ? "（复用已有配音）" : ""}。确认开始？`)) return;
+      await createExport(type, undefined, quote.estimatedCredits);
+    } catch (err) { setError(err instanceof Error ? err.message : "导出失败"); }
   }
 
   return (
@@ -318,8 +335,8 @@ export function ProjectWorkbenchPage({ workflow, providers, modelPrices, theme, 
         inspectorOpen={inspectorOpen}
         onCloseRail={() => setRailOpen(false)}
         onCloseInspector={() => setInspectorOpen(false)}
-        onRefresh={onRefresh}
-        onPublish={() => setPublishOpen(true)}
+        onRefresh={refreshProject}
+        onPublish={(candidate) => { setPublishCandidate(candidate); setPublishOpen(true); }}
         exportJobs={exportJobs}
         onExport={createExport}
         isBusy={isBusy}
@@ -347,7 +364,7 @@ export function ProjectWorkbenchPage({ workflow, providers, modelPrices, theme, 
             {operation ? <InlineProgress operation={operation} elapsed={operationElapsed} /> : null}
             {message ? <p className="success-text studio-v4-message">{message}</p> : null}
             {error ? <p className="danger-text studio-v4-message">{error}</p> : null}
-            {activeTab === "delivery" ? <VideoBoard project={project} providers={providers} modelPrices={modelPrices} storyboards={storyboards} characters={characters} roleAssets={roleAssets} imageAssets={imageAssets} videoAssets={videoAssets} exportJobs={exportJobs} isBusy={isBusy} onGenerate={() => void runWorkflowAction("video")} onCreateExport={createExport} onRefresh={refreshProject} onSaveModelRoutes={saveModelRoutes} onPublish={() => setPublishOpen(true)} /> : null}
+            {activeTab === "delivery" ? <VideoBoard project={project} providers={providers} modelPrices={modelPrices} storyboards={storyboards} characters={characters} roleAssets={roleAssets} imageAssets={imageAssets} videoAssets={videoAssets} exportJobs={exportJobs} isBusy={isBusy} onGenerate={() => void runWorkflowAction("video")} onCreateExport={createLegacyExport} onRefresh={refreshProject} onSaveModelRoutes={saveModelRoutes} onPublish={() => { setPublishCandidate(undefined); setPublishOpen(true); }} /> : null}
           </div>
         )}
         inspector={(
@@ -368,7 +385,7 @@ export function ProjectWorkbenchPage({ workflow, providers, modelPrices, theme, 
         onCloseRail={() => setRailOpen(false)}
         onCloseInspector={() => setInspectorOpen(false)}
       /> */}
-      {publishOpen ? <ShowcasePublishModal project={project} storyboards={storyboards} imageAssets={imageAssets} videoAssets={videoAssets} exportJobs={exportJobs} onClose={() => setPublishOpen(false)} /> : null}
+      {publishOpen ? <ShowcasePublishModal initialCandidate={publishCandidate} project={project} storyboards={storyboards} imageAssets={imageAssets} videoAssets={videoAssets} exportJobs={exportJobs} onClose={() => setPublishOpen(false)} /> : null}
       {previewImage ? <ImagePreviewModal preview={previewImage} onClose={() => setPreviewImage(null)} /> : null}
     </div>
     </WorkbenchProvider>
@@ -1313,6 +1330,7 @@ function VideoBoard({ project, providers, modelPrices, storyboards, characters, 
 
 function ShowcasePublishModal({
   project,
+  initialCandidate,
   storyboards,
   imageAssets,
   videoAssets,
@@ -1320,6 +1338,7 @@ function ShowcasePublishModal({
   onClose
 }: {
   project: Project;
+  initialCandidate?: DeliveryCandidate;
   storyboards: StoryboardShot[];
   imageAssets: AssetItem[];
   videoAssets: AssetItem[];
@@ -1327,81 +1346,96 @@ function ShowcasePublishModal({
   onClose: () => void;
 }) {
   const candidates = useMemo(() => {
-    const candidate = resolveSingleDeliveryCandidate(storyboards, [...imageAssets, ...videoAssets], exportJobs);
-    return candidate ? [candidate] : [];
-  }, [exportJobs, imageAssets, storyboards, videoAssets]);
-  const [candidateId, setCandidateId] = useState(candidates[0]?.id ?? "");
-  const selectedCandidate = candidates.find((item) => item.id === candidateId) ?? candidates[0];
+    return buildShowcaseCandidates(project.id, storyboards, [...imageAssets, ...videoAssets], exportJobs, initialCandidate);
+  }, [project.id, exportJobs, imageAssets, storyboards, videoAssets, initialCandidate]);
+  const [candidateKey, setCandidateKey] = useState(() => initialCandidate ? showcaseCandidateKey(initialCandidate) : candidates[0] ? showcaseCandidateKey(candidates[0]) : "");
+  const selectedCandidate = resolveShowcaseSelection(candidates, candidateKey);
   const [title, setTitle] = useState(project.name);
   const [description, setDescription] = useState(project.intro || "分享这次创作的成片与镜头方法。");
   const [category, setCategory] = useState("AI短剧");
-  const [coverUrl, setCoverUrl] = useState(candidates[0]?.coverUrl || imageAssets[0]?.referenceUrl || "");
+  const [coverUrl, setCoverUrl] = useState(selectedCandidate?.coverUrl ?? "");
   const [works, setWorks] = useState<ShowcaseWork[]>([]);
   const [loading, setLoading] = useState(false);
+  const [submittedKeys, setSubmittedKeys] = useState<string[]>([]);
+  const submitGuard = useRef(createShowcaseSubmitGuard());
+  const publishPending = useRef(false);
+  const [worksLoading, setWorksLoading] = useState(true);
+  const [worksError, setWorksError] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
   useEffect(() => {
-    void api.myShowcaseWorks().then(setWorks).catch(() => setWorks([]));
+    let active = true;
+    void api.myShowcaseWorks().then((items) => { if (active) setWorks(items); }).catch((reason) => { if (active) setWorksError(reason instanceof Error ? reason.message : "发布记录加载失败，请重新打开查看。"); }).finally(() => { if (active) setWorksLoading(false); });
+    return () => { active = false; };
   }, []);
 
-  function changeCandidate(nextId: string) {
-    setCandidateId(nextId);
-    const next = candidates.find((item) => item.id === nextId);
-    if (next?.coverUrl) setCoverUrl(next.coverUrl);
+  function changeCandidate(nextKey: string) {
+    setCandidateKey(nextKey);
+    const next = resolveShowcaseSelection(candidates, nextKey);
+    setCoverUrl(next?.coverUrl ?? "");
+    setMessage("");
+    setError("");
   }
 
   async function publish() {
+    if (publishPending.current || submittedKeys.includes(candidateKey)) return;
     if (!selectedCandidate) {
       setError("当前项目还没有可提交的视频或 MP4 导出文件。");
       return;
     }
+    if (!title.trim() || !coverUrl.trim()) { setError("请填写作品标题和封面地址。"); return; }
+    publishPending.current = true;
     setLoading(true);
     setMessage("");
     setError("");
     try {
-      const created = await api.createShowcaseWork({
+      const created = await submitGuard.current(candidateKey, () => api.createShowcaseWork({
         projectId: project.id,
         sourceAssetId: selectedCandidate.sourceAssetId,
         videoUrl: selectedCandidate.videoUrl,
-        title,
+        title: title.trim(),
         description,
         category,
-        coverUrl,
+        coverUrl: coverUrl.trim(),
         durationLabel: selectedCandidate.durationLabel
-      });
+      }));
+      if (!created) return;
       setWorks((current) => [created, ...current]);
+      setSubmittedKeys((current) => [...current, candidateKey]);
       setMessage("作品已提交审核。后台通过后会自动出现在前台创作现场。");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "作品提交失败");
     } finally {
       setLoading(false);
+      publishPending.current = false;
     }
   }
 
   return (
     <div id="showcase-publish-modal" className="showcase-publish-modal" role="dialog" aria-modal="true" aria-label="发布到创作现场">
-      <button className="showcase-publish-backdrop" type="button" aria-label="关闭" onClick={onClose} />
+      <button className="showcase-publish-backdrop" type="button" aria-label="关闭" disabled={loading} onClick={onClose} />
       <section>
-        <header><div><span>CREATOR SHOWCASE</span><h2>发布到创作现场</h2><p>选择当前项目已完成的视频，提交后进入后台审核。</p></div><button type="button" aria-label="关闭" onClick={onClose}><X size={18} /></button></header>
+        <header><div><span>CREATOR SHOWCASE</span><h2>发布到创作现场</h2><p>已选视频以此处预览为准，提交后进入后台审核。</p></div><button type="button" aria-label="关闭" disabled={loading} onClick={onClose}><X size={18} /></button></header>
         <div className="showcase-publish-body">
           <div className="showcase-publish-preview">
             {selectedCandidate ? <video src={selectedCandidate.videoUrl} poster={coverUrl || selectedCandidate.coverUrl} controls playsInline preload="metadata" /> : <div><Film size={36} /><strong>暂无可发布视频</strong><span>先生成镜头视频或合成 MP4。</span></div>}
-            <label><span>选择作品视频</span><select value={candidateId} onChange={(event) => changeCandidate(event.target.value)} disabled={!candidates.length}>{candidates.map((item) => <option value={item.id} key={item.id}>{item.label}</option>)}</select></label>
+            <label><span>选择作品视频</span><select value={selectedCandidate ? candidateKey : ""} onChange={(event) => changeCandidate(event.target.value)} disabled={loading || !candidates.length}>{!selectedCandidate ? <option value="" disabled>请选择可用视频</option> : null}{candidates.map((item) => <option value={showcaseCandidateKey(item)} key={item.id}>{item.label}</option>)}</select></label>
+            {candidateKey && !selectedCandidate ? <p className="danger-text" role="alert">原选视频已不可用或已更新，请重新选择并确认预览。</p> : null}
           </div>
           <div className="showcase-publish-form">
             <label><span>作品标题</span><input value={title} onChange={(event) => setTitle(event.target.value)} maxLength={120} /></label>
             <label><span>作品分类</span><select value={category} onChange={(event) => setCategory(event.target.value)}><option>AI短剧</option><option>动画短片</option><option>电商广告</option><option>品牌广告</option><option>概念片</option><option>电影感</option><option>科幻风</option></select></label>
             <label className="wide"><span>作品说明</span><textarea value={description} onChange={(event) => setDescription(event.target.value)} maxLength={1200} /></label>
             <label className="wide"><span>封面地址</span><input value={coverUrl} onChange={(event) => setCoverUrl(event.target.value)} placeholder="默认使用当前镜头首帧" /></label>
-            {message ? <p className="success-text wide">{message}</p> : null}
-            {error ? <p className="danger-text wide">{error}</p> : null}
-            <button className="primary-button wide" type="button" disabled={loading || !selectedCandidate || !title.trim() || !coverUrl.trim()} onClick={() => void publish()}><Upload size={17} />{loading ? "提交中..." : "提交后台审核"}</button>
+            {message ? <p className="success-text wide" role="status">{message}</p> : null}
+            {error ? <p className="danger-text wide" role="alert">{error}</p> : null}
+            <button className="primary-button wide" type="button" disabled={loading || !selectedCandidate || submittedKeys.includes(candidateKey) || !title.trim() || !coverUrl.trim()} onClick={() => void publish()}><Upload size={17} />{loading ? "提交中..." : submittedKeys.includes(candidateKey) ? "已提交审核" : "提交后台审核"}</button>
           </div>
         </div>
         <footer>
           <strong>我的发布记录</strong>
-          <div>{works.slice(0, 4).map((work) => <span className={`showcase-publish-status ${work.status}`} key={work.id}>{work.title} · {showcaseCreatorStatus(work.status)}</span>)}{!works.length ? <small>暂无提交记录</small> : null}</div>
+          <div>{works.slice(0, 4).map((work) => <span className={`showcase-publish-status ${work.status}`} key={work.id}>{work.title} · {showcaseCreatorStatus(work.status)}</span>)}{worksLoading ? <small role="status">正在加载发布记录…</small> : worksError ? <small className="danger-text" role="alert">{worksError}</small> : !works.length ? <small>暂无提交记录</small> : null}</div>
         </footer>
       </section>
     </div>

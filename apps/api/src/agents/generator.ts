@@ -316,6 +316,8 @@ async function generateStoryboardsWithModel(
 
 async function callOpenAICompatible(body: Record<string, unknown>, options: TextRuntimeOptions = {}) {
   const provider = options.textProvider || defaultTextProviderId();
+  // Enforce the same selected-model contract for chat, Google and Responses.
+  resolveTextModelCandidates(options, provider, textModelName(options));
   if (provider === "google-ai-studio") {
     return callGeminiInteraction(body, options);
   }
@@ -411,9 +413,9 @@ async function callChatCompletionsApi(
         urls: endpointCandidates(runtime.baseUrl, "chat/completions"),
         apiKey: runtime.apiKey,
         payload: {
-          model,
           max_tokens: Number(process.env.TEXT_GENERATION_MAX_TOKENS ?? process.env.OPENAI_GENERATION_MAX_OUTPUT_TOKENS ?? 2400),
-          ...body
+          ...body,
+          model
         }
       });
       await recordModelSubmission(runtime.provider, model);
@@ -947,31 +949,9 @@ export function textModelName(options: Pick<CreateProjectInput, "textProvider" |
 
 function runtimeTextModelName(options: Pick<CreateProjectInput, "textProvider" | "textModel"> = {}, providerOverride?: string) {
   const provider = providerOverride || options.textProvider || defaultTextProviderId();
-  const selected = textModelName({ ...options, textProvider: provider });
-  if (provider === "deepseek") return normalizeDeepSeekOfficialModel(selected);
-  if (provider === "google-ai-studio") return normalizeGeminiTextModel(selected);
-  return selected;
-}
-
-function normalizeDeepSeekOfficialModel(model: string) {
-  const aliases: Record<string, string> = {
-    "deepseek-v4-pro": process.env.DEEPSEEK_RUNTIME_MODEL || "deepseek-chat",
-    "deepseek-v4-flash": process.env.DEEPSEEK_RUNTIME_MODEL || "deepseek-chat",
-    "deepseek-v3": process.env.DEEPSEEK_RUNTIME_MODEL || "deepseek-chat"
-  };
-  return aliases[model] ?? model;
-}
-
-function normalizeGeminiTextModel(model: string) {
-  const normalized = model.trim().toLowerCase().replace(/\s+/g, "-");
-  const aliases: Record<string, string> = {
-    "gemini-3.1pro": "gemini-3.1-pro-preview",
-    "gemini-3.1-pro": "gemini-3.1-pro-preview",
-    "gemini-3.1-pro-preview": "gemini-3.1-pro-preview",
-    "gemini-3-pro": "gemini-3-pro-preview",
-    "gemini-3-pro-preview": "gemini-3-pro-preview"
-  };
-  return aliases[normalized] ?? model;
+  // Model IDs are an operator/user choice and are also the billing lookup key.
+  // Unsupported IDs must fail upstream, never silently become another model.
+  return textModelName({ ...options, textProvider: provider });
 }
 
 export function textProviderName(options: Pick<CreateProjectInput, "textProvider"> = {}) {
@@ -1076,7 +1056,7 @@ function resolveTextRuntime(options: TextRuntimeOptions = {}, providerOverride?:
       provider,
       apiKey: options.apiKey || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY,
       baseUrl: options.baseUrl || process.env.GEMINI_BASE_URL || process.env.GOOGLE_AI_STUDIO_BASE_URL || "https://generativelanguage.googleapis.com/v1beta",
-      model: normalizeGeminiTextModel(options.textModel || process.env.GEMINI_TEXT_MODEL || "gemini-3.1-pro-preview")
+      model
     };
   }
 
@@ -1102,6 +1082,13 @@ function errorMessage(error: unknown) {
 }
 
 function resolveTextModelCandidates(options: TextRuntimeOptions, provider: string, preferredModel: string) {
+  if (options.textModelPool !== undefined) {
+    const pool = uniqueStrings(options.textModelPool);
+    if (!pool.includes(preferredModel)) throw new Error("已选择的文本模型不在固定模型池中，请重新确认模型配置。");
+    return uniqueStrings([preferredModel, ...pool]);
+  }
+  // Explicit model selection cannot inherit unrelated models from an env pool.
+  if (options.textModel) return [preferredModel];
   const envPool =
     provider === "dashscope-text"
       ? process.env.DASHSCOPE_TEXT_MODEL_POOL || process.env.BAILIAN_TEXT_MODEL_POOL
@@ -1116,7 +1103,7 @@ function resolveTextModelCandidates(options: TextRuntimeOptions, provider: strin
             : provider === "openai-upstream"
               ? process.env.OPENAI_TEXT_MODEL_POOL
               : undefined;
-  return uniqueStrings([preferredModel, ...(options.textModelPool ?? []), ...splitModelList(envPool)]);
+  return uniqueStrings([preferredModel, ...splitModelList(envPool)]);
 }
 
 async function handleTextModelFallbackError(provider: string, model: string, error: unknown) {

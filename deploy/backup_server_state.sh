@@ -1,50 +1,29 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
+umask 077
 APP_DIR="${APP_DIR:-/opt/manjiao}"
 BACKUP_ROOT="${BACKUP_ROOT:-/opt/manjiao-backups}"
-COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.prod.yml}"
-STAMP="$(date +%Y%m%d_%H%M%S)"
-TARGET_DIR="$BACKUP_ROOT/$STAMP"
-
-mkdir -p "$TARGET_DIR"
-cd "$APP_DIR"
-
-echo "==> Backup target: $TARGET_DIR"
-
-echo "==> Backing up PostgreSQL database"
-docker compose -f "$COMPOSE_FILE" exec -T postgres sh -lc 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > "$TARGET_DIR/aigc_drama.dump"
-
-echo "==> Backing up storage volume"
-docker compose -f "$COMPOSE_FILE" exec -T api sh -lc 'cd /app && tar -czf - storage' > "$TARGET_DIR/storage.tar.gz"
-
-echo "==> Saving container status"
-docker compose -f "$COMPOSE_FILE" ps > "$TARGET_DIR/compose-ps.txt"
-
-echo "==> Writing restore notes"
+REPO_DIR="${MANJIAO_REPO_DIR:-/opt/git/aigc-short-drama-factory.git}"
+exec 9>"$REPO_DIR/manjiao-deploy.lock"
+flock -w 900 9
+mkdir -p "$BACKUP_ROOT"
+TARGET_DIR="$(mktemp -d "$BACKUP_ROOT/$(date +%Y%m%d_%H%M%S)_manual.XXXXXXXX")"
+bash "$(dirname "$0")/manjiao_remote.sh" backup "$APP_DIR" "$TARGET_DIR"
 cat > "$TARGET_DIR/RESTORE.md" <<'EOF'
-# Restore Notes
+# Restore notes
 
-Restore database:
+This backup contains a validated PostgreSQL custom dump, a storage archive and
+source archive. SHA256SUMS and COMPLETE must be present. Verify checksums before
+recovery. Keep the backup private because the source archive includes server
+environment configuration. This is not proof of a completed restore drill.
 
-```bash
-cd /opt/manjiao
-docker compose -f docker-compose.prod.yml stop api
-cat /opt/manjiao-backups/TIMESTAMP/aigc_drama.dump | docker compose -f docker-compose.prod.yml exec -T postgres sh -lc 'cat > /tmp/aigc_drama.dump'
-docker compose -f docker-compose.prod.yml exec -T postgres sh -lc 'dropdb -U "$POSTGRES_USER" "$POSTGRES_DB" --if-exists && createdb -U "$POSTGRES_USER" "$POSTGRES_DB"'
-docker compose -f docker-compose.prod.yml exec -T postgres sh -lc 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists /tmp/aigc_drama.dump'
-docker compose -f docker-compose.prod.yml up -d api
-```
+Code rollback uses manjiao_remote.sh rollback APP_DIR BACKUP_DIR. It never restores
+or downgrades the database. Application readiness must pass after the rollback.
 
-Restore storage:
-
-```bash
-cd /opt/manjiao
-cat /opt/manjiao-backups/TIMESTAMP/storage.tar.gz | docker compose -f docker-compose.prod.yml exec -T api sh -lc 'cd /app && tar -xzf -'
-docker compose -f docker-compose.prod.yml restart api nginx
-```
+Restore the database into an isolated empty database first and verify project,
+task and credit records. A production database restore replaces newer writes:
+stop API/worker writes, preserve the current database, and obtain an explicit
+recovery decision before using pg_restore. Restore matching storage separately.
+Do not run an old Compose command that automatically executes schema changes.
 EOF
-
-echo "==> Backup complete"
-du -sh "$TARGET_DIR"
-find "$TARGET_DIR" -maxdepth 1 -type f -printf "%f %s bytes\n" | sort
+echo "BACKUP_COMPLETE $TARGET_DIR"

@@ -2,6 +2,23 @@ generator client {
   provider = "prisma-client-js"
 }
 
+model AdminAuditLog {
+  id          String   @id
+  actorId     String
+  actorRole   String
+  action      String
+  target      String
+  details     Json     @default("{}")
+  ipAddress   String?
+  status      String   @default("started")
+  statusCode  Int?
+  createdAt   DateTime @default(now())
+  completedAt DateTime?
+
+  @@index([createdAt, id])
+  @@index([actorId, createdAt])
+}
+
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
@@ -235,6 +252,7 @@ model GenerationTask {
   finalCredits     Int?
   errorReason      String?
   jobId            String?
+  requestPayload   Json?
   qualityReports   QualityReport[]
   feedbacks        UserFeedback[]
   analyticsEvents  AnalyticsEvent[]
@@ -567,6 +585,7 @@ model CreditTransaction {
   createdAt    DateTime @default(now())
   @@index([userId])
   @@index([projectId])
+  @@index([taskId, userId, type])
 }
 
 model RechargeOrder {

@@ -10,6 +10,7 @@ import {
   fitPxPerSecond,
   formatTimecode,
   getDeliveryCandidates,
+  getDeliveryExportState,
   getDeliveryStats,
   getExportSummary,
   getNextPlayableShotId,
@@ -18,6 +19,7 @@ import {
   normalizeShotDuration,
   normalizePersistedMediaUrl,
   playheadOffset,
+  partitionDeliveryExportJobs,
   reduceDeliveryAutoPlay,
   reorder,
   resolveShotVideoStatus,
@@ -29,6 +31,16 @@ import {
 
 const shot = (id: string, duration: number): StoryboardShot => ({ id, projectId: "p", episodeNo: 1, sceneNo: 1, shotNo: 1, duration, shotSize: "", cameraAngle: "", cameraMovement: "", characters: [], scene: "", pictureDesc: id, dialogue: "", voiceOver: "", environmentSound: "", soundEffect: "", imagePrompt: "", videoPrompt: "", referenceAssetIds: [], status: "succeeded" });
 const asset = (id: string, shotId: string, url?: string): AssetItem => ({ id: `video_${shotId}`, projectId: "p", type: "video", name: id, description: "", prompt: "", referenceUrl: url, status: url ? "succeeded" : "failed" });
+
+test("export uses only the displayed episode in its dragged order and blocks incomplete clips", () => {
+  const storyboard = [shot("a", 2), shot("b", 3), { ...shot("c", 4), episodeNo: 2 }];
+  const visible = applyShotOrder(storyboard.filter((item) => item.episodeNo === 1), ["b", "a"]);
+  const ready = [asset("a", "a", "/storage/a.mp4"), asset("b", "b", "/storage/b.mp4")];
+  assert.deepEqual(getDeliveryExportState(visible, ready), { storyboardIds: ["b", "a"], missingVideoCount: 0, canExportVideo: true });
+  assert.equal(getDeliveryExportState(visible, [ready[0]!]).canExportVideo, false);
+  assert.equal(getDeliveryExportState(visible, [ready[0]!, { ...ready[1]!, status: "running" }]).missingVideoCount, 1);
+  assert.equal(getDeliveryExportState([], ready).canExportVideo, false);
+});
 
 test("normalizes invalid durations and lays clips sequentially", () => {
   assert.deepEqual(buildDeliveryClipLayout([shot("a", 0), shot("b", -2), shot("c", 3)]).map((clip) => ({ id: clip.id, start: clip.start, duration: clip.duration })), [
@@ -160,13 +172,29 @@ test("getDeliveryStats counts videos, falls back to full-track tts audio and det
   const none = getDeliveryStats(shots, assets, []);
   assert.deepEqual([none.total, none.videoReady, none.audioCovered, none.hasTrackAudio, none.hasSubtitle], [2, 1, 0, false, false]);
   const jobs: ExportJob[] = [
-    { id: "t", projectId: "p", type: "tts", status: "succeeded", audioUrl: "/storage/tts.mp3", createdAt: "", updatedAt: "" },
-    { id: "s", projectId: "p", type: "subtitle", status: "succeeded", subtitleUrl: "/storage/sub.srt", createdAt: "", updatedAt: "" }
+    { id: "t", projectId: "p", type: "tts", status: "succeeded", storyboardIds: ["a", "b"], audioUrl: "/storage/tts.mp3", createdAt: "", updatedAt: "" },
+    { id: "s", projectId: "p", type: "subtitle", status: "succeeded", storyboardIds: ["a", "b"], subtitleUrl: "/storage/sub.srt", createdAt: "", updatedAt: "" }
   ];
   const full = getDeliveryStats(shots, assets, jobs);
   assert.deepEqual([full.audioCovered, full.hasTrackAudio, full.hasSubtitle], [2, true, true]);
   const perShot = getDeliveryStats(shots, [...assets, rawAsset({ id: "audio_a", type: "audio", status: "succeeded", referenceUrl: "/storage/a.mp3" })], jobs);
-  assert.equal(perShot.audioCovered, 1);
+  assert.equal(perShot.audioCovered, 2);
+});
+
+test("export scope requires exact order and excludes unknown historical ranges", () => {
+  const base: ExportJob = { id: "current", projectId: "p", type: "tts", status: "succeeded", audioUrl: "/storage/audio.mp3", createdAt: "", updatedAt: "", storyboardIds: ["b", "a"] };
+  const jobs = [base, { ...base, id: "reordered", storyboardIds: ["a", "b"] }, { ...base, id: "other-episode", storyboardIds: ["c"] }, { ...base, id: "history", storyboardIds: undefined }];
+  const scoped = partitionDeliveryExportJobs(jobs, ["b", "a"]);
+  assert.deepEqual(scoped.current.map((job) => job.id), ["current"]);
+  assert.deepEqual(scoped.other.map((job) => job.id), ["reordered", "other-episode"]);
+  assert.deepEqual(scoped.history.map((job) => job.id), ["history"]);
+  assert.equal(getDeliveryStats([shot("a", 2), shot("b", 4)], [], [base, jobs[3]!]).hasTrackAudio, false);
+});
+
+test("project-wide legacy audio assets never mark another episode complete", () => {
+  const shots = [shot("a", 2), shot("b", 4)];
+  const assets = [rawAsset({ id: "project_audio", type: "audio", status: "succeeded", referenceUrl: "/storage/old.mp3" }), rawAsset({ id: "project_subtitle", type: "subtitle", status: "succeeded", referenceUrl: "/storage/old.srt" })];
+  assert.deepEqual(getDeliveryStats(shots, assets, []), { total: 2, videoReady: 0, audioCovered: 0, hasTrackAudio: false, hasSubtitle: false });
 });
 
 test("getRemainingVideoShots mirrors server eligibility: no playable video and an existing frame image", () => {

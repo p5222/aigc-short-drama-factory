@@ -24,7 +24,8 @@ const envFiles = isProduction
       resolve(process.cwd(), ".env.local")
     ];
 
-for (const envFile of envFiles) {
-  if (existsSync(envFile)) dotenv.config({ path: envFile, override: !isProduction });
+// Isolated integration tests must never inherit developer provider keys or a remote DB.
+for (const envFile of process.env.AIFILM_LOAD_ENV_FILES === "false" ? [] : envFiles) {
+  if (existsSync(envFile)) dotenv.config({ path: envFile, override: !isProduction, quiet: true });
 }
 

@@ -1,3 +1,5 @@
+import { clearAuthToken, readAuthToken } from "./authStorage";
+
 const baseUrl = import.meta.env.VITE_API_BASE_URL ?? "/api";
 
 export const AUTH_SESSION_EXPIRED_EVENT = "manjiao:auth-session-expired";
@@ -10,7 +12,7 @@ export class HttpError extends Error {
 }
 
 function authHeaders(headers?: HeadersInit) {
-  const token = localStorage.getItem("aifilm_auth_token");
+  const token = readAuthToken();
   return {
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
     ...headers
@@ -18,8 +20,8 @@ function authHeaders(headers?: HeadersInit) {
 }
 
 function notifySessionExpired(path: string) {
-  const hadToken = Boolean(localStorage.getItem("aifilm_auth_token"));
-  localStorage.removeItem("aifilm_auth_token");
+  const hadToken = Boolean(readAuthToken());
+  clearAuthToken();
   if (!hadToken || typeof window === "undefined") return;
   window.dispatchEvent(new CustomEvent(AUTH_SESSION_EXPIRED_EVENT, { detail: { path } }));
 }
@@ -38,7 +40,7 @@ async function fetchApi(path: string, init?: RequestInit) {
 async function responseError(response: Response): Promise<never> {
   const text = await response.text();
   const requestId = response.headers.get("x-request-id") ?? undefined;
-  let message = response.status === 401 ? "登录状态已过期，当前页面和草稿已保留。" : `请求失败：${response.status}`;
+  let message = response.status === 401 ? "登录状态已过期，请重新登录。未保存的修改可能需要重新填写。" : `请求失败：${response.status}`;
   if (text) {
     try {
       const data = JSON.parse(text) as { message?: string; error?: string; formErrors?: string[]; fieldErrors?: Record<string, string[]> };

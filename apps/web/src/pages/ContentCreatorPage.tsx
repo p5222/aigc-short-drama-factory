@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
-import type { ContentProjectSummary, CreateProjectInput, ModelProvider } from "@aifilm/shared";
+import type { ContentProjectSummary, ModelProvider } from "@aifilm/shared";
 import { ContentWorkspace } from "../content/ContentWorkspace";
 import { contentApi } from "../lib/contentApi";
 import "../content/content.css";
 
-export function ContentCreatorPage({ providers, initialSelectedId, onBack, onEnterProduction }: { providers: ModelProvider[]; initialSelectedId?: string; onBack?: () => void; onEnterProduction: (draft: CreateProjectInput & { contentProjectId?: string }) => void }) {
+export function ContentCreatorPage({ providers, initialSelectedId, onBack, onEnterProduction }: { providers: ModelProvider[]; initialSelectedId?: string; onBack?: () => void; onEnterProduction: (projectId: string) => void | Promise<void> }) {
   const [projects, setProjects] = useState<ContentProjectSummary[] | null>(null);
   const [error, setError] = useState("");
 

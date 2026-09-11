@@ -4,9 +4,12 @@ import { analyzeProductionEpisodes, countEffectiveCharacters, resolveNextEpisode
 import { z } from "zod";
 import { callTextModelJson } from "../agents/generator.js";
 import { prisma } from "../db/client.js";
+import { runBilledContentGeneration, withContentGenerationOperation } from "../content/generationBilling.js";
 
 const episodeResultSchema = z.object({
   title: z.string().min(1),
+  characters: z.array(z.unknown()).default([]),
+  props: z.array(z.unknown()).default([]),
   scenes: z.array(z.unknown()).default([]),
   dialogue: z.array(z.unknown()).default([]),
   voiceOver: z.array(z.unknown()).default([]),
@@ -106,16 +109,18 @@ async function generateOne(userId: string, contentProjectId: string, episodeNo: 
   const prompt = [
     `把下面素材改编为第 ${episodeNo} 集、约 180 秒的漫剧剧本。`,
     "只允许使用当前素材片段已有的人物、事件和设定。默认禁止扩写，禁止新增剧情事实，禁止挪用其他集内容。",
-    "输出 JSON：title, scenes, dialogue, voiceOver, sounds, estimatedSeconds, preservedFacts, endingHook, script。script 必须是可直接制作的完整中文剧本。",
+    "输出 JSON：title, characters, scenes, props, dialogue, voiceOver, sounds, estimatedSeconds, preservedFacts, endingHook, script。characters 每项包含 name/identity/appearance/costume/personality；scenes 每项包含 location/characters/description；props 每项包含 name/description。只列素材中明确存在的实体。script 必须是可直接制作的完整中文剧本。",
     `当前素材片段：\n${slice.content}`
   ].join("\n\n");
-  const raw = await callTextModelJson<unknown>({ ...(await runtime(project)), system: "你是漫剧改编编剧。严格忠于输入素材，只输出合法 JSON。", prompt, maxTokens: 8000, label: `第 ${episodeNo} 集剧本` });
-  const generated = episodeResultSchema.parse(raw);
-  const nextVersion = Math.max(0, ...(existing?.scripts.map((item) => item.version) ?? [])) + 1;
+  return runBilledContentGeneration(project, `内容第${episodeNo}集剧本`, async () => {
+    const raw = await callTextModelJson<unknown>({ ...(await runtime(project)), system: "你是漫剧改编编剧。严格忠于输入素材，只输出合法 JSON。", prompt, maxTokens: 8000, label: `第 ${episodeNo} 集剧本` });
+    return episodeResultSchema.parse(raw);
+  }, async (tx, generated) => {
+  const previous = await tx.episodeScriptVersion.aggregate({ where: { episode: { contentProjectId, episodeNo } }, _max: { version: true } });
+  const nextVersion = (previous._max.version ?? 0) + 1;
   const episodeId = existing?.id ?? `episode_${crypto.randomUUID()}`;
   const snapshot = { sourceId, sourceStart: slice.start, sourceEnd: slice.end, sourceType, allowExpansion: false, episodeNo } as Prisma.InputJsonValue;
 
-  const saved = await prisma.$transaction(async (tx) => {
     const episode = await tx.productionEpisode.upsert({
       where: { contentProjectId_episodeNo: { contentProjectId, episodeNo } },
       create: { id: episodeId, contentProjectId, productionProjectId: project.productionProjectId, episodeNo, title: generated.title, sourceStart: slice.start, sourceEnd: slice.end, sourceCharacterCount: countEffectiveCharacters(slice.content), targetDurationSeconds: 180, status: "confirmed", activeScriptVersion: nextVersion },
@@ -123,12 +128,16 @@ async function generateOne(userId: string, contentProjectId: string, episodeNo: 
     });
     await tx.episodeScriptVersion.create({ data: { id: `episode_script_${crypto.randomUUID()}`, episodeId: episode.id, version: nextVersion, status: "confirmed", content: generated.script, structuredResult: generated as unknown as Prisma.InputJsonValue, promptSnapshot: snapshot } });
     await tx.contentProject.update({ where: { id: contentProjectId }, data: { activeStep: "script", status: "confirmed" } });
-    return tx.productionEpisode.findUniqueOrThrow({ where: { id: episode.id }, include: { scripts: { orderBy: { version: "desc" } } } });
+    const saved = await tx.productionEpisode.findUniqueOrThrow({ where: { id: episode.id }, include: { scripts: { orderBy: { version: "desc" } } } });
+    return mapEpisode(saved);
   });
-  return mapEpisode(saved);
 }
 
 export async function generateEpisodes(userId: string, contentProjectId: string, scope: number | "all") {
+  return withContentGenerationOperation(userId, contentProjectId, "内容分集剧本", () => generateEpisodesUnlocked(userId, contentProjectId, scope));
+}
+
+async function generateEpisodesUnlocked(userId: string, contentProjectId: string, scope: number | "all") {
   const { content, sourceType } = await ownedProject(userId, contentProjectId);
   const maxEpisodes = analyzeProductionEpisodes(content, sourceType).maxEpisodes;
   const completed = await prisma.productionEpisode.findMany({ where: { contentProjectId, activeScriptVersion: { gt: 0 }, status: { not: "stale" } }, select: { episodeNo: true } });
@@ -140,7 +149,7 @@ export async function generateEpisodes(userId: string, contentProjectId: string,
 }
 
 export async function regenerateEpisode(userId: string, contentProjectId: string, episodeNo: number) {
-  return generateOne(userId, contentProjectId, episodeNo, true);
+  return withContentGenerationOperation(userId, contentProjectId, `重生成第${episodeNo}集剧本`, () => generateOne(userId, contentProjectId, episodeNo, true));
 }
 
 export async function listEpisodeVersions(userId: string, contentProjectId: string, episodeNo: number) {

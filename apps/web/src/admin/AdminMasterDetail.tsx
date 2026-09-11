@@ -1,19 +1,15 @@
-import { useEffect, type ReactNode } from "react";
+import { type ReactNode } from "react";
 import { X } from "lucide-react";
+import { useAdminDialog } from "./useAdminDialog";
 
-export function AdminMasterDetail({ title, meta, open, onClose, children, footer }: { title: string; meta?: ReactNode; open: boolean; onClose: () => void; children: ReactNode; footer?: ReactNode; }) {
-  useEffect(() => {
-    if (!open) return;
-    const handleEscape = (event: KeyboardEvent) => event.key === "Escape" && onClose();
-    window.addEventListener("keydown", handleEscape);
-    return () => window.removeEventListener("keydown", handleEscape);
-  }, [onClose, open]);
+export function AdminMasterDetail({ title, meta, open, onClose, children, footer, busy = false }: { title: string; meta?: ReactNode; open: boolean; onClose: () => void; children: ReactNode; footer?: ReactNode; busy?: boolean; }) {
+  const { dialogRef, titleId } = useAdminDialog(open, onClose, busy);
 
   if (!open) return null;
   return (
-    <div className="adm-detail-layer" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-      <aside className="adm-detail" role="dialog" aria-modal="true" aria-labelledby="adm-detail-title">
-        <header><div><h2 id="adm-detail-title">{title}</h2>{meta}</div><button className="adm-icon-btn" type="button" aria-label="关闭详情" onClick={onClose}><X /></button></header>
+    <div className="adm-detail-layer" onMouseDown={(event) => { if (!busy && event.target === event.currentTarget) onClose(); }}>
+      <aside ref={dialogRef} tabIndex={-1} className="adm-detail" role="dialog" aria-modal="true" aria-labelledby={titleId} aria-busy={busy}>
+        <header><div><h2 id={titleId}>{title}</h2>{meta}</div><button className="adm-icon-btn" type="button" aria-label="关闭详情" disabled={busy} onClick={onClose}><X /></button></header>
         <div className="adm-detail-body">{children}</div>
         {footer ? <footer>{footer}</footer> : null}
       </aside>

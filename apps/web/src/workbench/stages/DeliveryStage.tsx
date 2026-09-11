@@ -24,6 +24,8 @@ import { isPersistedPlayableVideoReference } from "@aifilm/shared";
 import { api } from "../../lib/api";
 import { ModelRoutePicker } from "../../components/ModelRoutePicker";
 import { generateVideos } from "../workbenchActions";
+import { DeliveryExportQuoteDialog } from "./DeliveryExportQuoteDialog";
+import { confirmedDeliveryCredits, deliveryQuoteScopeKey, type DeliveryExportQuote, type DeliveryExportType } from "./deliveryQuoteModel";
 import {
   DELIVERY_MAX_PX_PER_SECOND,
   DELIVERY_MIN_PX_PER_SECOND,
@@ -35,6 +37,7 @@ import {
   fitPxPerSecond,
   formatTimecode,
   getDeliveryCandidates,
+  getDeliveryExportState,
   getDeliveryStats,
   getExportSummary,
   getNextPlayableShotId,
@@ -43,11 +46,13 @@ import {
   normalizePersistedMediaUrl,
   normalizeShotDuration,
   playheadOffset,
+  partitionDeliveryExportJobs,
   reorder,
   resolveShotVideoStatus,
   rulerTicks,
   videoUnitCredits,
   waveformPoints,
+  type DeliveryCandidate,
   type DeliveryShotVideoStatus
 } from "./deliveryModel";
 
@@ -87,9 +92,9 @@ export interface DeliveryStageProps {
   onCloseRail: () => void;
   onCloseInspector: () => void;
   onRefresh: (projectId: string) => Promise<ProjectWorkflow>;
-  onPublish: () => void;
+  onPublish: (candidate: DeliveryCandidate) => void;
   exportJobs: ExportJob[];
-  onExport: (type: "tts" | "subtitle" | "video_export") => void;
+  onExport: (type: "tts" | "subtitle" | "video_export", storyboardIds?: string[], maxCredits?: number) => void | Promise<void>;
   isBusy: boolean;
   activeShotId: string | null;
   onSelectShot: (shotId: string) => void;
@@ -122,7 +127,7 @@ export function DeliveryStage({
 
   const [episodeNo, setEpisodeNo] = useState<number | null>(null);
   const [localShotId, setLocalShotId] = useState<string | null>(activeShotId);
-  /** 顺序暂为会话内状态：workbench API 没有“保存镜头顺序”的方法（updateStoryboardShot 仅是字段级 PATCH），刷新后回到服务端顺序。 */
+  /** 每次导出提交当前集的有序镜头；刷新后仍回到服务端顺序。 */
   const [orderByEpisode, setOrderByEpisode] = useState<Record<number, string[]>>({});
   const [pxPerSecond, setPxPerSecond] = useState(DELIVERY_DEFAULT_PX_PER_SECOND);
   const [progress, setProgress] = useState(0);
@@ -136,6 +141,16 @@ export function DeliveryStage({
   const [pendingAction, setPendingAction] = useState<DeliveryPendingAction>("");
   const [actionMessage, setActionMessage] = useState("");
   const [actionError, setActionError] = useState("");
+  const [downloadingJobId, setDownloadingJobId] = useState("");
+  const downloadingRef = useRef(false);
+  const [quoteIntent, setQuoteIntent] = useState<{ type: DeliveryExportType; episode: number; storyboardIds: string[]; scopeKey: string } | null>(null);
+  const [exportQuote, setExportQuote] = useState<DeliveryExportQuote | null>(null);
+  const [quoteLoading, setQuoteLoading] = useState(false);
+  const [exportSubmitting, setExportSubmitting] = useState(false);
+  const [quoteError, setQuoteError] = useState("");
+  const quoteRequest = useRef(0);
+  const quoteLoadingRef = useRef(false);
+  const exportSubmittingRef = useRef(false);
   const localBusy = pendingAction !== "";
 
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -172,24 +187,29 @@ export function DeliveryStage({
   const playheadLeft = playheadOffset(layout, activeShot?.id ?? "", progress, pxPerSecond);
   const absoluteSeconds = (layout.find((clip) => clip.id === activeShot?.id)?.start ?? 0) + progress;
 
-  const stats = getDeliveryStats(shots, assets, exportJobs);
+  const exportsByScope = partitionDeliveryExportJobs(exportJobs, shots.map((shot) => shot.id));
+  const episodeExportJobs = exportsByScope.current;
+  const stats = getDeliveryStats(shots, assets, episodeExportJobs);
+  const exportState = getDeliveryExportState(shots, assets);
+  const quoteScopeKey = deliveryQuoteScopeKey(project.id, activeEpisode, shots);
+  const confirmedCredits = quoteIntent ? confirmedDeliveryCredits(exportQuote, quoteIntent.type, quoteIntent.scopeKey, quoteScopeKey) : null;
   const remaining = useMemo(() => getRemainingVideoShots(shots, assets), [shots, assets]);
   const remainingSeconds = remaining.reduce((sum, shot) => sum + normalizeShotDuration(shot.duration), 0);
   const failedShots = shots.filter((shot) => resolveShotVideoStatus(videoByShot.get(shot.id)) === "failed");
-  const exportSummary = getExportSummary(exportJobs);
-  const publishable = getDeliveryCandidates(shots, assets, exportJobs).length > 0;
+  const exportSummary = getExportSummary(episodeExportJobs);
+  const publishableCandidate = getDeliveryCandidates(shots, assets, episodeExportJobs)[0];
 
   const unitCredits = videoUnitCredits(modelPrices, providerId, routeModel);
   const routeUnchanged = providerId === (project.videoProvider ?? "") && routeModel === (project.videoModel ?? "");
-  const latestTts = latestJobOfType(exportJobs, "tts");
-  const latestSubtitle = latestJobOfType(exportJobs, "subtitle");
+  const latestTts = latestJobOfType(episodeExportJobs, "tts");
+  const latestSubtitle = latestJobOfType(episodeExportJobs, "subtitle");
   const perShotAudioCount = shots.filter((shot) => {
     const audio = audioByShot.get(shot.id);
     return audio?.status === "succeeded" && Boolean(audio.referenceUrl);
   }).length;
   const trackAudioUrl = latestTts?.status === "succeeded" ? latestTts.audioUrl || latestTts.outputUrl : undefined;
 
-  const busyAll = isBusy || localBusy || routeSaving;
+  const busyAll = isBusy || localBusy || routeSaving || quoteLoading || exportSubmitting;
   const allIds = shots.map((shot) => shot.id);
   const allSelected = allIds.length > 0 && allIds.every((id) => selectedShotIds.includes(id));
   const selectedCount = allIds.filter((id) => selectedShotIds.includes(id)).length;
@@ -383,8 +403,90 @@ export function DeliveryStage({
     setPxPerSecond(fitPxPerSecond(Math.max(0, width - 48), totalDuration));
   }
 
+  async function downloadJob(job: ExportJob) {
+    if (downloadingRef.current) return;
+    downloadingRef.current = true;
+    setDownloadingJobId(job.id);
+    setActionError("");
+    try {
+      const blob = await api.downloadExportJob(project.id, job.id);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      const extension = job.type === "subtitle" ? "srt" : job.type === "tts" ? (blob.type.includes("mpeg") ? "mp3" : "wav") : "mp4";
+      link.download = `${project.name}-${job.id}.${extension}`;
+      document.body.append(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "下载失败，请重试。");
+    } finally {
+      downloadingRef.current = false;
+      setDownloadingJobId("");
+    }
+  }
+
+  async function openExportQuote(type: DeliveryExportType) {
+    if (quoteLoadingRef.current || exportSubmittingRef.current || !shots.length) return;
+    if (type === "video_export" && !exportState.canExportVideo) return;
+    const intent = { type, episode: activeEpisode, storyboardIds: [...exportState.storyboardIds], scopeKey: quoteScopeKey };
+    const requestId = ++quoteRequest.current;
+    quoteLoadingRef.current = true;
+    setQuoteIntent(intent);
+    setExportQuote(null);
+    setQuoteError("");
+    setQuoteLoading(true);
+    try {
+      const result = await api.quoteExport(project.id, { type, storyboardIds: intent.storyboardIds });
+      if (requestId !== quoteRequest.current) return;
+      if (result.type !== type || result.unit !== "tts_character") throw new Error("导出报价格式不正确，请刷新报价后重试。");
+      const quote: DeliveryExportQuote = { ...result, type, unit: "tts_character" };
+      if (confirmedDeliveryCredits(quote, type, intent.scopeKey, intent.scopeKey) === null) throw new Error("导出费用不可用，请刷新报价后重试。");
+      setExportQuote(quote);
+    } catch (reason) {
+      if (requestId === quoteRequest.current) setQuoteError(reason instanceof Error ? reason.message : "无法获取导出报价，请重试。");
+    } finally {
+      if (requestId === quoteRequest.current) { quoteLoadingRef.current = false; setQuoteLoading(false); }
+    }
+  }
+
+  function closeExportQuote() {
+    if (exportSubmittingRef.current) return;
+    quoteRequest.current += 1;
+    quoteLoadingRef.current = false;
+    setQuoteLoading(false);
+    setQuoteIntent(null);
+    setExportQuote(null);
+    setQuoteError("");
+  }
+
+  async function submitQuotedExport() {
+    if (!quoteIntent || confirmedCredits === null || exportSubmittingRef.current) return;
+    exportSubmittingRef.current = true;
+    setExportSubmitting(true);
+    setQuoteError("");
+    try {
+      await onExport(quoteIntent.type, quoteIntent.storyboardIds, confirmedCredits);
+      setQuoteIntent(null);
+      setExportQuote(null);
+    } catch (reason) {
+      setQuoteError(reason instanceof Error ? reason.message : "导出提交失败，请核对费用后重试。");
+    } finally {
+      exportSubmittingRef.current = false;
+      setExportSubmitting(false);
+    }
+  }
+
+  async function refreshDelivery() {
+    try { await onRefresh(project.id); }
+    catch (reason) { setActionError(reason instanceof Error ? reason.message : "成片数据刷新失败，请重试。"); }
+  }
+
   const activeMax = Math.max(1, videoRef.current?.duration || durationByShotId.get(activeShot?.id ?? "") || normalizeShotDuration(activeShot?.duration));
-  const downloads = exportJobs.filter((job) => job.status === "succeeded" && job.outputUrl).slice(0, 3);
+  const downloads = episodeExportJobs.filter((job) => job.status === "succeeded" && job.outputUrl).slice(0, 3);
+  const historicalDownloads = exportsByScope.history.filter((job) => job.status === "succeeded" && job.outputUrl).slice(0, 3);
+  const otherDownloads = exportsByScope.other.filter((job) => job.status === "succeeded" && job.outputUrl).slice(0, 3);
 
   return (
     <main className="dlv2-frame" data-rail-open={railOpen} data-inspector-open={inspectorOpen}>
@@ -403,7 +505,7 @@ export function DeliveryStage({
         </div>
         <div className="dlv2-topbar-right">
           {actionMessage ? <span className="dlv2-flash" data-tone="ok">{actionMessage}</span> : null}
-          {actionError ? <span className="dlv2-flash" data-tone="danger">{actionError}</span> : null}
+          {actionError ? <span className="dlv2-flash" data-tone="danger" role="alert">{actionError}</span> : null}
           <button
             className="dlv2-btn"
             type="button"
@@ -413,10 +515,10 @@ export function DeliveryStage({
           >
             {pendingAction === "batch" ? <Loader2 size={15} className="dlv2-spin" /> : <WandSparkles size={15} />}批量生成剩余视频{remaining.length ? `（${remaining.length}）` : ""}
           </button>
-          <button className="dlv2-btn dlv2-btn-primary" type="button" onClick={() => onExport("video_export")} disabled={busyAll || !shots.length}>
-            <Download size={15} />合成并导出 MP4
+          <button className="dlv2-btn dlv2-btn-primary" type="button" onClick={() => void openExportQuote("video_export")} disabled={busyAll || !exportState.canExportVideo} title={exportState.missingVideoCount ? `本集还有 ${exportState.missingVideoCount} 个镜头视频未完成，请先补齐` : "先查看配音费用，再按当前集、当前时间线顺序合成"}>
+            <Download size={15} />导出第 {activeEpisode} 集 MP4
           </button>
-          <button className="dlv2-icon-btn" type="button" aria-label="刷新成片数据" onClick={() => void onRefresh(project.id)}>
+          <button className="dlv2-icon-btn" type="button" aria-label="刷新成片数据" disabled={busyAll} onClick={() => void refreshDelivery()}>
             <RefreshCw size={15} />
           </button>
         </div>
@@ -443,7 +545,7 @@ export function DeliveryStage({
                     role="button"
                     tabIndex={0}
                     onClick={() => selectShot(shot.id)}
-                    onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); selectShot(shot.id); } }}
+                    onKeyDown={(event) => { if (event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); selectShot(shot.id); } }}
                   >
                     <input
                       type="checkbox"
@@ -630,23 +732,25 @@ export function DeliveryStage({
           <section className="dlv2-card">
             <header className="dlv2-card-head"><FileAudio size={14} /><strong>配音与字幕</strong></header>
             <div className="dlv2-card-actions">
-              <button className="dlv2-btn" type="button" onClick={() => onExport("tts")} disabled={busyAll || !shots.length}>
-                <FileAudio size={14} />批量生成配音
+              <button className="dlv2-btn" type="button" onClick={() => void openExportQuote("tts")} disabled={busyAll || !shots.length}>
+                <FileAudio size={14} />生成本集配音
               </button>
-              <button className="dlv2-btn" type="button" onClick={() => onExport("subtitle")} disabled={busyAll || !shots.length}>
-                <Subtitles size={14} />生成字幕轨
+              <button className="dlv2-btn" type="button" onClick={() => void openExportQuote("subtitle")} disabled={busyAll || !shots.length}>
+                <Subtitles size={14} />生成本集字幕
               </button>
             </div>
             <p className="dlv2-job-line">
-              配音：{latestTts ? JOB_STATUS_LABEL[latestTts.status] : "未生成"} · 字幕：{latestSubtitle ? JOB_STATUS_LABEL[latestSubtitle.status] : "未生成"} · 最近任务：{exportSummary.status === "idle" ? "暂无" : JOB_STATUS_LABEL[exportSummary.status as ExportJob["status"]] ?? exportSummary.status}
+              本集配音：{latestTts ? JOB_STATUS_LABEL[latestTts.status] : "未生成"} · 字幕：{latestSubtitle ? JOB_STATUS_LABEL[latestSubtitle.status] : "未生成"} · 本集最近任务：{exportSummary.status === "idle" ? "暂无" : JOB_STATUS_LABEL[exportSummary.status as ExportJob["status"]] ?? exportSummary.status}
             </p>
             {exportSummary.messages.slice(0, 3).map((message) => <p className="dlv2-warn" key={message}>{message}</p>)}
             {downloads.map((job) => (
-              <a className="dlv2-download" key={job.id} href={job.downloadUrl || job.outputUrl} download>
-                <Download size={13} />下载{JOB_TYPE_LABEL[job.type]}
-              </a>
+              <button className="dlv2-btn dlv2-download" type="button" key={job.id} disabled={Boolean(downloadingJobId)} onClick={() => void downloadJob(job)}>
+                <Download size={13} />{downloadingJobId === job.id ? "下载中…" : `下载本集${JOB_TYPE_LABEL[job.type]}`}
+              </button>
             ))}
-            <button className="dlv2-btn dlv2-btn-primary" type="button" onClick={onPublish} disabled={!publishable}>
+            {otherDownloads.length ? <details className="dlv2-job-line"><summary>其他集或其他镜头顺序的导出</summary>{otherDownloads.map((job) => <button className="dlv2-btn dlv2-download" type="button" key={job.id} disabled={Boolean(downloadingJobId)} onClick={() => void downloadJob(job)}><Download size={13} />{downloadingJobId === job.id ? "下载中…" : `${JOB_TYPE_LABEL[job.type]} · ${job.storyboardIds?.length} 镜 · ${new Date(job.createdAt).toLocaleString()}`}</button>)}</details> : null}
+            {historicalDownloads.length ? <details className="dlv2-job-line"><summary>项目历史导出（范围未记录）</summary><p>这些记录无法确认集数和镜头顺序，不计入本集配音或字幕完成状态。</p>{historicalDownloads.map((job) => <button className="dlv2-btn dlv2-download" type="button" key={job.id} disabled={Boolean(downloadingJobId)} onClick={() => void downloadJob(job)}><Download size={13} />{downloadingJobId === job.id ? "下载中…" : `历史${JOB_TYPE_LABEL[job.type]} · ${new Date(job.createdAt).toLocaleString()}`}</button>)}</details> : null}
+            <button className="dlv2-btn dlv2-btn-primary" type="button" onClick={() => { if (publishableCandidate) onPublish(publishableCandidate); }} disabled={!publishableCandidate}>
               <Upload size={14} />发布到创作现场
             </button>
           </section>
@@ -660,7 +764,7 @@ export function DeliveryStage({
             <button className="dlv2-icon-btn" type="button" disabled title="下个版本开放" aria-label="删除"><Trash2 size={14} /></button>
             <button className="dlv2-icon-btn" type="button" disabled title="下个版本开放" aria-label="撤销"><RotateCcw size={14} /></button>
             <button className="dlv2-icon-btn dlv2-flip" type="button" disabled title="下个版本开放" aria-label="重做"><RotateCcw size={14} /></button>
-            <span className="dlv2-tl-hint">拖拽排序</span>
+            <span className="dlv2-tl-hint" title="导出使用当前集的全部镜头及当前顺序；刷新页面恢复原始顺序。选中镜头仅用于生成。">拖拽排序 · 按此顺序导出本集 · 刷新恢复</span>
           </div>
           <div className="dlv2-tl-clock">{formatTimecode(absoluteSeconds, true)} / {formatTimecode(totalDuration)}</div>
           <div className="dlv2-tl-zoom">
@@ -755,6 +859,19 @@ export function DeliveryStage({
           </div>
         </div>
       </footer>
+      {quoteIntent ? <DeliveryExportQuoteDialog
+        type={quoteIntent.type}
+        episode={quoteIntent.episode}
+        shotCount={quoteIntent.storyboardIds.length}
+        quote={exportQuote}
+        loading={quoteLoading}
+        submitting={exportSubmitting}
+        error={quoteError || (exportQuote && confirmedCredits === null ? "台词或镜头顺序已变化，请刷新报价再提交。" : "")}
+        maxCredits={confirmedCredits}
+        onRetry={() => void openExportQuote(quoteIntent.type)}
+        onSubmit={() => void submitQuotedExport()}
+        onClose={closeExportQuote}
+      /> : null}
     </main>
   );
 }
@@ -770,6 +887,6 @@ function WaveformSvg({ seed, width }: { seed: string; width: number }): ReactEle
 
 function latestJobOfType(jobs: ExportJob[], type: ExportJob["type"]): ExportJob | undefined {
   return [...jobs]
-    .filter((job) => job.type === type)
+    .filter((job) => job.type === type || (type === "tts" && Boolean(job.audioUrl)) || (type === "subtitle" && Boolean(job.subtitleUrl)))
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || b.createdAt.localeCompare(a.createdAt))[0];
 }
