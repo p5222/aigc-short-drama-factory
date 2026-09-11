@@ -433,7 +433,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify(input ?? {})
     }),
-  estimate: (input: Pick<CreateProjectInput, "content" | "mode" | "targetEpisodes" | "textProvider" | "textModel" | "imageProvider" | "imageModel" | "imageSize" | "imageQuality" | "videoProvider" | "videoModel">) =>
+  estimate: (input: Pick<CreateProjectInput, "content" | "sourceType" | "mode" | "targetEpisodes" | "textProvider" | "textModel" | "imageProvider" | "imageModel" | "imageSize" | "imageQuality" | "videoProvider" | "videoModel">) =>
     request<CreationEstimate>("/creation/estimate", {
       method: "POST",
       body: JSON.stringify(input)

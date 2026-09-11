@@ -68,6 +68,10 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm build
       - run: node --test tools/git-workbench/workbench.test.mjs
+      - name: Verify Project Hub authentication, real Git isolation, retry and persistent audit
+        run: node --test tools/project-hub/*.test.mjs
+      - name: Verify the scoped Caddy operations route
+        run: python3 -m unittest discover -s deploy/project-hub -p 'test_*.py' -v
       - run: python3 -m unittest discover -s deploy -p test_deployment.py -v
       - run: bash -n deploy/manjiao_remote.sh deploy/server_git_post_receive.sh deploy/backup_server_state.sh deploy/install_git_hook.sh
       - name: Verify live Redis AOF migration preserves unsnapshotted queue data
@@ -77,3 +81,11 @@ jobs:
         run: docker build -f deploy/Dockerfile -t manjiao-verify .
       - name: Encode a real video with Chinese text and silent AAC audio
         run: docker run --rm --network none -v "$PWD/deploy/ffmpeg_smoke.sh:/smoke.sh:ro" manjiao-verify sh /smoke.sh
+      - name: Build the isolated Project Hub image
+        run: docker build -f deploy/project-hub/Dockerfile -t project-hub-verify .
+      - name: Verify Project Hub runtime tools without network or credentials
+        run: >-
+          docker run --rm --network none --read-only --tmpfs /tmp:size=64m,mode=1777
+          --entrypoint sh project-hub-verify -ec
+          'test "$(id -u)" = 10001; test -f public/handbook.html;
+          node --check server.mjs; node --version; git --version; gh --version; ssh -V'

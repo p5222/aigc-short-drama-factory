@@ -39,7 +39,13 @@ test("HTTP business boundaries: sessions, administrator writes, private media an
   await mkdir(resolve(root, "images"));
   await writeFile(resolve(root, "images", `${run}.png`), bytes);
   await db.asset.create({ data: { id: `api_asset_${run}`, projectId, type: "image", name: "Private image", description: "Test fixture", prompt: "", referenceUrl: mediaPath, status: "succeeded" } });
-  await db.modelProvider.create({ data: { id: providerId, name: "Private route", costHint: "test", modality: "text", models: ["test-model"], baseUrl: "https://private.example.test", apiKey: "never-disclose-test-secret", capability: {} } });
+  await db.modelProvider.create({ data: { id: providerId, name: "Private route", costHint: "test", modality: "text", enabled: true, models: ["test-model"], baseUrl: "https://private.example.test", apiKey: "never-disclose-test-secret", capability: {} } });
+  await db.modelPrice.createMany({ data: [
+    { id: `api_text_price_${run}`, providerId, providerName: "Private route", model: "test-model", modality: "text", unit: "text_episode", unitCredits: 37 },
+    { id: `api_other_price_${run}`, providerName: "Other route", model: "test-model", modality: "text", unit: "text_episode", unitCredits: 1 },
+    { id: `api_image_price_${run}`, providerId, providerName: "Private route", model: "test-image", modality: "image", unit: "image", unitCredits: 999 },
+    { id: `api_video_price_${run}`, providerId, providerName: "Private route", model: "test-video", modality: "video", unit: "video_second", unitCredits: 999 }
+  ] });
   const require = createRequire(import.meta.url);
   const child = spawn(process.execPath, ["--import", pathToFileURL(require.resolve("tsx")).href, "src/server.ts"], {
     cwd: resolve(import.meta.dirname, "../.."), stdio: ["ignore", "pipe", "pipe"], env: {
@@ -116,6 +122,31 @@ test("HTTP business boundaries: sessions, administrator writes, private media an
       assert.ok(page.items.every(item => item.actorId === ids[2]));
       assert.ok(!JSON.stringify(page).includes(password));
     });
+    await t.test("creation quotes charge only the exact text model and reject unconfirmed or stale caps without side effects", async () => {
+      const input = { title: "Quoted creation", sourceType: "script", content: "第1集 夜行\n场景1 庭院\n甲：回来。\n第2集 清晨\n场景1 客厅\n乙：我到了。", mode: "director", targetEpisodes: 2,
+        genre: "test", videoRatio: "9:16", artStyle: "test", textProvider: providerId, textModel: "test-model", imageProvider: providerId, imageModel: "test-image", videoProvider: providerId, videoModel: "test-video" };
+      const quoteResponse = await request("/api/creation/estimate", owner.token, "POST", input);
+      assert.equal(quoteResponse.status, 200, await quoteResponse.clone().text());
+      const quote = await quoteResponse.json() as { estimatedCredits: number; suggestedEpisodes: number; breakdown: Array<{ providerId: string; model: string; quantity: number; unitCredits: number; totalCredits: number }> };
+      assert.equal(quote.suggestedEpisodes, 2); assert.equal(quote.estimatedCredits, 74); assert.equal(quote.breakdown.length, 1);
+      assert.equal(quote.breakdown[0]!.providerId, providerId); assert.equal(quote.breakdown[0]!.model, "test-model");
+      assert.equal(quote.breakdown[0]!.unitCredits, 37); assert.equal(quote.breakdown[0]!.quantity, 2); assert.equal(quote.breakdown[0]!.totalCredits, 74);
+      const preferred = await request("/api/creation/estimate", owner.token, "POST", { ...input, textModel: undefined });
+      assert.equal(preferred.status, 200); assert.equal((await preferred.json() as typeof quote).estimatedCredits, 74);
+      const snapshot = async () => ({ projects: await db.project.count({ where: { userId: ids[0]! } }), tasks: await db.generationTask.count({ where: { userId: ids[0]! } }), transactions: await db.creditTransaction.count({ where: { userId: ids[0]! } }), account: await db.creditAccount.findUniqueOrThrow({ where: { userId: ids[0]! } }) });
+      const before = await snapshot();
+      for (const maxCredits of [undefined, -1, null, "74", 73]) {
+        const response = await request("/api/creation/start", owner.token, "POST", { ...input, maxCredits });
+        assert.ok(response.status >= 400 && response.status < 500, await response.text());
+        assert.deepEqual(await snapshot(), before);
+      }
+      await db.modelPrice.update({ where: { id: `api_text_price_${run}` }, data: { unitCredits: 40 } });
+      const stale = await request("/api/creation/start", owner.token, "POST", { ...input, maxCredits: quote.estimatedCredits });
+      assert.ok(stale.status >= 400 && stale.status < 500); assert.match(await stale.text(), /重新获取报价/);
+      assert.deepEqual(await snapshot(), before);
+      const fresh = await request("/api/creation/estimate", owner.token, "POST", input);
+      assert.equal((await fresh.json() as typeof quote).estimatedCredits, 80);
+    });
     await t.test("a duplicate admin-created email is HTTP 409 in both the response and completed audit", async () => {
       const response = await request("/api/admin/users", admin.token, "POST", {
         name: "Duplicate email review", email: `${ids[0]}@example.test`, password, role: "creator", status: "active", initialCredits: 0
@@ -139,6 +170,7 @@ test("HTTP business boundaries: sessions, administrator writes, private media an
     child.kill();
     if (child.exitCode === null) await Promise.race([once(child, "exit"), new Promise(resolve => setTimeout(resolve, 5000))]);
     await db.adminAuditLog.deleteMany({ where: { actorId: { in: ids } } });
+    await db.modelPrice.deleteMany({ where: { id: { in: [`api_text_price_${run}`, `api_other_price_${run}`, `api_image_price_${run}`, `api_video_price_${run}`] } } });
     await db.modelProvider.deleteMany({ where: { id: providerId } });
     await db.user.deleteMany({ where: { id: { in: ids } } });
     await db.$disconnect();

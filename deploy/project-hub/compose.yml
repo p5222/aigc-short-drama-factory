@@ -1,0 +1,28 @@
+name: project-hub
+services:
+  hub:
+    image: project-hub:${PROJECT_HUB_RELEASE:?Set a reviewed Git commit}
+    restart: unless-stopped
+    init: true
+    ports:
+      - "127.0.0.1:4319:4319"
+    environment:
+      PROJECT_HUB_CONFIG_FILE: /config/config.json
+      PROJECT_HUB_GITHUB_TOKEN_FILE: /config/github-token
+      PROJECT_HUB_SSH_CONFIG_FILE: /config/ssh/config
+    volumes:
+      - /opt/project-hub/config:/config:ro
+      - /opt/project-hub/data:/data
+      - /opt/project-hub/workspaces:/workspaces
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 512m
+    pids_limit: 128
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}

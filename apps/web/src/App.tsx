@@ -40,6 +40,7 @@ import { HelpPage, ProfilePage, SettingsPage } from "./pages/StaticPages";
 import { StudioPage } from "./pages/StudioPage";
 import { TaskCenterPage } from "./pages/TaskCenterPage";
 import { WizardPage } from "./pages/WizardPage";
+import { canManageModelTests } from "./pages/wizardRequestModel";
 import { WorkbenchPage } from "./pages/WorkbenchPage";
 import { ContentCreatorPage } from "./pages/ContentCreatorPage";
 import { resolveThemePreference, type WorkbenchTheme } from "./workbench/model";
@@ -407,6 +408,7 @@ export function App() {
         return (
           <WizardPage
             providers={providers}
+            canManageModels={canManageModelTests(user?.role)}
             onCreateContent={openFreshContent}
             onCreated={(projectId) => {
               void load().then(() => openProject(projectId)).catch(() => undefined);

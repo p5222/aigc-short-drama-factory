@@ -7,7 +7,6 @@ import express from "express";
 import { Redis as RedisClient } from "ioredis";
 import { z } from "zod";
 import { storyboardQualityRules, roleConsistencyRules, productionPipeline } from "@aifilm/shared";
-import { estimateCreation } from "./agents/workflow.js";
 import { testTextModelConnection } from "./agents/generator.js";
 import { createCharacterConsistencyPlan, createRelayGatewayPolicy, createWebNovelWritingPlan } from "./agents/openSourceAgents.js";
 import { getLingGuoAdapterMetadata } from "./agents/lingguoAdapter.js";
@@ -30,6 +29,7 @@ import {
   createRedeemCodeBatch,
   createRechargeOrder,
   createProjectAndTask,
+  quoteCreationStart,
   adjustUserCredits,
   deleteMembershipPlan,
   deleteModelPrice,
@@ -239,6 +239,8 @@ const createProjectSchema = z.object({
   episodeScripts: z.array(z.object({ episodeNo: z.number().int().positive(), title: z.string(), content: z.string() })).optional(),
   entityHints: z.object({ characters: z.array(z.string()).optional(), scenes: z.array(z.string()).optional(), props: z.array(z.string()).optional() }).optional()
 });
+
+const creationStartSchema = createProjectSchema.extend({ maxCredits: z.number().finite().nonnegative() });
 
 const projectRouteUpdateSchema = z.object({
   textProvider: z.string().nullable().optional(),
@@ -1628,26 +1630,18 @@ app.post(
       })
       .safeParse(req.body);
     if (!parsed.success) return res.status(400).json(parsed.error.flatten());
-    const pricing = await prisma.modelPrice.findMany({
-      where: { enabled: true },
-      select: { providerId: true, model: true, modality: true, unitCredits: true, enabled: true }
-    });
-    res.json(estimateCreation({
-      ...parsed.data,
-      pricing: pricing.map((item) => ({ ...item, providerId: item.providerId ?? undefined }))
-    }));
+    res.json(await quoteCreationStart(parsed.data));
   })
 );
 
 app.post(
   "/api/creation/start",
   asyncRoute(async (req, res) => {
-    const parsed = createProjectSchema.safeParse(req.body);
+    const parsed = creationStartSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json(parsed.error.flatten());
 
     const userId = requestUserId(req)!;
-    const estimate = estimateCreation(parsed.data);
-    const { projectId, taskId, task, estimatedCredits } = await createProjectAndTask(parsed.data, userId);
+    const { projectId, taskId, task, estimate } = await createProjectAndTask(parsed.data, userId, parsed.data.maxCredits);
 
     // The request and reservation already exist in PostgreSQL. A failed Redis
     // dispatch stays pending and is recovered by the outbox loop.

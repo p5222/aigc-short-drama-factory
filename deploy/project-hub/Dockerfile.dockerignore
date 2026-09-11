@@ -1,0 +1,7 @@
+**
+!tools/
+!tools/project-hub/
+!tools/project-hub/*.mjs
+tools/project-hub/*.test.mjs
+!tools/project-hub/public/
+!tools/project-hub/public/**

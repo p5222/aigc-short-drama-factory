@@ -1079,6 +1079,8 @@ export interface CreateProjectInput {
   videoRatio: "9:16" | "16:9" | "1:1";
   artStyle: string;
   targetEpisodes?: number;
+  /** User-confirmed ceiling for the text creation reservation; required by the HTTP start endpoint. */
+  maxCredits?: number;
   textProvider?: string;
   textModel?: string;
   imageProvider?: string;

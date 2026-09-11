@@ -3,7 +3,7 @@ import type { Prisma } from "@prisma/client";
 import { lockCreditAccount } from "../billing/accountCredits.js";
 import { assertProductionMediaProvider, mediaCheckpoint, runMediaTask } from "../billing/mediaTask.js";
 import sharp from "sharp";
-import type { AdminSummary, AdminUserRow, AssetItem, BatchGenerationResult, CreateProjectInput, GenerationTask, HelpArticle, PlatformAnnouncement, ProjectWorkflow, SegmentProfile, StoryboardExportRow, StoryboardShot, WorkbenchSummary } from "@aifilm/shared";
+import type { AdminSummary, AdminUserRow, AssetItem, BatchGenerationResult, CreateProjectInput, CreationEstimate, GenerationTask, HelpArticle, PlatformAnnouncement, ProjectWorkflow, SegmentProfile, StoryboardExportRow, StoryboardShot, WorkbenchSummary } from "@aifilm/shared";
 import { textModelName, textProviderName } from "../agents/generator.js";
 import { buildSeedanceVideoPrompt, buildStoryboardFirstFramePrompt, createStoryboardProductionPackage, resolveStoryboardReferenceAssets } from "../agents/storyboardProduction.js";
 import { estimateCreation } from "../agents/workflow.js";
@@ -1135,18 +1135,45 @@ export async function redeemExperienceCode(userId = DEMO_USER_ID, rawCode: strin
   });
 }
 
-export async function createProjectAndTask(
-  input: CreateProjectInput,
-  userId = DEMO_USER_ID
-): Promise<{ projectId: string; taskId: string; task: GenerationTask; estimatedCredits: number }> {
+type CreationQuoteInput = Parameters<typeof estimateCreation>[0];
+
+async function resolveCreationTextInput<T extends CreationQuoteInput>(input: T) {
   const providerId = input.textProvider || process.env.TEXT_PROVIDER;
   const provider = providerId ? await prisma.modelProvider.findUnique({ where: { id: providerId } }) : null;
   const model = input.textModel || readProviderRoutingState(provider?.capability, provider?.models ?? []).preferredModel || textModelName(input);
   assertProductionMediaProvider(provider, providerId || "local", model, "text");
-  input = { ...input, textProvider: providerId, textModel: model };
+  return { ...input, textProvider: providerId, textModel: model };
+}
+
+async function buildCreationStartQuote(input: CreationQuoteInput): Promise<CreationEstimate> {
   const baseEstimate = estimateCreation(input);
   const estimatedCredits = await resolveTextRunCredits(input, baseEstimate.suggestedEpisodes);
-  const estimate = { ...baseEstimate, estimatedCredits };
+  return {
+    words: baseEstimate.words, suggestedEpisodes: baseEstimate.suggestedEpisodes, mode: baseEstimate.mode, estimatedCredits,
+    notes: [
+      ...baseEstimate.notes.slice(0, 2),
+      "本次仅冻结文本解析、全局设定、剧本整理、角色与场景提取的积分；成功后结算，最终失败解冻。",
+      "角色图、分镜图、视频和配音会在对应生成步骤单独报价与确认，本次不收取这些费用。"
+    ],
+    breakdown: [{ label: "文本解析与项目结构化", providerId: input.textProvider, model: input.textModel,
+      quantity: baseEstimate.suggestedEpisodes, unitCredits: estimatedCredits / baseEstimate.suggestedEpisodes,
+      totalCredits: estimatedCredits, hint: "按本次选择集数及实际文本渠道、模型的启用价格计费。" }]
+  };
+}
+
+export async function quoteCreationStart(input: CreationQuoteInput): Promise<CreationEstimate> {
+  return buildCreationStartQuote(await resolveCreationTextInput(input));
+}
+
+export async function createProjectAndTask(
+  input: CreateProjectInput,
+  userId = DEMO_USER_ID,
+  maxCredits = Number.POSITIVE_INFINITY
+): Promise<{ projectId: string; taskId: string; task: GenerationTask; estimatedCredits: number; estimate: CreationEstimate }> {
+  input = await resolveCreationTextInput(input);
+  const estimate = await buildCreationStartQuote(input);
+  if ((maxCredits !== Number.POSITIVE_INFINITY && !Number.isFinite(maxCredits)) || maxCredits < 0) throw new Error("积分确认上限无效，请重新获取报价。");
+  if (estimate.estimatedCredits > maxCredits) throw new Error("价格或创建内容已变化，请重新获取报价并确认冻结积分。");
   const projectId = `proj_${crypto.randomUUID()}`;
   const taskId = `task_${crypto.randomUUID()}`;
 
@@ -1197,7 +1224,7 @@ export async function createProjectAndTask(
     return task;
   });
 
-  return { projectId, taskId, task: mapTask(result), estimatedCredits: estimate.estimatedCredits };
+  return { projectId, taskId, task: mapTask(result), estimatedCredits: estimate.estimatedCredits, estimate };
 }
 
 export async function runProjectImageTasks(
@@ -1943,7 +1970,7 @@ function defaultVendorCost(modality: string) {
   return 0.001;
 }
 
-async function resolveTextRunCredits(input: CreateProjectInput, suggestedEpisodes: number) {
+async function resolveTextRunCredits(input: CreationQuoteInput, suggestedEpisodes: number) {
   const model = textModelName(input);
   const price = await prisma.modelPrice.findFirst({ where: {
     modality: "text", model, providerId: input.textProvider || process.env.TEXT_PROVIDER || null, enabled: true
