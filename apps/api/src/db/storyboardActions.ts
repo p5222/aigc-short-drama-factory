@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import type { PrismaClient } from "@prisma/client";
 import { assertProductionMediaProvider, runMediaTask } from "../billing/mediaTask.js";
 import type { BatchGenerationResult, CreateProjectInput, StoryboardShot } from "@aifilm/shared";
 import { estimateImageCredits, normalizeImageOutputQuality, normalizeImageOutputSize, normalizeImageProviderId, resolveImageUnitCredits } from "@aifilm/shared";
@@ -8,9 +9,13 @@ import { generateImage } from "../providers/dashscopeImage.js";
 import type { ImageGenerationResult } from "../providers/types.js";
 import { persistImageReference } from "../storage/objectStorage.js";
 import { prisma } from "./client.js";
+import { captureMediaSource, captureReferenceSource, MediaSourceConflict } from "./mediaSource.js";
+import { persistCharacterReferenceInput, persistCurrentReferenceImage, persistCurrentShotImages, persistStaleReferenceOutputs, persistStaleShotOutputs, persistStoryboardTailFrame, removeCharacterReferenceInputs } from "./mediaPersistence.js";
 import { mapAsset, mapProject, mapStoryboard, mapTask } from "./mappers.js";
 import { DEMO_USER_ID } from "./seed.js";
-import { getProjectWorkflow } from "./repository.js";
+import { getProjectWorkflow, ProjectRequestError } from "./repository.js";
+import { archiveReferenceAsset, countCurrentImageAssets, invalidateReferenceMedia, invalidateShotMedia } from "./mediaInvalidation.js";
+import { isHistoricalAssetId } from "./mediaAssetIdentity.js";
 
 type CharacterReferenceJob = {
   asset: {
@@ -84,7 +89,7 @@ export async function runProjectStoryboardTasks(
     const generatedEpisodes = [...new Set(generated.storyboards.map((shot) => shot.episodeNo))];
     const replacedShots = await tx.storyboard.findMany({ where: { projectId, episodeNo: { in: generatedEpisodes } }, select: { id: true } });
     if (replacedShots.length) {
-      await tx.asset.deleteMany({ where: { projectId, id: { in: replacedShots.flatMap((shot) => [`image_${shot.id}`, `video_${shot.id}`]) } } });
+      await invalidateShotMedia(tx, projectId, replacedShots.map(shot => shot.id), { includeImages: true, reason: "分镜已重新生成" });
     }
     await tx.storyboard.deleteMany({ where: { projectId, episodeNo: { in: generatedEpisodes } } });
 
@@ -125,7 +130,7 @@ export async function runProjectStoryboardTasks(
     }
 
 
-    const totalAssets = await tx.asset.count({ where: { projectId } });
+    const totalAssets = await countCurrentImageAssets(tx, projectId);
     await tx.project.update({
       where: { id: projectId },
       data: {
@@ -152,14 +157,25 @@ export async function updateStoryboardShot(
   projectId: string,
   shotId: string,
   userId = DEMO_USER_ID,
-  data: Partial<Pick<StoryboardShot, "duration" | "shotSize" | "cameraAngle" | "cameraMovement" | "characters" | "scene" | "pictureDesc" | "action" | "orientation" | "spatialRelation" | "emotion" | "dialogue" | "voiceOver" | "environmentSound" | "soundEffect" | "imagePrompt" | "videoPrompt">>
+  data: Partial<Pick<StoryboardShot, "duration" | "shotSize" | "cameraAngle" | "cameraMovement" | "characters" | "scene" | "pictureDesc" | "action" | "orientation" | "spatialRelation" | "emotion" | "dialogue" | "voiceOver" | "environmentSound" | "soundEffect" | "imagePrompt" | "videoPrompt">>,
+  db: PrismaClient = prisma
 ) {
-  const project = await prisma.project.findFirst({ where: { id: projectId, userId } });
+  return db.$transaction(async tx => {
+  await tx.$queryRaw`SELECT true AS locked FROM pg_advisory_xact_lock(hashtext(${`project-lifecycle:${projectId}`}))`;
+  await tx.$queryRaw`SELECT "id" FROM "Project" WHERE "id" = ${projectId} AND "userId" = ${userId} FOR UPDATE`;
+  const project = await tx.project.findFirst({ where: { id: projectId, userId } });
   if (!project) throw new Error("Project not found");
-  const shot = await prisma.storyboard.findFirst({ where: { id: shotId, projectId } });
+  // Media settlement writes shot/asset rows before the project. Reject edits while it is active
+  // instead of introducing a project → media-row lock cycle with an already paid operation.
+  const activeTask = await tx.generationTask.findFirst({
+    where: { projectId, status: { notIn: ["succeeded", "completed", "failed", "canceled", "cancelled", "refunded"] } },
+    select: { id: true }
+  });
+  if (activeTask) throw new ProjectRequestError(409, "项目仍有生成任务，请等待结束或取消后再编辑镜头。");
+  const shot = await tx.storyboard.findFirst({ where: { id: shotId, projectId } });
   if (!shot) throw new Error("Storyboard shot not found");
 
-  const updated = await prisma.storyboard.update({
+  await tx.storyboard.update({
     where: { id: shotId },
     data: {
       ...(typeof data.duration === "number" ? { duration: data.duration } : {}),
@@ -183,41 +199,27 @@ export async function updateStoryboardShot(
     }
   });
 
-  await prisma.asset.deleteMany({ where: { projectId, id: { in: ["image_" + shotId, "video_" + shotId] } } });
-  return mapStoryboard(updated);
+  await invalidateShotMedia(tx, projectId, [shotId], { includeImages: true, reason: "镜头内容已修改，需要重新生成镜头媒体。" });
+  return mapStoryboard(await tx.storyboard.findUniqueOrThrow({ where: { id: shotId } }));
+  });
 }
 
-export async function captureStoryboardTailFrame(projectId: string, shotId: string, userId = DEMO_USER_ID, frameUrl: string) {
+export async function captureStoryboardTailFrame(projectId: string, shotId: string, userId = DEMO_USER_ID, frameUrl: string, sourceVideoUrl: string) {
   const workflow = await getProjectWorkflow(projectId, userId);
   if (!workflow) throw new Error("Project not found");
   const shot = workflow.storyboards.find((item) => item.id === shotId);
   if (!shot) throw new Error("Storyboard shot not found");
-  const storedUrl = await persistImageReference(frameUrl, `tail-frame-${projectId}-${shot.episodeNo}-${shot.shotNo}`);
-  if (!storedUrl) throw new Error("尾帧截图保存失败");
+  const video = workflow.assets.find(asset => asset.id === `video_${shotId}` && asset.status === "succeeded");
+  if (!sourceVideoUrl || video?.referenceUrl !== sourceVideoUrl) throw new MediaSourceConflict("当前镜头视频已更新，请刷新播放器后重新截取尾帧。");
 
   const episodeShots = workflow.storyboards
     .filter((item) => item.episodeNo === shot.episodeNo)
     .sort((left, right) => (left.shotNo - right.shotNo) || (left.sceneNo - right.sceneNo));
   const nextShot = episodeShots[episodeShots.findIndex((item) => item.id === shot.id) + 1];
-  const tailAssetId = `tailframe_${shot.id}`;
-  const result = await prisma.$transaction(async (tx) => {
-    const asset = await tx.asset.upsert({
-      where: { id: tailAssetId },
-      create: { id: tailAssetId, projectId, type: "image", name: `第${shot.episodeNo}集镜头${shot.shotNo}尾帧`, description: "创作者从已生成视频中截取的尾帧，用于下一镜头首帧承接。", prompt: shot.lastFramePrompt || shot.videoPrompt, referenceUrl: storedUrl, status: "succeeded" },
-      update: { referenceUrl: storedUrl, prompt: shot.lastFramePrompt || shot.videoPrompt, status: "succeeded" }
-    });
-    const updatedShot = await tx.storyboard.update({ where: { id: shot.id }, data: { lastFrameAssetId: tailAssetId } });
-    let updatedNextShot = undefined;
-    if (nextShot) {
-      await tx.asset.upsert({
-        where: { id: `image_${nextShot.id}` },
-        create: { id: `image_${nextShot.id}`, projectId, type: "image", name: `第${nextShot.episodeNo}集镜头${nextShot.shotNo}首帧（承接尾帧）`, description: "上一镜头尾帧截图，作为本镜头首帧参考。", prompt: nextShot.firstFramePrompt || nextShot.imagePrompt, referenceUrl: storedUrl, status: "succeeded" },
-        update: { name: `第${nextShot.episodeNo}集镜头${nextShot.shotNo}首帧（承接尾帧）`, referenceUrl: storedUrl, status: "succeeded" }
-      });
-      updatedNextShot = await tx.storyboard.update({ where: { id: nextShot.id }, data: { firstFrameAssetId: tailAssetId, continuitySourceShotId: shot.id } });
-    }
-    return { asset, updatedShot, updatedNextShot };
-  });
+  const source = captureMediaSource(workflow, "video", [shot.id, ...(nextShot ? [nextShot.id] : [])]);
+  const storedUrl = await persistImageReference(frameUrl, `tail-frame-${projectId}-${shot.episodeNo}-${shot.shotNo}`);
+  if (!storedUrl) throw new Error("尾帧截图保存失败");
+  const result = await persistStoryboardTailFrame({ projectId, shotId, userId, storedUrl, sourceVideoUrl, source, nextShotId: nextShot?.id ?? null });
   return { asset: mapAsset(result.asset), shot: mapStoryboard(result.updatedShot), nextShot: result.updatedNextShot ? mapStoryboard(result.updatedNextShot) : undefined };
 }
 
@@ -236,7 +238,8 @@ export async function regenerateStoryboardShotImage(projectId: string, shotId: s
   const assetById = new Map(workflow.assets.map((asset) => [asset.id, asset]));
   const credits = await resolveImageCredits(imageProvider, imageModel, imageSize, imageQuality);
 
-  return runMediaTask({ userId, projectId, projectName: workflow.project.name, estimatedCredits: credits, type: "image", scope: "image", title: "分镜首帧重新生成", provider: imageProvider, model: imageModel }, async (billing) => {
+  const source = captureMediaSource(workflow, "image", [shot.id]);
+  return runMediaTask({ userId, projectId, projectName: workflow.project.name, estimatedCredits: credits, type: "image", scope: "image", title: "分镜首帧重新生成", provider: imageProvider, model: imageModel, source }, async (billing) => {
   const resolvedReferences = resolveStoryboardReferenceAssets(workflow, shot, assetById);
   const imageResult = await generateImage({
     prompt: buildStoryboardFirstFramePrompt({ workflow, shot, assetById }),
@@ -265,41 +268,20 @@ export async function regenerateStoryboardShotImage(projectId: string, shotId: s
   }
   const storedImageUrl = await persistImageReference(imageResult.imageUrl, `shot-${projectId}-${shot.shotNo}`);
 
-  const result = await billing.complete(credits, async (tx) => {
-
-    const fallback = createSvgDataUrl("Shot " + shot.shotNo, shot.pictureDesc, workflow.project.artStyle);
-    const referenceUrl = storedImageUrl || imageResult.imageUrl || fallback;
-    await tx.asset.upsert({
-      where: { id: "image_" + shot.id },
-      update: { description: shot.pictureDesc, prompt: shot.imagePrompt, referenceUrl, status: "succeeded" },
-      create: {
-        id: "image_" + shot.id,
-        projectId,
-        type: "image",
-        name: "Shot " + shot.episodeNo + "-" + shot.sceneNo + "-" + shot.shotNo + " image",
-        description: shot.pictureDesc,
-        prompt: shot.imagePrompt,
-        referenceUrl,
-        status: "succeeded",
-        relatedCharacterId: null
-      }
-    });
-
-    await tx.storyboard.update({ where: { id: shot.id }, data: { status: "succeeded" } });
-    const totalImageAssets = await tx.asset.count({ where: { projectId, type: { in: ["role", "role_derivative", "scene", "prop", "image", "cover"] } } });
-    await tx.project.update({ where: { id: projectId }, data: { status: "asseting", imageAssets: totalImageAssets, creditsSpent: { increment: credits } } });
-    return {};
-  });
+  const referenceUrl = storedImageUrl || imageResult.imageUrl || createSvgDataUrl("Shot " + shot.shotNo, shot.pictureDesc, workflow.project.artStyle);
+  const outputs = [{ shot, url: referenceUrl }];
+  const result = await billing.complete(credits, tx => persistCurrentShotImages(tx, projectId, outputs, credits),
+    { onStale: tx => persistStaleShotOutputs(tx, { projectId, taskId: billing.taskId, type: "image", outputs }) });
 
   const project = await prisma.project.findFirstOrThrow({ where: { id: projectId, userId } });
-  return { project: mapProject(project), task: mapTask(result.task), assetsCreated: 1 };
+  return { project: mapProject(project), task: mapTask(result.task), assetsCreated: result.created };
   });
 }
 
 export async function generateSceneEnvironmentImage(projectId: string, assetId: string, userId = DEMO_USER_ID): Promise<BatchGenerationResult> {
   const workflow = await getProjectWorkflow(projectId, userId);
   if (!workflow) throw new Error("Project not found");
-  const asset = workflow.assets.find((item) => item.id === assetId && (item.type === "scene" || item.type === "prop"));
+  const asset = workflow.assets.find((item) => item.id === assetId && !isHistoricalAssetId(item.id) && (item.type === "scene" || item.type === "prop"));
   if (!asset) throw new Error("Scene asset not found");
 
   const imageProvider = workflow.project.imageProvider || process.env.IMAGE_PROVIDER || "mock";
@@ -310,7 +292,8 @@ export async function generateSceneEnvironmentImage(projectId: string, assetId: 
   assertProductionMediaProvider(imageProviderConfig, imageProvider, imageModel, "image");
   const credits = await resolveImageCredits(imageProvider, imageModel, imageSize, imageQuality);
 
-  return runMediaTask({ userId, projectId, projectName: workflow.project.name, estimatedCredits: credits, type: "image", scope: "image", title: "场景参考图生成", provider: imageProvider, model: imageModel }, async (billing) => {
+  const source = captureReferenceSource(workflow, [asset.id]);
+  return runMediaTask({ userId, projectId, projectName: workflow.project.name, estimatedCredits: credits, type: "image", scope: "image", title: "场景参考图生成", provider: imageProvider, model: imageModel, source }, async (billing) => {
   const prompt = [
     "为 AI 漫剧生产生成一张 16:9 场景环境概念图。",
     `场景：${asset.name}。`,
@@ -344,24 +327,18 @@ export async function generateSceneEnvironmentImage(projectId: string, assetId: 
   const storedImageUrl = await persistImageReference(imageResult.imageUrl, `scene-${projectId}-${asset.id}`);
   const referenceUrl = storedImageUrl || imageResult.imageUrl || createSvgDataUrl(asset.name, asset.description || "场景环境资产", workflow.project.artStyle);
 
-  const result = await billing.complete(credits, async (tx) => {
-    await tx.asset.update({
-      where: { id: asset.id },
-      data: { prompt, referenceUrl, status: "succeeded" }
-    });
-    await tx.project.update({ where: { id: projectId }, data: { status: "asseting", creditsSpent: { increment: credits } } });
-    return {};
-  });
+  const result = await billing.complete(credits, tx => persistCurrentReferenceImage(tx, { projectId, userId, assetId: asset.id, prompt, url: referenceUrl, credits }),
+    { onStale: tx => persistStaleReferenceOutputs(tx, projectId, billing.taskId, [{ name: asset.name, type: asset.type, prompt, url: referenceUrl }]) });
 
   const project = await prisma.project.findFirstOrThrow({ where: { id: projectId, userId } });
-  return { project: mapProject(project), task: mapTask(result.task), assetsCreated: 1 };
+  return { project: mapProject(project), task: mapTask(result.task), assetsCreated: result.created };
   });
 }
 
 export async function generateCharacterReferenceImages(projectId: string, userId = DEMO_USER_ID, input: CharacterReferenceGenerateInput = {}): Promise<BatchGenerationResult> {
   const workflow = await getProjectWorkflow(projectId, userId);
   if (!workflow) throw new Error("Project not found");
-  const roleAssets = workflow.assets.filter((asset) => asset.type === "role");
+  const roleAssets = workflow.assets.filter((asset) => asset.type === "role" && !isHistoricalAssetId(asset.id));
   const selectedCharacterIds = new Set((input.characterIds ?? []).filter(Boolean));
   const roleJobs: CharacterReferenceJob[] = roleAssets
     .filter((asset) => asset.relatedCharacterId)
@@ -398,7 +375,8 @@ export async function generateCharacterReferenceImages(projectId: string, userId
     return { project: mapProject(project), task: mapTask(task), assetsCreated: 0 };
   }
 
-  return runMediaTask({ userId, projectId, projectName: workflow.project.name, estimatedCredits: credits, type: "character", scope: "character", title: "角色参考图生成", provider: imageProvider, model: imageModel }, async (billing) => {
+  const source = captureReferenceSource(workflow, selectedJobs.map(job => job.asset.id));
+  return runMediaTask({ userId, projectId, projectName: workflow.project.name, estimatedCredits: credits, type: "character", scope: "character", title: "角色参考图生成", provider: imageProvider, model: imageModel, source }, async (billing) => {
   const imageResults: ImageGenerationResult[] = [];
   const storedImageUrls: Array<string | undefined> = [];
   const successfulJobs: CharacterReferenceJob[] = [];
@@ -407,7 +385,7 @@ export async function generateCharacterReferenceImages(projectId: string, userId
     try {
     const identityReferenceUrl = asset.referenceUrl;
     const uploadedReferenceUrls = workflow.assets
-      .filter((item) => item.type === "role_reference" && item.relatedCharacterId === asset.relatedCharacterId && item.referenceUrl)
+      .filter((item) => !isHistoricalAssetId(item.id) && item.type === "role_reference" && item.relatedCharacterId === asset.relatedCharacterId && item.referenceUrl)
       .map((item) => item.referenceUrl!)
       .slice(0, 4);
     const result = await generateImage({
@@ -442,10 +420,11 @@ export async function generateCharacterReferenceImages(projectId: string, userId
   credits = successfulJobs.length * creditsPerAsset;
 
   const result = await billing.complete(credits, async (tx) => {
-
-    await Promise.all(selectedJobs.map(({ asset, mode }, index) => {
+    await invalidateReferenceMedia(tx, projectId, userId, { assetIds: selectedJobs.map(job => job.asset.id), characterIds: selectedJobs.map(job => job.asset.relatedCharacterId!).filter(Boolean) }, "角色身份板已重新生成");
+    await Promise.all(selectedJobs.map(async ({ asset, mode }, index) => {
       const referenceUrl = storedImageUrls[index] || imageResults[index]?.imageUrl || createSvgDataUrl(asset.name, `${asset.description} 多视图角色设定表`, workflow.project.artStyle);
       const viewLabel = characterViewLabel(mode);
+      await archiveReferenceAsset(tx, projectId, `${asset.id}_turnaround`, "角色身份板已重新生成");
       return tx.asset.upsert({
         where: { id: `${asset.id}_turnaround` },
         update: {
@@ -470,14 +449,7 @@ export async function generateCharacterReferenceImages(projectId: string, userId
 
     await Promise.all(selectedJobs.filter(({ asset }) => asset.relatedCharacterId).map(async ({ asset }) => {
       const turnaroundAssetId = `${asset.id}_turnaround`;
-      await tx.asset.deleteMany({
-        where: {
-          projectId,
-          type: "role_derivative",
-          relatedCharacterId: asset.relatedCharacterId!,
-          id: { in: [`${asset.id}_front`, `${asset.id}_side`, `${asset.id}_back`] }
-        }
-      });
+      for (const id of [`${asset.id}_front`, `${asset.id}_side`, `${asset.id}_back`]) await archiveReferenceAsset(tx, projectId, id, "已生成新的角色身份板");
       await tx.character.update({ where: { id: asset.relatedCharacterId! }, data: { referenceAssetId: turnaroundAssetId } });
       await tx.asset.update({
         where: { id: asset.id },
@@ -496,207 +468,39 @@ export async function generateCharacterReferenceImages(projectId: string, userId
       })));
     }));
 
-    const totalImageAssets = await tx.asset.count({ where: { projectId, type: { in: ["role", "role_derivative", "scene", "prop", "image", "cover"] } } });
+    const totalImageAssets = await countCurrentImageAssets(tx, projectId);
     await tx.project.update({ where: { id: projectId }, data: { status: "asseting", imageAssets: totalImageAssets, creditsSpent: { increment: credits } } });
     return { created: selectedJobs.length };
-  }, { status: failures.length ? "failed" : "succeeded", errorReason: failures.length ? `已保留成功的 ${successfulJobs.length} 张参考图，仅成功项扣费。${failures.join("；")}` : null });
+  }, { status: failures.length ? "failed" : "succeeded", errorReason: failures.length ? `已保留成功的 ${successfulJobs.length} 张参考图，仅成功项扣费。${failures.join("；")}` : null,
+    onStale: tx => persistStaleReferenceOutputs(tx, projectId, billing.taskId, selectedJobs.map(({ asset, mode }, index) => ({ name: asset.name, type: "role_derivative", prompt: buildCharacterReferencePrompt(asset.prompt, mode, asset.referenceUrl, asset.name), url: storedImageUrls[index] || imageResults[index]?.imageUrl || createSvgDataUrl(asset.name, asset.description, workflow.project.artStyle) }))) });
 
   const project = await prisma.project.findFirstOrThrow({ where: { id: projectId, userId } });
   return { project: mapProject(project), task: mapTask(result.task), assetsCreated: result.created };
   });
 }
 
-export async function setCharacterReferenceImage(
-  projectId: string,
-  characterId: string,
-  userId = DEMO_USER_ID,
-  input: { referenceUrl: string; description?: string }
-) {
+// Legacy internal entry points share the same guarded source-mutation path.
+export async function setCharacterReferenceImage(projectId: string, characterId: string, userId = DEMO_USER_ID, input: { referenceUrl: string; description?: string }) {
+  return setCharacterReferenceImageV2(projectId, characterId, userId, input);
+}
+
+export async function deleteCharacterReferenceImage(projectId: string, characterId: string, userId = DEMO_USER_ID) {
+  return deleteCharacterReferenceImageV2(projectId, characterId, userId);
+}
+
+export async function setCharacterReferenceImageV2(projectId: string, characterId: string, userId = DEMO_USER_ID, input: { referenceUrl: string; description?: string }) {
   const workflow = await getProjectWorkflow(projectId, userId);
   if (!workflow) throw new Error("Project not found");
-  const character = workflow.characters.find((item) => item.id === characterId);
+  const character = workflow.characters.find(item => item.id === characterId);
   if (!character) throw new Error("Character not found");
-
-  const primaryRoleAsset = workflow.assets.find((item) => item.type === "role" && item.relatedCharacterId === character.id);
-  const assetId = primaryRoleAsset?.id || `asset_${character.id}`;
   const referenceUrl = input.referenceUrl.trim();
-  const description = input.description?.trim() || `${character.name} 用户上传/登记的正面参考图，用作角色身份锚点。`;
-  const storedReferenceUrl = await persistImageReference(referenceUrl, `character-reference-${projectId}-${character.name}`);
-
-  const asset = await prisma.asset.upsert({
-    where: { id: assetId },
-    update: {
-      type: "role",
-      name: `${character.name} 角色主参考图`,
-      description,
-      prompt: [
-        character.prompt,
-        "用户提供的正面参考图已作为身份锚点；后续生成多视图和分镜时保持同一脸型、发型、服装主色。"
-      ].join("\n"),
-      referenceUrl: storedReferenceUrl || referenceUrl,
-      status: "succeeded",
-      relatedCharacterId: character.id
-    },
-    create: {
-      id: assetId,
-      projectId,
-      type: "role",
-      name: `${character.name} 角色主参考图`,
-      description,
-      prompt: [
-        character.prompt,
-        "用户提供的正面参考图已作为身份锚点；后续生成多视图和分镜时保持同一脸型、发型、服装主色。"
-      ].join("\n"),
-      referenceUrl: storedReferenceUrl || referenceUrl,
-      status: "succeeded",
-      relatedCharacterId: character.id
-    }
-  });
-
-  await prisma.character.update({ where: { id: character.id }, data: { referenceAssetId: asset.id } });
-  const derivativeIds = workflow.assets
-    .filter((item) => item.type === "role_derivative" && item.relatedCharacterId === character.id)
-    .map((item) => item.id);
-  if (derivativeIds.length) {
-    await removeAssetReferencesFromStoryboards(projectId, derivativeIds);
-  }
-  await prisma.asset.deleteMany({
-    where: {
-      projectId,
-      type: "role_derivative",
-      relatedCharacterId: character.id
-    }
-  });
-  return asset;
+  const stored = await persistImageReference(referenceUrl, `character-reference-${projectId}-${character.name}`);
+  return persistCharacterReferenceInput(projectId, characterId, userId, { ...input, referenceUrl: stored || referenceUrl });
 }
 
-export async function deleteCharacterReferenceImage(
-  projectId: string,
-  characterId: string,
-  userId = DEMO_USER_ID
-) {
-  const workflow = await getProjectWorkflow(projectId, userId);
-  if (!workflow) throw new Error("Project not found");
-  const character = workflow.characters.find((item) => item.id === characterId);
-  if (!character) throw new Error("Character not found");
-
-  const roleAsset = workflow.assets.find((item) => item.type === "role" && item.relatedCharacterId === character.id);
-  const derivativeIds = workflow.assets
-    .filter((item) => item.relatedCharacterId === character.id && (item.type === "role_derivative" || item.id === roleAsset?.id))
-    .map((item) => item.id);
-
-  if (derivativeIds.length) await removeAssetReferencesFromStoryboards(projectId, derivativeIds.filter((id) => id !== roleAsset?.id));
-
-  await prisma.$transaction(async (tx) => {
-    await tx.asset.deleteMany({
-      where: {
-        projectId,
-        type: "role_derivative",
-        relatedCharacterId: character.id
-      }
-    });
-    if (roleAsset) {
-      await tx.asset.update({
-        where: { id: roleAsset.id },
-        data: {
-          referenceUrl: null,
-          status: "pending",
-          prompt: character.prompt
-        }
-      });
-    }
-    await tx.character.update({ where: { id: character.id }, data: { referenceAssetId: roleAsset?.id ?? null } });
-  });
-
-  return { ok: true, characterId, deletedAssets: derivativeIds.length };
+export async function deleteCharacterReferenceImageV2(projectId: string, characterId: string, userId = DEMO_USER_ID) {
+  return removeCharacterReferenceInputs(projectId, characterId, userId);
 }
-
-export async function setCharacterReferenceImageV2(
-  projectId: string,
-  characterId: string,
-  userId = DEMO_USER_ID,
-  input: { referenceUrl: string; description?: string }
-) {
-  const workflow = await getProjectWorkflow(projectId, userId);
-  if (!workflow) throw new Error("Project not found");
-  const character = workflow.characters.find((item) => item.id === characterId);
-  if (!character) throw new Error("Character not found");
-
-  const referenceUrl = input.referenceUrl.trim();
-  const storedReferenceUrl = await persistImageReference(referenceUrl, `character-reference-${projectId}-${character.name}`);
-  const primaryRoleAsset = workflow.assets.find((item) => item.type === "role" && item.relatedCharacterId === character.id);
-  const relatedRoleAssetIds = new Set(
-    workflow.assets
-      .filter((item) => item.relatedCharacterId === character.id && (item.type === "role" || item.type === "role_derivative"))
-      .map((item) => item.id)
-  );
-  const assetId = `asset_${character.id}_user_ref_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
-
-  return prisma.$transaction(async (tx) => {
-    const asset = await tx.asset.create({
-      data: {
-        id: assetId,
-        projectId,
-        type: "role_reference",
-        name: `${character.name} 用户参考设定`,
-        description: input.description?.trim() || `${character.name} 用户上传的角色参考设定图，不覆盖 AI 三视图身份板。`,
-        prompt: [
-          character.prompt,
-          "用户上传参考图只作为生产参考，不覆盖 AI 生成的角色身份板；后续角色三视图和分镜图可引用此图保持脸型、服装和风格一致。"
-        ].join("\n"),
-        referenceUrl: storedReferenceUrl || referenceUrl,
-        status: "succeeded",
-        relatedCharacterId: character.id
-      }
-    });
-
-    const relatedShots = workflow.storyboards.filter((shot) =>
-      shot.characters.includes(character.name) ||
-      (primaryRoleAsset ? shot.referenceAssetIds.includes(primaryRoleAsset.id) : false) ||
-      shot.referenceAssetIds.some((id) => relatedRoleAssetIds.has(id))
-    );
-    await Promise.all(relatedShots.map((shot) => tx.storyboard.update({
-      where: { id: shot.id },
-      data: { referenceAssetIds: [...new Set([...shot.referenceAssetIds, asset.id])] }
-    })));
-
-    return asset;
-  });
-}
-
-export async function deleteCharacterReferenceImageV2(
-  projectId: string,
-  characterId: string,
-  userId = DEMO_USER_ID
-) {
-  const workflow = await getProjectWorkflow(projectId, userId);
-  if (!workflow) throw new Error("Project not found");
-  const character = workflow.characters.find((item) => item.id === characterId);
-  if (!character) throw new Error("Character not found");
-
-  const referenceIds = workflow.assets
-    .filter((item) => item.type === "role_reference" && item.relatedCharacterId === character.id)
-    .map((item) => item.id);
-
-  if (referenceIds.length) await removeAssetReferencesFromStoryboards(projectId, referenceIds);
-  await prisma.asset.deleteMany({ where: { projectId, type: "role_reference", relatedCharacterId: character.id } });
-
-  return { ok: true, characterId, deletedAssets: referenceIds.length };
-}
-
-async function removeAssetReferencesFromStoryboards(projectId: string, assetIds: string[]) {
-  if (!assetIds.length) return;
-  const shots = await prisma.storyboard.findMany({
-    where: { projectId },
-    select: { id: true, referenceAssetIds: true }
-  });
-  await Promise.all(shots.map((shot) => {
-    const next = shot.referenceAssetIds.filter((id) => !assetIds.includes(id));
-    if (next.length === shot.referenceAssetIds.length) return Promise.resolve();
-    return prisma.storyboard.update({ where: { id: shot.id }, data: { referenceAssetIds: next } });
-  }));
-}
-
 async function resolveTextRunCredits(input: CreateProjectInput) {
   const price = await prisma.modelPrice.findFirst({ where: { providerId: input.textProvider, modality: "text", model: textModelName(input), enabled: true } });
   if (!price && process.env.NODE_ENV === "production") throw new Error("该文本模型尚未配置价格，请联系管理员。");
@@ -789,7 +593,7 @@ function hasExistingTurnaroundSheet(
   characterId: string
 ) {
   return assets.some((item) =>
-    item.type === "role_derivative" &&
+    !isHistoricalAssetId(item.id) && item.type === "role_derivative" &&
     item.relatedCharacterId === characterId &&
     item.referenceUrl &&
     item.status === "succeeded" &&

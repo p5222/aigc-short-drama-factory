@@ -65,7 +65,7 @@ import {
   listPublicHelpArticles,
   listProviders,
   listRechargeOrders,
-  pruneUserProjectsToLatest,
+  ProjectRequestError,
   requestInvoice,
   listRedeemCodes,
   listTasks,
@@ -89,6 +89,7 @@ import {
 import { prisma } from "./db/client.js";
 import { beginAdminAudit, finishAdminAudit, listAdminAuditLogs } from "./admin/audit.js";
 import { captureStoryboardTailFrame, deleteCharacterReferenceImageV2, generateCharacterReferenceImages, generateSceneEnvironmentImage, regenerateStoryboardShotImage, runProjectStoryboardTasks, setCharacterReferenceImageV2, updateStoryboardShot } from "./db/storyboardActions.js";
+import { MediaSourceConflict } from "./db/mediaSource.js";
 import {
   createEvaluationDataset,
   createExperimentRun,
@@ -240,7 +241,10 @@ const createProjectSchema = z.object({
   entityHints: z.object({ characters: z.array(z.string()).optional(), scenes: z.array(z.string()).optional(), props: z.array(z.string()).optional() }).optional()
 });
 
-const creationStartSchema = createProjectSchema.extend({ maxCredits: z.number().finite().nonnegative() });
+const creationStartSchema = createProjectSchema.extend({
+  maxCredits: z.number().finite().nonnegative(),
+  requestId: z.string().trim().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/)
+});
 
 const projectRouteUpdateSchema = z.object({
   textProvider: z.string().nullable().optional(),
@@ -495,7 +499,8 @@ const storyboardUpdateSchema = z.object({
 });
 
 const storyboardTailFrameSchema = z.object({
-  frameUrl: z.string().min(1).max(12_000_000)
+  frameUrl: z.string().min(1).max(12_000_000),
+  sourceVideoUrl: z.string().min(1).max(12_000)
 });
 
 const characterReferenceSchema = z.object({
@@ -687,6 +692,7 @@ const showcaseCreateSchema = z.object({
 }).refine((data) => Boolean(data.sourceAssetId || data.videoUrl), { message: "请选择视频资产或 MP4 导出文件。" });
 
 const showcaseAdminUpdateSchema = z.object({
+  expectedUpdatedAt: z.string().datetime(),
   title: z.string().trim().min(1).max(120).optional(),
   description: z.string().trim().max(1200).optional(),
   category: z.string().trim().min(1).max(40).optional(),
@@ -699,9 +705,10 @@ const showcaseAdminUpdateSchema = z.object({
 });
 
 const showcaseReviewSchema = z.object({
+  expectedUpdatedAt: z.string().datetime(),
   decision: z.enum(["approve", "reject"]),
   note: z.string().trim().max(1000).optional()
-});
+}).refine(data => data.decision !== "reject" || Boolean(data.note?.trim()), { message: "请填写驳回原因。", path: ["note"] });
 
 const paramId = (value: string | string[] | undefined) => (Array.isArray(value) ? value[0] : value ?? "");
 
@@ -1197,7 +1204,7 @@ app.post(
   asyncRoute(async (req, res) => {
     const parsed = storyboardTailFrameSchema.safeParse(req.body ?? {});
     if (!parsed.success) return res.status(400).json(parsed.error.flatten());
-    res.json(await captureStoryboardTailFrame(paramId(req.params.id), paramId(req.params.shotId), requestUserId(req), parsed.data.frameUrl));
+    res.json(await captureStoryboardTailFrame(paramId(req.params.id), paramId(req.params.shotId), requestUserId(req), parsed.data.frameUrl, parsed.data.sourceVideoUrl));
   })
 );
 
@@ -1303,7 +1310,7 @@ app.get("/api/admin/content-projects", asyncRoute(async (_req, res) => {
 app.get(
   "/api/showcase/mine",
   asyncRoute(async (req, res) => {
-    res.json(await listCreatorShowcaseWorks(requestUserId(req)!));
+    res.json(await listCreatorShowcaseWorks(requestUserId(req)!, typeof req.query.projectId === "string" ? req.query.projectId : undefined));
   })
 );
 
@@ -1323,7 +1330,15 @@ app.post(
 app.post(
   "/api/showcase/works/:id/submit",
   asyncRoute(async (req, res) => {
-    res.json(await resubmitCreatorShowcaseWork(requestUserId(req)!, paramId(req.params.id)));
+    const hasRevision = req.body && Object.keys(req.body).length > 0;
+    const parsed = hasRevision ? showcaseCreateSchema.safeParse(req.body) : undefined;
+    if (parsed && !parsed.success) return res.status(400).json(parsed.error.flatten());
+    const revision = parsed?.success ? parsed.data : undefined;
+    const coverPath = revision?.coverUrl ? localMediaPath(revision.coverUrl) : undefined;
+    if (coverPath && !(await userCanReadMedia(requestUserId(req)!, coverPath))) {
+      return res.status(403).json({ message: "只能发布本人项目中的私有素材" });
+    }
+    res.json(await resubmitCreatorShowcaseWork(requestUserId(req)!, paramId(req.params.id), revision));
   })
 );
 
@@ -1356,7 +1371,7 @@ app.post(
   asyncRoute(async (req, res) => {
     const parsed = showcaseReviewSchema.safeParse(req.body ?? {});
     if (!parsed.success) return res.status(400).json(parsed.error.flatten());
-    res.json(await reviewAdminShowcaseWork(paramId(req.params.id), parsed.data.decision, parsed.data.note));
+    res.json(await reviewAdminShowcaseWork(paramId(req.params.id), parsed.data.decision, parsed.data.note ?? "", parsed.data.expectedUpdatedAt));
   })
 );
 
@@ -1376,9 +1391,7 @@ app.get(
 
 app.post(
   "/api/projects/prune-to-latest",
-  asyncRoute(async (req, res) => {
-    res.json(await pruneUserProjectsToLatest(requestUserId(req)));
-  })
+  (_req, res) => res.status(410).json({ message: "批量清理旧项目已停用。请在作品列表逐项删除，任务与积分流水会保留。" })
 );
 
 app.get(
@@ -1641,7 +1654,7 @@ app.post(
     if (!parsed.success) return res.status(400).json(parsed.error.flatten());
 
     const userId = requestUserId(req)!;
-    const { projectId, taskId, task, estimate } = await createProjectAndTask(parsed.data, userId, parsed.data.maxCredits);
+    const { projectId, taskId, task, estimate, replayed } = await createProjectAndTask(parsed.data, userId, parsed.data.maxCredits);
 
     // The request and reservation already exist in PostgreSQL. A failed Redis
     // dispatch stays pending and is recovered by the outbox loop.
@@ -1651,7 +1664,7 @@ app.post(
       mode?: "real" | "local" | "queued";
     };
     const workflow = await getProjectWorkflow(projectId, userId);
-    res.status(201).json({ project: workflow?.project, task, estimate, mode: result.mode ?? "queued" });
+    res.status(replayed ? 200 : 201).json({ project: workflow?.project, task, estimate, mode: result.mode ?? "queued", replayed });
   })
 );
 
@@ -2617,6 +2630,7 @@ app.post(
 );
 
 app.use((error: unknown, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  if (error instanceof ProjectRequestError || error instanceof MediaSourceConflict) return res.status(error.status).json({ message: error.message });
   const message = error instanceof Error ? error.message : "服务器异常";
   const cause = error instanceof Error && "cause" in error ? (error as Error & { cause?: unknown }).cause : undefined;
   const causeMessage = cause instanceof Error ? `${cause.name}: ${cause.message}` : typeof cause === "object" && cause ? JSON.stringify(cause).slice(0, 240) : "";

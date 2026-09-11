@@ -14,7 +14,7 @@ export interface DeliveryExportQuote {
   cueCount: number;
 }
 
-export function deliveryQuoteScopeKey(projectId: string, episode: number, shots: Pick<StoryboardShot, "id" | "duration" | "dialogue" | "voiceOver">[]) {
+export function deliveryQuoteScopeKey(projectId: string, episode: number | "all", shots: Pick<StoryboardShot, "id" | "duration" | "dialogue" | "voiceOver">[]) {
   return JSON.stringify([projectId, episode, shots.map((shot) => [shot.id, shot.duration, shot.dialogue, shot.voiceOver])]);
 }
 

@@ -70,7 +70,7 @@ function LoadedAssetStage({
   const { state, dispatch } = useWorkbench();
   const { project, characters } = workflow;
   const roleAssets = useMemo(
-    () => workflow.assets.filter((asset) => asset.type === "role" || asset.type === "role_derivative" || asset.type === "role_reference"),
+    () => workflow.assets.filter((asset) => !asset.isHistorical && (asset.type === "role" || asset.type === "role_derivative" || asset.type === "role_reference")),
     [workflow.assets]
   );
   const sceneAssets = useMemo(() => deriveSceneAssetList(workflow.assets), [workflow.assets]);

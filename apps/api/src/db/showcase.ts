@@ -1,6 +1,8 @@
 import crypto from "node:crypto";
+import type { Prisma, PrismaClient } from "@prisma/client";
 import { isPublishableVideoUrl, type ShowcaseWork, type ShowcaseWorkInput, type ShowcaseWorkStatus } from "@aifilm/shared";
 import { prisma } from "./client.js";
+import { lockMediaProject, MediaSourceConflict } from "./mediaSource.js";
 
 type PageQuery = {
   page?: number;
@@ -58,7 +60,7 @@ function mapShowcaseWork(row: {
     title: row.title,
     description: row.description,
     category: row.category,
-    creatorName: row.creator?.name || row.authorName || "漫角创作者",
+    creatorName: row.authorName || row.creator?.name || "漫角创作者",
     coverUrl: row.coverUrl,
     videoUrl: row.videoUrl,
     durationLabel: row.durationLabel,
@@ -106,9 +108,9 @@ export async function listPublicShowcaseWorks(query: PageQuery) {
   return { items: items.map(mapShowcaseWork), page, pageSize, total, totalPages: Math.max(1, Math.ceil(total / pageSize)) };
 }
 
-export async function listCreatorShowcaseWorks(userId: string) {
-  const rows = await prisma.showcaseWork.findMany({
-    where: { creatorId: userId },
+export async function listCreatorShowcaseWorks(userId: string, projectId?: string, db: PrismaClient = prisma) {
+  const rows = await db.showcaseWork.findMany({
+    where: { creatorId: userId, ...(projectId?.trim() ? { projectId: projectId.trim() } : {}) },
     include: { creator: { select: { name: true } } },
     orderBy: { createdAt: "desc" },
     take: 50
@@ -116,29 +118,31 @@ export async function listCreatorShowcaseWorks(userId: string) {
   return rows.map(mapShowcaseWork);
 }
 
-async function resolveCreatorMedia(userId: string, input: ShowcaseWorkInput) {
-  const project = await prisma.project.findFirst({ where: { id: input.projectId, userId }, select: { id: true, intro: true } });
+async function resolveCreatorMedia(tx: Prisma.TransactionClient, userId: string, input: ShowcaseWorkInput) {
+  const project = await tx.project.findFirst({ where: { id: input.projectId, userId }, select: { id: true, intro: true } });
   if (!project) throw new Error("项目不存在或不属于当前账号。");
 
   let sourceAssetId = input.sourceAssetId?.trim() || undefined;
   let videoUrl = input.videoUrl?.trim() || "";
   if (sourceAssetId) {
-    const asset = await prisma.asset.findFirst({
+    const asset = await tx.asset.findFirst({
       where: { id: sourceAssetId, projectId: project.id, type: "video", status: "succeeded" },
       select: { referenceUrl: true }
     });
-    if (!asset?.referenceUrl || !isPublishableVideoUrl(asset.referenceUrl)) throw new Error("请选择当前项目中可播放的 MP4、WebM 或 MOV 视频资产。");
+    if (!asset?.referenceUrl || !isPublishableVideoUrl(asset.referenceUrl) || videoUrl !== asset.referenceUrl) {
+      throw new MediaSourceConflict("所选视频已更新或不可用，请刷新项目，重新选择并确认视频预览后提交。");
+    }
     videoUrl = asset.referenceUrl;
   } else {
     const exportJob = videoUrl
-      ? await prisma.exportJob.findFirst({ where: { projectId: project.id, userId, outputUrl: videoUrl, status: "succeeded" }, select: { id: true } })
+      ? await tx.exportJob.findFirst({ where: { projectId: project.id, userId, type: "video_export", outputUrl: videoUrl, status: "succeeded" }, select: { id: true } })
       : null;
     if (!exportJob || !isPublishableVideoUrl(videoUrl)) throw new Error("请选择当前项目中已完成的 MP4、WebM 或 MOV 导出文件。");
   }
 
   let coverUrl = input.coverUrl?.trim() || "";
   if (!coverUrl) {
-    const cover = await prisma.asset.findFirst({
+    const cover = await tx.asset.findFirst({
       where: { projectId: project.id, type: "image", status: "succeeded", referenceUrl: { not: null } },
       orderBy: { updatedAt: "desc" },
       select: { referenceUrl: true }
@@ -150,39 +154,56 @@ async function resolveCreatorMedia(userId: string, input: ShowcaseWorkInput) {
   return { project, sourceAssetId, videoUrl, coverUrl };
 }
 
-export async function createCreatorShowcaseWork(userId: string, input: ShowcaseWorkInput) {
-  const media = await resolveCreatorMedia(userId, input);
-  const now = new Date();
-  const row = await prisma.showcaseWork.create({
-    data: {
-      id: `showcase_${crypto.randomUUID()}`,
-      creatorId: userId,
-      projectId: media.project.id,
-      sourceAssetId: media.sourceAssetId,
-      title: input.title.trim(),
-      description: input.description?.trim() || media.project.intro || "",
-      category: input.category?.trim() || "AI短剧",
-      coverUrl: media.coverUrl,
-      videoUrl: media.videoUrl,
-      durationLabel: input.durationLabel?.trim() || "00:00",
-      status: "pending",
-      submittedAt: now
-    },
-    include: { creator: { select: { name: true } } }
+export async function createCreatorShowcaseWork(userId: string, input: ShowcaseWorkInput, db: PrismaClient = prisma) {
+  return db.$transaction(async tx => {
+    await lockMediaProject(tx, input.projectId, userId);
+    const media = await resolveCreatorMedia(tx, userId, input);
+    const now = new Date();
+    const row = await tx.showcaseWork.create({
+      data: {
+        id: `showcase_${crypto.randomUUID()}`,
+        creatorId: userId,
+        projectId: media.project.id,
+        sourceAssetId: media.sourceAssetId,
+        title: input.title.trim(),
+        description: input.description?.trim() || media.project.intro || "",
+        category: input.category?.trim() || "AI短剧",
+        coverUrl: media.coverUrl,
+        videoUrl: media.videoUrl,
+        durationLabel: input.durationLabel?.trim() || "00:00",
+        status: "pending",
+        submittedAt: now
+      },
+      include: { creator: { select: { name: true } } }
+    });
+    return mapShowcaseWork(row);
   });
-  return mapShowcaseWork(row);
 }
 
-export async function resubmitCreatorShowcaseWork(userId: string, id: string) {
-  const current = await prisma.showcaseWork.findFirst({ where: { id, creatorId: userId } });
-  if (!current) throw new Error("作品不存在。");
-  if (current.status === "approved") throw new Error("已发布作品无需重复提交。");
-  const row = await prisma.showcaseWork.update({
-    where: { id },
-    data: { status: "pending", reviewNote: "", submittedAt: new Date(), publishedAt: null },
-    include: { creator: { select: { name: true } } }
+export async function resubmitCreatorShowcaseWork(userId: string, id: string, input?: ShowcaseWorkInput, db: PrismaClient = prisma) {
+  const source = await db.showcaseWork.findFirst({ where: { id, creatorId: userId }, select: { projectId: true } });
+  if (!source?.projectId) throw new MediaSourceConflict("作品或原项目不存在，请返回项目列表刷新。");
+  if (input && input.projectId !== source.projectId) throw new MediaSourceConflict("不能将审核记录转移到其他项目。");
+  return db.$transaction(async tx => {
+    await lockMediaProject(tx, source.projectId!, userId);
+    await tx.$queryRaw`SELECT "id" FROM "ShowcaseWork" WHERE "id" = ${id} AND "creatorId" = ${userId} FOR UPDATE`;
+    const current = await tx.showcaseWork.findFirst({ where: { id, creatorId: userId } });
+    if (!current || !["rejected", "draft"].includes(current.status)) throw new MediaSourceConflict("作品已在审核中或已发布，请刷新发布记录，不要重复提交。");
+    const revised = input ?? { projectId: source.projectId!, sourceAssetId: current.sourceAssetId ?? undefined, videoUrl: current.videoUrl, title: current.title, description: current.description, category: current.category, coverUrl: current.coverUrl, durationLabel: current.durationLabel };
+    const media = await resolveCreatorMedia(tx, userId, revised);
+    const row = await tx.showcaseWork.update({
+      where: { id },
+      data: {
+        title: revised.title.trim(), description: revised.description?.trim() ?? current.description,
+        category: revised.category?.trim() || current.category, coverUrl: media.coverUrl, videoUrl: media.videoUrl,
+        sourceAssetId: media.sourceAssetId ?? null, durationLabel: revised.durationLabel?.trim() || current.durationLabel,
+        // Retain the original record and last review feedback while the revision is pending.
+        status: "pending", submittedAt: new Date(), publishedAt: null
+      },
+      include: { creator: { select: { name: true } } }
+    });
+    return mapShowcaseWork(row);
   });
-  return mapShowcaseWork(row);
 }
 
 export async function listAdminShowcaseWorks(query: PageQuery) {
@@ -215,7 +236,20 @@ export async function listAdminShowcaseWorks(query: PageQuery) {
   return { items: items.map(mapShowcaseWork), page, pageSize, total, totalPages: Math.max(1, Math.ceil(total / pageSize)) };
 }
 
-export async function updateAdminShowcaseWork(id: string, input: AdminShowcaseUpdate) {
+async function updateReviewedVersion(id: string, expectedUpdatedAt: string, data: Prisma.ShowcaseWorkUpdateManyMutationInput, db: PrismaClient) {
+  const expected = new Date(expectedUpdatedAt);
+  if (!Number.isFinite(expected.getTime())) throw new MediaSourceConflict("作品版本信息无效，请刷新审核队列后重新审阅。");
+  return db.$transaction(async tx => {
+    const result = await tx.showcaseWork.updateMany({
+      where: { id, updatedAt: expected },
+      data: { ...data, updatedAt: new Date(Math.max(Date.now(), expected.getTime() + 1)) }
+    });
+    if (result.count !== 1) throw new MediaSourceConflict("作品已被创作者或其他管理员更新，当前草稿未覆盖新内容。请刷新审核队列，重新打开作品审阅后再操作。");
+    return mapShowcaseWork(await tx.showcaseWork.findUniqueOrThrow({ where: { id }, include: { creator: { select: { name: true } } } }));
+  });
+}
+
+export async function updateAdminShowcaseWork(id: string, input: AdminShowcaseUpdate & { expectedUpdatedAt: string }, db: PrismaClient = prisma) {
   const data: AdminShowcaseUpdate = {};
   if (input.title !== undefined) data.title = input.title.trim();
   if (input.description !== undefined) data.description = input.description.trim();
@@ -228,24 +262,14 @@ export async function updateAdminShowcaseWork(id: string, input: AdminShowcaseUp
   if (input.sortOrder !== undefined) data.sortOrder = Math.max(0, Math.floor(input.sortOrder));
   if (data.title === "" || data.coverUrl === "" || data.videoUrl === "") throw new Error("标题、封面和视频地址不能为空。");
   if (data.videoUrl && !isPublishableVideoUrl(data.videoUrl)) throw new Error("视频地址必须是可播放的 MP4、WebM 或 MOV 文件。");
-  const row = await prisma.showcaseWork.update({
-    where: { id },
-    data,
-    include: { creator: { select: { name: true } } }
-  });
-  return mapShowcaseWork(row);
+  return updateReviewedVersion(id, input.expectedUpdatedAt, data, db);
 }
 
-export async function reviewAdminShowcaseWork(id: string, decision: "approve" | "reject", note = "") {
+export async function reviewAdminShowcaseWork(id: string, decision: "approve" | "reject", note: string, expectedUpdatedAt: string, db: PrismaClient = prisma) {
   const now = new Date();
-  const row = await prisma.showcaseWork.update({
-    where: { id },
-    data: {
-      status: decision === "approve" ? "approved" : "rejected",
-      reviewNote: note.trim(),
-      publishedAt: decision === "approve" ? now : null
-    },
-    include: { creator: { select: { name: true } } }
-  });
-  return mapShowcaseWork(row);
+  return updateReviewedVersion(id, expectedUpdatedAt, {
+    status: decision === "approve" ? "approved" : "rejected",
+    reviewNote: note.trim(),
+    publishedAt: decision === "approve" ? now : null
+  }, db);
 }

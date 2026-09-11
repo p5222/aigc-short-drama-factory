@@ -96,7 +96,7 @@ export function WorkbenchHeader({
   }
 
   return (
-    <header className="wb-header">
+    <header className="wb-header" data-layout="project-production">
       <div className="wb-header__project">
         <button className="wb-icon-button" type="button" aria-label="返回作品列表" onClick={onBack}>
           <ArrowLeft aria-hidden="true" />
@@ -141,8 +141,8 @@ export function WorkbenchHeader({
             <PanelRight aria-hidden="true" />
           </button>
         ) : null}
-        {onOpenTasks ? <button className="wb-icon-button wb-header__drawer-trigger" type="button" aria-label="打开生成任务" onClick={onOpenTasks}><ListTree aria-hidden="true" /></button> : null}
-        {onOpenEvaluation ? <button className="wb-icon-button wb-header__drawer-trigger" type="button" aria-label="打开评测反馈" onClick={onOpenEvaluation}><PanelRight aria-hidden="true" /></button> : null}
+        {onOpenTasks ? <button className="wb-icon-button wb-header__drawer-trigger wb-header__overflow-action" type="button" aria-label="打开生成任务" onClick={onOpenTasks}><ListTree aria-hidden="true" /></button> : null}
+        {onOpenEvaluation ? <button className="wb-icon-button wb-header__drawer-trigger wb-header__overflow-action" type="button" aria-label="打开评测反馈" onClick={onOpenEvaluation}><PanelRight aria-hidden="true" /></button> : null}
         {onRefresh ? (
           <button className="wb-icon-button wb-header__secondary-action" type="button" aria-label="刷新项目数据" onClick={onRefresh}>
             <RefreshCw aria-hidden="true" />
@@ -173,6 +173,8 @@ export function WorkbenchHeader({
               <span>保存状态</span>
               <strong>{saveStateLabels[saveState]}</strong>
             </span>
+            {onOpenTasks ? <button className="wb-more-mobile-action" type="button" onClick={() => { onOpenTasks(); closeMoreAndRestoreFocus(); }}><ListTree aria-hidden="true" /><span>打开生成任务</span></button> : null}
+            {onOpenEvaluation ? <button className="wb-more-mobile-action" type="button" onClick={() => { onOpenEvaluation(); closeMoreAndRestoreFocus(); }}><PanelRight aria-hidden="true" /><span>打开评测反馈</span></button> : null}
             {onRefresh ? (
               <button type="button" onClick={() => {
                 onRefresh();

@@ -32,7 +32,7 @@
   WalletCards,
   X
 } from "lucide-react";
-import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useId, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type {
   AdminSummary,
@@ -65,14 +65,17 @@ import type {
   VisualPipelineTestResult
 } from "@aifilm/shared";
 import { api, type AdminContentProject } from "../lib/api";
+import { HttpError } from "../lib/httpClient";
 import { AdminEvaluationPage, AdminMasterDetail, AdminTablePage } from "../admin";
 import { closeAfterAdminSuccess, createAdminActionRunner, createCreditAdjustmentAttempt, isValidCreditAdjustment, readAdminHash, runAdminBatch, type AdminActionResult } from "../admin/adminActionModel";
 import { useAdminDialog } from "../admin/useAdminDialog";
 import { fetchAdminUserPage } from "../admin/adminApi";
 import { AdminAuditLogPage } from "../admin/AdminAuditLogPage";
 import { formatAdminMoney, formatAdminTaskSuccess } from "../admin/adminMetricsModel";
+import { providerTestAvailability, testSavedProvider } from "../admin/adminProviderTestModel";
+import { scopedAdminNotice } from "../admin/adminNoticeModel";
 
-const AdminActionContext = createContext({ pending: false, message: "", error: "" });
+const AdminActionContext = createContext({ pending: false, message: "", error: "", version: 0 });
 type ProviderTestResult = ModelTestResult | ImageModelTestResult | VideoModelTestResult;
 type ProviderTestState = {
   loading: boolean;
@@ -132,7 +135,9 @@ export function AdminPage({
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [actionPending, setActionPending] = useState(false);
+  const [noticeVersion, setNoticeVersion] = useState(0);
   const actionRunner = useRef(createAdminActionRunner((state) => {
+    setNoticeVersion((version) => version + 1);
     setActionPending(state.pending);
     setMessage(state.message);
     setError(state.error);
@@ -201,9 +206,9 @@ export function AdminPage({
     catch (reason) { setError(reason instanceof Error ? reason.message : "后台数据刷新失败"); }
   }
 
-  async function runModelTest(provider: ModelProvider, model: string) {
+  async function runModelTest(provider: ModelProvider, model: string, dirty = false) {
     const testKey = `${provider.id}:${model}`;
-    if (providerTestPending.current.has(testKey)) return;
+    if ([...providerTestPending.current].some((key) => key.startsWith(`${provider.id}:`))) return;
     providerTestPending.current.add(testKey);
     setMessage("");
     setError("");
@@ -212,20 +217,10 @@ export function AdminPage({
     setVideoTestResult(null);
     setProviderTests((current) => ({ ...current, [testKey]: { loading: true } }));
     try {
-      let result: ProviderTestResult;
-      if (provider.modality === "image") {
-        const imageResult = await api.imageModelTest({ imageProvider: provider.id, imageModel: model });
-        result = imageResult;
-        setImageTestResult(imageResult);
-      } else if (provider.modality === "video") {
-        const videoResult = await api.videoModelTest({ videoProvider: provider.id, videoModel: model });
-        result = videoResult;
-        setVideoTestResult(videoResult);
-      } else {
-        const textResult = await api.modelTest({ textProvider: provider.id, textModel: model });
-        result = textResult;
-        setTestResult(textResult);
-      }
+      const result = await testSavedProvider(provider, model, api, { dirty });
+      if (provider.modality === "image") setImageTestResult(result as ImageModelTestResult);
+      else if (provider.modality === "video") setVideoTestResult(result as VideoModelTestResult);
+      else if (provider.modality === "text") setTestResult(result as ModelTestResult);
       setProviderTests((current) => ({ ...current, [testKey]: { loading: false, result } }));
     } catch (err) {
       const result: ProviderTestResult = {
@@ -299,8 +294,10 @@ export function AdminPage({
 
   const current = moduleCopy[activeModule] ?? moduleCopy.运营总览;
 
+  useEffect(() => { setMessage(""); setError(""); }, [activeModule]);
+
   return (
-    <AdminActionContext.Provider value={{ pending: actionPending, message, error }}>
+    <AdminActionContext.Provider value={{ pending: actionPending, message, error, version: noticeVersion }}>
     <div className="admin-v2-page" aria-busy={actionPending}>
       <header className="admin-v2-titlebar">
         <div>
@@ -390,9 +387,16 @@ export function AdminPage({
           onLoadPluginStatus={() => void loadPluginStatus()}
           onTestPipeline={(pipelineId) => void runPipelineTest(pipelineId)}
           onCreate={(input) => runAction(() => api.createProvider(input), "模型渠道已创建，并自动补齐价格策略。")}
-          onSave={(id, input) => runAction(() => api.updateProvider(id, input), "供应商配置已保存。")}
+          onSave={async (id, input) => {
+            const saved = await runAction(() => api.updateProvider(id, input), "供应商配置已保存，请重新测试当前配置。");
+            if (saved) {
+              setProviderTests((current) => Object.fromEntries(Object.entries(current).filter(([key]) => !key.startsWith(`${id}:`))));
+              setTestResult(null); setImageTestResult(null); setVideoTestResult(null);
+            }
+            return saved;
+          }}
           onDelete={(id) => runAction(() => api.deleteProvider(id), "模型渠道已删除；存在价格记录时自动停用。")}
-          onTest={(provider, model) => void runModelTest(provider, model)}
+          onTest={(provider, model, dirty) => void runModelTest(provider, model, dirty)}
         />
       ) : null}
       {activeModule === "价格策略" ? (
@@ -492,8 +496,12 @@ function ShowcaseWorksSection() {
   const [selected, setSelected] = useState<ShowcaseWork | null>(null);
   const [draft, setDraft] = useState<ShowcaseWork | null>(null);
   const [reviewNote, setReviewNote] = useState("");
+  const [reviewNoteError, setReviewNoteError] = useState("");
+  const reviewNoteRef = useRef<HTMLTextAreaElement>(null);
+  const reviewNoteHintId = useId();
   const [working, setWorking] = useState(false);
   const showcasePending = useRef(false);
+  const [versionConflict, setVersionConflict] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
@@ -522,18 +530,16 @@ function ShowcaseWorksSection() {
   }, [keyword, page, reloadKey, status]);
 
   function openWork(work: ShowcaseWork) {
+    setVersionConflict(false);
     setSelected(work);
     setDraft({ ...work });
     setReviewNote(work.reviewNote ?? "");
+    setReviewNoteError("");
     setMessage("");
     setError("");
   }
 
   async function refreshSelected(next?: ShowcaseWork) {
-    const result = await api.adminShowcaseWorks(page, 20, status, keyword);
-    setItems(result.items);
-    setTotal(result.total);
-    setTotalPages(result.totalPages);
     if (next && (status === "all" || next.status === status)) {
       setSelected(next);
       setDraft({ ...next });
@@ -541,16 +547,25 @@ function ShowcaseWorksSection() {
       setSelected(null);
       setDraft(null);
     }
+    try {
+      const result = await api.adminShowcaseWorks(page, 20, status, keyword);
+      setItems(result.items);
+      setTotal(result.total);
+      setTotalPages(result.totalPages);
+    } catch {
+      setError("操作已完成，审核队列刷新失败；请刷新队列确认最新状态，无需重复提交。");
+    }
   }
 
   async function saveDraft() {
-    if (!selected || !draft || showcasePending.current) return;
+    if (!selected || !draft || showcasePending.current || versionConflict) return;
     showcasePending.current = true;
     setWorking(true);
     setMessage("");
     setError("");
     try {
       const updated = await api.updateAdminShowcaseWork(selected.id, {
+        expectedUpdatedAt: selected.updatedAt,
         title: draft.title,
         description: draft.description,
         category: draft.category,
@@ -564,6 +579,7 @@ function ShowcaseWorksSection() {
       setMessage("作品展示信息已保存。");
       await refreshSelected(updated);
     } catch (reason) {
+      if (reason instanceof HttpError && reason.status === 409) setVersionConflict(true);
       setError(reason instanceof Error ? reason.message : "保存失败");
     } finally {
       setWorking(false);
@@ -572,15 +588,22 @@ function ShowcaseWorksSection() {
   }
 
   async function review(decision: "approve" | "reject") {
-    if (!selected || !draft || showcasePending.current) return;
-    if (decision === "reject" && !reviewNote.trim()) { setError("请填写驳回原因，方便创作者修改后重新提交。"); return; }
+    if (!selected || !draft || showcasePending.current || versionConflict) return;
+    if (decision === "reject" && !reviewNote.trim()) {
+      setReviewNoteError("请填写驳回原因，方便创作者修改后重新提交。");
+      reviewNoteRef.current?.focus();
+      return;
+    }
+    setReviewNoteError("");
     showcasePending.current = true;
     setWorking(true);
     setMessage("");
     setError("");
     try {
+      let expectedUpdatedAt = selected.updatedAt;
       if (decision === "approve") {
-        await api.updateAdminShowcaseWork(selected.id, {
+        const saved = await api.updateAdminShowcaseWork(selected.id, {
+          expectedUpdatedAt,
           title: draft.title,
           description: draft.description,
           category: draft.category,
@@ -591,11 +614,15 @@ function ShowcaseWorksSection() {
           featured: draft.featured,
           sortOrder: draft.sortOrder
         });
+        expectedUpdatedAt = saved.updatedAt;
+        setSelected(saved);
+        setDraft({ ...saved });
       }
-      const updated = await api.reviewAdminShowcaseWork(selected.id, { decision, note: reviewNote });
+      const updated = await api.reviewAdminShowcaseWork(selected.id, { decision, note: reviewNote, expectedUpdatedAt });
       setMessage(decision === "approve" ? "作品已通过审核并发布到前台。" : "作品已驳回，创作者可以修改后重新提交。");
       await refreshSelected(updated);
     } catch (reason) {
+      if (reason instanceof HttpError && reason.status === 409) setVersionConflict(true);
       setError(reason instanceof Error ? reason.message : "审核失败");
     } finally {
       setWorking(false);
@@ -637,15 +664,17 @@ function ShowcaseWorksSection() {
         title={selected?.title ?? "作品审核"}
         meta={selected ? <span className="adm-status" data-status={selected.status}>{showcaseStatusLabel(selected.status)}</span> : null}
         onClose={() => { setSelected(null); setDraft(null); }}
-        footer={<>{message ? <span>{message}</span> : <span /> }<button className="admin-secondary-btn" type="button" disabled={working} onClick={() => void saveDraft()}>保存信息</button><button className="showcase-reject-btn" type="button" disabled={working} onClick={() => void review("reject")}><X size={16} />驳回</button><button className="admin-primary-btn" type="button" disabled={working} onClick={() => void review("approve")}><CheckCircle2 size={16} />通过并发布</button></>}
+        footer={<>{message ? <span>{message}</span> : <span /> }<button className="admin-secondary-btn" type="button" disabled={working || versionConflict} onClick={() => void saveDraft()}>保存信息</button><button className="showcase-reject-btn" type="button" disabled={working || versionConflict} onClick={() => void review("reject")}><X size={16} />驳回</button><button className="admin-primary-btn" type="button" disabled={working || versionConflict} onClick={() => void review("approve")}><CheckCircle2 size={16} />通过并发布</button></>}
       >
+        {working ? <p className="admin-toast" role="status">正在保存或审核，完成后可继续编辑。</p> : null}
         {error ? <p className="admin-toast danger" role="alert">{error}</p> : null}
+        {versionConflict ? <p className="admin-toast" role="status">当前草稿和审核意见已保留在此窗口。请先复制需要保留的修改，关闭窗口后从最新队列重新打开作品审阅。<button className="admin-secondary-btn" type="button" onClick={() => setReloadKey(value => value + 1)}>刷新审核队列</button></p> : null}
         {draft ? <div className="showcase-admin-modal-body adm-showcase-detail">
               <div className="showcase-admin-preview">
                 <video src={draft.videoUrl} poster={draft.coverUrl} controls playsInline preload="metadata" />
                 <p>提交项目：{draft.projectId || "官方初始化"}</p>
               </div>
-              <div className="showcase-admin-form">
+              <fieldset className="showcase-admin-form adm-review-fields" disabled={working} aria-label="作品审核字段">
                 <label><span>作品标题</span><input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} /></label>
                 <label><span>作者显示名</span><input value={draft.creatorName} onChange={(event) => setDraft({ ...draft, creatorName: event.target.value })} /></label>
                 <label><span>分类</span><input value={draft.category} onChange={(event) => setDraft({ ...draft, category: event.target.value })} /></label>
@@ -655,8 +684,8 @@ function ShowcaseWorksSection() {
                 <label className="wide"><span>视频地址</span><input value={draft.videoUrl} onChange={(event) => setDraft({ ...draft, videoUrl: event.target.value })} /></label>
                 <label><span>展示顺序</span><input type="number" min={0} value={draft.sortOrder} onChange={(event) => setDraft({ ...draft, sortOrder: Number(event.target.value) })} /></label>
                 <label className="showcase-featured-toggle"><input type="checkbox" checked={draft.featured} onChange={(event) => setDraft({ ...draft, featured: event.target.checked })} /><span>设为官方精选</span></label>
-                <label className="wide"><span>审核意见</span><textarea value={reviewNote} onChange={(event) => setReviewNote(event.target.value)} placeholder="驳回时说明需要修改的内容" /></label>
-              </div>
+                <label className="wide"><span>审核意见</span><textarea ref={reviewNoteRef} value={reviewNote} aria-invalid={Boolean(reviewNoteError)} aria-describedby={reviewNoteHintId} onChange={(event) => { setReviewNote(event.target.value); if (event.target.value.trim()) setReviewNoteError(""); }} placeholder="驳回时说明需要修改的内容" /><small id={reviewNoteHintId} role={reviewNoteError ? "alert" : undefined}>{reviewNoteError || "驳回时必填，创作者可据此修改后重新提交。"}</small></label>
+              </fieldset>
             </div> : null}
       </AdminMasterDetail>
     </section>
@@ -2413,8 +2442,7 @@ function UsersSection({
         />
       </AdminModuleWorkbench>
       <AdminMasterDetail open={Boolean(selectedUser)} title={selectedUser?.name ?? "用户详情"} meta={selectedUser ? <p>{selectedUser.email || selectedUser.phone || selectedUser.id}</p> : null} busy={action.pending} onClose={() => setSelectedUserId(null)}>
-        {action.message ? <p className="admin-toast success" role="status">{action.message}</p> : null}
-        {action.error ? <p className="admin-toast danger" role="alert">{action.error}</p> : null}
+        <AdminScopedActionNotice />
         {selectedUser ? <div className="adm-user-detail-editor"><UserRow key={selectedUser.id} user={selectedUser} selected={selectedUserIds.includes(selectedUser.id)} onToggleSelected={() => setSelectedUserIds((current) => current.includes(selectedUser.id) ? current.filter((id) => id !== selectedUser.id) : [...current, selectedUser.id])} onUserSave={onUserSave} onPasswordReset={onPasswordReset} onCreditAdjust={onCreditAdjust} /></div> : null}
       </AdminMasterDetail>
       <AdminModal open={createOpen} title="创建用户" description="创建后可立即登录；初始积分会写入流水，密码不在后台明文保存。" onClose={() => setCreateOpen(false)} wide>
@@ -3515,7 +3543,7 @@ function ProvidersSection({
   onCreate: (input: Pick<ModelProvider, "name" | "modality" | "enabled" | "baseUrl" | "models" | "costHint"> & { id?: string; iconUrl?: string; apiKey?: string; routing?: { mode?: "auto" | "manual"; preferredModel?: string; modelPool?: string[] }; unitCredits?: number; vendorCostCny?: number }) => void;
   onSave: (id: string, input: Partial<Pick<ModelProvider, "name" | "modality" | "enabled" | "baseUrl" | "iconUrl" | "models" | "costHint">> & { apiKey?: string | null; routing?: { mode?: "auto" | "manual"; preferredModel?: string; modelPool?: string[] } }) => void;
   onDelete: (id: string) => void;
-  onTest: (provider: ModelProvider, model: string) => void;
+  onTest: (provider: ModelProvider, model: string, dirty?: boolean) => void;
 }) {
   const [keyword, setKeyword] = useState("");
   const [modality, setModality] = useState("all");
@@ -4150,12 +4178,21 @@ function AdminModal({
             <X size={18} />
           </button>
         </header>
-        {action.pending ? <p className="admin-toast" role="status">正在提交，请稍候…</p> : null}
-        {action.error ? <p className="admin-toast danger" role="alert">{action.error}</p> : null}
+        <AdminScopedActionNotice />
         {children}
       </section>
     </div>
   );
+}
+
+function AdminScopedActionNotice() {
+  const action = useContext(AdminActionContext);
+  const [openedAt] = useState(action.version);
+  const notice = scopedAdminNotice(action, openedAt);
+  return <>
+    {action.pending ? <p className="admin-toast" role="status">正在提交，请稍候…</p> : notice.message ? <p className="admin-toast success" role="status">{notice.message}</p> : null}
+    {notice.error ? <p className="admin-toast danger" role="alert">{notice.error}</p> : null}
+  </>;
 }
 
 function AdminActionBar({ children }: { children: ReactNode }) {
@@ -4666,9 +4703,11 @@ function ProviderRow({
   testStates: Record<string, ProviderTestState>;
   onSave: (id: string, input: Partial<Pick<ModelProvider, "name" | "modality" | "enabled" | "baseUrl" | "iconUrl" | "models" | "costHint">> & { apiKey?: string | null; routing?: { mode?: "auto" | "manual"; preferredModel?: string; modelPool?: string[] } }) => void;
   onDelete: (id: string) => void;
-  onTest: (provider: ModelProvider, model: string) => void;
+  onTest: (provider: ModelProvider, model: string, dirty?: boolean) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const detailsId = useId();
+  const testHintId = useId();
   const [draft, setDraft] = useState({
     name: provider.name,
     modality: provider.modality,
@@ -4700,6 +4739,7 @@ function ProviderRow({
   const [selectedModel, setSelectedModel] = useState(models[0] ?? "");
   const testKey = `${provider.id}:${selectedModel}`;
   const testState = testStates[testKey];
+  const providerTesting = Object.entries(testStates).some(([key, state]) => key.startsWith(`${provider.id}:`) && state.loading);
   useEffect(() => {
     if (!models.length) return;
     if (!models.includes(draft.preferredModel)) {
@@ -4720,6 +4760,7 @@ function ProviderRow({
     draft.costHint !== provider.costHint ||
     draft.routingMode !== (provider.routing?.mode ?? "auto") ||
     draft.preferredModel !== (provider.routing?.preferredModel ?? provider.models[0] ?? "");
+  const testReadiness = providerTestAvailability(provider, selectedModel, { dirty, pending: providerTesting });
   const capability = [
     provider.capability.supportsReferenceImage ? "参考图" : "",
     provider.capability.supportsSeed ? "Seed" : "",
@@ -4736,8 +4777,9 @@ function ProviderRow({
 
   return (
     <article className="admin-provider-card">
+      <fieldset className="admin-provider-fields" disabled={providerTesting} aria-label={`${provider.name}渠道配置`}>
       <div className="admin-provider-card-head">
-        <button className="admin-icon-btn" onClick={() => setExpanded(!expanded)} title={expanded ? "收起渠道" : "展开渠道"}>
+        <button className="admin-icon-btn" type="button" onClick={() => setExpanded(!expanded)} title={expanded ? "收起渠道" : "展开渠道"} aria-label={`${expanded ? "收起" : "展开"}${provider.name}渠道`} aria-expanded={expanded} aria-controls={expanded ? detailsId : undefined}>
           {expanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
         </button>
         <AdminProviderIcon provider={{ ...provider, iconUrl: draft.iconUrl }} />
@@ -4768,8 +4810,8 @@ function ProviderRow({
               modelPool: models
             }
           })}>保存</button>
-          <button className="admin-icon-btn" title="测试当前模型" disabled={!selectedModel || testState?.loading} onClick={() => onTest(provider, selectedModel)}>
-            {testState?.loading ? <Loader2 className="spin-icon" size={16} /> : provider.modality === "image" ? <Image size={16} /> : provider.modality === "video" ? <Video size={16} /> : <PlayCircle size={16} />}
+          <button className="admin-secondary-btn compact admin-provider-test-button" type="button" title={testReadiness.reason} aria-label={`测试${provider.name}已保存配置`} aria-describedby={testHintId} disabled={!testReadiness.available} onClick={() => onTest(provider, selectedModel, dirty)}>
+            {providerTesting ? <Loader2 className="spin-icon" size={16} /> : <PlayCircle size={16} />}<span>{providerTesting ? "测试中" : ["tts", "embedding"].includes(provider.modality) ? "暂不支持测试" : "测试已保存配置"}</span>
           </button>
           <button className="admin-icon-btn danger" title="删除/停用" onClick={() => { if (window.confirm("确认删除该模型渠道？如果存在价格策略会自动停用保留关联。")) onDelete(provider.id); }}>
             <Trash2 size={16} />
@@ -4783,10 +4825,11 @@ function ProviderRow({
         <span>{draft.routingMode === "manual" ? `手动固定：${draft.preferredModel || "未选模型"}` : `自动额度池：${availableCount}/${Math.max(1, quotaStatus.length)} 可用`}</span>
         <span>{draft.costHint}</span>
       </div>
-      <ProviderInlineTestResult state={testState} />
+      <p id={testHintId} className={`admin-provider-test-hint${dirty ? " unsaved" : ""}`}>{testReadiness.reason}</p>
+      <ProviderInlineTestResult state={dirty ? undefined : testState} />
 
       {expanded ? (
-        <div className="admin-provider-expanded">
+        <div id={detailsId} className="admin-provider-expanded">
           <label>
             <span>渠道名称</span>
             <input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
@@ -4825,7 +4868,7 @@ function ProviderRow({
             <textarea value={draft.models} onChange={(event) => setDraft({ ...draft, models: event.target.value })} placeholder="每行或逗号一个模型" />
           </label>
           <label>
-            <span>测试模型</span>
+            <span>待测试模型</span>
             <select value={selectedModel} onChange={(event) => setSelectedModel(event.target.value)}>
               {models.map((model) => <option key={model} value={model}>{model}</option>)}
             </select>
@@ -4867,6 +4910,7 @@ function ProviderRow({
           </div>
         </div>
       ) : null}
+      </fieldset>
     </article>
   );
 }
@@ -5158,6 +5202,8 @@ function ModelTestPanel({
   if (!text && !image && !video) return null;
   return (
     <article className="admin-v2-card admin-test-result-card">
+      <h3>最近一次已保存配置的测试结果</h3>
+      <p>结果对应测试时的配置；修改渠道后需保存并重新测试。</p>
       {text ? <p><strong>{text.provider} / {text.model}</strong><span>{text.message}</span></p> : null}
       {video ? <p><strong>{video.provider} / {video.model}</strong><span>{video.message}</span></p> : null}
       {image ? (
@@ -5174,7 +5220,7 @@ function ProviderInlineTestResult({ state }: { state?: ProviderTestState }) {
   if (!state) return null;
   if (state.loading) {
     return (
-      <div className="admin-provider-test-state loading">
+      <div className="admin-provider-test-state loading" role="status">
         <Loader2 className="spin-icon" size={16} />
         <span>正在测试当前模型，请等待上游返回...</span>
       </div>
@@ -5183,7 +5229,7 @@ function ProviderInlineTestResult({ state }: { state?: ProviderTestState }) {
   if (!state.result) return null;
   const imageUrl = "hasImageUrl" in state.result ? state.result.imageUrl : undefined;
   return (
-    <div className={state.result.ok ? "admin-provider-test-state success" : "admin-provider-test-state failed"}>
+    <div className={state.result.ok ? "admin-provider-test-state success" : "admin-provider-test-state failed"} role={state.result.ok ? "status" : "alert"}>
       <div>
         {state.result.ok ? <CheckCircle2 size={16} /> : <Activity size={16} />}
         <strong>{state.result.provider} / {state.result.model}</strong>

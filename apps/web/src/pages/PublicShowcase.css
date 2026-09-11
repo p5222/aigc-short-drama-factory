@@ -149,16 +149,19 @@
 .public-studio-pagination button:disabled { opacity: .35; cursor: default; }
 .public-studio-pagination span { color: rgba(255,255,255,.6); font-size: 13px; }
 
-.public-preview-modal { position: fixed; inset: 0; z-index: 180; display: grid; place-items: center; padding: 24px; }
+.public-preview-modal { position: fixed; inset: 0; z-index: 180; display: grid; place-items: center; padding: 24px; overscroll-behavior: contain; }
+.public-preview-modal[data-appearance="dark"] { color-scheme: dark; color: #f4f8f6; --light-text: #f4f8f6; }
 .public-preview-backdrop { position: absolute; inset: 0; border: 0; background: rgba(0, 0, 0, 0.82); backdrop-filter: blur(12px); }
-.public-preview-modal section { position: relative; z-index: 1; width: min(920px, 100%); overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.16); border-radius: 8px; background: #101111; box-shadow: 0 34px 110px rgba(0, 0, 0, 0.68); }
-.public-preview-modal video { width: 100%; aspect-ratio: 16 / 9; display: block; background: #000; }
-.public-preview-modal section > div { padding: 18px 22px 22px; }
+.public-preview-modal section { position: relative; z-index: 1; width: min(920px, 100%); max-height: calc(100dvh - 48px); min-width: 0; display: flex; flex-direction: column; overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.16); border-radius: 8px; background: #101111; box-shadow: 0 34px 110px rgba(0, 0, 0, 0.68); }
+.public-preview-modal video { width: 100%; max-height: 68dvh; min-height: 120px; flex: 0 0 auto; aspect-ratio: 16 / 9; object-fit: contain; display: block; background: #000; }
+.public-preview-modal section > .public-preview-information { min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 20px; overflow: auto; overscroll-behavior: contain; padding: 18px 22px 22px; }
+.public-preview-copy { min-width: 0; overflow-wrap: anywhere; }
 .public-preview-modal section > div span { color: #00fba6; font-size: 12px; font-weight: 800; }
-.public-preview-modal h3 { margin: 7px 0 4px; font-size: 26px; }
-.public-preview-modal p { margin: 0; color: rgba(255, 255, 255, 0.48); }
-.public-preview-modal section > div button { min-height: 40px; float: right; margin-top: -42px; padding: 0 18px; }
-.public-preview-close { position: absolute; top: 12px; right: 12px; z-index: 3; width: 38px; height: 38px; display: grid; place-items: center; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 999px; color: #fff; background: rgba(0, 0, 0, 0.5); cursor: pointer; }
+.public-preview-modal[data-appearance="dark"] h3 { margin: 7px 0 4px; color: #f4f8f6; font-size: 26px; line-height: 1.35; }
+.public-preview-modal[data-appearance="dark"] p { margin: 0; color: #b8c5bf; line-height: 1.6; }
+.public-preview-modal section > div button { min-height: 44px; margin: 0; padding: 0 18px; white-space: nowrap; }
+.public-preview-close { position: absolute; top: 12px; right: 12px; z-index: 3; width: 44px; height: 44px; display: grid; place-items: center; border: 1px solid rgba(255, 255, 255, 0.4); border-radius: 999px; color: #fff; background: rgba(0, 0, 0, 0.78); cursor: pointer; }
+.public-preview-modal button:focus-visible, .public-preview-modal video:focus-visible { outline: 2px solid #00fba6; outline-offset: -4px; }
 
 @media (max-width: 1020px) {
   .public-studio-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -175,5 +178,17 @@
 @media (max-width: 520px) {
   .public-studio-grid { grid-template-columns: 1fr; }
   .public-studio-banner-meta { flex-wrap: wrap; }
-  .public-preview-modal section > div button { float: none; margin-top: 16px; }
+  .public-preview-modal { padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); }
+  .public-preview-modal section { max-height: calc(100dvh - 24px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); }
+  .public-preview-modal video { aspect-ratio: 4 / 3; max-height: 52dvh; }
+  .public-preview-modal section > .public-preview-information { grid-template-columns: minmax(0, 1fr); gap: 16px; padding: 18px; }
+  .public-preview-modal[data-appearance="dark"] h3 { font-size: 21px; }
+  .public-preview-modal section > div button { width: 100%; }
+  .public-preview-close { top: 8px; right: 8px; }
+}
+
+@media (max-height: 500px) {
+  .public-preview-modal { padding: 12px; }
+  .public-preview-modal section { max-height: calc(100dvh - 24px); }
+  .public-preview-modal video { max-height: 54dvh; }
 }

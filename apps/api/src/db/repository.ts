@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import type { Prisma } from "@prisma/client";
+import type { ExportJob as ExportJobRow, Prisma, PrismaClient } from "@prisma/client";
 import { lockCreditAccount } from "../billing/accountCredits.js";
 import { assertProductionMediaProvider, mediaCheckpoint, runMediaTask } from "../billing/mediaTask.js";
 import sharp from "sharp";
@@ -11,6 +11,8 @@ import { estimateImageCredits, isPersistedPlayableVideoReference, normalizeImage
 import { hashPassword } from "../auth/password.js";
 import { buildDirectorStoryboardRow, createDirectorStoryboardPackage } from "../export/directorStoryboard.js";
 import { selectExportWorkflow } from "../export/exportSelection.js";
+import { assessVideoExportCompletion, captureVideoExportSnapshot, readVideoExportSnapshot, type VideoExportSnapshot } from "../export/exportCompletion.js";
+import { captureExportSource, createExportSourceContext, exportSourceFromDiagnostics, exportSourceStatus, type ExportSourceSnapshot } from "../export/exportSource.js";
 import { lockTaskCredits, reserveTaskCredits, releaseTaskCredits } from "../billing/taskCredits.js";
 import { createSubtitleAsset, createTtsManifest, createVideoExportPackage, type MediaExportResult } from "../export/mediaExport.js";
 import { getOrCreatePaidNarration, quoteProjectNarration } from "../export/narrationBilling.js";
@@ -21,6 +23,8 @@ import type { ImageGenerationResult, VideoGenerationResult } from "../providers/
 import { generateVideo, queryVideoTaskResult } from "../providers/video.js";
 import { persistImageBuffer, persistImageReference, persistVideoReference, readStoredAsset } from "../storage/objectStorage.js";
 import { prisma } from "./client.js";
+import { captureMediaSource } from "./mediaSource.js";
+import { persistCurrentShotImages, persistCurrentShotVideo, persistStaleShotOutputs } from "./mediaPersistence.js";
 import { DEMO_USER_ID } from "./seed.js";
 import {
   mapAsset,
@@ -234,10 +238,28 @@ export async function listProjects(userId = DEMO_USER_ID) {
   return (await prisma.project.findMany({ where: { userId }, orderBy: { updatedAt: "desc" } })).map(mapProject);
 }
 
-export async function deleteProject(projectId: string, userId = DEMO_USER_ID) {
-  const result = await prisma.project.deleteMany({ where: { id: projectId, userId } });
-  if (!result.count) throw new Error("项目不存在或无权删除");
-  return { id: projectId, deleted: true };
+export class ProjectRequestError extends Error {
+  constructor(readonly status: 400 | 404 | 409, message: string) { super(message); this.name = "ProjectRequestError"; }
+}
+
+export async function deleteProject(projectId: string, userId = DEMO_USER_ID, db: PrismaClient = prisma) {
+  return db.$transaction(async tx => {
+    await tx.$queryRaw`SELECT true AS locked FROM pg_advisory_xact_lock(hashtext(${`project-lifecycle:${projectId}`}))`;
+    // FK inserts for new work cannot race past this lock and the final deletion.
+    await tx.$queryRaw`SELECT "id" FROM "Project" WHERE "id" = ${projectId} AND "userId" = ${userId} FOR UPDATE`;
+    if (!await tx.project.findFirst({ where: { id: projectId, userId } })) throw new ProjectRequestError(404, "项目不存在或无权删除");
+    const terminal = ["succeeded", "completed", "failed", "canceled", "cancelled", "refunded"];
+    const activeTask = await tx.generationTask.findFirst({ where: { projectId, status: { notIn: terminal } }, select: { id: true } });
+    const activeExport = await tx.exportJob.findFirst({ where: { projectId, status: { notIn: terminal } }, select: { id: true } });
+    if (activeTask || activeExport) throw new ProjectRequestError(409, "项目仍有生成或导出任务，请等待结束或取消后再删除。");
+    const ledger = await tx.creditTransaction.findMany({ where: { projectId, userId, type: { in: ["freeze", "refund", "consume"] } }, select: { taskId: true, type: true, amount: true } });
+    const reservations = new Map<string | null, number>();
+    for (const entry of ledger) reservations.set(entry.taskId, (reservations.get(entry.taskId) ?? 0) + (entry.type === "consume" ? entry.amount : -entry.amount));
+    if ([...reservations.values()].some(amount => amount > 0)) throw new ProjectRequestError(409, "项目仍有未结算的冻结积分，请先在任务页核对或联系管理员。");
+    // GenerationTask and CreditTransaction use ON DELETE SET NULL, preserving history.
+    await tx.project.delete({ where: { id: projectId } });
+    return { id: projectId, deleted: true };
+  });
 }
 
 export async function updateProjectModelRoutes(
@@ -268,60 +290,16 @@ export async function updateProjectModelRoutes(
   );
 }
 
-export async function pruneUserProjectsToLatest(userId = DEMO_USER_ID) {
-  const projects = await prisma.project.findMany({
-    where: { userId },
-    orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
-    select: { id: true, name: true, updatedAt: true }
-  });
-  const latest = projects[0];
-  const staleProjectIds = projects.slice(1).map((project) => project.id);
-
-  if (!staleProjectIds.length) {
-    return {
-      keptProjectId: latest?.id,
-      keptProjectName: latest?.name,
-      deletedProjects: 0,
-      deletedTasks: 0,
-      deletedTransactions: 0
-    };
-  }
-
-  const result = await prisma.$transaction(async (tx) => {
-    const deletedTasks = await tx.generationTask.deleteMany({
-      where: { userId, projectId: { in: staleProjectIds } }
-    });
-    const deletedTransactions = await tx.creditTransaction.deleteMany({
-      where: { userId, projectId: { in: staleProjectIds } }
-    });
-    const deletedProjects = await tx.project.deleteMany({
-      where: { userId, id: { in: staleProjectIds } }
-    });
-
-    return {
-      deletedProjects: deletedProjects.count,
-      deletedTasks: deletedTasks.count,
-      deletedTransactions: deletedTransactions.count
-    };
-  });
-
-  return {
-    keptProjectId: latest?.id,
-    keptProjectName: latest?.name,
-    ...result
-  };
-}
-
-export async function getProjectWorkflow(projectId: string, userId = DEMO_USER_ID) {
+export async function getProjectWorkflow(projectId: string, userId = DEMO_USER_ID, db: PrismaClient | Prisma.TransactionClient = prisma) {
   const [project, script, characters, assets, storyboards, tasks, qualityReports, feedbacks] = await Promise.all([
-    prisma.project.findFirst({ where: { id: projectId, userId } }),
-    prisma.scriptDraft.findFirst({ where: { projectId }, orderBy: { createdAt: "desc" } }),
-    prisma.character.findMany({ where: { projectId }, orderBy: { createdAt: "asc" } }),
-    prisma.asset.findMany({ where: { projectId }, orderBy: { createdAt: "asc" } }),
-    prisma.storyboard.findMany({ where: { projectId }, orderBy: [{ episodeNo: "asc" }, { sceneNo: "asc" }, { shotNo: "asc" }] }),
-    prisma.generationTask.findMany({ where: { projectId, userId }, orderBy: { createdAt: "desc" } }),
-    prisma.qualityReport.findMany({ where: { projectId }, orderBy: { createdAt: "desc" }, take: 30 }),
-    prisma.userFeedback.findMany({ where: { projectId, userId }, orderBy: { createdAt: "desc" }, take: 30 })
+    db.project.findFirst({ where: { id: projectId, userId } }),
+    db.scriptDraft.findFirst({ where: { projectId }, orderBy: { createdAt: "desc" } }),
+    db.character.findMany({ where: { projectId }, orderBy: { createdAt: "asc" } }),
+    db.asset.findMany({ where: { projectId }, orderBy: { createdAt: "asc" } }),
+    db.storyboard.findMany({ where: { projectId }, orderBy: [{ episodeNo: "asc" }, { sceneNo: "asc" }, { shotNo: "asc" }] }),
+    db.generationTask.findMany({ where: { projectId, userId }, orderBy: { createdAt: "desc" } }),
+    db.qualityReport.findMany({ where: { projectId }, orderBy: { createdAt: "desc" }, take: 30 }),
+    db.userFeedback.findMany({ where: { projectId, userId }, orderBy: { createdAt: "desc" }, take: 30 })
   ]);
 
   if (!project) return null;
@@ -1137,17 +1115,17 @@ export async function redeemExperienceCode(userId = DEMO_USER_ID, rawCode: strin
 
 type CreationQuoteInput = Parameters<typeof estimateCreation>[0];
 
-async function resolveCreationTextInput<T extends CreationQuoteInput>(input: T) {
+async function resolveCreationTextInput<T extends CreationQuoteInput>(input: T, db: Pick<Prisma.TransactionClient, "modelProvider"> = prisma) {
   const providerId = input.textProvider || process.env.TEXT_PROVIDER;
-  const provider = providerId ? await prisma.modelProvider.findUnique({ where: { id: providerId } }) : null;
+  const provider = providerId ? await db.modelProvider.findUnique({ where: { id: providerId } }) : null;
   const model = input.textModel || readProviderRoutingState(provider?.capability, provider?.models ?? []).preferredModel || textModelName(input);
   assertProductionMediaProvider(provider, providerId || "local", model, "text");
   return { ...input, textProvider: providerId, textModel: model };
 }
 
-async function buildCreationStartQuote(input: CreationQuoteInput): Promise<CreationEstimate> {
+async function buildCreationStartQuote(input: CreationQuoteInput, db: Pick<Prisma.TransactionClient, "modelPrice"> = prisma): Promise<CreationEstimate> {
   const baseEstimate = estimateCreation(input);
-  const estimatedCredits = await resolveTextRunCredits(input, baseEstimate.suggestedEpisodes);
+  const estimatedCredits = await resolveTextRunCredits(input, baseEstimate.suggestedEpisodes, db);
   return {
     words: baseEstimate.words, suggestedEpisodes: baseEstimate.suggestedEpisodes, mode: baseEstimate.mode, estimatedCredits,
     notes: [
@@ -1168,16 +1146,36 @@ export async function quoteCreationStart(input: CreationQuoteInput): Promise<Cre
 export async function createProjectAndTask(
   input: CreateProjectInput,
   userId = DEMO_USER_ID,
-  maxCredits = Number.POSITIVE_INFINITY
-): Promise<{ projectId: string; taskId: string; task: GenerationTask; estimatedCredits: number; estimate: CreationEstimate }> {
-  input = await resolveCreationTextInput(input);
-  const estimate = await buildCreationStartQuote(input);
+  maxCredits = Number.POSITIVE_INFINITY,
+  db: PrismaClient = prisma
+): Promise<{ projectId: string; taskId: string; task: GenerationTask; estimatedCredits: number; estimate: CreationEstimate; replayed: boolean }> {
+  const requestId = input.requestId?.trim();
+  if (!requestId || !/^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/.test(requestId)) throw new ProjectRequestError(400, "请提供有效的创建请求标识，网络重试时保留同一标识。");
   if ((maxCredits !== Number.POSITIVE_INFINITY && !Number.isFinite(maxCredits)) || maxCredits < 0) throw new Error("积分确认上限无效，请重新获取报价。");
-  if (estimate.estimatedCredits > maxCredits) throw new Error("价格或创建内容已变化，请重新获取报价并确认冻结积分。");
-  const projectId = `proj_${crypto.randomUUID()}`;
-  const taskId = `task_${crypto.randomUUID()}`;
+  const { requestId: _requestId, maxCredits: _maxCredits, ...generationInput } = input;
+  function canonical(value: unknown): unknown {
+    if (Array.isArray(value)) return value.map(canonical);
+    if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, item]) => [key, canonical(item)]));
+    return value;
+  }
+  const requestHash = crypto.createHash("sha256").update(JSON.stringify(canonical(generationInput))).digest("hex");
 
-  const result = await prisma.$transaction(async (tx) => {
+  return db.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT true AS locked FROM pg_advisory_xact_lock(hashtext(${`creation-request:${userId}:${requestId}`}))`;
+    const previous = await tx.creationRequest.findUnique({ where: { userId_requestId: { userId, requestId } } });
+    if (previous) {
+      if (previous.requestHash !== requestHash) throw new ProjectRequestError(409, "此创建请求标识已用于不同内容，请为新的创作使用新标识。");
+      const task = await tx.generationTask.findFirst({ where: { id: previous.taskId, userId } });
+      const project = await tx.project.findFirst({ where: { id: previous.projectId, userId } });
+      if (!project || !task || task.projectId !== project.id) throw new ProjectRequestError(409, "原创建项目已删除或不可用，请明确新建创作后重新提交。");
+      const estimate = previous.estimate as unknown as CreationEstimate;
+      return { projectId: project.id, taskId: task.id, task: mapTask(task), estimatedCredits: estimate.estimatedCredits, estimate, replayed: true };
+    }
+    const resolvedInput = await resolveCreationTextInput(input, tx);
+    const estimate = await buildCreationStartQuote(resolvedInput, tx);
+    if (estimate.estimatedCredits > maxCredits) throw new Error("价格或创建内容已变化，请重新获取报价并确认冻结积分。");
+    const projectId = `proj_${crypto.randomUUID()}`;
+    const taskId = `task_${crypto.randomUUID()}`;
     await tx.project.create({
       data: {
         id: projectId,
@@ -1188,8 +1186,8 @@ export async function createProjectAndTask(
         sourceType: input.sourceType,
         artStyle: input.artStyle,
         videoRatio: input.videoRatio,
-        textProvider: input.textProvider,
-        textModel: input.textModel,
+        textProvider: resolvedInput.textProvider,
+        textModel: resolvedInput.textModel,
         imageProvider: input.imageProvider,
         imageModel: input.imageModel,
         imageSize: input.imageSize ? normalizeImageOutputSize(input.imageSize) : null,
@@ -1210,9 +1208,9 @@ export async function createProjectAndTask(
         type: "text",
         title: "核心剧情、剧本与角色卡生成",
         jobId: `creation-${crypto.randomUUID()}`,
-        requestPayload: JSON.parse(JSON.stringify(input)),
-        provider: textProviderName(input),
-        model: textModelName(input),
+        requestPayload: JSON.parse(JSON.stringify(resolvedInput)),
+        provider: textProviderName(resolvedInput),
+        model: textModelName(resolvedInput),
         status: "pending",
         progress: 0,
         estimatedCredits: estimate.estimatedCredits
@@ -1220,11 +1218,9 @@ export async function createProjectAndTask(
     });
 
     await reserveTaskCredits(tx, { taskId, userId, description: "生成任务冻结积分" });
-
-    return task;
-  });
-
-  return { projectId, taskId, task: mapTask(result), estimatedCredits: estimate.estimatedCredits, estimate };
+    await tx.creationRequest.create({ data: { id: `creation_request_${crypto.randomUUID()}`, userId, requestId, requestHash, projectId, taskId, estimate: JSON.parse(JSON.stringify(estimate)) } });
+    return { projectId, taskId, task: mapTask(task), estimatedCredits: estimate.estimatedCredits, estimate, replayed: false };
+  }, { timeout: 15_000 });
 }
 
 export async function runProjectImageTasks(
@@ -1250,7 +1246,8 @@ export async function runProjectImageTasks(
   const quality = normalizeImageOutputQuality(workflow.project.imageQuality);
   const unitCredits = await resolveImageCreditPerShot(provider, model, size, quality);
   const estimatedCredits = (nineGrid ? 1 : shots.length) * unitCredits;
-  return runMediaTask({ userId, projectId, projectName: workflow.project.name, type: "image", scope: "image", provider, model, estimatedCredits, title: nineGrid ? "九宫格分镜图生成" : "分镜图生成" }, async (billing) => {
+  const source = captureMediaSource(workflow, "image", shots.map(shot => shot.id));
+  return runMediaTask({ userId, projectId, projectName: workflow.project.name, type: "image", scope: "image", provider, model, estimatedCredits, source, title: nineGrid ? "九宫格分镜图生成" : "分镜图生成" }, async (billing) => {
     const successes: Array<{ shot: StoryboardShot; url: string }> = [];
     const failures: string[] = [];
     if (nineGrid) {
@@ -1280,16 +1277,10 @@ export async function runProjectImageTasks(
     }
     if (!successes.length) throw new Error(failures.join("；") || "未生成可用图片");
     const billed = (nineGrid ? 1 : successes.length) * unitCredits;
-    const result = await billing.complete(billed, async (tx) => {
-      for (const { shot, url } of successes) await tx.asset.upsert({ where: { id: `image_${shot.id}` },
-        create: { id: `image_${shot.id}`, projectId, type: "image", name: `镜头 ${shot.episodeNo}-${shot.shotNo} 分镜图`, description: shot.pictureDesc, prompt: shot.imagePrompt, referenceUrl: url, status: "succeeded" },
-        update: { description: shot.pictureDesc, prompt: shot.imagePrompt, referenceUrl: url, status: "succeeded" }
-      });
-      await tx.storyboard.updateMany({ where: { projectId, id: { in: successes.map(({ shot }) => shot.id) } }, data: { status: "succeeded" } });
-      const imageAssets = await tx.asset.count({ where: { projectId, type: { in: ["role", "role_derivative", "scene", "prop", "image", "cover"] } } });
-      await tx.project.update({ where: { id: projectId }, data: { status: "asseting", imageAssets, creditsSpent: { increment: billed } } });
-      return { created: successes.length };
-    }, { status: failures.length ? "failed" : "succeeded", errorReason: failures.length ? `成功 ${successes.length} 张，失败 ${failures.length} 张；只对成功项扣费。${failures.join("；")}` : null });
+    const result = await billing.complete(billed, tx => persistCurrentShotImages(tx, projectId, successes, billed), {
+      status: failures.length ? "failed" : "succeeded", errorReason: failures.length ? `成功 ${successes.length} 张，失败 ${failures.length} 张；只对成功项扣费。${failures.join("；")}` : null,
+      onStale: tx => persistStaleShotOutputs(tx, { projectId, taskId: billing.taskId, type: "image", outputs: successes })
+    });
     const refreshed = await getProjectWorkflow(projectId, userId);
     return { project: refreshed!.project, task: mapTask(result.task), assetsCreated: result.created };
   });
@@ -1303,7 +1294,8 @@ export async function runProjectVideoTasks(
   const known = new Set(workflow.storyboards.map((shot) => shot.id));
   const requested = new Set(options.storyboardIds ?? []);
   if (requested.size && ![...requested].some((id) => known.has(id))) throw new Error("所选镜头不属于当前项目");
-  const images = new Map(workflow.assets.filter((asset) => asset.type === "image").map((asset) => [asset.id.replace(/^image_/, ""), asset]));
+  const images = new Map(workflow.assets.filter((asset) => asset.type === "image" && asset.status === "succeeded" && asset.referenceUrl
+    && /^(?:https?:\/\/|\/storage\/|data:image\/)/i.test(asset.referenceUrl)).map((asset) => [asset.id.replace(/^image_/, ""), asset]));
   const videos = new Map(workflow.assets.filter((asset) => asset.type === "video").map((asset) => [asset.id.replace(/^video_/, ""), asset]));
   const pending = await prisma.generationTask.findMany({ where: { userId, projectId, jobId: { startsWith: "media:video:" }, status: { in: ["pending", "running"] } } });
   const pendingShots = new Set(pending.map((task) => task.jobId!.slice("media:video:".length)));
@@ -1311,8 +1303,8 @@ export async function runProjectVideoTasks(
   const provider = workflow.project.videoProvider || process.env.VIDEO_PROVIDER || "dashscope-video";
   const config = await prisma.modelProvider.findUnique({ where: { id: provider } });
   const model = workflow.project.videoModel || config?.models[0] || currentVideoModelName(provider);
-  const candidates = workflow.storyboards.filter((shot) => (!requested.size || requested.has(shot.id)) && images.has(shot.id)
-    && (pendingShots.has(shot.id) || regenerate || !isPersistedPlayableVideoReference(videos.get(shot.id)?.referenceUrl)));
+  const candidates = workflow.storyboards.filter((shot) => (!requested.size || requested.has(shot.id))
+    && (pendingShots.has(shot.id) || (images.has(shot.id) && (regenerate || !isPersistedPlayableVideoReference(videos.get(shot.id)?.referenceUrl)))));
   const shots = candidates.slice(0, videoBatchLimit(workflow.storyboards.length, provider));
   if (!shots.length) throw new Error("没有可生成的镜头，请先生成首帧；已有视频需显式选择重新生成。");
   const unitCredits = await resolveVideoCreditPerSecond(provider, model);
@@ -1324,7 +1316,8 @@ export async function runProjectVideoTasks(
       const result = await runMediaTask({
         userId, projectId, projectName: workflow.project.name, type: "video", scope: `video:${shot.id}`,
         title: `镜头 ${shot.episodeNo}-${shot.shotNo} 视频生成`, provider, model,
-        estimatedCredits: Math.max(1, shot.duration) * unitCredits, resume: true
+        estimatedCredits: Math.max(1, shot.duration) * unitCredits, resume: true,
+        source: captureMediaSource(workflow, "video", [shot.id])
       }, async (billing) => {
         let checkpoint = mediaCheckpoint(billing.task);
         const runtimeProvider = typeof checkpoint.provider === "string" ? checkpoint.provider : provider;
@@ -1362,20 +1355,9 @@ export async function runProjectVideoTasks(
         await billing.checkpoint({ ...checkpoint, remoteVideoUrl: generated.videoUrl, provider: runtimeProvider, model: runtimeModel, shotId: shot.id });
         const videoUrl = await persistVideoReference(generated.videoUrl, `video-${projectId}-${shot.shotNo}`);
         if (!videoUrl) throw new Error("视频已生成但保存失败，请刷新继续保存。");
-        const completed = await billing.complete(billing.task.estimatedCredits, async (tx) => {
-          const existing = await tx.asset.findUnique({ where: { id: `video_${shot.id}` } });
-          if (existing && isPersistedPlayableVideoReference(existing.referenceUrl ?? undefined)) await tx.asset.create({ data: {
-            id: `video_${shot.id}_v${crypto.randomUUID()}`, projectId, type: "video", name: `${existing.name}（旧版本）`,
-            description: existing.description, prompt: existing.prompt, referenceUrl: existing.referenceUrl, status: "succeeded"
-          } });
-          await tx.asset.upsert({ where: { id: `video_${shot.id}` },
-            create: { id: `video_${shot.id}`, projectId, type: "video", name: `镜头 ${shot.episodeNo}-${shot.shotNo} 视频`, description: generated.message || shot.pictureDesc, prompt: shot.videoPrompt, referenceUrl: videoUrl, status: "succeeded" },
-            update: { description: generated.message || shot.pictureDesc, prompt: shot.videoPrompt, referenceUrl: videoUrl, status: "succeeded" }
-          });
-          const videoClips = await tx.asset.count({ where: { projectId, id: { in: workflow.storyboards.map((item) => `video_${item.id}`) }, status: "succeeded" } });
-          await tx.project.update({ where: { id: projectId }, data: { status: "rendering", videoClips, creditsSpent: { increment: billing.task.estimatedCredits } } });
-          return { created: 1 };
-        });
+        const completed = await billing.complete(billing.task.estimatedCredits,
+          tx => persistCurrentShotVideo(tx, { projectId, shot, url: videoUrl, credits: billing.task.estimatedCredits, description: generated.message }),
+          { onStale: tx => persistStaleShotOutputs(tx, { projectId, taskId: billing.taskId, type: "video", outputs: [{ shot, url: videoUrl }] }) });
         return { task: mapTask(completed.task), created: completed.created };
       });
       outcomes.push(result);
@@ -1466,29 +1448,38 @@ export async function exportDirectorStoryboardPackage(projectId: string, userId 
   return createDirectorStoryboardPackage(workflow);
 }
 
-export async function listExportJobs(userId = DEMO_USER_ID, projectId?: string) {
-  return (
-    await prisma.exportJob.findMany({
+export async function listExportJobs(userId = DEMO_USER_ID, projectId?: string, db: PrismaClient = prisma) {
+  return db.$transaction(async tx => {
+    const jobs = await tx.exportJob.findMany({
       where: {
         userId,
         ...(projectId ? { projectId } : {})
       },
       orderBy: { createdAt: "desc" }
-    })
-  ).map(mapExportJob);
+    });
+    return mapExportsWithCurrentSource(tx, jobs, userId);
+  }, { isolationLevel: "RepeatableRead" });
 }
 
-export async function getExportJobForDownload(projectId: string, jobId: string, userId = DEMO_USER_ID) {
-  const job = await prisma.exportJob.findFirst({
-    where: {
-      id: jobId,
-      projectId,
-      userId,
-      status: "succeeded"
-    }
-  });
-  if (!job || !job.outputUrl) throw new Error("导出记录不存在或尚未生成下载文件");
-  return mapExportJob(job);
+async function mapExportsWithCurrentSource(tx: Prisma.TransactionClient, jobs: ExportJobRow[], userId: string) {
+  const contexts = new Map<string, ReturnType<typeof createExportSourceContext>>();
+  await Promise.all([...new Set(jobs.map(job => job.projectId))].map(async projectId => {
+    contexts.set(projectId, createExportSourceContext(await getProjectWorkflow(projectId, userId, tx)));
+  }));
+  return jobs.map(job => mapExportJob(job, contexts.get(job.projectId)!(exportSourceFromDiagnostics(job.errorReason), job.type as "tts" | "subtitle" | "video_export")));
+}
+
+async function readCurrentExportJob(projectId: string, jobId: string, userId: string, db: PrismaClient = prisma) {
+  return db.$transaction(async tx => {
+    const job = await tx.exportJob.findFirst({ where: { id: jobId, projectId, userId } });
+    return job ? (await mapExportsWithCurrentSource(tx, [job], userId))[0]! : null;
+  }, { isolationLevel: "RepeatableRead" });
+}
+
+export async function getExportJobForDownload(projectId: string, jobId: string, userId = DEMO_USER_ID, db: PrismaClient = prisma) {
+  const job = await readCurrentExportJob(projectId, jobId, userId, db);
+  if (!job || job.status !== "succeeded" || !job.outputUrl) throw new Error("导出记录不存在或尚未生成下载文件");
+  return job;
 }
 
 export async function quoteProjectExport(projectId: string, userId: string, type: "tts" | "subtitle" | "video_export", storyboardIds?: string[]) {
@@ -1511,6 +1502,8 @@ export async function createProjectExportJob(
   if (!fullWorkflow) throw new Error("项目不存在");
   const workflow = selectExportWorkflow(fullWorkflow, storyboardIds);
   if (!Number.isSafeInteger(maxCredits) || maxCredits < 0) throw new Error("请提供有效的导出积分上限");
+  const videoSnapshot = type === "video_export" ? captureVideoExportSnapshot(workflow) : undefined;
+  const sourceSnapshot = captureExportSource(workflow, type, storyboardIds === undefined ? "project" : "selection");
   if (type !== "subtitle" && (await quoteProjectNarration(workflow, userId)).estimatedCredits > maxCredits) throw new Error("配音价格或内容已变化，请重新获取报价并确认积分上限。");
   if (type === "video_export") {
     assertVideoExportReady(workflow);
@@ -1518,23 +1511,28 @@ export async function createProjectExportJob(
   }
   const scope = crypto.createHash("sha256").update(JSON.stringify({ projectId, type, shots: workflow.storyboards, assets: workflow.assets.map(asset => [asset.id, asset.referenceUrl]) })).digest("hex").slice(0, 24);
   const acquired = await prisma.$transaction(async tx => {
+    // Take the project first: stale-job takeover must not hold ExportJob while waiting on a new job's project FK.
+    await tx.$queryRaw`SELECT true AS locked FROM pg_advisory_xact_lock(hashtext(${`project-lifecycle:${projectId}`}))`;
+    await tx.$queryRaw`SELECT "id" FROM "Project" WHERE "id" = ${projectId} AND "userId" = ${userId} FOR UPDATE`;
+    if (!await tx.project.findFirst({ where: { id: projectId, userId } })) throw new Error("项目不存在");
     await tx.$queryRaw`SELECT true AS locked FROM pg_advisory_xact_lock(hashtext(${`export:${userId}:${scope}`}))`;
     const current = await tx.exportJob.findFirst({ where: { userId, projectId, type, id: { startsWith: `export_${scope}_` }, status: "running" } });
     if (current && current.updatedAt.getTime() > Date.now() - 120_000) return { job: current, acquired: false };
-    if (current) await tx.exportJob.update({ where: { id: current.id }, data: { status: "failed", errorReason: "导出进程中断，可重新导出，已完成的配音将复用。" } });
+    if (current) await tx.exportJob.update({ where: { id: current.id }, data: { status: "failed", errorReason: JSON.stringify({ kind: "export_diagnostics", sourceSnapshot: exportSourceFromDiagnostics(current.errorReason) ?? undefined, message: "导出进程中断，可重新导出，已完成的配音将复用。" }) } });
     const job = await tx.exportJob.create({
     data: {
       id: `export_${scope}_${crypto.randomUUID()}`,
       userId,
       projectId,
       type,
-      status: "running"
+      status: "running",
+      errorReason: JSON.stringify({ kind: "export_diagnostics", storyboardIds: sourceSnapshot.storyboardIds, sourceSnapshot, message: "导出处理中" })
     }
     });
     return { job, acquired: true };
   });
   const job = acquired.job;
-  if (!acquired.acquired) return mapExportJob(job);
+  if (!acquired.acquired) return (await readCurrentExportJob(projectId, job.id, userId))!;
   const heartbeat = setInterval(() => {
     void prisma.exportJob.updateMany({ where: { id: job.id, status: "running" }, data: { updatedAt: new Date() } }).catch(() => undefined);
   }, 20_000);
@@ -1550,22 +1548,63 @@ export async function createProjectExportJob(
           : await createVideoExportPackage(workflow, narration!);
 
     if (type === "video_export" && exportResult.outputKind !== "mp4") {
-      return mapExportJob(await prisma.exportJob.update({
+      await prisma.exportJob.update({
         where: { id: job.id },
-        data: { status: "failed", outputUrl: exportResult.outputUrl, errorReason: exportDiagnosticsMessage(type, exportResult, workflow.storyboards.map(shot => shot.id)) }
-      }));
+        data: { status: "failed", outputUrl: exportResult.outputUrl, errorReason: exportDiagnosticsMessage(type, exportResult, workflow.storyboards.map(shot => shot.id), undefined, videoSnapshot, false, sourceSnapshot) }
+      });
+      return (await readCurrentExportJob(projectId, job.id, userId))!;
     }
 
-    const refreshed = await prisma.$transaction(async tx => {
-    await tx.$queryRaw`SELECT "id" FROM "ExportJob" WHERE "id" = ${job.id} FOR UPDATE`;
-    const current = await tx.exportJob.findUniqueOrThrow({ where: { id: job.id } });
-    if (current.status !== "running") throw new Error("导出已由新的请求接管，请刷新查看结果");
-    const updated = await tx.exportJob.update({
+    const refreshed = await persistProjectExportSuccess({ projectId, userId, jobId: job.id, type, workflow, exportResult, videoSnapshot, sourceSnapshot });
+    return mapExportJob(refreshed, refreshed.sourceStatus);
+  } catch (error) {
+    const failed = await prisma.exportJob.update({
       where: { id: job.id },
+      data: {
+        status: "failed",
+        errorReason: JSON.stringify({ kind: "export_diagnostics", sourceSnapshot, storyboardIds: sourceSnapshot.storyboardIds, message: error instanceof Error ? error.message : "导出失败" })
+      }
+    });
+    return (await readCurrentExportJob(projectId, failed.id, userId))!;
+  } finally { clearInterval(heartbeat); }
+}
+
+/** Persist the already-produced output atomically; no provider or file work may run while these locks are held. */
+export async function persistProjectExportSuccess(input: {
+  projectId: string;
+  userId: string;
+  jobId: string;
+  type: "tts" | "subtitle" | "video_export";
+  workflow: ProjectWorkflow;
+  exportResult: MediaExportResult;
+  videoSnapshot?: VideoExportSnapshot;
+  sourceSnapshot?: ExportSourceSnapshot;
+}, db: PrismaClient = prisma) {
+  const { projectId, userId, jobId, type, workflow, exportResult, videoSnapshot } = input;
+  const sourceSnapshot = input.sourceSnapshot ?? captureExportSource(workflow, type);
+  if (type === "video_export" && (!videoSnapshot || exportResult.outputKind !== "mp4")) throw new Error("缺少有效的成片导出快照或 MP4 结果");
+  return db.$transaction(async tx => {
+    // Share the lifecycle ordering with deletion and manual shot edits before locking the export job.
+    await tx.$queryRaw`SELECT true AS locked FROM pg_advisory_xact_lock(hashtext(${`project-lifecycle:${projectId}`}))`;
+    await tx.$queryRaw`SELECT "id" FROM "Project" WHERE "id" = ${projectId} AND "userId" = ${userId} FOR UPDATE`;
+    const currentWorkflow = await getProjectWorkflow(projectId, userId, tx);
+    if (!currentWorkflow) throw new Error("项目不存在");
+    await tx.$queryRaw`SELECT "id" FROM "ExportJob" WHERE "id" = ${jobId} FOR UPDATE`;
+    const current = await tx.exportJob.findUniqueOrThrow({ where: { id: jobId } });
+    if (current.projectId !== projectId || current.userId !== userId || current.type !== type) throw new Error("导出任务不属于当前项目");
+    if (current.status !== "running") throw new Error("导出已由新的请求接管，请刷新查看结果");
+    const completion = type === "video_export"
+      ? assessVideoExportCompletion(videoSnapshot!, currentWorkflow, { ...exportResult, status: "succeeded" })
+      : undefined;
+    const previousComplete = Boolean(completion && !completion.complete && currentWorkflow.project.status === "completed"
+      && await hasCurrentCompleteExport(tx, userId, currentWorkflow));
+    const sourceStatus = exportSourceStatus(sourceSnapshot, currentWorkflow, type);
+    const updated = await tx.exportJob.update({
+      where: { id: jobId },
       data: {
         status: "succeeded",
         outputUrl: exportResult.outputUrl,
-        errorReason: exportDiagnosticsMessage(type, exportResult, workflow.storyboards.map(shot => shot.id))
+        errorReason: exportDiagnosticsMessage(type, exportResult, workflow.storyboards.map(shot => shot.id), completion, videoSnapshot, previousComplete, sourceSnapshot)
       }
     });
 
@@ -1602,29 +1641,41 @@ export async function createProjectExportJob(
     if (type === "video_export") {
       await tx.project.update({
         where: { id: projectId },
-        data: { status: isVideoMp4 ? "completed" : "rendering" }
+        // A partial export preserves proven full delivery; a late export cannot undo a return to storyboarding.
+        data: { status: completion!.complete || previousComplete ? "completed" : currentWorkflow.project.status === "completed" ? "rendering" : currentWorkflow.project.status }
       });
     }
-    return updated;
-    });
-    return mapExportJob(refreshed);
-  } catch (error) {
-    const failed = await prisma.exportJob.update({
-      where: { id: job.id },
-      data: {
-        status: "failed",
-        errorReason: error instanceof Error ? error.message : "导出失败"
-      }
-    });
-    return mapExportJob(failed);
-  } finally { clearInterval(heartbeat); }
+    return { ...updated, sourceStatus };
+  });
 }
 
-function exportDiagnosticsMessage(type: "tts" | "subtitle" | "video_export", result: MediaExportResult, storyboardIds: string[]) {
+async function hasCurrentCompleteExport(tx: Prisma.TransactionClient, userId: string, workflow: ProjectWorkflow) {
+  const candidates = await tx.exportJob.findMany({
+    where: { projectId: workflow.project.id, userId, type: "video_export", status: "succeeded", errorReason: { contains: '"projectCompletion":"complete"' } },
+    orderBy: { createdAt: "desc" }
+  });
+  return candidates.some(job => {
+    try {
+      const snapshot = readVideoExportSnapshot(JSON.parse(job.errorReason!).videoSnapshot);
+      return snapshot !== null && assessVideoExportCompletion(snapshot, workflow, mapExportJob(job)).complete;
+    } catch { return false; }
+  });
+}
+
+function exportDiagnosticsMessage(type: "tts" | "subtitle" | "video_export", result: MediaExportResult, storyboardIds: string[], completion?: ReturnType<typeof assessVideoExportCompletion>, videoSnapshot?: VideoExportSnapshot, previousComplete = false, sourceSnapshot?: ExportSourceSnapshot) {
   const warningText = result.warnings?.length ? result.warnings.slice(0, 3).join("；") : "";
+  const completionMessage = completion?.complete
+    ? "MP4 成片已生成，当前项目全部镜头已完成导出，可预览和下载。"
+    : previousComplete
+      ? "本次选定镜头的 MP4 已生成；项目已有与当前内容一致的完整成片，可继续预览和下载。"
+      : completion?.reason === "source_changed"
+      ? "MP4 已生成，但镜头或素材在导出期间发生变化；该文件保留为历史成片，请基于当前内容重新导出。"
+      : completion
+        ? "本次选定镜头的 MP4 已生成；当前项目尚未完成全部镜头和集数的导出，可继续制作。"
+        : "MP4 成片已生成，可预览和下载。";
   const message = type === "video_export"
     ? result.outputKind === "mp4"
-      ? "MP4 成片已生成，可预览和下载。"
+      ? completionMessage
       : "已生成诊断包：包含视频片段、配音、字幕、FFmpeg 状态和复盘清单；配置 FFmpeg 后可重新导出 MP4。"
     : type === "tts"
       ? "多角色配音资产已生成，可被最终 MP4 合成复用。"
@@ -1632,6 +1683,9 @@ function exportDiagnosticsMessage(type: "tts" | "subtitle" | "video_export", res
   return JSON.stringify({
     kind: "export_diagnostics",
     storyboardIds,
+    projectCompletion: completion?.reason,
+    videoSnapshot: completion?.complete ? videoSnapshot : undefined,
+    sourceSnapshot,
     message: warningText ? `${message} ${warningText}` : message,
     outputKind: result.outputKind,
     manifestUrl: result.manifestUrl,
@@ -1644,8 +1698,13 @@ function exportDiagnosticsMessage(type: "tts" | "subtitle" | "video_export", res
   });
 }
 
-export async function retryTask(taskId: string, userId = DEMO_USER_ID, input?: CreateProjectInput) {
-  return mapTask(await prisma.$transaction(async (tx) => {
+export async function retryTask(taskId: string, userId = DEMO_USER_ID, input?: CreateProjectInput, db: PrismaClient = prisma) {
+  return mapTask(await db.$transaction(async (tx) => {
+    const candidate = await tx.generationTask.findFirst({ where: { id: taskId, userId } });
+    if (candidate?.projectId) {
+      await tx.$queryRaw`SELECT true AS locked FROM pg_advisory_xact_lock(hashtext(${`project-lifecycle:${candidate.projectId}`}))`;
+      if (!await tx.project.findFirst({ where: { id: candidate.projectId, userId } })) throw new ProjectRequestError(409, "原项目已删除，不能重新冻结积分或重试任务。");
+    }
     const { task } = await lockTaskCredits(tx, taskId, userId);
     if (task.status === "succeeded") throw new Error("已成功任务不需要重试");
     if (task.status === "pending" || task.status === "running") return task;
@@ -1970,9 +2029,9 @@ function defaultVendorCost(modality: string) {
   return 0.001;
 }
 
-async function resolveTextRunCredits(input: CreationQuoteInput, suggestedEpisodes: number) {
+async function resolveTextRunCredits(input: CreationQuoteInput, suggestedEpisodes: number, db: Pick<Prisma.TransactionClient, "modelPrice"> = prisma) {
   const model = textModelName(input);
-  const price = await prisma.modelPrice.findFirst({ where: {
+  const price = await db.modelPrice.findFirst({ where: {
     modality: "text", model, providerId: input.textProvider || process.env.TEXT_PROVIDER || null, enabled: true
   } });
   if (!price && process.env.NODE_ENV === "production") throw new Error("该文本渠道与模型尚未配置启用价格，请联系管理员。");

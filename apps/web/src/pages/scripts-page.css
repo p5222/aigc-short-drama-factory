@@ -1,0 +1,168 @@
+.scripts-page .tabs {
+  flex-wrap: wrap;
+}
+
+.scripts-page .tabs button {
+  min-height: 40px;
+}
+
+.scripts-page .works-section-head h2 {
+  margin: 0;
+  color: var(--ds-text-primary);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.scripts-page .project-grid {
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+}
+
+.scripts-page .project-card {
+  min-width: 0;
+  position: relative;
+}
+
+.scripts-page .works-card-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.scripts-page .works-card-heading h3 {
+  width: 100%;
+  margin: 0;
+  min-width: 0;
+}
+
+.scripts-page .works-card-heading small {
+  align-self: center;
+  color: var(--ds-text-secondary);
+}
+
+.scripts-page .works-card-open {
+  display: block;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ds-text-primary);
+  font: inherit;
+  font-size: 19px;
+  font-weight: 650;
+  line-height: 1.5;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.scripts-page .works-card-open::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: 8px;
+}
+
+.scripts-page .works-card-open:focus-visible::after {
+  outline: 2px solid var(--ds-focus-ring);
+  outline-offset: 2px;
+}
+
+.scripts-page .works-card-open:hover {
+  color: var(--ds-action-primary);
+}
+
+.scripts-page .works-card-open:disabled {
+  cursor: progress;
+  opacity: .7;
+}
+
+.scripts-page .project-card p {
+  margin: 0;
+  color: var(--ds-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.scripts-page .project-stats {
+  flex-wrap: wrap;
+  color: var(--ds-text-secondary);
+}
+
+.scripts-page .works-card-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--ds-border-divider);
+  color: var(--ds-text-muted);
+  font-size: 12px;
+}
+
+.scripts-page .works-card-delete {
+  position: relative;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 64px;
+  min-height: 40px;
+  border: 1px solid var(--ds-border-default);
+  border-radius: var(--ds-radius-control);
+  padding: 0 12px;
+  background: var(--ds-bg-surface);
+  color: var(--ds-status-danger);
+  font: inherit;
+  cursor: pointer;
+}
+
+.scripts-page .works-card-delete:hover:not(:disabled) {
+  border-color: var(--ds-status-danger);
+}
+
+.scripts-page .works-card-delete:disabled {
+  cursor: wait;
+  opacity: .65;
+}
+
+.scripts-page .project-card .works-delete-error {
+  position: relative;
+  z-index: 2;
+  color: var(--ds-status-danger);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.scripts-page .works-feedback {
+  margin: 0;
+  color: var(--ds-status-success);
+  font-size: 14px;
+}
+
+.scripts-page .works-card-delete .spin {
+  animation: works-delete-spin 1s linear infinite;
+}
+
+@keyframes works-delete-spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 600px) {
+  .scripts-page .row-title,
+  .scripts-page .row-title .inline-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .scripts-page .project-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .scripts-page .works-card-delete {
+    min-height: 44px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scripts-page .works-card-delete .spin {
+    animation: none;
+  }
+}

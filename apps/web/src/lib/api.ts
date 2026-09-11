@@ -168,11 +168,11 @@ export const api = {
   helpArticles: () => request<HelpArticle[]>("/help/articles"),
   publicShowcaseWorks: (page = 1, pageSize = 20, category = "全部", keyword = "") =>
     request<PagedResult<ShowcaseWork>>(`/showcase/works?page=${page}&pageSize=${pageSize}&category=${encodeURIComponent(category)}&keyword=${encodeURIComponent(keyword)}`),
-  myShowcaseWorks: () => request<ShowcaseWork[]>("/showcase/mine"),
+  myShowcaseWorks: (projectId?: string) => request<ShowcaseWork[]>(`/showcase/mine${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ""}`),
   createShowcaseWork: (input: ShowcaseWorkInput) =>
     request<ShowcaseWork>("/showcase/works", { method: "POST", body: JSON.stringify(input) }),
-  resubmitShowcaseWork: (id: string) =>
-    request<ShowcaseWork>(`/showcase/works/${id}/submit`, { method: "POST" }),
+  resubmitShowcaseWork: (id: string, input?: ShowcaseWorkInput) =>
+    request<ShowcaseWork>(`/showcase/works/${id}/submit`, { method: "POST", ...(input ? { body: JSON.stringify(input) } : {}) }),
   trackEvent: (input: AnalyticsEventInput) =>
     request<{ ok: boolean }>("/analytics/events", {
       method: "POST",
@@ -186,12 +186,12 @@ export const api = {
   adminSummary: () => request<AdminSummary>("/admin/summary"),
   adminShowcaseWorks: (page = 1, pageSize = 20, status = "all", keyword = "") =>
     request<PagedResult<ShowcaseWork>>(`/admin/showcase/works?page=${page}&pageSize=${pageSize}&status=${encodeURIComponent(status)}&keyword=${encodeURIComponent(keyword)}`),
-  updateAdminShowcaseWork: (id: string, input: Partial<Pick<ShowcaseWork, "title" | "description" | "category" | "creatorName" | "coverUrl" | "videoUrl" | "durationLabel" | "featured" | "sortOrder">>) =>
+  updateAdminShowcaseWork: (id: string, input: Partial<Pick<ShowcaseWork, "title" | "description" | "category" | "creatorName" | "coverUrl" | "videoUrl" | "durationLabel" | "featured" | "sortOrder">> & { expectedUpdatedAt: string }) =>
     request<ShowcaseWork>(`/admin/showcase/works/${id}`, {
       method: "PATCH",
       body: JSON.stringify({ ...input, authorName: input.creatorName })
     }),
-  reviewAdminShowcaseWork: (id: string, input: { decision: "approve" | "reject"; note?: string }) =>
+  reviewAdminShowcaseWork: (id: string, input: { decision: "approve" | "reject"; note?: string; expectedUpdatedAt: string }) =>
     request<ShowcaseWork>(`/admin/showcase/works/${id}/review`, { method: "POST", body: JSON.stringify(input) }),
   adminAnnouncements: () => request<PlatformAnnouncement[]>("/admin/announcements"),
   adminHelpArticles: () => request<HelpArticle[]>("/admin/help-articles"),
@@ -456,10 +456,10 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(input)
     }),
-  captureStoryboardTailFrame: (projectId: string, shotId: string, frameUrl: string) =>
+  captureStoryboardTailFrame: (projectId: string, shotId: string, frameUrl: string, sourceVideoUrl: string) =>
     request<{ shot: StoryboardShot; nextShot?: StoryboardShot; asset: AssetItem }>(`/projects/${projectId}/storyboards/${shotId}/tail-frame`, {
       method: "POST",
-      body: JSON.stringify({ frameUrl })
+      body: JSON.stringify({ frameUrl, sourceVideoUrl })
     }),
   regenerateShotImage: (projectId: string, shotId: string) =>
     request<BatchGenerationResult>(`/projects/${projectId}/storyboards/${shotId}/image/regenerate`, {

@@ -136,6 +136,7 @@ export interface AssetItem {
   referenceUrl?: string;
   status: TaskStatus;
   relatedCharacterId?: string;
+  isHistorical?: boolean;
 }
 
 export interface StoryboardShot {
@@ -304,6 +305,8 @@ export interface ExportJob {
   type: "tts" | "subtitle" | "video_export";
   storyboardIds?: string[];
   status: ExportJobStatus;
+  /** Missing on older clients/records; treat it as unknown until the API verifies a saved source snapshot. */
+  sourceStatus?: "current" | "stale" | "unknown";
   outputUrl?: string;
   downloadUrl?: string;
   previewUrl?: string;
@@ -1081,6 +1084,8 @@ export interface CreateProjectInput {
   targetEpisodes?: number;
   /** User-confirmed ceiling for the text creation reservation; required by the HTTP start endpoint. */
   maxCredits?: number;
+  /** Persist across retries of one logical creation; required by the HTTP start endpoint. */
+  requestId?: string;
   textProvider?: string;
   textModel?: string;
   imageProvider?: string;

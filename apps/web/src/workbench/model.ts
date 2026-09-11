@@ -328,7 +328,7 @@ export function resolveCharacterIdentityAsset(
   assets: AssetItem[]
 ): AssetItem | undefined {
   const generatedAssets = assets.filter((asset) => (
-    asset.relatedCharacterId === character.id
+    !asset.isHistorical && asset.relatedCharacterId === character.id
     && asset.type !== "role_reference"
     && Boolean(asset.referenceUrl)
   ));
@@ -339,7 +339,7 @@ export function resolveCharacterIdentityAsset(
 
 export function listCharacterReferenceAssets(characterId: string, assets: AssetItem[]): AssetItem[] {
   return assets.filter((asset) => (
-    asset.type === "role_reference"
+    !asset.isHistorical && asset.type === "role_reference"
     && asset.relatedCharacterId === characterId
     && Boolean(asset.referenceUrl)
   ));
@@ -354,7 +354,7 @@ export function updateCharacterReferenceDraft(
 }
 
 export function deriveSceneAssetList(assets: AssetItem[]): AssetItem[] {
-  return assets.filter((asset) => asset.type === "scene" || asset.type === "prop");
+  return assets.filter((asset) => !asset.isHistorical && (asset.type === "scene" || asset.type === "prop"));
 }
 
 export function reconcileActiveAsset(

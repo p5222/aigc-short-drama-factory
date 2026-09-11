@@ -3,12 +3,16 @@ import { Clapperboard, Download, FileAudio, Film, FolderOpen, Loader2, RefreshCw
 import type { AssetItem, ExportJob, GenerationTask, Project, ProjectWorkflow, StoryboardShot } from "@aifilm/shared";
 import { isPersistedPlayableVideoReference } from "@aifilm/shared";
 import { api } from "../lib/api";
+import { DeliveryExportQuoteDialog } from "../workbench/stages/DeliveryExportQuoteDialog";
+import { confirmedDeliveryCredits, deliveryQuoteScopeKey, type DeliveryExportQuote, type DeliveryExportType } from "../workbench/stages/deliveryQuoteModel";
+import { getDeliveryExportState, partitionDeliveryExportJobs } from "../workbench/stages/deliveryModel";
+import { buildStudioExportIntent, createScopedRequestGate, submitStudioExport, type StudioExportIntent } from "./studioExportModel";
 
 interface StudioPageProps {
   projects: Project[];
   tasks: GenerationTask[];
   onOpenProject: (projectId: string) => void;
-  onRefresh: () => void;
+  onRefresh: () => void | Promise<void>;
 }
 
 type StudioAction = "tts" | "subtitle" | "video_export" | "refresh";
@@ -30,6 +34,18 @@ export function StudioPage({ projects, tasks, onOpenProject, onRefresh }: Studio
   const [clipIndex, setClipIndex] = useState(0);
   const [autoPlayNext, setAutoPlayNext] = useState(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const projectRef = useRef(selectedProjectId);
+  projectRef.current = selectedProjectId;
+  const dataRequests = useRef(createScopedRequestGate()).current;
+  const quoteRequests = useRef(createScopedRequestGate()).current;
+  const quoteBusyRef = useRef(false);
+  const submittingRef = useRef(false);
+  const [quoteIntent, setQuoteIntent] = useState<StudioExportIntent | null>(null);
+  const [quote, setQuote] = useState<DeliveryExportQuote | null>(null);
+  const [quoteLoading, setQuoteLoading] = useState(false);
+  const [quoteError, setQuoteError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [refreshRequired, setRefreshRequired] = useState(false);
 
   useEffect(() => {
     if (!projects.length) {
@@ -43,54 +59,76 @@ export function StudioPage({ projects, tasks, onOpenProject, onRefresh }: Studio
 
   const loadStudioData = useCallback(async (projectId: string) => {
     if (!projectId) return;
+    const ticket = dataRequests.begin(projectId);
     setLoading(true);
-    setError("");
     try {
       const [nextWorkflow, nextExportJobs] = await Promise.all([
         api.workflow(projectId),
         api.exportJobs(projectId)
       ]);
+      if (!dataRequests.isCurrent(ticket, projectRef.current)) return;
+      if (nextWorkflow.project.id !== projectId) throw new Error("作品数据不匹配，请刷新后重试。");
       setWorkflow(nextWorkflow);
       setExportJobs(nextExportJobs);
+      setError("");
     } catch (err) {
-      setWorkflow(undefined);
-      setExportJobs([]);
+      if (!dataRequests.isCurrent(ticket, projectRef.current)) return;
       setError(err instanceof Error ? err.message : "剪辑中心数据加载失败");
+      throw err;
     } finally {
-      setLoading(false);
+      if (dataRequests.isCurrent(ticket, projectRef.current)) setLoading(false);
     }
-  }, []);
+  }, [dataRequests]);
 
   useEffect(() => {
     setClipIndex(0);
     setAutoPlayNext(false);
     setMessage("");
+    setError("");
+    setWorkflow(undefined);
+    setExportJobs([]);
+    setRefreshRequired(false);
+    dataRequests.invalidate();
+    quoteRequests.invalidate();
+    quoteBusyRef.current = false;
+    setQuoteLoading(false);
+    setQuoteIntent(null);
+    setQuote(null);
+    setQuoteError("");
     if (!selectedProjectId) {
-      setWorkflow(undefined);
-      setExportJobs([]);
+      setLoading(false);
       return;
     }
-    void loadStudioData(selectedProjectId);
-  }, [loadStudioData, selectedProjectId]);
+    void loadStudioData(selectedProjectId).catch(() => undefined);
+    return () => { dataRequests.invalidate(); quoteRequests.invalidate(); };
+  }, [dataRequests, loadStudioData, quoteRequests, selectedProjectId]);
 
-  const project = workflow?.project ?? projects.find((item) => item.id === selectedProjectId);
-  const storyboards = workflow?.storyboards ?? [];
-  const assets = workflow?.assets ?? [];
+  const currentWorkflow = workflow?.project.id === selectedProjectId ? workflow : undefined;
+  const project = currentWorkflow?.project ?? projects.find((item) => item.id === selectedProjectId);
+  const storyboards = currentWorkflow?.storyboards ?? [];
+  const assets = currentWorkflow?.assets ?? [];
+  const currentExportJobs = currentWorkflow ? exportJobs : [];
+  const scopeKey = currentWorkflow ? deliveryQuoteScopeKey(selectedProjectId, "all", storyboards) : "";
+  const scopeRef = useRef(scopeKey);
+  scopeRef.current = scopeKey;
+  const confirmedCredits = quoteIntent ? confirmedDeliveryCredits(quote, quoteIntent.type, quoteIntent.scopeKey, scopeKey) : null;
+  const exportState = getDeliveryExportState(storyboards, assets);
+  const scopedJobs = partitionDeliveryExportJobs(currentExportJobs, storyboards.map(shot => shot.id)).current;
   const projectTasks = useMemo(() => tasks.filter((task) => task.projectId === selectedProjectId), [selectedProjectId, tasks]);
-  const hasActiveProcess = projectTasks.some((task) => task.status === "pending" || task.status === "running") || exportJobs.some((job) => job.status === "pending" || job.status === "running");
+  const hasActiveProcess = projectTasks.some((task) => task.status === "pending" || task.status === "running") || currentExportJobs.some((job) => job.status === "pending" || job.status === "running");
 
   useEffect(() => {
     if (!selectedProjectId || !hasActiveProcess) return;
     const timer = window.setInterval(() => {
-      void loadStudioData(selectedProjectId);
-      onRefresh();
-    }, 4000);
+      if (document.hidden || submittingRef.current) return;
+      void loadStudioData(selectedProjectId).catch(() => undefined);
+    }, 8000);
     return () => window.clearInterval(timer);
-  }, [hasActiveProcess, loadStudioData, onRefresh, selectedProjectId]);
+  }, [hasActiveProcess, loadStudioData, selectedProjectId]);
 
   const imageAssetByShotId = useMemo(() => buildShotAssetMap(assets, "image"), [assets]);
   const videoAssetByShotId = useMemo(() => buildShotAssetMap(assets, "video"), [assets]);
-  const latestFinalExport = useMemo(() => exportJobs.find((job) => isMp4Export(job)), [exportJobs]);
+  const latestFinalExport = scopedJobs.find((job) => isMp4Export(job));
   const finalUrl = latestFinalExport?.previewUrl || latestFinalExport?.outputUrl;
 
   const shotClips = useMemo<StudioClip[]>(() => {
@@ -124,8 +162,8 @@ export function StudioPage({ projects, tasks, onOpenProject, onRefresh }: Studio
 
   const currentClip = playlist[clipIndex] ?? playlist[0];
   const coverImage = storyboards.map((shot) => imageAssetByShotId.get(shot.id)?.referenceUrl).find(Boolean);
-  const ttsJob = exportJobs.find((job) => job.type === "tts");
-  const subtitleJob = exportJobs.find((job) => job.type === "subtitle");
+  const ttsJob = scopedJobs.find((job) => job.type === "tts");
+  const subtitleJob = scopedJobs.find((job) => job.type === "subtitle");
   const outputReady = Boolean(latestFinalExport);
   const totalDuration = storyboards.reduce((sum, shot) => sum + Math.max(0, shot.duration || 0), 0);
 
@@ -143,33 +181,72 @@ export function StudioPage({ projects, tasks, onOpenProject, onRefresh }: Studio
   }
 
   async function refreshStudio() {
-    if (!selectedProjectId) return;
+    if (!selectedProjectId || busyAction || submittingRef.current) return;
+    const projectId = selectedProjectId;
     setBusyAction("refresh");
-    await loadStudioData(selectedProjectId);
-    onRefresh();
-    setBusyAction(null);
+    try {
+      await loadStudioData(projectId);
+      await onRefresh();
+      if (projectRef.current === projectId) { setRefreshRequired(false); setMessage("剪辑数据已刷新。"); }
+    } catch (reason) {
+      if (projectRef.current === projectId) setError(reason instanceof Error ? reason.message : "数据刷新失败，请稍后重试。");
+    } finally { setBusyAction(null); }
   }
 
-  async function runExport(type: "tts" | "subtitle" | "video_export") {
-    if (!selectedProjectId) return;
-    setBusyAction(type);
-    setMessage("");
-    setError("");
+  async function openExportQuote(type: DeliveryExportType) {
+    if (!currentWorkflow || loading || refreshRequired || quoteBusyRef.current || submittingRef.current) return;
+    let intent: StudioExportIntent;
     try {
-      const job = await api.createExportJob(selectedProjectId, { type });
-      setExportJobs((current) => [job, ...current.filter((item) => item.id !== job.id)]);
-      setMessage(exportJobMessage(job));
-      await loadStudioData(selectedProjectId);
-      onRefresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "导出任务失败");
+      intent = buildStudioExportIntent(currentWorkflow, type);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "当前作品不可导出。"); return; }
+    const ticket = quoteRequests.begin(intent.scopeKey);
+    quoteBusyRef.current = true;
+    setQuoteIntent(intent); setQuote(null); setQuoteError(""); setQuoteLoading(true);
+    try {
+      const result = await api.quoteExport(intent.projectId, { type, storyboardIds: intent.storyboardIds });
+      if (!quoteRequests.isCurrent(ticket, scopeRef.current)) return;
+      if (result.type !== type || result.unit !== "tts_character") throw new Error("导出报价格式不正确，请刷新报价后重试。");
+      const nextQuote: DeliveryExportQuote = { ...result, type, unit: "tts_character" };
+      if (confirmedDeliveryCredits(nextQuote, type, intent.scopeKey, scopeRef.current) === null) throw new Error("导出费用不可用，请刷新报价后重试。");
+      setQuote(nextQuote);
+    } catch (reason) {
+      if (quoteRequests.isCurrent(ticket, scopeRef.current)) setQuoteError(reason instanceof Error ? reason.message : "无法获取报价，请重试。");
     } finally {
-      setBusyAction(null);
+      if (quoteRequests.isCurrent(ticket, intent.scopeKey)) { quoteBusyRef.current = false; setQuoteLoading(false); }
     }
   }
 
+  function closeExportQuote() {
+    if (submittingRef.current) return;
+    quoteRequests.invalidate(); quoteBusyRef.current = false;
+    setQuoteIntent(null); setQuote(null); setQuoteError(""); setQuoteLoading(false);
+  }
+
+  async function confirmExport() {
+    if (!quoteIntent || confirmedCredits === null || submittingRef.current || quoteIntent.projectId !== projectRef.current) return;
+    const intent = quoteIntent;
+    submittingRef.current = true; setSubmitting(true); setBusyAction(intent.type); setQuoteError("");
+    setMessage(""); setError("");
+    try {
+      const result = await submitStudioExport(intent, quote, scopeRef.current, {
+        submit: api.createExportJob,
+        sync: async (projectId) => { await loadStudioData(projectId); await onRefresh(); }
+      });
+      if (projectRef.current !== intent.projectId) return;
+      setExportJobs((current) => current.some(item => item.id === result.job.id) ? current : [result.job, ...current]);
+      setQuoteIntent(null); setQuote(null);
+      if (result.status === "failed") setError(result.job.errorReason || "导出未完成，请核对记录中的原因后重新获取报价。");
+      else if (result.status === "sync-required") {
+        setRefreshRequired(true);
+        setMessage(`${exportJobMessage(result.job)} 数据刷新失败，请先刷新记录；无需重新提交导出。`);
+      } else setMessage(exportJobMessage(result.job));
+    } catch (reason) {
+      if (projectRef.current === intent.projectId) setQuoteError(reason instanceof Error ? reason.message : "未确认导出结果，请先刷新导出记录后再决定是否重试。");
+    } finally { submittingRef.current = false; setSubmitting(false); setBusyAction(null); }
+  }
+
   async function downloadExport(job: ExportJob) {
-    if (!selectedProjectId) return;
+    if (!currentWorkflow || !selectedProjectId) return;
     try {
       const blob = await api.downloadExportJob(selectedProjectId, job.id);
       const objectUrl = window.URL.createObjectURL(blob);
@@ -205,11 +282,11 @@ export function StudioPage({ projects, tasks, onOpenProject, onRefresh }: Studio
         <div>
           <span className="section-kicker">COMPOSE & EXPORT</span>
           <h1>剪辑中心</h1>
-          <p>跨作品的合成与导出中心：左侧选择作品，中间连播预览已有视频片段或最终成片，右侧一键合成 MP4、生成配音与字幕。镜头级的精细编辑请进入生产台的成片时间线。</p>
+          <p>选择作品后预览视频片段，查看费用并导出全部剧集。按集导出或调整镜头顺序，请进入生产台的成片阶段。</p>
         </div>
         <div className="studio-hero-stats">
           <StudioStat label="可连播片段" value={`${shotClips.length}/${storyboards.length || 0}`} ready={shotClips.length > 0} />
-          <StudioStat label="配音 / 字幕" value={exportStatusText(exportJobs)} ready={Boolean(ttsJob || subtitleJob)} />
+          <StudioStat label="全项目配音 / 字幕" value={exportStatusText(scopedJobs)} ready={scopedJobs.some(job => job.status === "succeeded" && (job.type === "tts" || job.type === "subtitle"))} />
           <StudioStat label="成片" value={outputReady ? "可预览" : "未合成"} ready={outputReady} />
         </div>
       </section>
@@ -221,13 +298,13 @@ export function StudioPage({ projects, tasks, onOpenProject, onRefresh }: Studio
               <h2>作品队列</h2>
               <small>选择要合成与导出的作品</small>
             </div>
-            <button className="studio-icon-button" onClick={() => void refreshStudio()} disabled={busyAction === "refresh"} aria-label="刷新剪辑中心">
+            <button className="studio-icon-button" onClick={() => void refreshStudio()} disabled={Boolean(busyAction)} aria-label="刷新剪辑中心">
               {busyAction === "refresh" ? <Loader2 size={16} className="spin-icon" /> : <RefreshCw size={16} />}
             </button>
           </div>
           <div className="studio-project-list">
             {projects.map((item) => (
-              <button className={item.id === selectedProjectId ? "active" : ""} key={item.id} onClick={() => setSelectedProjectId(item.id)} type="button">
+              <button className={item.id === selectedProjectId ? "active" : ""} key={item.id} onClick={() => setSelectedProjectId(item.id)} disabled={submitting} type="button">
                 <strong>{item.name}</strong>
                 <span>{item.videoRatio} · {item.storyboards} 分镜 · {item.videoClips} 视频</span>
               </button>
@@ -243,7 +320,7 @@ export function StudioPage({ projects, tasks, onOpenProject, onRefresh }: Studio
             </div>
             <div className="studio-actions-inline">
               <button className="ghost-button" onClick={() => project && onOpenProject(project.id)} disabled={!project}>
-                <Clapperboard size={17} />去成片时间线编辑
+                <Clapperboard size={17} />去生产台编辑
               </button>
             </div>
           </div>
@@ -265,7 +342,7 @@ export function StudioPage({ projects, tasks, onOpenProject, onRefresh }: Studio
               <div className="studio-player-empty">
                 <Scissors size={30} />
                 <strong>还没有可播放的视频片段</strong>
-                <span>先到生产台完成分镜生图与图生视频，片段会自动出现在这里；也可以直接在右侧发起合成任务。</span>
+                <span>先到生产台完成分镜生图与图生视频，片段会自动出现在这里。</span>
                 <button className="ghost-button" type="button" onClick={() => project && onOpenProject(project.id)} disabled={!project}>
                   <FolderOpen size={16} />去生产台生成片段
                 </button>
@@ -306,19 +383,22 @@ export function StudioPage({ projects, tasks, onOpenProject, onRefresh }: Studio
           </div>
 
           {loading ? <div className="studio-loading"><Loader2 size={18} className="spin-icon" />正在加载作品数据...</div> : null}
-          {message ? <p className="success-text">{message}</p> : null}
-          {error ? <p className="danger-text">{error}</p> : null}
+          {message ? <p className="success-text" role="status">{message}</p> : null}
+          {error ? <p className="danger-text" role="alert">{error}</p> : null}
+          <p className="studio-preview-note">导出范围：本项目全部剧集，共 {storyboards.length} 个镜头，按项目镜头顺序。单集或自定义顺序请到生产台导出。</p>
+          {refreshRequired ? <button className="ghost-button" onClick={() => void refreshStudio()} disabled={Boolean(busyAction)}><RefreshCw size={16} />仅刷新导出记录</button> : null}
+          {quoteIntent && quoteIntent.scopeKey !== scopeKey ? <p className="danger-text" role="alert">作品内容已变化，请刷新报价。</p> : null}
 
           <div className="studio-action-stack">
-            <button className="primary-button" onClick={() => void runExport("video_export")} disabled={!storyboards.length || Boolean(busyAction)}>
+            <button className="primary-button" onClick={() => void openExportQuote("video_export")} disabled={!exportState.canExportVideo || loading || refreshRequired || quoteLoading || Boolean(busyAction)} title={exportState.missingVideoCount ? `还有 ${exportState.missingVideoCount} 个镜头视频未完成` : "先查看费用，再确认合成"}>
               {busyAction === "video_export" ? <Loader2 size={17} className="spin-icon" /> : <Film size={17} />}
               合成 MP4 成片
             </button>
-            <button className="ghost-button" onClick={() => void runExport("tts")} disabled={!storyboards.length || Boolean(busyAction)}>
+            <button className="ghost-button" onClick={() => void openExportQuote("tts")} disabled={!storyboards.length || loading || refreshRequired || quoteLoading || Boolean(busyAction)}>
               {busyAction === "tts" ? <Loader2 size={17} className="spin-icon" /> : <FileAudio size={17} />}
               生成配音轨{ttsJob ? `（${exportJobStatusText(ttsJob.status)}）` : ""}
             </button>
-            <button className="ghost-button" onClick={() => void runExport("subtitle")} disabled={!storyboards.length || Boolean(busyAction)}>
+            <button className="ghost-button" onClick={() => void openExportQuote("subtitle")} disabled={!storyboards.length || loading || refreshRequired || quoteLoading || Boolean(busyAction)}>
               {busyAction === "subtitle" ? <Loader2 size={17} className="spin-icon" /> : <Subtitles size={17} />}
               生成字幕轨{subtitleJob ? `（${exportJobStatusText(subtitleJob.status)}）` : ""}
             </button>
@@ -340,21 +420,24 @@ export function StudioPage({ projects, tasks, onOpenProject, onRefresh }: Studio
 
           <div className="studio-export-list">
             <strong>导出记录</strong>
-            {exportJobs.slice(0, 5).map((job) => (
+            {currentExportJobs.slice(0, 5).map((job) => (
               <article key={job.id}>
                 <div>
                   <span>{exportJobTitle(job)}</span>
                   <small>{exportJobStatusText(job.status)} · {new Date(job.updatedAt).toLocaleString()}</small>
+                  <small>{job.status === "succeeded" && job.sourceStatus !== "current" ? (job.sourceStatus === "stale" ? "历史版本 · 内容已更新" : "历史版本 · 输入未核验") : scopedJobs.some(item => item.id === job.id) ? "本项目全部镜头" : job.storyboardIds?.length ? `其他导出范围 · ${job.storyboardIds.length} 镜头` : "历史记录 · 范围未记录"}</small>
+                  {job.errorReason ? <small className="danger-text">{job.errorReason}</small> : null}
                 </div>
-                {job.downloadUrl || job.outputUrl ? (
+                {job.status === "succeeded" && (job.downloadUrl || job.outputUrl) ? (
                   <button className="studio-icon-button" onClick={() => void downloadExport(job)} type="button" aria-label="下载导出文件"><Download size={15} /></button>
                 ) : null}
               </article>
             ))}
-            {!exportJobs.length ? <small>合成、配音和字幕记录会显示在这里，完成后可直接下载。</small> : null}
+            {!currentExportJobs.length ? <small>合成、配音和字幕记录会显示在这里，完成后可直接下载。</small> : null}
           </div>
         </section>
       </div>
+      {quoteIntent ? <DeliveryExportQuoteDialog type={quoteIntent.type} episode="all" shotCount={quoteIntent.storyboardIds.length} quote={quote} loading={quoteLoading} submitting={submitting} error={quoteIntent.scopeKey !== scopeKey ? "作品内容已变化，请刷新报价后重新确认。" : quoteError} maxCredits={confirmedCredits} onRetry={() => void openExportQuote(quoteIntent.type)} onSubmit={() => void confirmExport()} onClose={closeExportQuote} /> : null}
     </div>
   );
 }
@@ -381,8 +464,8 @@ function isMp4Export(job: ExportJob) {
 }
 
 function exportStatusText(jobs: ExportJob[]) {
-  const tts = jobs.find((job) => job.type === "tts");
-  const subtitle = jobs.find((job) => job.type === "subtitle");
+  const tts = jobs.find((job) => job.type === "tts" && job.status === "succeeded");
+  const subtitle = jobs.find((job) => job.type === "subtitle" && job.status === "succeeded");
   if (tts && subtitle) return "已生成";
   if (tts) return "已有配音";
   if (subtitle) return "已有字幕";

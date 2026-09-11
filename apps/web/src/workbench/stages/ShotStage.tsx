@@ -331,7 +331,7 @@ function LoadedShotStage({
       </header>
       {state.shotMode === "table" ? <ShotTable storyboards={storyboards} activeShot={activeShot} onSelect={selectShot} /> : null}
       {state.shotMode === "image" ? <ShotImageCanvas shot={activeShot} imageUrl={activeImage?.referenceUrl} onPreview={() => activeImage?.referenceUrl && onPreview({ url: activeImage.referenceUrl, title: activeImage.name })} /> : null}
-      {state.shotMode === "video" ? <ShotVideoCanvas shot={activeShot} videoUrl={activeVideo?.referenceUrl} status={resolveVideoAssetStatus(activeVideo)} onCaptureTailFrame={async (frameUrl) => { if (!activeShot) return; setPending("tail-frame"); setError(""); try { await api.captureStoryboardTailFrame(project.id, activeShot.id, frameUrl); await onRefresh(project.id); setMessage(activeShot.shotNo < storyboards.filter((item) => item.episodeNo === activeShot.episodeNo).length ? "尾帧已保存，并已作为下一镜头首帧。" : "尾帧已保存。" ); } catch (cause) { setError(errorText(cause, "尾帧保存失败，请重试。")); } finally { setPending(""); } }} /> : null}
+      {state.shotMode === "video" ? <ShotVideoCanvas shot={activeShot} videoUrl={activeVideo?.referenceUrl} status={resolveVideoAssetStatus(activeVideo)} onCaptureTailFrame={async (frameUrl, sourceVideoUrl) => { if (!activeShot) return; setPending("tail-frame"); setError(""); try { await api.captureStoryboardTailFrame(project.id, activeShot.id, frameUrl, sourceVideoUrl); await onRefresh(project.id); setMessage(activeShot.shotNo < storyboards.filter((item) => item.episodeNo === activeShot.episodeNo).length ? "尾帧已保存，并已作为下一镜头首帧。" : "尾帧已保存。" ); } catch (cause) { setError(errorText(cause, "尾帧保存失败，请重试。")); } finally { setPending(""); } }} /> : null}
       <div className="wb-action-feedback" aria-live="polite">{message ? <p className="wb-action-feedback--success">{message}</p> : null}{error ? <p className="wb-action-feedback--error">{error}</p> : null}</div>
     </div>}
     inspector={<div className="wb-shot-inspector">
@@ -373,28 +373,46 @@ function ShotImageCanvas({ shot, imageUrl, onPreview }: { shot?: StoryboardShot;
   return <button className="wb-shot-media" type="button" disabled={!imageUrl} onClick={onPreview}><MediaFrame aspectRatio="16:9" label="当前镜头首帧">{imageUrl ? <img src={imageUrl} alt={shot?.pictureDesc || "镜头首帧"} /> : <div><ImageIcon /><strong>首帧待生成</strong><span>{shot?.pictureDesc || "选择镜头后查看"}</span></div>}</MediaFrame></button>;
 }
 
-function ShotVideoCanvas({ shot, videoUrl, status, onCaptureTailFrame }: { shot?: StoryboardShot; videoUrl?: string; status: ReturnType<typeof resolveVideoAssetStatus>; onCaptureTailFrame: (frameUrl: string) => Promise<void> }) {
+function ShotVideoCanvas({ shot, videoUrl, status, onCaptureTailFrame }: { shot?: StoryboardShot; videoUrl?: string; status: ReturnType<typeof resolveVideoAssetStatus>; onCaptureTailFrame: (frameUrl: string, sourceVideoUrl: string) => Promise<void> }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [capturing, setCapturing] = useState(false);
+  const [captureError, setCaptureError] = useState("");
   const playable = status === "succeeded" && isPersistedPlayableVideoReference(videoUrl);
   async function captureTailFrame() {
     const video = videoRef.current;
-    if (!video || !playable || !video.videoWidth || !video.videoHeight) return;
+    const sourceVideoUrl = videoUrl;
+    if (!video || !playable || !sourceVideoUrl) return;
     setCapturing(true);
+    setCaptureError("");
     try {
-      if (video.readyState >= 2 && Number.isFinite(video.duration)) {
-        video.currentTime = Math.max(0, video.duration - 0.08);
-        await new Promise<void>((resolve) => { const done = () => { video.removeEventListener("seeked", done); resolve(); }; video.addEventListener("seeked", done, { once: true }); });
+      if (video.readyState < 2 || !video.videoWidth || !video.videoHeight || !Number.isFinite(video.duration)) {
+        throw new Error("视频尚未加载完成，请等待视频可播放后重试。");
       }
+      video.pause();
+      const targetTime = Math.max(0, video.duration - 0.08);
+      if (Math.abs(video.currentTime - targetTime) > 0.01) {
+        await new Promise<void>((resolve, reject) => {
+          const cleanup = () => { clearTimeout(timer); video.removeEventListener("seeked", done); video.removeEventListener("error", failed); };
+          const done = () => { cleanup(); resolve(); };
+          const failed = () => { cleanup(); reject(new Error("无法读取视频尾帧，请刷新视频后重试。")); };
+          const timer = setTimeout(failed, 10000);
+          video.addEventListener("seeked", done, { once: true });
+          video.addEventListener("error", failed, { once: true });
+          video.currentTime = targetTime;
+        });
+      }
+      if (videoRef.current !== video || video.getAttribute("src") !== sourceVideoUrl) throw new Error("镜头视频已更新，请使用最新视频重新截取。");
       const canvas = document.createElement("canvas");
       canvas.width = video.videoWidth; canvas.height = video.videoHeight;
       const context = canvas.getContext("2d");
       if (!context) throw new Error("浏览器不支持视频截图");
       context.drawImage(video, 0, 0, canvas.width, canvas.height);
-      await onCaptureTailFrame(canvas.toDataURL("image/png"));
+      await onCaptureTailFrame(canvas.toDataURL("image/png"), sourceVideoUrl);
+    } catch (cause) {
+      setCaptureError(errorText(cause, "尾帧截取失败，请刷新视频后重试。"));
     } finally { setCapturing(false); }
   }
-  return <div className="wb-shot-video"><MediaFrame aspectRatio="16:9" label="当前镜头视频">{playable ? <><video ref={videoRef} src={videoUrl} controls preload="metadata" /><button type="button" className="wb-tail-frame-button" disabled={capturing} onClick={() => void captureTailFrame()}>{capturing ? "正在截取尾帧…" : "截取尾帧并承接下一镜头"}</button></> : <div className="wb-shot-video-empty"><Film /><strong>{status === "failed" ? "当前片段生成失败" : status === "running" ? "当前片段生成中" : "视频待生成"}</strong><span>{shot?.videoPrompt || "当前镜头尚无可播放片段"}</span></div>}</MediaFrame></div>;
+  return <div className="wb-shot-video"><MediaFrame aspectRatio="16:9" label="当前镜头视频">{playable ? <><video key={videoUrl} ref={videoRef} src={videoUrl} controls preload="metadata" /><button type="button" className="wb-tail-frame-button" disabled={capturing} onClick={() => void captureTailFrame()}>{capturing ? "正在截取尾帧…" : "截取尾帧并承接下一镜头"}</button></> : <div className="wb-shot-video-empty"><Film /><strong>{status === "failed" ? "当前片段生成失败" : status === "running" ? "当前片段生成中" : "视频待生成"}</strong><span>{shot?.videoPrompt || "当前镜头尚无可播放片段"}</span></div>}</MediaFrame>{captureError ? <p className="wb-inline-error" role="alert">{captureError}</p> : null}</div>;
 }
 
 function ShotEditor({ state, onEdit, onSave, disabled }: { state: ShotDraftState; onEdit: (patch: Partial<StoryboardShot>) => void; onSave: () => Promise<void>; disabled: boolean }) {
