@@ -30,6 +30,7 @@ export const contentApi = {
   addSource: (projectId: string, input: SourceDocumentInput) =>
     requestJson<SourceDocumentResult>(`/content/projects/${encodeURIComponent(projectId)}/sources`, { method: "POST", body: JSON.stringify(input) }),
   productionPackage: (projectId: string) => requestJson<ContentProductionPackage>(`/content/projects/${encodeURIComponent(projectId)}/package`),
+  syncProduction: (projectId: string) => requestJson<{ productionProjectId: string }>(`/content/projects/${encodeURIComponent(projectId)}/production/sync`, { method: "POST" }),
   generatePackage: (projectId: string, scope: number | "all" = "all") => requestJson<ContentProductionPackage>(`/content/projects/${encodeURIComponent(projectId)}/generate`, { method: "POST", body: JSON.stringify({ scope }) }),
   episodes: (projectId: string) => requestJson<ProductionEpisode[]>(`/content/projects/${encodeURIComponent(projectId)}/episodes`),
   generateEpisodes: (projectId: string, scope: number | "all") => requestJson<{ maxEpisodes: number; generatedEpisodeNos: number[]; episodes: ProductionEpisode[] }>(`/content/projects/${encodeURIComponent(projectId)}/episodes/generate`, { method: "POST", body: JSON.stringify({ scope }) }),

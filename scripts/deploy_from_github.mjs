@@ -1,11 +1,13 @@
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { randomUUID } from "node:crypto";
 
 // Publish the exact GitHub main commit through the existing server Git hook.
 // Use `pnpm deploy:server --check` to inspect readiness without deploying.
 process.chdir(fileURLToPath(new URL("../", import.meta.url)));
 const args = process.argv.slice(2);
 const checkOnly = args.length === 1 && args[0] === "--check";
+const retry = args.length === 1 && args[0] === "--retry";
 const server = process.env.MANJIAO_GIT_REMOTE || "ssh://manjiao-git/opt/git/aigc-short-drama-factory.git";
 
 function git(...args) {
@@ -16,7 +18,7 @@ function git(...args) {
 }
 
 try {
-  if (args.length && !checkOnly) throw new Error("Usage: pnpm deploy:server [--check]");
+  if (args.length && !checkOnly && !retry) throw new Error("Usage: pnpm deploy:server [--check|--retry]");
   if (git("status", "--porcelain", "--untracked-files=no")) {
     throw new Error("Commit or stash tracked changes before deploying. Only committed files are deployed.");
   }
@@ -34,10 +36,11 @@ try {
   if (checkOnly) {
     console.log("CHECK_OK: GitHub commit and server access verified. No deployment performed; builds and health were not checked.");
   } else {
-    if (serverMain === head && deployed !== head) {
-      throw new Error("Server main already points here but deployment is unconfirmed. A repeated push will not rerun the hook; inspect the deployment log on the server.");
+    if (serverMain === head && deployed !== head && !retry) {
+      throw new Error("Server main already points here but deployment is unconfirmed. Inspect /opt/manjiao-deploy-logs, fix the failure, then run pnpm deploy:server --retry.");
     }
-    if (deployed !== head || serverMain !== head) {
+    if (retry && serverMain !== head) throw new Error("Retry requires HEAD to equal server main; use the normal deploy command for a new commit.");
+    if (retry || deployed !== head || serverMain !== head) {
       const pnpmCli = process.env.npm_execpath;
       if (!pnpmCli) throw new Error("Run through pnpm deploy:server so the local verification commands can run.");
       for (const command of [
@@ -56,14 +59,21 @@ try {
         throw new Error("GitHub main changed during verification. Update and retry.");
       }
       // No force: divergent server history is rejected by Git.
-      git("push", server, `${head}:refs/heads/main`);
+      const targetRef = retry ? `refs/heads/deploy-requests/${Date.now()}-${randomUUID()}` : "refs/heads/main";
+      git("push", server, `${head}:${targetRef}`);
+      if (retry && git("ls-remote", server, targetRef)) {
+        throw new Error("The server did not complete this retry request. Inspect /opt/manjiao-deploy-logs even if the previously deployed commit is unchanged.");
+      }
     }
     if (git("ls-remote", server, "refs/heads/deployed").split(/\s+/)[0] !== head) {
-      throw new Error("Push completed but the server did not confirm deployment. Inspect /tmp/manjiao_git_deploy_<commit>.log.");
+      throw new Error("Push completed but the server did not confirm deployment. Inspect /opt/manjiao-deploy-logs. After repair, run pnpm deploy:server --retry.");
     }
-    const response = await fetch("https://manjiao.cloud/health", { signal: AbortSignal.timeout(15000) });
-    if (!response.ok) throw new Error(`Deployment commit confirmed, but public health returned ${response.status}.`);
-    console.log(`DEPLOY_OK ${head} https://manjiao.cloud (health ${response.status})`);
+    const response = await fetch("https://manjiao.cloud/ready", { signal: AbortSignal.timeout(15000) });
+    if (!response.ok) throw new Error(`Deployment commit confirmed, but public readiness returned ${response.status}.`);
+    const readiness = await response.json();
+    if (readiness.ok !== true) throw new Error("Public readiness did not confirm healthy dependencies and worker.");
+    if (readiness.revision !== head) throw new Error("Public API revision is missing or differs from the deployed commit.");
+    console.log(`DEPLOY_OK ${head} https://manjiao.cloud (readiness ${response.status})`);
   }
 } catch (error) {
   console.error(`DEPLOY_STOPPED: ${error.message}`);

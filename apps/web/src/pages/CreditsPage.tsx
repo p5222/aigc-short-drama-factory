@@ -1,15 +1,19 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { CheckCircle2, ClipboardList, Coins, CreditCard, Gift, ReceiptText, Sparkles, WalletCards } from "lucide-react";
 import type { CreditAccount, CreditTransaction, MembershipPlan, ModelPrice, Plan } from "@aifilm/shared";
 import { api } from "../lib/api";
+import { rechargeCheckoutUrl } from "./creditCheckoutModel";
+import { createTaskActionRunner } from "./taskActionModel";
 
 const modalityOrder: Record<string, number> = { text: 0, image: 1, video: 2, tts: 3, embedding: 4 };
 
-export function RechargePage({ plans, membershipPlans, modelPrices, onRefresh }: { plans: Plan[]; membershipPlans: MembershipPlan[]; modelPrices: ModelPrice[]; onRefresh: () => void }) {
+export function RechargePage({ plans, modelPrices, onRefresh }: { plans: Plan[]; membershipPlans: MembershipPlan[]; modelPrices: ModelPrice[]; onRefresh: () => void | Promise<void> }) {
   const [message, setMessage] = useState("");
   const [redeemCode, setRedeemCode] = useState("");
   const [error, setError] = useState("");
-  const defaultShopUrl = "https://pay.ldxp.cn/shop/ZHP28OV1";
+  const [redeeming, setRedeeming] = useState(false);
+  const redeemRunner = useRef(createTaskActionRunner()).current;
+  const availablePlans = plans.filter((plan) => plan.enabled);
   const enabledModelPrices = modelPrices.filter((price) => price.enabled);
   const usageReferences = useMemo(() => buildCreditUsageReferences(enabledModelPrices), [enabledModelPrices]);
   const sortedModelPrices = useMemo(
@@ -22,28 +26,33 @@ export function RechargePage({ plans, membershipPlans, modelPrices, onRefresh }:
   );
 
   async function redeem() {
+    if (!redeemCode.trim()) return;
+    const code = redeemCode.trim();
     setMessage("");
     setError("");
-    const codePrefix = redeemCode.trim().split("-")[0] || "manual";
-    void api.trackEvent({ eventName: "redeem_code_start", campaignCode: codePrefix, properties: { codePrefix } }).catch(() => undefined);
-    try {
-      const account = await api.redeemCode(redeemCode);
+    const codePrefix = code.split("-")[0] || "manual";
+    const result = await redeemRunner.run("redeem", "retry", async () => {
+      void api.trackEvent({ eventName: "redeem_code_start", campaignCode: codePrefix, properties: { codePrefix } }).catch(() => undefined);
+      const account = await api.redeemCode(code);
       void api.trackEvent({ eventName: "redeem_code_success", campaignCode: codePrefix, properties: { codePrefix, balance: account.balance } }).catch(() => undefined);
       setMessage(`兑换成功，当前积分余额 ${account.balance.toLocaleString()}。`);
       setRedeemCode("");
-      onRefresh();
-    } catch (err) {
-      void api.trackEvent({ eventName: "redeem_code_fail", campaignCode: codePrefix, properties: { codePrefix, message: err instanceof Error ? err.message : "兑换失败" } }).catch(() => undefined);
-      setError(err instanceof Error ? err.message : "兑换失败");
+      try { await onRefresh(); }
+      catch { setMessage(`兑换成功，当前积分余额 ${account.balance.toLocaleString()}。余额面板刷新失败，可稍后刷新查看，请勿重复兑换。`); }
+    }, (pending) => setRedeeming(Boolean(pending.redeem)));
+    if (result.status === "failed") {
+      void api.trackEvent({ eventName: "redeem_code_fail", campaignCode: codePrefix, properties: { codePrefix, message: result.message } }).catch(() => undefined);
+      setError(result.message);
     }
   }
 
-  function openCheckout(kind: "recharge" | "membership", item: { id: string; name: string; shopUrl?: string; price: number }) {
+  function openCheckout(item: Plan) {
     setMessage("");
     setError("");
-    const shopUrl = item.shopUrl?.trim() || defaultShopUrl;
+    const shopUrl = rechargeCheckoutUrl(item);
+    if (!shopUrl) { setError("该套餐暂未开放购买，请稍后重试或联系平台支持。"); return; }
     void api.trackEvent({
-      eventName: kind === "recharge" ? "recharge_shop_open" : "membership_shop_open",
+      eventName: "recharge_shop_open",
       properties: { itemId: item.id, itemName: item.name, amountCny: item.price, shopUrl }
     }).catch(() => undefined);
     window.open(shopUrl, "_blank", "noopener,noreferrer");
@@ -62,7 +71,7 @@ export function RechargePage({ plans, membershipPlans, modelPrices, onRefresh }:
           <span className="recharge-validity">积分永久有效 · 可用于所有 AI 生成能力</span>
         </div>
         <div className="plan-grid recharge-plan-grid" data-tour-id="recharge-plans">
-        {plans.map((plan) => {
+        {availablePlans.map((plan) => {
           const featured = Boolean(plan.badge && plan.badge.includes("推荐"));
           const totalCredits = plan.credits + plan.bonusCredits;
           return (
@@ -90,14 +99,16 @@ export function RechargePage({ plans, membershipPlans, modelPrices, onRefresh }:
               </ul>
               <button
                 className="primary-button"
-                onClick={() => openCheckout("recharge", { id: plan.id, name: plan.name, price: plan.price, shopUrl: plan.shopUrl })}
+                disabled={!rechargeCheckoutUrl(plan)}
+                onClick={() => openCheckout(plan)}
               >
-                前往充值
+                {rechargeCheckoutUrl(plan) ? "前往充值" : "暂未开放购买"}
               </button>
             </article>
           );
         })}
         </div>
+        {!availablePlans.length ? <p className="empty-state">暂没有开放购买的充值套餐。已有卡密可以在下方兑换。</p> : null}
       </section>
       <section className="panel credit-usage-panel">
         <div className="panel-head">
@@ -130,51 +141,32 @@ export function RechargePage({ plans, membershipPlans, modelPrices, onRefresh }:
           {!enabledModelPrices.length ? <div className="empty-state">后台还没有启用的模型价格策略。</div> : null}
         </div>
       </section>
-      {message ? <p className="success-text">{message}</p> : null}
-      {error ? <p className="danger-text">{error}</p> : null}
+      {message ? <p className="success-text" role="status">{message}</p> : null}
+      {error ? <p className="danger-text" role="alert">{error}</p> : null}
       <section className="panel">
         <div className="panel-head">
           <div><h2>兑换体验额度</h2><small>适合新用户试用、内测邀请和运营活动；兑换到账积分永久有效。</small></div>
         </div>
         <div className="redeem-row">
-          <input value={redeemCode} onChange={(event) => setRedeemCode(event.target.value.toUpperCase())} placeholder="输入兑换码，例如 TRIAL300" />
-          <button className="ghost-button" onClick={redeem} disabled={!redeemCode.trim()}>兑换</button>
+          <input value={redeemCode} disabled={redeeming} onChange={(event) => setRedeemCode(event.target.value.toUpperCase())} aria-label="兑换码" placeholder="输入兑换码" />
+          <button className="ghost-button" onClick={() => void redeem()} disabled={redeeming || !redeemCode.trim()}>{redeeming ? "兑换中…" : "兑换"}</button>
         </div>
       </section>
       <section className="panel">
         <div className="panel-head">
-          <div><h2>订阅会员权益</h2><small>后续增强：每月额度、权益折扣、优先队列，不提供无限生成。</small></div>
-        </div>
-        <div className="membership-grid">
-          {membershipPlans.map((membership) => (
-            <article className="membership-card" key={membership.id}>
-              {membership.badge ? <span className="badge">{membership.badge}</span> : null}
-              <span>{membership.name}</span>
-              <strong>¥{membership.monthlyPrice.toFixed(2)} / 月</strong>
-              <p>{membership.monthlyCredits.toLocaleString()} 积分/月 · {membership.discountPercent}% 权益折扣 · 队列等级 {membership.priorityLevel}</p>
-              <ul>
-                {membership.features.map((feature) => <li key={feature}>{feature}</li>)}
-              </ul>
-              <button
-                className="primary-button"
-                onClick={() => openCheckout("membership", { id: membership.id, name: membership.name, price: membership.monthlyPrice, shopUrl: membership.shopUrl })}
-              >
-                前往订阅
-              </button>
-            </article>
-          ))}
+          <div><h2>订阅会员暂未开放</h2><small>当前仅提供积分充值与卡密兑换。月度额度、会员折扣和优先队列尚未上线，暂不销售订阅。</small></div>
         </div>
       </section>
       <section className="panel payment-method-panel">
         <div className="panel-head">
-          <div><h2>支付方式</h2><small>当前使用店铺下单 + 卡密兑换入账，后续可接入原生支付回调。</small></div>
+          <div><h2>购买与入账方式</h2><small>从上方已开放的充值套餐进入对应购买页，再将获得的卡密填入兑换框。</small></div>
         </div>
         <div className="payment-method-row">
-          <button type="button" className="payment-method-card" onClick={() => window.open(defaultShopUrl, "_blank", "noopener,noreferrer")}>
+          <div className="payment-method-card">
             <WalletCards size={22} />
-            <span><strong>支付宝 / 店铺卡密</strong><small>安全可靠，购买后回到本页兑换</small></span>
+            <span><strong>店铺卡密</strong><small>店铺完成支付后，回到本页兑换入账</small></span>
             <CheckCircle2 size={20} />
-          </button>
+          </div>
         </div>
       </section>
     </div>

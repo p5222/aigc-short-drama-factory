@@ -1,9 +1,9 @@
 import { ArrowLeft, ArrowRight, BookOpen, Check, CheckCircle2, CircleAlert, Clapperboard, FileText, LoaderCircle, Map, Plus, RefreshCw, Sparkles, Trash2, UsersRound } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactElement } from "react";
-import { analyzeProductionEpisodes, episodeGenerationOptions, type ContentProductionPackage, type ContentProjectSummary, type CreateProjectInput, type ModelProvider, type StyleProfile } from "@aifilm/shared";
+import { analyzeProductionEpisodes, episodeGenerationOptions, type ContentProductionPackage, type ContentProjectSummary, type ModelProvider, type StyleProfile } from "@aifilm/shared";
 import { contentApi, type ContentVersionHistory, type SourceDocumentInput } from "../lib/contentApi";
 import { ModelRoutePicker } from "../components/ModelRoutePicker";
-import { buildProductionDraft, chapterGenerationPlan, chapterNavigationStage, cleanModelText, isCurrentRequest, modeLabel, reconcileProjectId, sourceKindForMode, statusLabel, type RequestToken } from "./model";
+import { chapterGenerationPlan, chapterNavigationStage, cleanModelText, isCurrentRequest, modeLabel, reconcileProjectId, sourceKindForMode, statusLabel, type RequestToken } from "./model";
 
 const emptyStyle: StyleProfile = { key: "", name: "", category: "", summary: "", characterRules: [], sceneRules: [], lightingRules: [], cameraRules: [], materialRules: [], negativeRules: [] };
 const styleOptions: Array<Pick<StyleProfile, "key" | "name" | "category" | "summary">> = [
@@ -52,7 +52,7 @@ interface ContentWorkspaceProps {
   providers: ModelProvider[];
   onReload: () => Promise<ContentProjectSummary[]>;
   onBack?: () => void;
-  onEnterProduction: (draft: CreateProjectInput & { contentProjectId?: string }) => void;
+  onEnterProduction: (projectId: string) => void | Promise<void>;
 }
 
 export function ContentWorkspace({ initialProjects, initialSelectedId, startBlank = false, providers, onReload, onBack, onEnterProduction }: ContentWorkspaceProps) {
@@ -72,7 +72,8 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
   const [sourceOpen, setSourceOpen] = useState(false);
   const [focusStage, setFocusStage] = useState<StageId | "">("");
   const [selectedChapterNo, setSelectedChapterNo] = useState(1);
-  const [busy, setBusy] = useState<"create" | "save" | "generate" | "refresh" | "">("");
+  const [busy, setBusy] = useState<"create" | "save" | "generate" | "refresh" | "handoff" | "">("");
+  const handoffPending = useRef(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [failedProjectId, setFailedProjectId] = useState("");
@@ -352,14 +353,17 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
     finally { setBusy(""); }
   }
 
-  function enterProduction() {
-    if (!selected || !handoffContent) return;
-    onEnterProduction(buildProductionDraft(
-      selected,
-      handoffContent,
-      (productionPackage?.episodes ?? []).map((episode) => ({ episodeNo: episode.episodeNo, title: episode.title, content: activeEpisodeScript(episode) })),
-      productionPackage?.entities ? { characters: productionPackage.entities.characters.map((item) => item.name), scenes: productionPackage.entities.scenes.map((item) => item.name), props: productionPackage.entities.props.map((item) => item.name) } : {}
-    ));
+  async function enterProduction() {
+    if (!selected || !handoffContent || working || handoffPending.current) return;
+    handoffPending.current = true;
+    setBusy("handoff"); setError(""); setMessage("");
+    try {
+      const { productionProjectId } = await contentApi.syncProduction(selected.id);
+      setMessage("已同步剧本与实体，正在打开关联制作项目。此次交接不会重复生成剧本或扣费。");
+      await onEnterProduction(productionProjectId);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "制作交接失败，请重试。");
+    } finally { handoffPending.current = false; setBusy(""); }
   }
 
   const history = selected ? versions[selected.id] : undefined;
@@ -492,7 +496,7 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
           <button type="button" className="content-secondary-button" disabled={working} onClick={() => setFocusStage("chapter")}><FileText size={14} />返回编辑正文</button>
           {episodeOptions.length ? <select className="cw2-mini-select" aria-label="选择生成集数" value={episodeScope} onChange={(event) => setEpisodeScope(event.target.value === "all" ? "all" : Number(event.target.value))}>{episodeOptions.map((option) => <option key={String(option.value)} value={option.value}>{option.label}</option>)}</select> : null}
           <button type="button" className="content-secondary-button" disabled={working || !episodeOptions.length} onClick={() => void generateScriptFromChapters()}><RefreshCw size={14} />继续生成分集剧本</button>
-          <button type="button" className="content-primary-button" disabled={!handoffContent} onClick={enterProduction}>进入漫剧创作<ArrowRight size={16} /></button>
+          <button type="button" className="content-primary-button" disabled={!handoffContent || working} onClick={() => void enterProduction()}>{busy === "handoff" ? "正在打开制作项目…" : "进入漫剧创作"}<ArrowRight size={16} /></button>
         </div>
       </> : <>
         <div className="cw2-stage-head"><h2>制作交接</h2><small>把正文转成可生产剧本，并提取人物 / 场景实体</small></div>
@@ -520,7 +524,7 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
       <div className="cw2-todo"><span>角色 / 场景实体</span><em className={productionPackage?.entities?.characters.length ? "is-ok" : "is-wait"}>{productionPackage?.entities?.characters.length ? `${productionPackage.entities.characters.length} 角色 · ${productionPackage.entities.scenes.length} 场景` : "待提取"}</em></div>
       <div className="cw2-todo"><span>视觉风格</span><em className="is-ok">{selected.styleProfile?.name || "自动匹配"}</em></div>
       {handoffContent
-        ? <button type="button" className="content-primary-button cw2-full" onClick={enterProduction}>进入漫剧创作<ArrowRight size={15} /></button>
+        ? <button type="button" className="content-primary-button cw2-full" disabled={working} onClick={() => void enterProduction()}>{busy === "handoff" ? "正在打开制作项目…" : "进入漫剧创作"}<ArrowRight size={15} /></button>
         : <button type="button" className="content-secondary-button cw2-full" disabled={!chapters.length || working} onClick={() => void generateScriptFromChapters()}>{busy === "generate" ? <LoaderCircle size={15} /> : <Clapperboard size={15} />}生成剧本后交接</button>}
       {handoffContent ? <small className="cw2-ok-note"><CheckCircle2 size={12} />交接会自动带入剧本、作品名与视觉风格</small> : null}
     </div>

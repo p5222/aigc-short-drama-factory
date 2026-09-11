@@ -8,6 +8,8 @@ import { createToonflowScriptPlan, type ToonflowCharacterCard } from "../agents/
 import { materializePrompt } from "../prompts/runtime.js";
 import { normalizeDevelopmentAnalysis, normalizeDevelopmentOutline } from "./normalization.js";
 import { generateEpisodes } from "../production/episodeService.js";
+import { markContentOperationFailed, runBilledContentGeneration, saveContentOperationOutput, withContentGenerationOperation } from "./generationBilling.js";
+import { collectHandoffEntities, handoffEntityId } from "./productionHandoff.js";
 
 const generatedChapterSchema = z.object({
   title: z.string().min(1), content: z.string().min(100), factUpdates: z.array(z.unknown()).default([]),
@@ -103,33 +105,43 @@ export async function updateContentModelRoute(userId: string, contentProjectId: 
 }
 
 export async function analyzeContentProject(userId: string, contentProjectId: string, input: { intentType: "title" | "genre" | "references"; intent: string; targetWords: number; chapterCount: number; batchSize: number }) {
+  return withContentGenerationOperation(userId, contentProjectId, "内容结构拆解", () => analyzeContentProjectUnlocked(userId, contentProjectId, input));
+}
+
+async function analyzeContentProjectUnlocked(userId: string, contentProjectId: string, input: { intentType: "title" | "genre" | "references"; intent: string; targetWords: number; chapterCount: number; batchSize: number }) {
   const project = await prisma.contentProject.findFirst({ where: { id: contentProjectId, userId } });
   if (!project) throw new Error("内容项目不存在");
   await prisma.contentProject.update({ where: { id: contentProjectId }, data: { activeStep: "analysis", status: "running" } });
   try {
     const analysisKey = input.intentType === "title" ? "title_story_planning" : input.intentType === "genre" ? "genre_story_research" : "reference_story_research";
     const analysisPrompt = materializePrompt(analysisKey, { intent: input.intent, targetWords: input.targetWords, chapterCount: input.chapterCount, styleProfile: project.styleProfile });
-    const analysisRaw = await callTextModelJson<unknown>({ ...(await contentTextRuntime(project)), system: analysisPrompt.systemPrompt, prompt: analysisPrompt.userPrompt, maxTokens: 5000, label: "爆款结构分析" });
-    const analysis = normalizeDevelopmentAnalysis(analysisRaw);
-    analysis.evidence.sources = await verifyEvidenceSources(analysis.evidence.sources);
-    if (analysis.evidence.mode === "model_search" && !analysis.evidence.sources.some((source) => source.verified)) {
-      analysis.evidence.mode = "model_prior";
-      analysis.evidence.limitations.push("模型未返回可核验来源，已降级为模型知识参考");
-    }
-    const version = (await prisma.storyAnalysis.aggregate({ where: { contentProjectId }, _max: { version: true } }))._max.version ?? 0;
-    await prisma.$transaction([
-      prisma.storyAnalysis.create({ data: { id: `analysis_${crypto.randomUUID()}`, contentProjectId, version: version + 1, status: "confirmed", result: JSON.parse(JSON.stringify({ ...analysis, intentType: input.intentType, intent: input.intent, targetWords: input.targetWords, chapterCount: input.chapterCount, batchSize: input.batchSize })) as Prisma.InputJsonValue, promptSnapshot: analysisPrompt.snapshot as unknown as Prisma.InputJsonValue } }),
-      prisma.contentProject.update({ where: { id: contentProjectId }, data: { activeStep: "analysis", status: "confirmed" } })
-    ]);
+    await runBilledContentGeneration(project, "内容结构拆解", async () => {
+      const analysisRaw = await callTextModelJson<unknown>({ ...(await contentTextRuntime(project)), system: analysisPrompt.systemPrompt, prompt: analysisPrompt.userPrompt, maxTokens: 5000, label: "爆款结构分析" });
+      const analysis = normalizeDevelopmentAnalysis(analysisRaw);
+      analysis.evidence.sources = await verifyEvidenceSources(analysis.evidence.sources);
+      if (analysis.evidence.mode === "model_search" && !analysis.evidence.sources.some((source) => source.verified)) {
+        analysis.evidence.mode = "model_prior";
+        analysis.evidence.limitations.push("模型未返回可核验来源，已降级为模型知识参考");
+      }
+      return analysis;
+    }, async (tx, analysis) => {
+      const version = (await tx.storyAnalysis.aggregate({ where: { contentProjectId }, _max: { version: true } }))._max.version ?? 0;
+      await tx.storyAnalysis.create({ data: { id: `analysis_${crypto.randomUUID()}`, contentProjectId, version: version + 1, status: "confirmed", result: JSON.parse(JSON.stringify({ ...analysis, intentType: input.intentType, intent: input.intent, targetWords: input.targetWords, chapterCount: input.chapterCount, batchSize: input.batchSize })) as Prisma.InputJsonValue, promptSnapshot: analysisPrompt.snapshot as unknown as Prisma.InputJsonValue } });
+      await tx.contentProject.update({ where: { id: contentProjectId }, data: { activeStep: "analysis", status: "confirmed" } });
+    });
     return getContentProductionPackage(userId, contentProjectId);
   } catch (error) {
     logContentStageFailure("analysis", contentProjectId, project, error);
-    await prisma.contentProject.update({ where: { id: contentProjectId }, data: { activeStep: "analysis", status: "failed" } });
+    await markContentOperationFailed("analysis");
     throw error;
   }
 }
 
 export async function generateContentOutline(userId: string, contentProjectId: string) {
+  return withContentGenerationOperation(userId, contentProjectId, "内容章节大纲", () => generateContentOutlineUnlocked(userId, contentProjectId));
+}
+
+async function generateContentOutlineUnlocked(userId: string, contentProjectId: string) {
   const project = await prisma.contentProject.findFirst({ where: { id: contentProjectId, userId }, include: { analyses: { orderBy: { version: "desc" }, take: 1 } } });
   if (!project || !project.analyses[0]) throw new Error("请先完成结构拆解");
   const analysisResult = project.analyses[0].result as Record<string, unknown>;
@@ -138,6 +150,7 @@ export async function generateContentOutline(userId: string, contentProjectId: s
   await prisma.contentProject.update({ where: { id: contentProjectId }, data: { activeStep: "outline", status: "running" } });
   try {
     const prompt = materializePrompt("same_genre_story_strategy", { analysis: analysisResult, targetWords, chapterCount, styleProfile: project.styleProfile });
+    await runBilledContentGeneration(project, "内容章节大纲", async () => {
     const raw = await callTextModelJson<unknown>({ ...(await contentTextRuntime(project)), system: prompt.systemPrompt, prompt: prompt.userPrompt, maxTokens: 7000, label: "章节大纲" });
     const outline = normalizeDevelopmentOutline(raw);
     // 软化处理：模型偶尔多给/少给一两章不再整单失败，只在偏差过大时才拒绝，
@@ -154,15 +167,16 @@ export async function generateContentOutline(userId: string, contentProjectId: s
       .slice()
       .sort((a, b) => a.chapterNo - b.chapterNo)
       .map((chapter, index) => ({ ...chapter, chapterNo: index + 1 }));
-    const version = (await prisma.storyOutline.aggregate({ where: { contentProjectId }, _max: { version: true } }))._max.version ?? 0;
-    await prisma.$transaction([
-      prisma.storyOutline.create({ data: { id: `outline_${crypto.randomUUID()}`, contentProjectId, version: version + 1, status: "draft", result: JSON.parse(JSON.stringify({ ...outline, targetWords, chapterCount, batchSize: Number(analysisResult.batchSize ?? 2) })) as Prisma.InputJsonValue, promptSnapshot: prompt.snapshot as unknown as Prisma.InputJsonValue } }),
-      prisma.contentProject.update({ where: { id: contentProjectId }, data: { title: outline.title, activeStep: "outline", status: "draft" } })
-    ]);
+    return outline;
+    }, async (tx, outline) => {
+      const version = (await tx.storyOutline.aggregate({ where: { contentProjectId }, _max: { version: true } }))._max.version ?? 0;
+      await tx.storyOutline.create({ data: { id: `outline_${crypto.randomUUID()}`, contentProjectId, version: version + 1, status: "draft", result: JSON.parse(JSON.stringify({ ...outline, targetWords, chapterCount, batchSize: Number(analysisResult.batchSize ?? 2) })) as Prisma.InputJsonValue, promptSnapshot: prompt.snapshot as unknown as Prisma.InputJsonValue } });
+      await tx.contentProject.update({ where: { id: contentProjectId }, data: { title: outline.title, activeStep: "outline", status: "draft" } });
+    });
     return getContentProductionPackage(userId, contentProjectId);
   } catch (error) {
     logContentStageFailure("outline", contentProjectId, project, error);
-    await prisma.contentProject.update({ where: { id: contentProjectId }, data: { activeStep: "outline", status: "failed" } });
+    await markContentOperationFailed("outline");
     throw error;
   }
 }
@@ -180,25 +194,28 @@ export async function confirmContentOutline(userId: string, contentProjectId: st
 }
 
 export async function developContentProject(userId: string, contentProjectId: string, input: { intentType: "title" | "genre" | "references"; intent: string; targetWords: number; chapterCount: number; batchSize: number }) {
-  await analyzeContentProject(userId, contentProjectId, input);
-  return generateContentOutline(userId, contentProjectId);
+  return withContentGenerationOperation(userId, contentProjectId, "内容拆解与大纲", async () => {
+    await analyzeContentProject(userId, contentProjectId, input);
+    return generateContentOutline(userId, contentProjectId);
+  });
 }
 
 async function verifyEvidenceSources(sources: Array<{ title: string; url?: string | null; platform?: string | null; verified: boolean }>) {
-  return Promise.all(sources.map(async (source) => {
-    if (!source.url) return { ...source, verified: false };
+  // Model-suggested URLs are references to review, not evidence of a verified
+  // claim. A successful HEAD request cannot establish factual support.
+  return sources.map(source => {
     try {
-      const url = new URL(source.url);
-      if (!/^https?:$/.test(url.protocol)) return { ...source, verified: false };
-      const response = await fetch(url, { method: "HEAD", redirect: "follow", signal: AbortSignal.timeout(5000), headers: { "User-Agent": "ManjiaoResearch/1.0" } });
-      return { ...source, url: url.toString(), verified: response.ok };
-    } catch {
-      return { ...source, verified: false };
-    }
-  }));
+      const url = new URL(source.url || "");
+      return { ...source, url: /^https?:$/.test(url.protocol) && !url.username && !url.password ? url.toString() : null, verified: false };
+    } catch { return { ...source, url: null, verified: false }; }
+  });
 }
 
 export async function generateContentChapterBatch(userId: string, contentProjectId: string, input: { startChapter: number; batchSize: number; regenerate?: boolean }) {
+  return withContentGenerationOperation(userId, contentProjectId, "内容章节正文", () => generateContentChapterBatchUnlocked(userId, contentProjectId, input));
+}
+
+async function generateContentChapterBatchUnlocked(userId: string, contentProjectId: string, input: { startChapter: number; batchSize: number; regenerate?: boolean }) {
   const project = await prisma.contentProject.findFirst({ where: { id: contentProjectId, userId }, include: { outlines: { orderBy: { version: "desc" }, take: 1 }, chapters: { orderBy: [{ chapterNo: "asc" }, { version: "desc" }] } } });
   if (!project) throw new Error("内容项目不存在");
   const outline = normalizeDevelopmentOutline(project.outlines[0]?.result);
@@ -214,16 +231,18 @@ export async function generateContentChapterBatch(userId: string, contentProject
   try {
     for (const goal of goals) {
       const prompt = materializePrompt("chapter_generation", { outline, previousHandoff, chapterGoal: goal, characterState: outline.characters, targetWords: goal.targetWords ?? Math.round(Number((project.outlines[0]?.result as any)?.targetWords ?? 20000) / outline.chapters.length) });
-      const generated = generatedChapterSchema.parse(await callTextModelJson<unknown>({ ...(await contentTextRuntime(project)), system: prompt.systemPrompt, prompt: prompt.userPrompt, maxTokens: 7000, label: `第${goal.chapterNo}章正文` }));
-      const currentVersion = (await prisma.storyChapter.aggregate({ where: { contentProjectId, chapterNo: goal.chapterNo }, _max: { version: true } }))._max.version ?? 0;
-      await prisma.storyChapter.create({ data: { id: `chapter_${crypto.randomUUID()}`, contentProjectId, chapterNo: goal.chapterNo, title: generated.title, status: "confirmed", content: generated.content, result: JSON.parse(JSON.stringify({ factUpdates: generated.factUpdates, handoff: generated.handoff })) as Prisma.InputJsonValue, promptSnapshot: prompt.snapshot as unknown as Prisma.InputJsonValue, version: currentVersion + 1 } });
+      const generated = await runBilledContentGeneration(project, `内容第${goal.chapterNo}章正文`, async () => generatedChapterSchema.parse(await callTextModelJson<unknown>({ ...(await contentTextRuntime(project)), system: prompt.systemPrompt, prompt: prompt.userPrompt, maxTokens: 7000, label: `第${goal.chapterNo}章正文` })), async (tx, generated) => {
+        const currentVersion = (await tx.storyChapter.aggregate({ where: { contentProjectId, chapterNo: goal.chapterNo }, _max: { version: true } }))._max.version ?? 0;
+        await tx.storyChapter.create({ data: { id: `chapter_${crypto.randomUUID()}`, contentProjectId, chapterNo: goal.chapterNo, title: generated.title, status: "confirmed", content: generated.content, result: JSON.parse(JSON.stringify({ factUpdates: generated.factUpdates, handoff: generated.handoff })) as Prisma.InputJsonValue, promptSnapshot: prompt.snapshot as unknown as Prisma.InputJsonValue, version: currentVersion + 1 } });
+        return generated;
+      });
       previousHandoff = generated.handoff;
     }
-    await prisma.contentProject.update({ where: { id: contentProjectId }, data: { activeStep: "chapter", status: "confirmed" } });
+    await saveContentOperationOutput((tx) => tx.contentProject.update({ where: { id: contentProjectId }, data: { activeStep: "chapter", status: "confirmed" } }));
     return getContentProductionPackage(userId, contentProjectId);
   } catch (error) {
     logContentStageFailure("chapter", contentProjectId, project, error);
-    await prisma.contentProject.update({ where: { id: contentProjectId }, data: { activeStep: "chapter", status: "failed" } });
+    await markContentOperationFailed("chapter");
     throw error;
   }
 }
@@ -336,6 +355,10 @@ export async function getContentProductionPackage(userId: string, contentProject
 }
 
 export async function generateContentProductionPackage(userId: string, contentProjectId: string, scope: number | "all" = "all") {
+  return withContentGenerationOperation(userId, contentProjectId, "内容分集剧本", () => generateContentProductionPackageUnlocked(userId, contentProjectId, scope));
+}
+
+async function generateContentProductionPackageUnlocked(userId: string, contentProjectId: string, scope: number | "all" = "all") {
   if (process.env.CONTENT_EPISODE_PIPELINE !== "legacy") {
     try {
       const project = await prisma.contentProject.findFirst({ where: { id: contentProjectId, userId }, include: { scripts: { orderBy: { version: "desc" }, take: 1 } } });
@@ -346,12 +369,15 @@ export async function generateContentProductionPackage(userId: string, contentPr
         const active = episode.scripts?.find((script: { version: number }) => script.version === episode.activeScriptVersion);
         return active ? `第${episode.episodeNo}集 ${episode.title}\n${active.content}` : "";
       }).filter(Boolean).join("\n\n");
-      const nextVersion = (project.scripts[0]?.version ?? 0) + 1;
-      await prisma.scriptVersion.create({ data: { id: `content_script_${crypto.randomUUID()}`, contentProjectId, version: nextVersion, status: "confirmed", content: scriptContent, result: { episodeCount: generated.episodes.length }, promptSnapshot: { key: "episode_adaptation", allowExpansion: false } } });
+      await saveContentOperationOutput(async (tx) => {
+        const latest = await tx.scriptVersion.findFirst({ where: { contentProjectId }, orderBy: { version: "desc" } });
+        if (latest?.content === scriptContent) return;
+        await tx.scriptVersion.create({ data: { id: `content_script_${crypto.randomUUID()}`, contentProjectId, version: (latest?.version ?? 0) + 1, status: "confirmed", content: scriptContent, result: { episodeCount: generated.episodes.length }, promptSnapshot: { key: "episode_adaptation", allowExpansion: false } } });
+      });
       await syncContentToProduction(userId, contentProjectId);
       return getContentProductionPackage(userId, contentProjectId);
     } catch (error) {
-      await prisma.contentProject.updateMany({ where: { id: contentProjectId, userId }, data: { status: "failed" } });
+      await markContentOperationFailed("script");
       throw error;
     }
   }
@@ -376,6 +402,7 @@ export async function generateContentProductionPackage(userId: string, contentPr
       targetEpisodes: Math.max(1, Math.min(20, Math.ceil(Math.max(source.content.length, 800) / 2000)))
     };
     const plan = createToonflowScriptPlan(input);
+    await runBilledContentGeneration(project, "内容剧本结构化", async () => {
     const generated = await callTextModelJson<{ synopsis?: string; script?: string; characters?: ToonflowCharacterCard[] }>({
       ...(await contentTextRuntime(project)),
       system: "你是漫角内容创作编剧。严格执行用户提示，只输出合法 JSON。",
@@ -391,10 +418,11 @@ export async function generateContentProductionPackage(userId: string, contentPr
       description: [item.identity, item.appearance, item.costume, item.personality].filter(Boolean).join("；")
     }));
     const scenes = extractSceneNames(scriptContent, input.genre).map((name, index) => ({ id: `scene_${index + 1}`, name, description: `${name}，从已确认剧本提取` }));
-    const nextVersion = (project.scripts[0]?.version ?? 0) + 1;
+    return { generated, scriptContent, characters, scenes };
+    }, async (tx, { generated, scriptContent, characters, scenes }) => {
+    const nextVersion = (await tx.scriptVersion.aggregate({ where: { contentProjectId }, _max: { version: true } }))._max.version ?? 0;
     const snapshot = JSON.parse(JSON.stringify({ key: source.kind === "script" ? "script_structure" : "novel_to_script", plan, sourceId: source.id })) as Prisma.InputJsonValue;
-    await prisma.$transaction(async (tx) => {
-      await tx.scriptVersion.create({ data: { id: `content_script_${crypto.randomUUID()}`, contentProjectId, version: nextVersion, status: "confirmed", content: scriptContent, result: { synopsis: generated.synopsis ?? "" }, promptSnapshot: snapshot } });
+      await tx.scriptVersion.create({ data: { id: `content_script_${crypto.randomUUID()}`, contentProjectId, version: nextVersion + 1, status: "confirmed", content: scriptContent, result: { synopsis: generated.synopsis ?? "" }, promptSnapshot: snapshot } });
       await tx.entityCatalog.upsert({
         where: { contentProjectId },
         create: { id: `entity_${crypto.randomUUID()}`, contentProjectId, version: 1, characters, scenes, props: [], promptSnapshot: snapshot },
@@ -404,27 +432,56 @@ export async function generateContentProductionPackage(userId: string, contentPr
     });
     return getContentProductionPackage(userId, contentProjectId);
   } catch (error) {
-    await prisma.contentProject.update({ where: { id: contentProjectId }, data: { status: "failed" } });
+    await markContentOperationFailed("script");
     throw error;
   }
 }
 
 export async function syncContentToProduction(userId: string, contentProjectId: string) {
+  return withContentGenerationOperation(userId, contentProjectId, "同步制作项目", () => syncContentToProductionUnlocked(userId, contentProjectId));
+}
+
+async function syncContentToProductionUnlocked(userId: string, contentProjectId: string) {
   const content = await prisma.contentProject.findFirst({
     where: { id: contentProjectId, userId },
-    include: { scripts: { orderBy: { version: "desc" }, take: 1 }, episodes: { orderBy: { episodeNo: "asc" } } }
+    include: { scripts: { orderBy: { version: "desc" }, take: 1 }, episodes: { orderBy: { episodeNo: "asc" }, include: { scripts: true } }, outlines: { orderBy: { version: "desc" }, take: 1 }, entities: true }
   });
   if (!content) throw new Error("内容项目不存在");
   const activeScript = content.scripts[0];
-  if (!activeScript) throw new Error("请先生成分集剧本");
+  if (!activeScript?.content.trim()) throw new Error("请先生成分集剧本");
   const productionProjectId = content.productionProjectId ?? `proj_${crypto.randomUUID()}`;
   const artStyle = (content.styleProfile as { name?: string } | null)?.name || "AI 自动匹配画风";
-  await prisma.$transaction(async (tx) => {
+  const entities = collectHandoffEntities({ script: activeScript.content, catalog: content.entities, outline: content.outlines[0]?.result, episodes: content.episodes.map((episode) => episode.scripts.find((script) => script.version === episode.activeScriptVersion)?.structuredResult) });
+  await saveContentOperationOutput(async (tx) => {
+    const existingProject = await tx.project.findUnique({ where: { id: productionProjectId }, include: { scripts: { orderBy: { createdAt: "desc" }, take: 1 } } });
+    if (existingProject && existingProject.userId !== userId) throw new Error("关联制作项目不可访问");
+    if (existingProject && existingProject.scripts[0]?.content !== activeScript.content && await tx.storyboard.count({ where: { projectId: productionProjectId } }) > 0) {
+      throw new Error("关联项目已进入分镜制作，当前剧本与制作版本不同。请先保留现有制作版本，再建立新的内容项目进行改版。");
+    }
     await tx.project.upsert({
       where: { id: productionProjectId },
-      create: { id: productionProjectId, userId, name: content.title, type: "漫剧改编", intro: "由内容创作同步", sourceType: "script", artStyle, videoRatio: "9:16", status: "scripting", episodes: Math.max(1, content.episodes.length), segmentProfile: "jimeng_15s", episodeDurationSeconds: 180, sourceCharactersPerEpisode: 20000, allowExpansion: false },
-      update: { name: content.title, artStyle, status: "scripting", episodes: Math.max(1, content.episodes.length), allowExpansion: false }
+      create: { id: productionProjectId, userId, name: content.title, type: "漫剧改编", intro: "由内容创作同步", sourceType: "script", artStyle, videoRatio: "9:16", status: "scripting", episodes: Math.max(1, content.episodes.length), segmentProfile: "jimeng_15s", episodeDurationSeconds: 180, sourceCharactersPerEpisode: 20000, allowExpansion: false, textProvider: content.textProvider, textModel: content.textModel },
+      update: { name: content.title, episodes: Math.max(1, content.episodes.length), allowExpansion: false }
     });
+    const existingCharacters = await tx.character.findMany({ where: { projectId: productionProjectId } });
+    for (const character of entities.characters) {
+      const existing = existingCharacters.find((item) => item.name === character.name);
+      const id = existing?.id ?? handoffEntityId("role", productionProjectId, character.name);
+      const prompt = [character.name, character.description, artStyle, "角色三视图，正面、侧面、背面，保持人物外观一致，无水印"].join("，");
+      await tx.character.upsert({ where: { id }, create: { id, projectId: productionProjectId, name: character.name, identity: character.identity || "剧本角色", appearance: character.appearance || "", costume: character.costume || "", personality: character.personality || "", prompt, negativePrompt: "换脸，多余肢体，文字，水印", consistencyLevel: "high" }, update: {} });
+      const roleAsset = await tx.asset.findFirst({ where: { projectId: productionProjectId, relatedCharacterId: id, type: "role" } });
+      if (!roleAsset) await tx.asset.create({ data: { id: `asset_${id}`, projectId: productionProjectId, type: "role", name: `${character.name} 角色参考图`, description: character.description, prompt: existing?.prompt || prompt, status: "pending", relatedCharacterId: id } });
+    }
+    for (const kind of ["scenes", "props"] as const) {
+      for (const item of entities[kind]) {
+        const type = kind === "scenes" ? "scene" : "prop";
+        const existing = await tx.asset.findFirst({ where: { projectId: productionProjectId, type, name: item.name } });
+        if (!existing) await tx.asset.create({ data: { id: handoffEntityId(type, productionProjectId, item.name), projectId: productionProjectId, type, name: item.name, description: item.description, prompt: `${item.name}，${item.description}，${artStyle}，${type === "scene" ? "空镜场景参考图" : "道具参考图"}，无文字，无水印`, status: "pending" } });
+      }
+    }
+    const catalog = Object.fromEntries((["characters", "scenes", "props"] as const).map((kind) => [kind, entities[kind].map((item) => ({ id: handoffEntityId(kind, productionProjectId, item.name), name: item.name, description: item.description }))]));
+    await tx.entityCatalog.upsert({ where: { contentProjectId }, create: { id: `entity_${crypto.randomUUID()}`, contentProjectId, characters: catalog.characters, scenes: catalog.scenes, props: catalog.props, promptSnapshot: { source: "saved_content_handoff", scriptVersion: activeScript.version } }, update: { characters: catalog.characters, scenes: catalog.scenes, props: catalog.props } });
+    await tx.project.update({ where: { id: productionProjectId }, data: { characters: await tx.character.count({ where: { projectId: productionProjectId } }) } });
     await tx.scriptDraft.upsert({
       where: { id: `script_${contentProjectId}_active` },
       create: { id: `script_${contentProjectId}_active`, projectId: productionProjectId, name: `${content.title} 分集剧本`, content: activeScript.content, synopsis: "由内容创作逐集同步", version: activeScript.version },

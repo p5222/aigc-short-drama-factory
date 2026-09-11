@@ -79,10 +79,10 @@ interface GeminiImageResponse {
 }
 
 export async function generateDashScopeImage(input: ImageGenerationInput): Promise<ImageGenerationResult> {
-  const apiKey = process.env.DASHSCOPE_API_KEY;
+  const apiKey = input.apiKey || process.env.DASHSCOPE_API_KEY;
   if (!apiKey) throw new Error("Missing DASHSCOPE_API_KEY");
 
-  const baseUrl = process.env.DASHSCOPE_BASE_URL || "https://dashscope.aliyuncs.com/api/v1";
+  const baseUrl = input.baseUrl || process.env.DASHSCOPE_BASE_URL || "https://dashscope.aliyuncs.com/api/v1";
   const preferredModel = normalizeDashScopeImageModel(input.model || process.env.DASHSCOPE_IMAGE_MODEL || "qwen-image");
   const candidates = resolveDashScopeImageCandidates(input, preferredModel);
   const skipped: string[] = [];
@@ -337,6 +337,7 @@ export async function testImageModelConnection(options: Pick<ImageGenerationInpu
       provider,
       model: options.model,
       baseUrl: options.baseUrl,
+      apiKey: options.apiKey,
       prompt: ""
     },
     provider
@@ -352,6 +353,7 @@ export async function testImageModelConnection(options: Pick<ImageGenerationInpu
       provider: options.provider,
       model: options.model,
       baseUrl: options.baseUrl,
+      apiKey: options.apiKey,
       prompt,
       negativePrompt: "text, subtitle, watermark, logo, malformed hands, extra fingers, face drift, duplicate person, low quality",
       ratio: "9:16",
@@ -475,6 +477,7 @@ function normalizeDashScopeImageModel(model: string) {
 }
 
 function resolveDashScopeImageCandidates(input: ImageGenerationInput, preferredModel: string) {
+  if (input.modelPool !== undefined) return uniqueStrings([preferredModel, ...input.modelPool]).map(normalizeDashScopeImageModel);
   return uniqueStrings([
     preferredModel,
     ...(input.modelPool ?? []),

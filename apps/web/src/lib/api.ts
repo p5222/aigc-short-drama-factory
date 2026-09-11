@@ -500,7 +500,9 @@ export const api = {
     request<DirectorStoryboardPackage>(`/projects/${projectId}/director-storyboard/export`, { method: "POST" }),
   exportJobs: (projectId: string) => request<ExportJob[]>(`/projects/${projectId}/export/jobs`),
   downloadExportJob: (projectId: string, jobId: string) => requestBlob(`/projects/${projectId}/export/jobs/${jobId}/download`),
-  createExportJob: (projectId: string, input: { type: "tts" | "subtitle" | "video_export" }) =>
+  quoteExport: (projectId: string, input: { type: "tts" | "subtitle" | "video_export"; storyboardIds?: string[] }) =>
+    request<{ type: string; providerId: string; providerName: string; model: string; characters: number; estimatedCredits: number; unitCredits: number; unit: string; cached: boolean; cueCount: number }>(`/projects/${projectId}/exports/quote`, { method: "POST", body: JSON.stringify(input) }),
+  createExportJob: (projectId: string, input: { type: "tts" | "subtitle" | "video_export"; storyboardIds?: string[]; maxCredits?: number }) =>
     request<ExportJob>(`/projects/${projectId}/export/jobs`, {
       method: "POST",
       body: JSON.stringify(input)

@@ -1,156 +1,110 @@
 # 新电脑与开发智能体接手指南
 
-> 2026-09-09 更新：当前优先使用 [GitHub 与跨设备发布指南](./github-and-multi-device-deployment.md)，以 GitHub main 为发布来源，并用跨平台命令 `pnpm deploy:server` 发布。下文保留旧的 Windows / 服务器直推操作记录。
+修订：2026-09-12。统一流程是：从 GitHub 拉取 → 功能分支修改 → 验证 → 提交并推送 → PR 合并 main → 独立发布服务器 → 业务验收。个人开发也可以按这一流程自查；多人协作时由另一位开发者审查 PR。
 
-## 双击入口
+## 交接什么
 
-- `一键发布到服务器.bat`：日常代码提交、服务器 Git push 和生产部署。
-- `新电脑一键接入并拉取项目.bat`：新设备生成公钥；授权后再次运行即可 clone。
-- `管理员一键授权新设备.bat`：当前管理员电脑为新设备添加受限 Git 公钥。
-- `一键同步到GitHub.bat`：GitHub 网络恢复后同步当前分支与 `main`。
+提供仓库地址 `https://github.com/p5222/aigc-short-drama-factory.git`、当前功能分支、最后提交号、目标需求、测试结果和未完成事项即可。真实环境配置另走受控渠道，不能放进提示词、截图或提交。代码、提交历史和操作文档随 GitHub 同步，生产数据库、生成素材、`.env` 与私钥不会随 clone 下载。
 
-本仓库的远端是 `https://github.com/p5222/aigc-short-drama-factory.git`。代码、提交历史和交接文档都应进入 GitHub；真实密钥只保存在本机或服务器环境变量中，禁止提交 `.env`、私钥或访问令牌。
-
-## 1. 给开发者或智能体什么
-
-提供以下信息即可，不需要复制旧 Codex 的聊天记录：
-
-- GitHub 仓库地址
-- 要继续开发的分支名和目标需求
-- 本文档路径：`docs/operations/developer-handoff-and-push.md`
-- 需要联调时，单独通过安全渠道提供 `.env` 所需密钥，不能放进提示词、提交或截图
-
-推荐提示词：
+给接手开发者的任务说明可以是：
 
 ```text
-请克隆 https://github.com/p5222/aigc-short-drama-factory.git，阅读 README.md、
-docs/operations/developer-handoff-and-push.md 和当前 git 状态。基于最新远端分支开发，
-不要提交 .env、密钥、输出目录或本机工具目录。完成后运行 pnpm test、pnpm typecheck、
-pnpm build，review diff，提交并 push 到 codex/<任务名> 分支，然后返回 commit 和分支名。
+请阅读 README.md、docs/operations/github-and-multi-device-deployment.md 和当前 Git 状态。
+确认目标分支已包含远端最新提交；使用 codex/<任务名> 功能分支开发。
+不要提交 .env、私钥、访问令牌、输出目录或临时快照。
+完成后生成 Prisma Client、构建 shared，再运行 pnpm test、pnpm typecheck 和 pnpm build。
+审查 diff，逐项添加文件，提交并 push 功能分支，返回分支、提交号与验证结果。
+GitHub push 不等于生产部署；生产需合并 main 后独立执行发布与验收。
 ```
 
-## 2. 新电脑首次接入
+## 新电脑首次接入
 
-安装 Git、Node.js 24+、pnpm 11+ 和 GitHub CLI，然后执行：
+安装 Git、Node.js 24、GitHub CLI；运行项目或发布时使用 pnpm 11.7.0。每个人登录自己的 GitHub 账号，由仓库管理员添加协作者；不要共享账号或 PAT。
 
-```powershell
+```bash
 gh auth login
 gh auth setup-git
+gh auth status
+git config --global user.name "你的名字"
+git config --global user.email "你的GitHub提交邮箱"
+npm install -g pnpm@11.7.0
 git clone https://github.com/p5222/aigc-short-drama-factory.git
 cd aigc-short-drama-factory
+git switch -c codex/my-task
 pnpm install --frozen-lockfile
-git switch -c codex/<task-name>
 ```
 
-GitHub 账号必须是仓库协作者，或使用有仓库写权限的组织账号。验证权限：
+继续已存在的远端功能分支时，执行 `git fetch origin` 和 `git switch --track origin/codex/分支名`；本地已有该分支则 `git switch` 后 `git pull --ff-only`。离开旧电脑前先 push，单独 commit 不能让其他电脑获得进展。
 
-```powershell
-gh auth status
-git remote -v
-git push -u origin HEAD
-```
+本地运行需要 Docker、独立开发数据库与 `.env`。首次配置、启动和冲突处理见 [跨设备指南](./github-and-multi-device-deployment.md)。不要把本地 `.env` 指向生产数据库。使用图形界面可启动 [Git Workbench](../../tools/git-workbench/README.md)，左侧「操作手册 · 换电脑」也可离线阅读；无需安装 Codex。
 
-若不希望共享个人账号，在 GitHub 仓库 `Settings > Collaborators` 邀请每位开发者自己的账号。不要多人共用 PAT。服务器部署权限与 GitHub 推送权限分开管理。
+## 每次迭代与合并
 
-## 3. 每次开发与推送
-
-最短路径（仅修改已跟踪文件时）：
-
-```powershell
-pnpm push:safe -- "feat: describe the change"
-```
-
-该命令自动运行测试、类型检查、构建、diff 检查、提交和 push。发现未跟踪文件时会停止，先用 `git add <明确的新文件>` 确认后再运行。
-
-```powershell
+```bash
 git fetch origin
-git switch <branch>
-git pull --ff-only
-pnpm install --frozen-lockfile
+git switch main
+git pull --ff-only origin main
+git switch -c codex/my-next-task
+# 在编辑器修改后
+pnpm --filter @aifilm/api db:generate
+pnpm --filter @aifilm/shared build
 pnpm test
 pnpm typecheck
 pnpm build
-git status --short
 git diff --check
-git add <明确的文件列表>
+git status --short
+git add <逐个审查确认的文件路径>
 git commit -m "feat: describe the change"
 git push -u origin HEAD
+gh pr create --fill --base main
 ```
 
-不要使用 `git add .` 或 `git add -A` 代替审查。提交前检查 `git status`，确认没有 `.env`、密钥、`output/`、设计插件副本、服务器快照或临时文件。
+GitHub CI 还运行隔离 PostgreSQL / Redis 集成测试和生产镜像检查，不能仅凭本地单元测试代替。冲突需要理解双方业务改动后再合并，不要强推共享分支或丢弃未确认文件。完整需求通过 PR 合并 main 后才进入发布队列。
 
-## 4. 合并与默认分支
+## 新设备的服务器权限
 
-日常开发推送到 `codex/<task-name>`。通过 Pull Request review 后合并到 `main`：
+仅开发和 push GitHub 不需要服务器权限；发布者需要设备专属 SSH 公钥授权。新电脑自己生成密钥，私钥留在新电脑，只将 `.pub` 公钥交给管理员。不要让管理员分发共用私钥。
 
-```powershell
-gh pr create --fill --base main --head codex/<task-name>
-```
-
-新环境默认克隆 `main`，所以可交付功能最终必须合并到 `main`；仅推送功能分支不等于完成发布。
-
-## 5. 生产服务器部署
-
-GitHub 推送成功不等于生产上线。生产部署需要单独的 SSH 私钥或服务器管理员授权。Windows 环境应配置 `~/.ssh/config`：
-
-```sshconfig
-Host manjiao
-  HostName 43.139.101.102
-  User ubuntu
-  IdentityFile ~/.ssh/manjiao_tencent
-  IdentitiesOnly yes
-```
-
-先验证：
-
-```powershell
-ssh manjiao "echo SSH_OK"
-```
-
-生产部署只接受干净、已提交、已推送的当前分支：
-
-```powershell
-.\deploy\deploy_to_manjiao.bat
-```
-
-脚本会执行本地验证、推送、服务器备份、上传、重建、健康检查和失败回滚。SSH 私钥必须由服务器管理员逐人发放；离职或设备丢失时从服务器 `~/.ssh/authorized_keys` 删除对应公钥。
-
-GitHub 不可用时的最短交付路径：
-
-```powershell
-pnpm ship:server -- "feat: describe the change"
-```
-
-该命令会提交已跟踪改动、push 到服务器私有 Git 仓库并部署生产。新文件需先执行 `git add <文件>`。其他电脑可直接获取服务器最新代码：
-
-```powershell
-git clone manjiao:/opt/git/aigc-short-drama-factory.git
-```
-
-服务器 Git 的 `main` 始终对应最近一次成功发起的服务器交付；GitHub 恢复后执行 `git push origin main` 完成同步。
-
-### 新设备首次授权
-
-新设备运行公开的接入脚本，生成设备专属 key：
-
-```powershell
-.\scripts\bootstrap_manjiao_git.ps1
-```
-
-把输出的 `.pub` 公钥文件安全地发给服务器管理员。管理员在已授权电脑运行：
+管理员在已有 `manjiao` 终端权限的电脑运行：
 
 ```powershell
 .\scripts\grant_manjiao_git_access.ps1 -PublicKeyFile C:\path\device.pub
 ```
 
-授权后，新设备重新运行并直接 clone：
+新设备配置 `manjiao-git` SSH 别名后，通过以下命令验证受限 Git 权限：
 
-```powershell
-.\scripts\bootstrap_manjiao_git.ps1 -CloneTo D:\aigc-short-drama-factory
+```bash
+git ls-remote ssh://manjiao-git/opt/git/aigc-short-drama-factory.git
 ```
 
-该 key 被强制限制为 Git 命令，不能获得服务器终端、端口转发或任意命令权限。push `main` 后服务器 hook 自动部署并检查健康状态。
+这种权限拒绝交互式 SSH、文件读取与端口转发，所以 `ssh manjiao-git "echo OK"` 失败是预期行为。具备生产 main 推送权限仍意味着能运行发布代码，只授权可信设备。设备丢失或成员离职时撤销对应公钥和 GitHub 权限。
 
-## 6. 最小交接记录
+密钥生成、SSH config、腾讯云防火墙与设备撤销的完整说明见 [跨设备指南第 3、4 节](./github-and-multi-device-deployment.md)。`bootstrap_manjiao_git.ps1` 是可选 Windows 接入工具，会生成无口令设备密钥；需要口令时使用手册里的手动步骤。日常代码来源仍是 GitHub。
 
-每次交接至少说明：当前分支、最后 commit、已完成内容、未完成内容、测试结果、是否已部署、生产备份目录。不要用聊天记录替代仓库内文档和 commit。
+## 发布与确认
+
+首次升级必须由管理员按 [部署升级说明](../../deploy/UPGRADE.md) 安装新版 hook；仓库代码不会自动替换已经安装的 hook。合并 PR 后，在干净项目目录中执行：
+
+```bash
+git switch main
+git pull --ff-only origin main
+pnpm deploy:server --check
+pnpm deploy:server
+```
+
+`--check` 是只读连通性和提交一致性检查，不会构建，也不证明服务器写权限或业务通过。正式发布验证本地代码后，服务器串行执行经过校验的备份、镜像构建、非破坏 schema 同步、API 就绪检查与前端更新。`main` 是服务器收到的提交，`deployed` 是通过发布就绪检查的提交；Git push 成功不等于部署成功。
+
+同一提交失败后，先由管理员检查 `/opt/manjiao-deploy-logs/` 并修复原因，再运行 `pnpm deploy:server --retry`。代码回退优先通过 revert PR 发布新提交；自动源码恢复不会恢复数据库和客户素材。`RECOVERY_FAILED` 不能视作已恢复。
+
+旧的 `一键发布到服务器.bat`、`pnpm ship:server` 与 `deploy/deploy_to_manjiao.bat` 已转到统一入口，不能跳过 GitHub main，也不再替你提交代码。不要根据旧版本文档绕过 GitHub 直接发布。GitHub 不可用时保留本地工作，恢复连通后继续审查与推送。
+
+发布后完成 [发布验收单](./release-acceptance.md)，包括真实任务、积分、私有媒体、导出和后台运营流程。只在证据完整时记录“已部署并验收”。
+
+## 每次交接记录
+
+- 分支、GitHub PR、最后提交号与服务器 deployed 提交号。
+- 已完成行为、遗留问题、测试命令及结果。
+- 是否已发布、验收人、验收时间、备份和日志路径。
+- 涉及 schema 或环境配置的变更、兼容性和恢复步骤。
+
+不在交接记录中包含任何密钥、令牌、真实客户数据或备份内容。

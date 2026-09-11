@@ -302,6 +302,7 @@ export interface ExportJob {
   id: string;
   projectId: string;
   type: "tts" | "subtitle" | "video_export";
+  storyboardIds?: string[];
   status: ExportJobStatus;
   outputUrl?: string;
   downloadUrl?: string;
@@ -1098,17 +1099,25 @@ export interface AdminSummary {
   tasksToday: number;
   successRate: number;
   creditsConsumed: number;
-  providerCost: number;
-  creditsRevenueEstimate?: number;
+  /** No vendor invoice/usage-cost ledger is connected yet; unknown is not zero. */
+  providerCost: number | null;
+  creditsRevenueEstimate?: number | null;
+  paidRechargeCny?: number;
+  totalTasks?: number;
+  completedTasks?: number;
+  providerCostStatus?: "unavailable" | "recorded";
+  metricsNote?: string;
+  unreconciledCredits?: number;
+  metricTimezone?: "Asia/Shanghai";
   refundCredits?: number;
   failedTasks?: number;
-  grossMarginEstimate?: number;
-  grossMarginRate?: number;
+  grossMarginEstimate?: number | null;
+  grossMarginRate?: number | null;
   costByStage?: Array<{
     stage: string;
     tasks: number;
     credits: number;
-    providerCost: number;
+    providerCost: number | null;
     failed: number;
     successRate: number;
   }>;
@@ -1118,7 +1127,7 @@ export interface AdminSummary {
     modality: string;
     tasks: number;
     credits: number;
-    providerCost: number;
+    providerCost: number | null;
     failed: number;
     successRate: number;
   }>;

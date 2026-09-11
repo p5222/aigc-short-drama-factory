@@ -21,6 +21,7 @@
   RefreshCw,
   ReceiptText,
   Search,
+  Save,
   ShieldCheck,
   SlidersHorizontal,
   ToggleLeft,
@@ -31,7 +32,7 @@
   WalletCards,
   X
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type {
   AdminSummary,
@@ -65,8 +66,13 @@ import type {
 } from "@aifilm/shared";
 import { api, type AdminContentProject } from "../lib/api";
 import { AdminEvaluationPage, AdminMasterDetail, AdminTablePage } from "../admin";
+import { closeAfterAdminSuccess, createAdminActionRunner, createCreditAdjustmentAttempt, isValidCreditAdjustment, readAdminHash, runAdminBatch, type AdminActionResult } from "../admin/adminActionModel";
+import { useAdminDialog } from "../admin/useAdminDialog";
+import { fetchAdminUserPage } from "../admin/adminApi";
+import { AdminAuditLogPage } from "../admin/AdminAuditLogPage";
+import { formatAdminMoney, formatAdminTaskSuccess } from "../admin/adminMetricsModel";
 
-type AdminActionResult = void | Promise<void>;
+const AdminActionContext = createContext({ pending: false, message: "", error: "" });
 type ProviderTestResult = ModelTestResult | ImageModelTestResult | VideoModelTestResult;
 type ProviderTestState = {
   loading: boolean;
@@ -77,9 +83,10 @@ type PipelineTestState = {
   result?: VisualPipelineTestResult;
 };
 
-const adminModules = ["运营总览", "用户管理", "平台公告", "创作现场管理", "创作质量中心", "提示词评分", "兑换码", "套餐会员", "订阅会员", "模型路由", "价格策略"];
+const adminModules = ["运营总览", "用户管理", "平台公告", "创作现场管理", "创作质量中心", "提示词评分", "兑换码", "套餐会员", "订阅会员", "模型路由", "价格策略", "操作记录"];
 
 const moduleCopy: Record<string, { title: string; subtitle: string }> = {
+  操作记录: { title: "操作记录", subtitle: "查看管理员配置和运营操作的执行记录，用于核对变更、排查失败。" },
   运营总览: { title: "运营总览", subtitle: "查看用户、积分、模型成本和任务健康度。" },
   用户管理: { title: "用户管理", subtitle: "管理账号状态、身份权限、积分余额、密码重置和运营入账。" },
   平台公告: { title: "平台公告", subtitle: "维护前台工作台公告，并在子模块管理帮助中心教程与 FAQ。" },
@@ -87,7 +94,7 @@ const moduleCopy: Record<string, { title: string; subtitle: string }> = {
   创作质量中心: { title: "创作质量中心", subtitle: "根据真实创作内容定位阶段瓶颈，对比模型与提示词版本，持续验证优化效果。" },
   兑换码: { title: "兑换码", subtitle: "批量生成唯一兑换码，控制额度、次数和启停状态。" },
   套餐会员: { title: "套餐会员", subtitle: "管理前台充值包，启停后前端自动适配展示。" },
-  订阅会员: { title: "订阅会员", subtitle: "管理月度额度、折扣、优先队列和会员权益。" },
+  订阅会员: { title: "订阅会员", subtitle: "预留方案配置。订阅购买、自动月度发放、折扣与优先队列尚未开放。" },
   模型路由: { title: "模型路由", subtitle: "管理文本、生图、视频供应商，测试模型连接。" },
   提示词评分: { title: "提示词评分", subtitle: "维护各阶段 LLM 评测提示词、评分标准和输出 JSON 约束。" },
   价格策略: { title: "价格策略", subtitle: "按供应商、模型和计费单位配置积分单价与成本。" }
@@ -120,10 +127,18 @@ export function AdminPage({
   users: AdminUserRow[];
   evaluation?: EvaluationOverview;
   qualityProjects: QualityProjectRow[];
-  onRefresh: () => void;
+  onRefresh: () => void | Promise<void>;
 }) {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [actionPending, setActionPending] = useState(false);
+  const actionRunner = useRef(createAdminActionRunner((state) => {
+    setActionPending(state.pending);
+    setMessage(state.message);
+    setError(state.error);
+  }));
+  const providerTestPending = useRef(new Set<string>());
+  const pipelineTestPending = useRef(new Set<string>());
   const [testResult, setTestResult] = useState<ModelTestResult | null>(null);
   const [imageTestResult, setImageTestResult] = useState<ImageModelTestResult | null>(null);
   const [videoTestResult, setVideoTestResult] = useState<VideoModelTestResult | null>(null);
@@ -133,7 +148,7 @@ export function AdminPage({
   const [pipelineTests, setPipelineTests] = useState<Record<string, PipelineTestState>>({});
   const [relayPolicy, setRelayPolicy] = useState<RelayGatewayPolicy | null>(null);
   const [activeModule, setActiveModule] = useState(() => {
-    const hash = decodeURIComponent(window.location.hash.replace(/^#/, ""));
+    const hash = readAdminHash(window.location.hash);
     if (hash === "用户积分") return "用户管理";
     if (hash === "智能体接入") return "提示词评分";
     if (qualityPanelFromHash(hash)) return "创作质量中心";
@@ -152,7 +167,7 @@ export function AdminPage({
 
   useEffect(() => {
     function syncHashModule() {
-      const hash = decodeURIComponent(window.location.hash.replace(/^#/, ""));
+      const hash = readAdminHash(window.location.hash);
       if (hash === "用户积分") {
         setActiveModule("用户管理");
         return;
@@ -178,19 +193,18 @@ export function AdminPage({
   }, [activeModule, providers.length]);
 
   async function runAction(action: () => Promise<unknown>, success: string) {
-    setMessage("");
-    setError("");
-    try {
-      await action();
-      setMessage(success);
-      onRefresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "操作失败");
-    }
+    return actionRunner.current(action, success, onRefresh);
+  }
+
+  async function refreshQualitySnapshot() {
+    try { await onRefresh(); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : "后台数据刷新失败"); }
   }
 
   async function runModelTest(provider: ModelProvider, model: string) {
     const testKey = `${provider.id}:${model}`;
+    if (providerTestPending.current.has(testKey)) return;
+    providerTestPending.current.add(testKey);
     setMessage("");
     setError("");
     setTestResult(null);
@@ -222,6 +236,8 @@ export function AdminPage({
         message: err instanceof Error ? err.message : "模型测试失败"
       };
       setProviderTests((current) => ({ ...current, [testKey]: { loading: false, result } }));
+    } finally {
+      providerTestPending.current.delete(testKey);
     }
   }
 
@@ -241,9 +257,13 @@ export function AdminPage({
     const [adapterRes, pipelineRes] = await Promise.allSettled([api.openSourceAdapters(), api.visualPipelines()]);
     if (adapterRes.status === "fulfilled") setOpenSourceAdapters(adapterRes.value);
     if (pipelineRes.status === "fulfilled") setVisualPipelines(pipelineRes.value);
+    const failures = [adapterRes, pipelineRes].filter((result) => result.status === "rejected");
+    if (failures.length) setError("部分模型接入状态读取失败，请刷新重试；空列表不代表尚未配置。");
   }
 
   async function runPipelineTest(pipelineId: string) {
+    if (pipelineTestPending.current.has(pipelineId)) return;
+    pipelineTestPending.current.add(pipelineId);
     setPipelineTests((current) => ({ ...current, [pipelineId]: { loading: true } }));
     try {
       const result = await api.testVisualPipeline(pipelineId);
@@ -272,31 +292,36 @@ export function AdminPage({
           }
         }
       }));
+    } finally {
+      pipelineTestPending.current.delete(pipelineId);
     }
   }
 
   const current = moduleCopy[activeModule] ?? moduleCopy.运营总览;
 
   return (
-    <div className="admin-v2-page">
+    <AdminActionContext.Provider value={{ pending: actionPending, message, error }}>
+    <div className="admin-v2-page" aria-busy={actionPending}>
       <header className="admin-v2-titlebar">
         <div>
           <h1>{current.title}</h1>
           <p>{current.subtitle}</p>
         </div>
         <div className="admin-v2-title-actions">
-          <button className="admin-icon-btn" onClick={onRefresh} title="刷新">
+          <button className="admin-icon-btn" disabled={actionPending} onClick={() => void actionRunner.current(async () => { await onRefresh(); }, "后台数据已刷新。") } title="刷新" aria-label="刷新后台数据">
             <RefreshCw size={18} />
           </button>
         </div>
       </header>
 
-      {message ? <p className="admin-toast success">{message}</p> : null}
-      {error ? <p className="admin-toast danger">{error}</p> : null}
+      {message ? <p className="admin-toast success" role="status">{message}</p> : null}
+      {error ? <p className="admin-toast danger" role="alert">{error}</p> : null}
 
+      <fieldset className="admin-action-scope" disabled={actionPending}>
+      {activeModule === "操作记录" ? <AdminAuditLogPage /> : null}
       {activeModule === "运营总览" ? <DashboardSection summary={summary} providers={providers} modelPrices={modelPrices} /> : null}
       {activeModule === "创作现场管理" ? <><ContentProjectsAdminSection /><ShowcaseWorksSection /></> : null}
-      {activeModule === "创作质量中心" ? <QualityCenterSection evaluation={evaluation} projects={qualityProjects} providers={providers} onRefresh={onRefresh} /> : null}
+      {activeModule === "创作质量中心" ? <QualityCenterSection evaluation={evaluation} projects={qualityProjects} providers={providers} onRefresh={refreshQualitySnapshot} /> : null}
       {activeModule === "提示词评分" ? (
         <PromptScoringSection
           templates={templates}
@@ -379,32 +404,29 @@ export function AdminPage({
           onDelete={(id) => runAction(() => api.deleteModelPrice(id), "模型价格策略已删除。")}
         />
       ) : null}
+      </fieldset>
     </div>
+    </AdminActionContext.Provider>
   );
 }
 
 function DashboardSection({ summary, providers, modelPrices }: { summary?: AdminSummary; providers: ModelProvider[]; modelPrices: ModelPrice[] }) {
   const enabledProviders = providers.filter((item) => item.enabled).length;
   const enabledPrices = modelPrices.filter((item) => item.enabled).length;
-  const disabledProviders = providers.length - enabledProviders;
-  const avgCredits = enabledPrices ? Math.round(modelPrices.filter((item) => item.enabled).reduce((sum, item) => sum + item.unitCredits, 0) / enabledPrices) : 0;
-  const providerCost = summary?.providerCost ?? 0;
-  const revenue = summary?.creditsRevenueEstimate ?? 0;
-  const grossMargin = summary?.grossMarginEstimate ?? revenue - providerCost;
   return (
     <section className="admin-v2-section">
       <div className="admin-v2-metrics">
-        <AdminMetric icon={<UserRound size={22} />} label="注册用户" value={summary?.users ?? 0} hint="当前系统用户" tone="blue" />
-        <AdminMetric icon={<DatabaseZap size={22} />} label="项目数量" value={summary?.projects ?? 0} hint={`${summary?.tasksToday ?? 0} 个今日任务`} tone="amber" />
-        <AdminMetric icon={<CheckCircle2 size={22} />} label="任务成功率" value={`${summary?.successRate ?? 0}%`} hint="生成任务健康度" tone="green" />
+        <AdminMetric icon={<UserRound size={22} />} label="注册用户" value={summary?.users ?? "未读取"} hint="当前系统用户" tone="blue" />
+        <AdminMetric icon={<DatabaseZap size={22} />} label="项目数量" value={summary?.projects ?? "未读取"} hint={`今日 ${summary?.tasksToday ?? "—"} 个生成任务（北京时间）`} tone="amber" />
+        <AdminMetric icon={<CheckCircle2 size={22} />} label="任务成功率" value={formatAdminTaskSuccess(summary?.successRate, summary?.completedTasks)} hint={`仅统计 ${summary?.completedTasks ?? "—"} 个成功或失败任务`} tone="green" />
         <AdminMetric icon={<Activity size={22} />} label="启用渠道" value={enabledProviders} hint={`${enabledPrices} 条价格启用`} tone="violet" />
       </div>
 
       <div className="admin-v2-metrics small">
-        <AdminMetric icon={<WalletCards size={20} />} label="积分消耗" value={(summary?.creditsConsumed ?? 0).toLocaleString()} hint="累计消耗积分" tone="blue" />
-        <AdminMetric icon={<CircleDollarSign size={20} />} label="供应商成本" value={`¥${providerCost.toFixed(2)}`} hint="已记录成本" tone="amber" />
-        <AdminMetric icon={<ChartNoAxesCombined size={20} />} label="毛利估算" value={`¥${grossMargin.toFixed(2)}`} hint={`${summary?.grossMarginRate ?? 0}% 毛利率`} tone="green" />
-        <AdminMetric icon={<ShieldCheck size={20} />} label="退款积分" value={(summary?.refundCredits ?? 0).toLocaleString()} hint={`${summary?.failedTasks ?? 0} 个失败任务`} tone="violet" />
+        <AdminMetric icon={<WalletCards size={20} />} label="实扣积分" value={summary?.creditsConsumed.toLocaleString() ?? "未读取"} hint="以消耗流水为准" tone="blue" />
+        <AdminMetric icon={<CircleDollarSign size={20} />} label="充值实收" value={formatAdminMoney(summary?.paidRechargeCny, "未读取")} hint="已支付的真实订单金额" tone="green" />
+        <AdminMetric icon={<ChartNoAxesCombined size={20} />} label="供应商成本" value={formatAdminMoney(summary?.providerCost)} hint={summary?.providerCostStatus === "recorded" ? "已记录供应商实际成本" : "尚未接入实际用量账单"} tone="amber" />
+        <AdminMetric icon={<ShieldCheck size={20} />} label="解冻积分" value={summary?.refundCredits?.toLocaleString() ?? "未读取"} hint="释放冻结额度，不代表现金退款" tone="violet" />
       </div>
 
       <div className="admin-v2-card admin-dashboard-grid">
@@ -415,10 +437,12 @@ function DashboardSection({ summary, providers, modelPrices }: { summary?: Admin
           </div>
         </div>
         <div className="admin-policy-strip">
-          <PolicyItem title="任务队列" body={`${summary?.tasksToday ?? 0} 个任务已记录，成功率 ${summary?.successRate ?? 0}%。`} />
+          <PolicyItem title="任务统计" body={`累计 ${summary?.totalTasks ?? "—"} 个生成任务；今日 ${summary?.tasksToday ?? "—"} 个（北京时间），不含内部操作锁。`} />
           <PolicyItem title="渠道覆盖" body={`${enabledProviders}/${providers.length} 个供应商启用，${enabledPrices} 条价格策略可用。`} />
-          <PolicyItem title="收入与成本" body={`积分收入估算 ¥${revenue.toFixed(2)}，供应商成本 ¥${providerCost.toFixed(2)}，平均单价 ${avgCredits} 积分。`} />
+          <PolicyItem title="收款与成本" body={`充值实收 ${formatAdminMoney(summary?.paidRechargeCny, "未读取")}；尚未按消耗确认收入。${summary?.grossMarginEstimate == null ? "供应商账单未完成核对，毛利暂不可计算。" : `已记录毛利 ${formatAdminMoney(summary.grossMarginEstimate)}。`}`} />
         </div>
+        {summary?.metricsNote ? <p className="admin-list-note">{summary.metricsNote}</p> : null}
+        {(summary?.unreconciledCredits ?? 0) > 0 ? <p className="admin-toast danger" role="status">积分账户累计值与消耗流水相差 {summary!.unreconciledCredits!.toLocaleString()} 积分，需核对历史数据。</p> : null}
       </div>
 
       <AdminTablePage
@@ -444,9 +468,16 @@ function ContentProjectsAdminSection() {
   const [rows, setRows] = useState<AdminContentProject[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  useEffect(() => { void api.adminContentProjects().then(setRows).catch((reason) => setError(reason instanceof Error ? reason.message : "内容项目加载失败")).finally(() => setLoading(false)); }, []);
+  const [reload, setReload] = useState(0);
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setError("");
+    void api.adminContentProjects().then((result) => { if (active) setRows(result); }).catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : "内容项目加载失败"); }).finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [reload]);
   const stepLabels: Record<string, string> = { source: "创作意图", analysis: "爆款分析", strategy: "创作策略", outline: "章节大纲", chapter: "分批正文", script: "剧本", entity: "人物场景" };
-  return <section className="admin-v2-card admin-content-projects"><header className="admin-v2-card-head"><div><h2>内容创作流转</h2><p>与前台内容工作台共用真实项目、分析、大纲和章节数据。</p></div><span>{rows.length} 个项目</span></header>{loading ? <p className="admin-empty">正在读取内容项目...</p> : error ? <p className="admin-toast danger">{error}</p> : <div className="admin-content-project-list">{rows.map((row) => <article key={row.id}><div><strong>{row.title}</strong><small>{row.user?.name || row.user?.email || "未知创作者"} · {new Date(row.updatedAt).toLocaleString("zh-CN")}</small></div><span>{stepLabels[row.activeStep] || row.activeStep}</span><span className={`admin-content-status ${row.status}`}>{row.status}</span><dl><div><dt>分析</dt><dd>{row.counts.analyses}</dd></div><div><dt>大纲</dt><dd>{row.counts.outlines}</dd></div><div><dt>章节</dt><dd>{row.counts.chapters}</dd></div><div><dt>剧本</dt><dd>{row.counts.scripts}</dd></div></dl></article>)}</div>}</section>;
+  return <section className="admin-v2-card admin-content-projects"><header className="admin-v2-card-head"><div><h2>内容创作流转</h2><p>与前台内容工作台共用真实项目、分析、大纲和章节数据。</p></div><span>{rows.length} 个项目</span><button className="admin-icon-btn" disabled={loading} type="button" aria-label="刷新内容项目" onClick={() => setReload((value) => value + 1)}><RefreshCw size={17} /></button></header>{loading ? <p className="admin-empty" role="status">正在读取内容项目...</p> : error ? <p className="admin-toast danger" role="alert">{error}</p> : !rows.length ? <EmptyHint text="暂无内容创作项目。创作者保存内容项目后可在此查看进度。" /> : <div className="admin-content-project-list">{rows.map((row) => <article key={row.id}><div><strong>{row.title}</strong><small>{row.user?.name || row.user?.email || "未知创作者"} · {new Date(row.updatedAt).toLocaleString("zh-CN")}</small></div><span>{stepLabels[row.activeStep] || row.activeStep}</span><span className={`admin-content-status ${row.status}`}>{row.status}</span><dl><div><dt>分析</dt><dd>{row.counts.analyses}</dd></div><div><dt>大纲</dt><dd>{row.counts.outlines}</dd></div><div><dt>章节</dt><dd>{row.counts.chapters}</dd></div><div><dt>剧本</dt><dd>{row.counts.scripts}</dd></div></dl></article>)}</div>}</section>;
 }
 
 function ShowcaseWorksSection() {
@@ -462,6 +493,7 @@ function ShowcaseWorksSection() {
   const [draft, setDraft] = useState<ShowcaseWork | null>(null);
   const [reviewNote, setReviewNote] = useState("");
   const [working, setWorking] = useState(false);
+  const showcasePending = useRef(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
@@ -512,7 +544,8 @@ function ShowcaseWorksSection() {
   }
 
   async function saveDraft() {
-    if (!selected || !draft) return;
+    if (!selected || !draft || showcasePending.current) return;
+    showcasePending.current = true;
     setWorking(true);
     setMessage("");
     setError("");
@@ -534,11 +567,14 @@ function ShowcaseWorksSection() {
       setError(reason instanceof Error ? reason.message : "保存失败");
     } finally {
       setWorking(false);
+      showcasePending.current = false;
     }
   }
 
   async function review(decision: "approve" | "reject") {
-    if (!selected || !draft) return;
+    if (!selected || !draft || showcasePending.current) return;
+    if (decision === "reject" && !reviewNote.trim()) { setError("请填写驳回原因，方便创作者修改后重新提交。"); return; }
+    showcasePending.current = true;
     setWorking(true);
     setMessage("");
     setError("");
@@ -563,6 +599,7 @@ function ShowcaseWorksSection() {
       setError(reason instanceof Error ? reason.message : "审核失败");
     } finally {
       setWorking(false);
+      showcasePending.current = false;
     }
   }
 
@@ -596,11 +633,13 @@ function ShowcaseWorksSection() {
 
       <AdminMasterDetail
         open={Boolean(selected && draft)}
+        busy={working}
         title={selected?.title ?? "作品审核"}
         meta={selected ? <span className="adm-status" data-status={selected.status}>{showcaseStatusLabel(selected.status)}</span> : null}
         onClose={() => { setSelected(null); setDraft(null); }}
         footer={<>{message ? <span>{message}</span> : <span /> }<button className="admin-secondary-btn" type="button" disabled={working} onClick={() => void saveDraft()}>保存信息</button><button className="showcase-reject-btn" type="button" disabled={working} onClick={() => void review("reject")}><X size={16} />驳回</button><button className="admin-primary-btn" type="button" disabled={working} onClick={() => void review("approve")}><CheckCircle2 size={16} />通过并发布</button></>}
       >
+        {error ? <p className="admin-toast danger" role="alert">{error}</p> : null}
         {draft ? <div className="showcase-admin-modal-body adm-showcase-detail">
               <div className="showcase-admin-preview">
                 <video src={draft.videoUrl} poster={draft.coverUrl} controls playsInline preload="metadata" />
@@ -633,14 +672,14 @@ function CostBreakdownCard({
   rows
 }: {
   title: string;
-  rows: Array<{ name: string; sub?: string; tasks: number; credits: number; cost: number; failed: number; successRate: number }>;
+  rows: Array<{ name: string; sub?: string; tasks: number; credits: number; cost: number | null; failed: number; successRate: number }>;
 }) {
   return (
     <article className="admin-v2-card cost-breakdown-card">
       <div className="admin-v2-card-head">
         <div>
           <h2>{title}</h2>
-          <p>按真实任务记录聚合积分、供应商成本、失败数和成功率。</p>
+          <p>按任务记录聚合积分和失败数；缺少供应商实际账单时，成本显示待对账。</p>
         </div>
       </div>
       <div className="cost-breakdown-table">
@@ -650,10 +689,10 @@ function CostBreakdownCard({
             <strong>{row.name}<small>{row.sub || `${row.failed} 失败`}</small></strong>
             <span>{row.tasks}</span>
             <span>{row.credits}</span>
-            <span>¥{row.cost.toFixed(2)}</span>
+            <span>{formatAdminMoney(row.cost)}</span>
             <span>{row.successRate}%</span>
           </div>
-        )) : <div className="empty-state">暂无成本记录，生成任务后会自动汇总。</div>}
+        )) : <div className="empty-state">暂无任务统计；实际成本需接入供应商账单后核对。</div>}
       </div>
     </article>
   );
@@ -702,7 +741,7 @@ function QualityCenterSection({
   providers: ModelProvider[];
   onRefresh: () => void;
 }) {
-  const [activePanel, setActivePanel] = useState<QualityPanelKey>(() => qualityPanelFromHash(decodeURIComponent(window.location.hash.replace(/^#/, ""))) ?? "overview");
+  const [activePanel, setActivePanel] = useState<QualityPanelKey>(() => qualityPanelFromHash(readAdminHash(window.location.hash)) ?? "overview");
   const [snapshot, setSnapshot] = useState<QualityCenterOverview>();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -713,7 +752,7 @@ function QualityCenterSection({
 
   useEffect(() => {
     function syncQualityPanel() {
-      const panel = qualityPanelFromHash(decodeURIComponent(window.location.hash.replace(/^#/, "")));
+      const panel = qualityPanelFromHash(readAdminHash(window.location.hash));
       if (panel) setActivePanel(panel);
     }
     window.addEventListener("hashchange", syncQualityPanel);
@@ -1465,6 +1504,8 @@ function EvaluationSection({
   const [runError, setRunError] = useState("");
   const [datasetMessage, setDatasetMessage] = useState("");
   const [sampleKeyword, setSampleKeyword] = useState("");
+  const evaluationPending = useRef(false);
+  const datasetPending = useRef(false);
 
   useEffect(() => {
     setSelectedProjectIds((current) => current.length ? current.filter((id) => projects.some((row) => row.project.id === id)) : projects.slice(0, 3).map((row) => row.project.id));
@@ -1510,6 +1551,9 @@ function EvaluationSection({
   const projectedLlmCalls = mode === "rules" ? 0 : selectedProjectIds.length * selectedStages.length * Math.max(1, selectedModels.length);
 
   async function saveCurrentDataset() {
+    if (datasetPending.current) return;
+    if (!selectedProjectIds.length || !selectedStages.length) { setRunError("请先选择样本项目和评测阶段。"); return; }
+    datasetPending.current = true;
     setSavingDataset(true);
     setRunError("");
     setDatasetMessage("");
@@ -1531,10 +1575,15 @@ function EvaluationSection({
       setRunError(err instanceof Error ? err.message : "保存样本集失败");
     } finally {
       setSavingDataset(false);
+      datasetPending.current = false;
     }
   }
 
   async function runEvaluation() {
+    if (evaluationPending.current) return;
+    if (!selectedProjectIds.length || !selectedStages.length) { setRunError("请先选择样本项目和评测阶段。"); return; }
+    if (mode !== "rules" && !selectedModels.length) { setRunError("请先选择用于评分的文本模型。"); return; }
+    evaluationPending.current = true;
     setRunning(true);
     setRunError("");
     try {
@@ -1561,6 +1610,7 @@ function EvaluationSection({
       setRunError(err instanceof Error ? err.message : "评测运行失败");
     } finally {
       setRunning(false);
+      evaluationPending.current = false;
     }
   }
 
@@ -2226,7 +2276,7 @@ function FeedbackOpsSection({
 }
 
 function UsersSection({
-  users,
+  users: refreshSnapshot,
   onCreateUser,
   onUserSave,
   onPasswordReset,
@@ -2236,44 +2286,54 @@ function UsersSection({
   onCreateUser: (input: { name: string; email?: string; phone?: string; password: string; role?: string; status?: string; initialCredits?: number }) => AdminActionResult;
   onUserSave: (userId: string, input: Partial<Pick<AdminUserRow, "name" | "role" | "status">>) => AdminActionResult;
   onPasswordReset: (userId: string, password: string) => AdminActionResult;
-  onCreditAdjust: (input: { userId: string; amount: number; description: string }) => AdminActionResult;
+  onCreditAdjust: (input: { userId: string; amount: number; description: string; requestId?: string }) => AdminActionResult;
 }) {
   const [keyword, setKeyword] = useState("");
   const [role, setRole] = useState("all");
   const [status, setStatus] = useState("all");
   const [segment, setSegment] = useState("all");
+  const [users, setUsers] = useState<AdminUserRow[]>([]);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+  const [reloadKey, setReloadKey] = useState(0);
   const [createOpen, setCreateOpen] = useState(false);
-  const [selectedUser, setSelectedUser] = useState<AdminUserRow | null>(null);
+  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+  const selectedUser = users.find((user) => user.id === selectedUserId);
+  const batchPending = useRef(false);
+  const action = useContext(AdminActionContext);
   const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
-  function matchesSegment(user: AdminUserRow) {
-    if (segment === "all") return true;
-    if (segment === "admin") return user.role !== "creator";
-    if (segment === "creator") return user.role === "creator";
-    if (segment === "paid") return user.totalRecharge > 0;
-    if (segment === "active") return user.status === "active";
-    if (segment === "disabled") return user.status === "disabled";
-    if (segment === "no_password") return !user.hasPassword;
-    return true;
-  }
-  const rows = users.filter((user) => {
-    const matchedKeyword = [user.name, user.email, user.phone, user.id].filter(Boolean).join(" ").toLowerCase().includes(keyword.toLowerCase());
-    const matchedRole = role === "all" || user.role === role;
-    const matchedStatus = status === "all" || user.status === status;
-    return matchedKeyword && matchedRole && matchedStatus && matchesSegment(user);
-  });
+  useEffect(() => {
+    let current = true;
+    const controller = new AbortController();
+    setLoading(true);
+    setLoadError("");
+    const timer = window.setTimeout(() => {
+      void fetchAdminUserPage({ page, keyword: keyword.trim(), role, status }, controller.signal).then((result) => {
+        if (!current) return;
+        const lastPage = Math.max(1, Math.ceil(result.total / result.pageSize));
+        if (page > lastPage) { setPage(lastPage); return; }
+        setUsers(result.items);
+        setTotal(result.total);
+      }).catch((reason) => {
+        if (current) setLoadError(reason instanceof Error ? reason.message : "用户列表读取失败");
+      }).finally(() => { if (current) setLoading(false); });
+    }, 200);
+    return () => { current = false; controller.abort(); window.clearTimeout(timer); };
+  }, [page, keyword, role, status, reloadKey, refreshSnapshot]);
+  const rows = users;
   const activeUsers = users.filter((user) => user.status === "active").length;
   const paidUsers = users.filter((user) => user.totalRecharge > 0).length;
   const totalCredits = users.reduce((sum, user) => sum + user.credits, 0);
   const allVisibleSelected = rows.length > 0 && rows.every((user) => selectedUserIds.includes(user.id));
   const selectedVisibleCount = rows.filter((user) => selectedUserIds.includes(user.id)).length;
   const railItems: AdminRailItem[] = [
-    { id: "all", label: "全部用户", count: users.length, meta: "完整账号池", tone: "blue" },
-    { id: "creator", label: "创作者", count: users.filter((user) => user.role === "creator").length, meta: "前台真实用户" },
-    { id: "admin", label: "后台成员", count: users.filter((user) => user.role !== "creator").length, meta: "运营/财务/客服", tone: "violet" },
-    { id: "paid", label: "已付费", count: paidUsers, meta: "有充值记录", tone: "green" },
-    { id: "active", label: "正常", count: activeUsers, meta: "可登录账号", tone: "green" },
-    { id: "disabled", label: "停用", count: users.filter((user) => user.status === "disabled").length, meta: "不可登录", tone: "danger" },
-    { id: "no_password", label: "未设密码", count: users.filter((user) => !user.hasPassword).length, meta: "需引导重置", tone: "amber" }
+    { id: "all", label: "全部用户", meta: "完整账号池", tone: "blue" },
+    { id: "creator", label: "创作者", meta: "前台账号" },
+    { id: "admin", label: "后台成员", meta: "后台管理员", tone: "violet" },
+    { id: "active", label: "正常", meta: "可登录账号", tone: "green" },
+    { id: "disabled", label: "停用", meta: "不可登录", tone: "danger" }
   ];
 
   function toggleVisibleUsers() {
@@ -2284,13 +2344,17 @@ function UsersSection({
   }
 
   async function batchSetStatus(nextStatus: "active" | "disabled") {
-    const targetIds = selectedUserIds.filter((id) => users.some((user) => user.id === id));
+    if (batchPending.current) return;
+    const targetIds = selectedUserIds.filter((id) => rows.some((user) => user.id === id));
     if (!targetIds.length) return;
     if (!window.confirm(`确认将 ${targetIds.length} 个用户批量改为「${adminStatusLabels[nextStatus]}」？`)) return;
-    for (const id of targetIds) {
-      await onUserSave(id, { status: nextStatus });
+    batchPending.current = true;
+    try {
+      const completed = await runAdminBatch(targetIds, (id) => onUserSave(id, { status: nextStatus }));
+      setSelectedUserIds((current) => current.filter((id) => !completed.includes(id)));
+    } finally {
+      batchPending.current = false;
     }
-    setSelectedUserIds([]);
   }
 
   return (
@@ -2300,27 +2364,28 @@ function UsersSection({
         railDescription="先选运营视角，再用搜索和筛选精确定位账号。"
         railItems={railItems}
         activeRail={segment}
-        onRailChange={setSegment}
-        railFooter={<span>当前结果 {rows.length} 条，已选 {selectedVisibleCount} 条。</span>}
+        onRailChange={(next) => { setSegment(next); setPage(1); setRole(next === "admin" || next === "creator" ? next : "all"); setStatus(next === "active" || next === "disabled" ? next : "all"); setSelectedUserIds([]); }}
+        railFooter={<span>共匹配 {total} 条，本页 {rows.length} 条，已选 {selectedVisibleCount} 条。</span>}
       >
         <div className="admin-v2-metrics small">
-          <AdminMetric icon={<UserRound size={20} />} label="用户总数" value={users.length} hint={`${activeUsers} 个正常账号`} tone="blue" />
-          <AdminMetric icon={<WalletCards size={20} />} label="积分余额" value={totalCredits.toLocaleString()} hint="所有用户可用积分" tone="green" />
-          <AdminMetric icon={<CircleDollarSign size={20} />} label="付费用户" value={paidUsers} hint="有真实充值记录" tone="amber" />
-          <AdminMetric icon={<ShieldCheck size={20} />} label="后台成员" value={users.filter((user) => user.role !== "creator").length} hint="管理员与运营角色" tone="violet" />
+          <AdminMetric icon={<UserRound size={20} />} label="匹配用户" value={total} hint={`本页 ${activeUsers} 个正常账号`} tone="blue" />
+          <AdminMetric icon={<WalletCards size={20} />} label="本页积分余额" value={totalCredits.toLocaleString()} hint="本页账号可用积分合计" tone="green" />
+          <AdminMetric icon={<CircleDollarSign size={20} />} label="本页有入账记录" value={paidUsers} hint="含赠送与运营调整" tone="amber" />
+          <AdminMetric icon={<ShieldCheck size={20} />} label="本页后台成员" value={users.filter((user) => user.role !== "creator").length} hint="后台管理员" tone="violet" />
         </div>
         <AdminToolbar
           right={
             <AdminActionBar>
-              <button className="admin-secondary-btn compact" disabled={!selectedUserIds.length} type="button" onClick={() => void batchSetStatus("active")}>批量启用</button>
-              <button className="admin-secondary-btn compact" disabled={!selectedUserIds.length} type="button" onClick={() => void batchSetStatus("disabled")}>批量停用</button>
+              <button className="admin-secondary-btn compact" disabled={!selectedVisibleCount} type="button" onClick={() => void batchSetStatus("active")}>启用当前已选</button>
+              <button className="admin-secondary-btn compact" disabled={!selectedVisibleCount} type="button" onClick={() => void batchSetStatus("disabled")}>停用当前已选</button>
               <button className="admin-primary-btn" type="button" onClick={() => setCreateOpen(true)}><Plus size={18} />创建用户</button>
             </AdminActionBar>
           }
         >
-          <SearchField value={keyword} onChange={setKeyword} placeholder="搜索用户、邮箱、手机号、ID..." />
-          <SelectFilter value={role} onChange={setRole} options={["all", "creator", "admin"]} labels={{ all: "全部角色", creator: "创作者", admin: "后台管理员" }} />
-          <SelectFilter value={status} onChange={setStatus} options={["all", "active", "disabled"]} labels={{ all: "全部状态", active: "正常", disabled: "停用" }} />
+          <SearchField value={keyword} onChange={(value) => { setKeyword(value); setPage(1); setSelectedUserIds([]); }} placeholder="在全部用户中搜索姓名、邮箱、手机号、ID..." />
+          <SelectFilter value={role} onChange={(value) => { setRole(value); setSegment("all"); setPage(1); setSelectedUserIds([]); }} options={["all", "creator", "admin"]} labels={{ all: "全部角色", creator: "创作者", admin: "后台管理员" }} />
+          <SelectFilter value={status} onChange={(value) => { setStatus(value); setSegment("all"); setPage(1); setSelectedUserIds([]); }} options={["all", "active", "disabled"]} labels={{ all: "全部状态", active: "正常", disabled: "停用" }} />
+          <button className="admin-icon-btn" aria-label="刷新用户列表" title="刷新用户列表" disabled={loading} onClick={() => setReloadKey((value) => value + 1)}><RefreshCw size={18} /></button>
         </AdminToolbar>
         <AdminTablePage
           title="账号列表"
@@ -2332,21 +2397,28 @@ function UsersSection({
             { key: "role", label: "身份", render: (user) => adminRoleLabels[user.role] ?? user.role },
             { key: "status", label: "状态", render: (user) => <span className="adm-status" data-status={user.status}>{adminStatusLabels[user.status] ?? user.status}</span> },
             { key: "credits", label: "积分", render: (user) => user.credits.toLocaleString() },
-            { key: "recharge", label: "累计充值", render: (user) => `¥${user.totalRecharge.toFixed(2)}` },
+            { key: "recharge", label: "累计入账积分", render: (user) => user.totalRecharge.toLocaleString() },
             { key: "consumed", label: "累计消耗", render: (user) => user.totalConsume.toLocaleString() },
             { key: "projects", label: "项目", render: (user) => user.projects }
           ]}
           rows={rows}
           rowKey={(user) => user.id}
+          loading={loading}
+          error={loadError}
+          page={page}
+          totalPages={Math.max(1, Math.ceil(total / 25))}
+          onPageChange={(next) => { setPage(next); setSelectedUserIds([]); setSelectedUserId(null); }}
           emptyText="没有匹配的用户；请调整分层、搜索或筛选条件"
-          onRowClick={setSelectedUser}
+          onRowClick={(user) => setSelectedUserId(user.id)}
         />
       </AdminModuleWorkbench>
-      <AdminMasterDetail open={Boolean(selectedUser)} title={selectedUser?.name ?? "用户详情"} meta={selectedUser ? <p>{selectedUser.email || selectedUser.phone || selectedUser.id}</p> : null} onClose={() => setSelectedUser(null)}>
-        {selectedUser ? <div className="admin-user-management-table v2 adm-user-detail-editor"><UserRow user={selectedUser} selected={selectedUserIds.includes(selectedUser.id)} onToggleSelected={() => setSelectedUserIds((current) => current.includes(selectedUser.id) ? current.filter((id) => id !== selectedUser.id) : [...current, selectedUser.id])} onUserSave={onUserSave} onPasswordReset={onPasswordReset} onCreditAdjust={onCreditAdjust} /></div> : null}
+      <AdminMasterDetail open={Boolean(selectedUser)} title={selectedUser?.name ?? "用户详情"} meta={selectedUser ? <p>{selectedUser.email || selectedUser.phone || selectedUser.id}</p> : null} busy={action.pending} onClose={() => setSelectedUserId(null)}>
+        {action.message ? <p className="admin-toast success" role="status">{action.message}</p> : null}
+        {action.error ? <p className="admin-toast danger" role="alert">{action.error}</p> : null}
+        {selectedUser ? <div className="adm-user-detail-editor"><UserRow key={selectedUser.id} user={selectedUser} selected={selectedUserIds.includes(selectedUser.id)} onToggleSelected={() => setSelectedUserIds((current) => current.includes(selectedUser.id) ? current.filter((id) => id !== selectedUser.id) : [...current, selectedUser.id])} onUserSave={onUserSave} onPasswordReset={onPasswordReset} onCreditAdjust={onCreditAdjust} /></div> : null}
       </AdminMasterDetail>
       <AdminModal open={createOpen} title="创建用户" description="创建后可立即登录；初始积分会写入流水，密码不在后台明文保存。" onClose={() => setCreateOpen(false)} wide>
-        <AdminUserCreator onCreate={(input) => { void onCreateUser(input); setCreateOpen(false); }} />
+        <AdminUserCreator onCreate={(input) => closeAfterAdminSuccess(() => onCreateUser(input), () => setCreateOpen(false))} />
       </AdminModal>
     </section>
   );
@@ -2445,7 +2517,7 @@ function AnnouncementsSection({
             <TableFooter total={rows.length} />
           </AdminModuleWorkbench>
           <AdminModal open={createOpen} title="新增平台公告" description="公告启用后会出现在前台工作台，可用置顶和生效时间控制展示顺序。" onClose={() => setCreateOpen(false)} wide>
-            <AnnouncementCreator onCreate={(input) => { void onCreate(input); setCreateOpen(false); }} />
+            <AnnouncementCreator onCreate={(input) => closeAfterAdminSuccess(() => onCreate(input), () => setCreateOpen(false))} />
           </AdminModal>
         </>
       ) : (
@@ -2533,7 +2605,7 @@ function HelpArticlesManager({
       </div>
       <TableFooter total={rows.length} />
       <AdminModal open={createOpen} title="新增帮助文章" description="文章启用后会进入前台帮助中心，可通过分类、排序和置顶控制展示。" onClose={() => setCreateOpen(false)} wide>
-        <HelpArticleCreator onCreate={(input) => { void onCreate(input); setCreateOpen(false); }} />
+        <HelpArticleCreator onCreate={(input) => closeAfterAdminSuccess(() => onCreate(input), () => setCreateOpen(false))} />
       </AdminModal>
     </AdminModuleWorkbench>
   );
@@ -2808,6 +2880,10 @@ function EvaluationRecordsCard({
   const [recordPage, setRecordPage] = useState(1);
   const [recordPages, setRecordPages] = useState(1);
   const [recordTotal, setRecordTotal] = useState(runs.length);
+  const [recordsLoading, setRecordsLoading] = useState(false);
+  const pageRequest = useRef(0);
+  const deletePending = useRef(false);
+  const exportPending = useRef(false);
   const allVisibleSelected = visibleRuns.length > 0 && visibleRuns.every((run) => selectedRunIds.includes(run.id));
 
   useEffect(() => {
@@ -2816,11 +2892,23 @@ function EvaluationRecordsCard({
   }, [runs]);
 
   async function loadRunPage(page: number) {
-    const result = await api.adminEvaluationRunsPage(page, 12);
-    setVisibleRuns(result.items);
-    setRecordPage(result.page);
-    setRecordPages(result.totalPages);
-    setRecordTotal(result.total);
+    const requestId = ++pageRequest.current;
+    setRecordsLoading(true);
+    setExportError("");
+    try {
+      const result = await api.adminEvaluationRunsPage(page, 12);
+      if (requestId !== pageRequest.current) return;
+      const lastPage = Math.max(1, result.totalPages);
+      if (result.page > lastPage) { await loadRunPage(lastPage); return; }
+      setVisibleRuns(result.items);
+      setRecordPage(result.page);
+      setRecordPages(lastPage);
+      setRecordTotal(result.total);
+    } catch (reason) {
+      if (requestId === pageRequest.current) setExportError(reason instanceof Error ? reason.message : "评测记录读取失败");
+    } finally {
+      if (requestId === pageRequest.current) setRecordsLoading(false);
+    }
   }
 
   function toggleRun(id: string) {
@@ -2835,25 +2923,39 @@ function EvaluationRecordsCard({
   }
 
   async function deleteRun(run: EvaluationRun) {
+    if (deletePending.current) return;
     if (!window.confirm(`确认删除评测记录「${run.name}」？本次运行生成的质检报告也会一起删除。`)) return;
     setDeleting(run.id);
+    deletePending.current = true;
+    setExportError("");
     try {
       await onDeleteRun(run.id);
       await loadRunPage(Math.min(recordPage, recordPages));
+    } catch (reason) {
+      setExportError(reason instanceof Error ? reason.message : "评测记录删除失败");
     } finally {
       setDeleting("");
+      deletePending.current = false;
     }
   }
   async function deleteDataset(dataset: EvaluationDataset) {
+    if (deletePending.current) return;
     if (!window.confirm(`确认删除样本集「${dataset.name}」？历史运行会保留当时的快照。`)) return;
     setDeleting(dataset.id);
+    deletePending.current = true;
+    setExportError("");
     try {
       await onDeleteDataset(dataset.id);
+    } catch (reason) {
+      setExportError(reason instanceof Error ? reason.message : "样本集删除失败");
     } finally {
       setDeleting("");
+      deletePending.current = false;
     }
   }
   async function exportRun(run: EvaluationRun) {
+    if (exportPending.current) return;
+    exportPending.current = true;
     setExportError("");
     setExporting(run.id);
     try {
@@ -2863,12 +2965,15 @@ function EvaluationRecordsCard({
       setExportError(err instanceof Error ? err.message : "单个评测记录导出失败");
     } finally {
       setExporting("");
+      exportPending.current = false;
     }
   }
 
   async function exportRuns(scope: "selected" | "all") {
+    if (exportPending.current) return;
     const ids = scope === "selected" ? selectedRunIds : undefined;
     if (scope === "selected" && !ids?.length) return;
+    exportPending.current = true;
     setExportError("");
     setExporting(scope);
     try {
@@ -2878,6 +2983,7 @@ function EvaluationRecordsCard({
       setExportError(err instanceof Error ? err.message : "评测记录导出失败");
     } finally {
       setExporting("");
+      exportPending.current = false;
     }
   }
 
@@ -2906,7 +3012,8 @@ function EvaluationRecordsCard({
         <strong>导出逻辑</strong>
         <span>数据库共 {recordTotal} 次运行，当前第 {recordPage}/{recordPages} 页；导出全部仍覆盖完整记录。</span>
       </div>
-      {exportError ? <p className="admin-toast danger">{exportError}</p> : null}
+      {exportError ? <p className="admin-toast danger" role="alert">{exportError}</p> : null}
+      {recordsLoading ? <p className="admin-toast" role="status">正在加载评测记录…</p> : null}
       <div className="evaluation-dataset-compact-list">
         {datasets.slice(0, 6).map((dataset) => (
           <div key={dataset.id}>
@@ -2944,22 +3051,30 @@ function EvaluationRecordsCard({
             ))}
           </tbody>
         </table>
-        {!visibleRuns.length ? <EmptyHint text="暂无评测记录。先在“运行评测”里选择样本并执行一次规则评分。" /> : null}
+        {!visibleRuns.length && !recordsLoading && !exportError ? <EmptyHint text="暂无评测记录。先在“运行评测”里选择样本并执行一次规则评分。" /> : null}
       </div>
-      <div className="admin-pagination"><button type="button" disabled={recordPage <= 1} onClick={() => void loadRunPage(recordPage - 1)}>‹</button><button className="active" type="button">{recordPage} / {recordPages}</button><button type="button" disabled={recordPage >= recordPages} onClick={() => void loadRunPage(recordPage + 1)}>›</button></div>
+      <div className="admin-pagination"><button type="button" aria-label="上一页评测记录" disabled={recordsLoading || recordPage <= 1} onClick={() => void loadRunPage(recordPage - 1)}>‹</button><span>{recordPage} / {recordPages}</span><button type="button" aria-label="下一页评测记录" disabled={recordsLoading || recordPage >= recordPages} onClick={() => void loadRunPage(recordPage + 1)}>›</button></div>
     </article>
   );
 }
 
 function ProjectQualityPool({ projects, onDeleteQuality }: { projects: QualityProjectRow[]; onDeleteQuality: (projectId: string) => Promise<void> }) {
   const [deleting, setDeleting] = useState("");
+  const [error, setError] = useState("");
+  const deletePending = useRef(false);
   async function cleanProject(row: QualityProjectRow) {
+    if (deletePending.current) return;
     if (!window.confirm(`确认清理「${row.project.name}」的质检报告和用户反馈？不会删除作品本身。`)) return;
     setDeleting(row.project.id);
+    setError("");
+    deletePending.current = true;
     try {
       await onDeleteQuality(row.project.id);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "清理质检数据失败");
     } finally {
       setDeleting("");
+      deletePending.current = false;
     }
   }
   return (
@@ -2968,6 +3083,7 @@ function ProjectQualityPool({ projects, onDeleteQuality }: { projects: QualityPr
         <div>
           <h2>项目质检池</h2>
           <p>后台统一收集所有用户生成项目，用来筛选低分、不可用反馈和需要进入下一轮优化的作品。</p>
+          {error ? <p className="admin-toast danger" role="alert">{error}</p> : null}
         </div>
       </div>
       <div className="admin-table-wrap">
@@ -3078,6 +3194,7 @@ function RedeemSection({
   const [viewMode, setViewMode] = useState("codes");
   const [createOpen, setCreateOpen] = useState(false);
   const [expandedBatch, setExpandedBatch] = useState<string | null>(null);
+  const batchPending = useRef(false);
   const rows = redeemCodes.filter((code) => {
     const matchedKeyword = `${code.code} ${code.name} ${code.batchId ?? ""}`.toLowerCase().includes(keyword.toLowerCase());
     const codeStatus = redeemStatus(code);
@@ -3102,19 +3219,21 @@ function RedeemSection({
   ];
   const visibleCodes = rows.slice(0, 50);
   async function batchToggle(codes: RedeemCode[], enabled: boolean) {
+    if (batchPending.current) return;
     const target = codes.filter((code) => code.enabled !== enabled);
-    for (const code of target) {
-      await onSave(code.id, { enabled });
-    }
+    batchPending.current = true;
+    try { await runAdminBatch(target, (code) => onSave(code.id, { enabled })); }
+    finally { batchPending.current = false; }
   }
 
   async function batchDeleteUnused(codes: RedeemCode[]) {
+    if (batchPending.current) return;
     const unused = codes.filter((code) => code.usedCount === 0);
     if (!unused.length) return;
     if (!window.confirm(`确认删除 ${unused.length} 个未使用兑换码？已使用记录不会被删除。`)) return;
-    for (const code of unused) {
-      await onDelete(code.id);
-    }
+    batchPending.current = true;
+    try { await runAdminBatch(unused, (code) => onDelete(code.id)); }
+    finally { batchPending.current = false; }
   }
 
   return (
@@ -3189,7 +3308,7 @@ function RedeemSection({
         <TableFooter total={rows.length} />
       </AdminModuleWorkbench>
       <AdminModal open={createOpen} title="生成兑换码" description="批量生成唯一 code，默认每个 code 只可兑换一次。" onClose={() => setCreateOpen(false)} wide>
-        <RedeemBatchCreator onCreate={(input) => { void onBatchCreate(input); setCreateOpen(false); }} />
+        <RedeemBatchCreator onCreate={(input) => closeAfterAdminSuccess(() => onBatchCreate(input), () => setCreateOpen(false))} />
       </AdminModal>
     </section>
   );
@@ -3273,7 +3392,7 @@ function PlansSection({
         <TableFooter total={rows.length} />
       </AdminModuleWorkbench>
       <AdminModal open={createOpen} title="新增充值套餐" description="套餐启用后会按价格排序展示在前台购买区。" onClose={() => setCreateOpen(false)} wide>
-        <PlanCreator onCreate={(input) => { void onCreate(input); setCreateOpen(false); }} />
+        <PlanCreator onCreate={(input) => closeAfterAdminSuccess(() => onCreate(input), () => setCreateOpen(false))} />
       </AdminModal>
     </section>
   );
@@ -3306,28 +3425,29 @@ function MembershipSection({
   const enabledRows = plans.filter((plan) => plan.enabled);
   const railItems: AdminRailItem[] = [
     { id: "all", label: "全部会员", count: plans.length, meta: "订阅方案", tone: "blue" },
-    { id: "enabled", label: "前台展示", count: enabledRows.length, meta: "可购买", tone: "green" },
+    { id: "enabled", label: "历史启用标记", count: enabledRows.length, meta: "当前不售卖", tone: "green" },
     { id: "disabled", label: "已停用", count: plans.length - enabledRows.length, meta: "后台保留", tone: "danger" },
-    { id: "discount", label: "模型折扣", count: plans.filter((plan) => plan.discountPercent > 0).length, meta: "长期权益", tone: "amber" },
-    { id: "priority", label: "优先队列", count: plans.filter((plan) => plan.priorityLevel > 0).length, meta: "生产提速", tone: "violet" }
+    { id: "discount", label: "预留折扣", count: plans.filter((plan) => plan.discountPercent > 0).length, meta: "尚未执行", tone: "amber" },
+    { id: "priority", label: "预留优先级", count: plans.filter((plan) => plan.priorityLevel > 0).length, meta: "尚未执行", tone: "violet" }
   ];
   return (
     <section className="admin-v2-section">
       <AdminModuleWorkbench
         railTitle="会员权益"
-        railDescription="订阅会员用于月度额度、折扣和优先队列管理。"
+        railDescription="查看历史方案；当前只开放一次性积分充值。"
         railItems={railItems}
         activeRail={segment}
         onRailChange={setSegment}
-        railFooter={<span>会员策略影响长期留存和生产成本。</span>}
+        railFooter={<span>以下配置尚未接入购买和权益执行。</span>}
       >
         <div className="admin-v2-metrics small">
-          <AdminMetric icon={<ReceiptText size={20} />} label="会员方案" value={plans.length} hint={`${enabledRows.length} 个启用`} tone="blue" />
+          <AdminMetric icon={<ReceiptText size={20} />} label="预留方案" value={plans.length} hint="当前均不可购买" tone="blue" />
           <AdminMetric icon={<CircleDollarSign size={20} />} label="月费合计" value={`¥${plans.reduce((sum, plan) => sum + plan.monthlyPrice, 0)}`} hint="所有方案标价" tone="green" />
-          <AdminMetric icon={<WalletCards size={20} />} label="月额度" value={plans.reduce((sum, plan) => sum + plan.monthlyCredits, 0).toLocaleString()} hint="全部方案积分池" tone="amber" />
-          <AdminMetric icon={<ShieldCheck size={20} />} label="最高队列" value={Math.max(0, ...plans.map((plan) => plan.priorityLevel))} hint="优先级越高越靠前" tone="violet" />
+          <AdminMetric icon={<WalletCards size={20} />} label="预留月额度" value={plans.reduce((sum, plan) => sum + plan.monthlyCredits, 0).toLocaleString()} hint="尚未自动发放" tone="amber" />
+          <AdminMetric icon={<ShieldCheck size={20} />} label="预留优先级" value={Math.max(0, ...plans.map((plan) => plan.priorityLevel))} hint="尚未影响实际队列" tone="violet" />
         </div>
-        <AdminToolbar right={<button className="admin-primary-btn" type="button" onClick={() => setCreateOpen(true)}><Plus size={18} />新增会员</button>}>
+        <p className="admin-toast" role="status">订阅会员暂未开放。月度发放、模型折扣和优先队列尚未实现，以下方案仅供核对；运营售卖请使用“套餐会员”中的一次性充值。</p>
+        <AdminToolbar>
           <SearchField value={keyword} onChange={setKeyword} placeholder="搜索会员、权益、标签..." />
         </AdminToolbar>
         <div className="admin-table-wrap admin-data-card">
@@ -3347,16 +3467,16 @@ function MembershipSection({
             </thead>
             <tbody>
               {rows.map((plan) => (
-                <MembershipRow key={plan.id} plan={plan} onSave={onSave} onDelete={onDelete} />
+                <tr key={plan.id}><td>{plan.name}</td><td>¥{plan.monthlyPrice}</td><td>{plan.monthlyCredits}</td><td>{plan.discountPercent}%（预留）</td><td>{plan.priorityLevel}（预留）</td><td>{plan.features.join("；")}</td><td>{plan.shopUrl || "未配置"}</td><td>未开放</td><td>只读</td></tr>
               ))}
             </tbody>
           </table>
-          {!rows.length ? <EmptyHint text="没有匹配的订阅会员方案。可以切换左侧权益分类，或新增一个会员方案。" /> : null}
+          {!rows.length ? <EmptyHint text="没有匹配的预留订阅方案。可调整筛选查看历史配置。" /> : null}
         </div>
         <TableFooter total={rows.length} />
       </AdminModuleWorkbench>
       <AdminModal open={createOpen} title="新增订阅会员" description="用于管理月度积分、模型折扣、队列优先级和前台展示权益。" onClose={() => setCreateOpen(false)} wide>
-        <MembershipCreator onCreate={(input) => { void onCreate(input); setCreateOpen(false); }} />
+        <MembershipCreator onCreate={(input) => closeAfterAdminSuccess(() => onCreate(input), () => setCreateOpen(false))} />
       </AdminModal>
     </section>
   );
@@ -3478,7 +3598,7 @@ function ProvidersSection({
         <TableFooter total={rows.length} />
       </AdminModuleWorkbench>
       <AdminModal open={createOpen} title="新增模型渠道" description="密钥只写入服务端，后台列表只展示是否已配置和 Key 预览。" onClose={() => setCreateOpen(false)} wide>
-        <ProviderCreator onCreate={(input) => { void onCreate(input); setCreateOpen(false); }} />
+        <ProviderCreator onCreate={(input) => closeAfterAdminSuccess(() => onCreate(input), () => setCreateOpen(false))} />
       </AdminModal>
     </section>
   );
@@ -3754,7 +3874,7 @@ function PricesSection({
         <TableFooter total={rows.length} />
       </AdminModuleWorkbench>
       <AdminModal open={createOpen} title="新增价格策略" description="用于补充特殊模型单价；常规渠道新增后会自动生成基础价格。" onClose={() => setCreateOpen(false)} wide>
-        <PriceCreator providers={providers} onCreate={(input) => { void onCreate(input); setCreateOpen(false); }} />
+        <PriceCreator providers={providers} onCreate={(input) => closeAfterAdminSuccess(() => onCreate(input), () => setCreateOpen(false))} />
       </AdminModal>
     </section>
   );
@@ -4013,21 +4133,25 @@ function AdminModal({
   children: ReactNode;
   wide?: boolean;
 }) {
+  const action = useContext(AdminActionContext);
+  const { dialogRef, titleId } = useAdminDialog(open, onClose, action.pending);
   if (!open) return null;
   return (
     <div className="admin-modal-backdrop" role="presentation" onMouseDown={(event) => {
-      if (event.target === event.currentTarget) onClose();
+      if (!action.pending && event.target === event.currentTarget) onClose();
     }}>
-      <section className={wide ? "admin-modal wide" : "admin-modal"} role="dialog" aria-modal="true" aria-label={title}>
+      <section ref={dialogRef} tabIndex={-1} className={wide ? "admin-modal wide" : "admin-modal"} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-busy={action.pending}>
         <header className="admin-modal-head">
           <div>
-            <h2>{title}</h2>
+            <h2 id={titleId}>{title}</h2>
             {description ? <p>{description}</p> : null}
           </div>
-          <button className="admin-icon-btn" type="button" onClick={onClose} title="关闭">
+          <button className="admin-icon-btn" type="button" disabled={action.pending} onClick={onClose} title="关闭" aria-label="关闭弹窗">
             <X size={18} />
           </button>
         </header>
+        {action.pending ? <p className="admin-toast" role="status">正在提交，请稍候…</p> : null}
+        {action.error ? <p className="admin-toast danger" role="alert">{action.error}</p> : null}
         {children}
       </section>
     </div>
@@ -4106,7 +4230,7 @@ const adminStatusLabels: Record<string, string> = {
 
 function userIdentityLabel(user: AdminUserRow) {
   if (user.role !== "creator") return adminRoleLabels[user.role] ?? user.role;
-  if (user.totalRecharge > 0) return "购买者";
+  if (user.totalRecharge > 0) return "有积分入账";
   if (user.totalConsume > 0 || user.projects > 0) return "创作者";
   return "体验用户";
 }
@@ -4171,7 +4295,7 @@ function UserRow({
   onToggleSelected: () => void;
   onUserSave: (userId: string, input: Partial<Pick<AdminUserRow, "name" | "role" | "status">>) => AdminActionResult;
   onPasswordReset: (userId: string, password: string) => AdminActionResult;
-  onCreditAdjust: (input: { userId: string; amount: number; description: string }) => AdminActionResult;
+  onCreditAdjust: (input: { userId: string; amount: number; description: string; requestId?: string }) => AdminActionResult;
 }) {
   const [name, setName] = useState(user.name);
   const [role, setRole] = useState(user.role);
@@ -4179,73 +4303,58 @@ function UserRow({
   const [amount, setAmount] = useState("100");
   const [description, setDescription] = useState("运营补偿");
   const [password, setPassword] = useState("");
+  const creditAttempt = useRef(createCreditAdjustmentAttempt());
+  async function adjustCredits() {
+    if (!isValidCreditAdjustment(amount, description)) return;
+    const input = { userId: user.id, amount: Number(amount), description: description.trim() };
+    await closeAfterAdminSuccess(() => onCreditAdjust({ ...input, requestId: creditAttempt.current.getRequestId(input) }), () => {
+      creditAttempt.current.complete();
+      setAmount("");
+    });
+  }
+  useEffect(() => { setName(user.name); setRole(user.role); setStatus(user.status); }, [user.name, user.role, user.status]);
   const dirty = name !== user.name || role !== user.role || status !== user.status;
   const identity = userIdentityLabel({ ...user, role });
   return (
-    <article className="admin-user-management-row">
-      <label className="admin-row-checkbox">
-        <input type="checkbox" checked={selected} onChange={onToggleSelected} aria-label={`选择用户 ${user.name}`} />
-      </label>
-      <div className="admin-user-account-cell">
-        <input className="admin-user-name-input" value={name} onChange={(event) => setName(event.target.value)} aria-label="用户名" />
-        <span>{user.email ?? "未绑定邮箱"}</span>
-        <small>最近登录：{formatDate(user.lastLoginAt)}</small>
-      </div>
-
-      <span className="admin-user-muted-cell">{user.phone ?? "未绑定"}</span>
-
-      <div className="admin-user-identity-cell">
+    <article className="adm-user-profile">
+      <div className="adm-user-contact">
         <strong>{identity}</strong>
-        <select value={role} onChange={(event) => setRole(event.target.value)} aria-label="用户角色">
-          <option value="creator">创作者</option>
-          <option value="admin">后台管理员</option>
-        </select>
+        <span>邮箱：{user.email || "未绑定"}</span>
+        <span>手机号：{user.phone || "未绑定"}</span>
+        <small>最近登录：{formatDate(user.lastLoginAt)}</small>
+        <small>账号 ID：{user.id}</small>
       </div>
-
-      <div className="admin-user-status-cell">
-        <select value={status} onChange={(event) => setStatus(event.target.value)} aria-label="账号状态">
-          <option value="active">正常</option>
-          <option value="disabled">停用</option>
-        </select>
-        <StatusChip active={status === "active"} label={adminStatusLabels[status] ?? status} />
-      </div>
-
-      <div className="admin-user-credit-cell">
-        <strong>{user.credits.toLocaleString()}</strong>
-        <span>冻结 {user.frozenCredits.toLocaleString()}</span>
-      </div>
-      <span className="admin-user-number-cell">{user.totalRecharge.toLocaleString()}</span>
-      <span className="admin-user-number-cell">{user.totalConsume.toLocaleString()}</span>
-      <span className="admin-user-number-cell">{user.projects.toLocaleString()}</span>
-      <StatusChip active={Boolean(user.hasPassword)} label={user.hasPassword ? "已设置" : "未设置"} />
-
-      <details className="admin-user-action-drawer">
-        <summary>管理</summary>
-        <div className="admin-user-action-panel">
-          <label>
-            <span>重置密码</span>
-            <div className="admin-inline-actions compact">
-              <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="输入 12 位以上新密码" />
-              <button className="admin-text-btn" disabled={password.length < 12} onClick={() => { onPasswordReset(user.id, password); setPassword(""); }}>重置</button>
-            </div>
-          </label>
-          <label>
-            <span>积分调整</span>
-            <div className="admin-inline-actions compact triple">
-              <input className="mini-number" type="number" value={amount} onChange={(event) => setAmount(event.target.value)} />
-              <input value={description} onChange={(event) => setDescription(event.target.value)} />
-              <button className="admin-icon-btn teal" title="积分入账" onClick={() => onCreditAdjust({ userId: user.id, amount: Number(amount), description })}>
-                <WalletCards size={16} />
-              </button>
-            </div>
-          </label>
-          <div className="admin-inline-actions compact">
-            <button className={dirty ? "admin-text-btn primary" : "admin-text-btn"} disabled={!dirty} title="保存账号" onClick={() => onUserSave(user.id, { name, role, status })}>
-              保存账号资料
-            </button>
-          </div>
+      <dl className="adm-user-stat-grid" aria-label="账号统计">
+        <div><dt>可用积分</dt><dd>{user.credits.toLocaleString()}</dd></div>
+        <div><dt>冻结积分</dt><dd>{user.frozenCredits.toLocaleString()}</dd></div>
+        <div><dt>累计入账积分</dt><dd>{user.totalRecharge.toLocaleString()}</dd></div>
+        <div><dt>累计消耗积分</dt><dd>{user.totalConsume.toLocaleString()}</dd></div>
+        <div><dt>项目数量</dt><dd>{user.projects.toLocaleString()}</dd></div>
+        <div><dt>登录密码</dt><dd>{user.hasPassword ? "已设置" : "未设置"}</dd></div>
+      </dl>
+      <form className="adm-user-form-section" aria-label="账号资料" onSubmit={(event) => { event.preventDefault(); if (dirty && name.trim()) void onUserSave(user.id, { name: name.trim(), role, status }); }}>
+        <h3>账号资料</h3>
+        <label><span>用户名</span><input value={name} onChange={(event) => setName(event.target.value)} maxLength={80} required /></label>
+        <div className="adm-user-field-pair">
+          <label><span>用户角色</span><select value={role} onChange={(event) => setRole(event.target.value)}><option value="creator">创作者</option><option value="admin">后台管理员</option></select></label>
+          <label><span>账号状态</span><select value={status} onChange={(event) => setStatus(event.target.value)}><option value="active">正常</option><option value="disabled">停用</option></select></label>
         </div>
-      </details>
+        <button className="admin-primary-btn" type="submit" disabled={!dirty || !name.trim()}><Save size={16} />保存账号资料</button>
+      </form>
+      <form className="adm-user-form-section" aria-label="积分调整" onSubmit={(event) => { event.preventDefault(); void adjustCredits(); }}>
+        <h3>积分调整</h3>
+        <p>正数入账，负数扣减；操作会记录积分流水。</p>
+        <label><span>调整积分</span><input type="number" step={1} value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="例如：100 或 -100" required /></label>
+        <label><span>调整原因</span><input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="填写补偿或扣减原因" required /></label>
+        <button className="admin-primary-btn" type="submit" disabled={!isValidCreditAdjustment(amount, description)}><WalletCards size={16} />提交积分调整</button>
+      </form>
+      <form className="adm-user-form-section" aria-label="重置登录密码" onSubmit={(event) => { event.preventDefault(); if (password.length >= 12) void closeAfterAdminSuccess(() => onPasswordReset(user.id, password), () => setPassword("")); }}>
+        <h3>重置登录密码</h3>
+        <p>重置后旧会话会失效，用户需使用新密码登录。</p>
+        <label><span>新密码</span><input type="password" autoComplete="new-password" minLength={12} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="至少 12 位" required /></label>
+        <button className="admin-secondary-btn" type="submit" disabled={password.length < 12}>重置密码</button>
+      </form>
+      <label className="adm-user-batch-selection"><input type="checkbox" checked={selected} onChange={onToggleSelected} />加入当前页批量选择</label>
     </article>
   );
 }
@@ -4368,15 +4477,21 @@ function RedeemCodeRow({
     draft.enabled !== code.enabled ||
     draft.startsAt !== dateInputValue(code.startsAt) ||
     draft.endsAt !== dateInputValue(code.endsAt);
-  function copyCode() {
-    void navigator.clipboard?.writeText(code.code);
+  const [copyState, setCopyState] = useState("");
+  async function copyCode() {
+    try {
+      if (!navigator.clipboard) throw new Error("当前浏览器不支持自动复制，请选中兑换码手动复制。");
+      await navigator.clipboard.writeText(code.code);
+      setCopyState("已复制已保存的兑换码");
+    } catch (reason) { setCopyState(reason instanceof Error ? reason.message : "复制失败，请手动复制。"); }
   }
   return (
     <div className="admin-redeem-code-row compact">
       <span className="admin-row-check" aria-hidden="true" />
       <div className="admin-redeem-code-cell">
         <input className="code-input" value={draft.code} onChange={(event) => setDraft({ ...draft, code: event.target.value.toUpperCase() })} />
-        <button className="admin-icon-btn subtle" type="button" title="复制兑换码" onClick={copyCode}><Copy size={15} /></button>
+        <button className="admin-icon-btn subtle" type="button" title="复制已保存的兑换码" aria-label="复制已保存的兑换码" onClick={() => void copyCode()}><Copy size={15} /></button>
+        {copyState ? <small role="status">{copyState}</small> : null}
       </div>
       <input className="activity-input" value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
       <span className="admin-redeem-tag">积分</span>
@@ -4403,7 +4518,7 @@ function RedeemCodeRow({
 }
 
 function PlanCreator({ onCreate }: { onCreate: (input: Pick<Plan, "name" | "price" | "credits" | "bonusCredits" | "badge" | "features" | "shopUrl" | "enabled">) => AdminActionResult }) {
-  const [draft, setDraft] = useState({ name: "内测体验包", price: "9.9", credits: "600", bonusCredits: "100", badge: "低价体验", features: "适合小红书引流试用；可生成一轮剧本和分镜图", shopUrl: "https://pay.ldxp.cn/shop/ZHP28OV1" });
+  const [draft, setDraft] = useState({ name: "积分充值包", price: "9.9", credits: "600", bonusCredits: "100", badge: "", features: "", shopUrl: "" });
   return (
     <div className="admin-modal-form admin-plan-create-strip">
       <div><strong>新增充值套餐</strong><span>前台按价格自动排序，只展示启用套餐。</span></div>

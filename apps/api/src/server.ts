@@ -24,6 +24,7 @@ import {
   createHelpArticle,
   createProvider,
   createProjectExportJob,
+  quoteProjectExport,
   createPromptTemplate,
   exportDirectorStoryboardPackage,
   createRedeemCodeBatch,
@@ -49,6 +50,7 @@ import {
   getWorkbenchSummary,
   handleRechargeCallback,
   listAdminUsers,
+  listAdminUsersPage,
   listAdminPlans,
   listCreditTransactions,
   listExportJobs,
@@ -85,6 +87,7 @@ import {
   updateRedeemCode
 } from "./db/repository.js";
 import { prisma } from "./db/client.js";
+import { beginAdminAudit, finishAdminAudit, listAdminAuditLogs } from "./admin/audit.js";
 import { captureStoryboardTailFrame, deleteCharacterReferenceImageV2, generateCharacterReferenceImages, generateSceneEnvironmentImage, regenerateStoryboardShotImage, runProjectStoryboardTasks, setCharacterReferenceImageV2, updateStoryboardShot } from "./db/storyboardActions.js";
 import {
   createEvaluationDataset,
@@ -125,8 +128,11 @@ import {
 import { testImageModelConnection } from "./providers/dashscopeImage.js";
 import { testVideoModelConnection } from "./providers/video.js";
 import { listVisualPipelines, testVisualPipeline } from "./providers/visualPipelineRegistry.js";
-import { generationQueue, generationQueueEvents, queueConnection, startGenerationWorker } from "./queue/generationQueue.js";
+import { generationQueue, generationQueueEvents, queueConnection, startGenerationWorker, getGenerationWorkerReady } from "./queue/generationQueue.js";
+import { enqueueCreationTask, recoverCreationDispatches } from "./queue/creationDispatch.js";
+import { syncContentToProduction } from "./content/service.js";
 import { ensureStorageBuckets, storageRoot } from "./storage/objectStorage.js";
+import { MEDIA_COOKIE, localMediaPath, isPublishedMedia, userCanReadMedia, resolveMediaSession, verifyProviderMediaUrl } from "./storage/mediaAccess.js";
 import { handleActivateEpisodeVersion, handleAddSource, handleAnalyzeContentProject, handleConfirmContentOutline, handleCreateContentProject, handleDeleteContentProject, handleDevelopContentProject, handleGenerateContentChapterBatch, handleGenerateContentOutline, handleGenerateContentPackage, handleGenerateEpisodes, handleGetContentPackage, handleGetContentVersions, handleListEpisodes, handleListEpisodeVersions, handleListContentProjects, handleRegenerateEpisode, handleUpdateContentChapter, handleUpdateContentModelRoute } from "./content/routes.js";
 
 const app = express();
@@ -147,15 +153,10 @@ const rateLimitMax = Number(process.env.API_RATE_LIMIT_MAX ?? 180);
 const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
 const isProduction = process.env.NODE_ENV === "production";
 const mockPaymentEnabled = process.env.ENABLE_MOCK_PAYMENT === "true" || !isProduction;
-const publicStorageBuckets = new Set(
-  (process.env.PUBLIC_STORAGE_BUCKETS ?? "images,videos,audio,exports")
-    .split(",")
-    .map((bucket) => bucket.trim())
-    .filter(Boolean)
-);
 
 app.disable("x-powered-by");
 app.use((req, res, next) => {
+  res.setHeader("X-Request-ID", crypto.randomUUID());
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
   res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
@@ -174,17 +175,25 @@ app.use(
 app.use(express.json({ limit: "12mb" }));
 app.use(
   "/storage",
-  (req, res, next) => {
-    const bucket = req.path.split(/[\\/]/).filter(Boolean)[0] ?? "";
-    if (!publicStorageBuckets.has(bucket)) {
-      return res.status(404).json({ message: "Storage object is not public." });
+  asyncRoute(async (req, res, next) => {
+    const path = localMediaPath(`/storage${req.path}`);
+    if (!path) return res.status(404).json({ message: "文件不存在" });
+    const publicMedia = await isPublishedMedia(path);
+    const signed = await verifyProviderMediaUrl(path, req.query.expires, req.query.signature);
+    if (!publicMedia && !signed) {
+      const user = await resolveMediaSession(req.headers.cookie) || await resolveAuthUser(req);
+      if (!user || (user.role !== "admin" && !(await userCanReadMedia(user.id, path)))) {
+        return res.status(404).json({ message: "文件不存在或无权访问" });
+      }
     }
-    res.setHeader("Cache-Control", "public, max-age=604800, immutable");
+    res.setHeader("Cache-Control", "private, no-store");
     next();
-  },
-  express.static(storageRoot, { fallthrough: false, index: false, maxAge: "7d" })
+  }),
+  express.static(storageRoot, { fallthrough: false, index: false, cacheControl: false, dotfiles: "deny" })
 );
+
 app.use((req, res, next) => {
+  if (req.path === "/health" || req.path === "/ready") return next();
   const key = `${req.ip}:${req.path.startsWith("/api/auth") ? "auth" : "api"}`;
   const now = Date.now();
   const bucket = rateLimitMap.get(key);
@@ -248,12 +257,12 @@ const registerSchema = z.object({
   // 手机号改为选填：支持 QQ 邮箱等纯邮箱注册；填了就必须是合法手机号。
   phone: z.union([z.string().regex(/^1[3-9]\d{9}$/, "请输入 11 位中国大陆手机号"), z.literal("")]).optional(),
   email: z.string().email(),
-  password: z.string().min(6)
+  password: z.string().min(8).max(1024)
 });
 
 const loginSchema = z.object({
   account: z.string().min(1),
-  password: z.string().min(6)
+  password: z.string().min(6).max(1024)
 });
 
 const profileUpdateSchema = z.object({
@@ -385,7 +394,8 @@ const redeemBatchCreateSchema = z.object({
 const adjustCreditsSchema = z.object({
   userId: z.string().min(1),
   amount: z.coerce.number().int(),
-  description: z.string().default("")
+  description: z.string().default(""),
+  requestId: z.string().trim().min(1).max(128)
 });
 
 const rechargeOrderCreateSchema = z.object({
@@ -409,7 +419,9 @@ const invoiceRequestSchema = z.object({
 });
 
 const exportJobCreateSchema = z.object({
-  type: z.enum(["tts", "subtitle", "video_export"])
+  type: z.enum(["tts", "subtitle", "video_export"]),
+  storyboardIds: z.array(z.string().min(1)).min(1).max(2000).optional(),
+  maxCredits: z.number().int().nonnegative().optional()
 });
 
 const adminUserUpdateSchema = z.object({
@@ -422,14 +434,14 @@ const adminUserCreateSchema = z.object({
   name: z.string().min(1),
   email: z.string().email().optional(),
   phone: z.string().regex(/^1[3-9]\d{9}$/, "请输入 11 位中国大陆手机号").optional(),
-  password: z.string().min(12),
+  password: z.string().min(12).max(1024),
   role: z.enum(["creator", "admin"]).optional(),
   status: z.enum(["active", "disabled"]).optional(),
   initialCredits: z.coerce.number().int().min(0).optional()
 });
 
 const resetPasswordSchema = z.object({
-  password: z.string().min(12)
+  password: z.string().min(12).max(1024)
 });
 
 const promptTemplateUpdateSchema = z.object({
@@ -724,10 +736,27 @@ function exportDownloadFileName(job: { id: string; type: string; outputUrl?: str
 }
 
 function asyncRoute<TReq extends express.Request, TRes extends express.Response>(
-  handler: (req: TReq, res: TRes) => Promise<unknown>
+  handler: (req: TReq, res: TRes, next: express.NextFunction) => Promise<unknown>
 ) {
   return (req: TReq, res: TRes, next: express.NextFunction) => {
-    Promise.resolve(handler(req, res)).catch(next);
+    void (async () => {
+      const actor = requestAuthUser(req);
+      const audited = actor && !["GET", "HEAD", "OPTIONS"].includes(req.method)
+        && (req.path.startsWith("/api/admin/") || req.path.startsWith("/api/settings/"));
+      // Persist the intent before any administrator mutation. A process crash
+      // leaves a visible unfinished record instead of silently losing history.
+      const audit = audited ? await beginAdminAudit({ actorId: actor.id, actorRole: actor.role,
+        method: req.method, path: req.path, body: req.body, ip: req.ip }) : null;
+      if (audit) {
+        // The error middleware can map a thrown error to 409/404/503. Record
+        // the actual response, never a guessed 500 before that mapping runs.
+        // A disconnect before finish remains "started" for operator review.
+        res.once("finish", () => {
+          void finishAdminAudit(audit.id, res.statusCode).catch(error => console.error("[audit] completion pending", audit.id, error));
+        });
+      }
+      await handler(req, res, next);
+    })().catch(next);
   };
 }
 
@@ -740,19 +769,24 @@ function sessionExpiresAt() {
   return new Date(Date.now() + ttlMs);
 }
 
-async function issueToken(userId: string, req: express.Request) {
+async function issueToken(userId: string, req: express.Request, expectedPasswordHash?: string) {
   const token = crypto.randomBytes(32).toString("hex");
-  await prisma.authSession.create({
-    data: {
-      id: `session_${crypto.randomUUID()}`,
-      userId,
-      tokenHash: hashAuthToken(token),
-      userAgent: req.get("user-agent")?.slice(0, 500),
-      ipAddress: req.ip,
-      expiresAt: sessionExpiresAt()
+  await prisma.$transaction(async tx => {
+    await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${userId} FOR UPDATE`;
+    const user = await tx.user.findUniqueOrThrow({ where: { id: userId } });
+    if (user.status !== "active" || (expectedPasswordHash && user.passwordHash !== expectedPasswordHash)) {
+      throw new Error("账号状态或密码已发生变化，请重新登录。");
     }
+    await tx.authSession.create({ data: {
+      id: `session_${crypto.randomUUID()}`, userId, tokenHash: hashAuthToken(token),
+      userAgent: req.get("user-agent")?.slice(0, 500), ipAddress: req.ip, expiresAt: sessionExpiresAt()
+    } });
   });
   return token;
+}
+
+function setMediaCookie(res: express.Response, token: string) {
+  res.cookie(MEDIA_COOKIE, token, { httpOnly: true, secure: isProduction, sameSite: "lax", path: "/storage" });
 }
 
 function bearerToken(req: express.Request) {
@@ -823,15 +857,17 @@ async function resolveAuthUser(req: express.Request) {
 }
 
 async function ensureCreditForUser(userId: string) {
+  const configuredCredits = Number(process.env.REGISTRATION_CREDITS ?? (isProduction ? 0 : 1000));
+  const starterCredits = Number.isSafeInteger(configuredCredits) && configuredCredits >= 0 ? configuredCredits : 0;
   await prisma.creditAccount.upsert({
     where: { userId },
     update: {},
     create: {
       id: `credit_${userId}`,
       userId,
-      balance: 1000,
+      balance: starterCredits,
       frozenBalance: 0,
-      totalRecharge: 1000,
+      totalRecharge: starterCredits,
       totalConsume: 0
     }
   });
@@ -846,6 +882,28 @@ app.get("/health", (_req, res) => {
     time: new Date().toISOString()
   });
 });
+
+let catalogReady = false;
+app.get("/ready", asyncRoute(async (_req, res) => {
+  const database = prisma.$queryRaw`SELECT 1`;
+  const results = await Promise.allSettled([
+    Promise.race([database, new Promise((_, reject) => {
+      const timer = setTimeout(() => reject(new Error("Database readiness timeout")), 3000);
+      timer.unref();
+      void database.finally(() => clearTimeout(timer)).catch(() => undefined);
+    })]),
+    pingRedis()
+  ]);
+  const checks = {
+    database: results[0].status === "fulfilled",
+    redis: results[1].status === "fulfilled",
+    worker: getGenerationWorkerReady(),
+    catalog: catalogReady
+  };
+  const ok = Object.values(checks).every(Boolean);
+  res.setHeader("Cache-Control", "no-store");
+  res.status(ok ? 200 : 503).json({ ok, checks, revision: process.env.APP_REVISION || "development" });
+}));
 
 app.get(
   "/api/system/health/dependencies",
@@ -901,7 +959,8 @@ app.post(
     });
 
     await ensureCreditForUser(user.id);
-    const token = await issueToken(user.id, req);
+    const token = await issueToken(user.id, req, user.passwordHash ?? undefined);
+    setMediaCookie(res, token);
     res.status(201).json({ token, user: publicUser(user) });
   })
 );
@@ -924,10 +983,12 @@ app.post(
 
     const validPassword = await verifyPassword(parsed.data.password, user.passwordHash);
     if (!validPassword) return res.status(401).json({ message: "密码不正确，请重新输入。" });
+    if (user.status !== "active") return res.status(403).json({ message: "账号已停用，请联系平台支持。" });
 
     await ensureCreditForUser(user.id);
     await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
-    const token = await issueToken(user.id, req);
+    const token = await issueToken(user.id, req, user.passwordHash ?? undefined);
+    setMediaCookie(res, token);
     res.json({ token, user: publicUser(user) });
   })
 );
@@ -939,6 +1000,7 @@ app.get(
     if (!authUser) return res.status(401).json({ message: "登录已过期，请重新登录。" });
     const user = await prisma.user.findUnique({ where: { id: authUser.id } });
     if (!user) return res.status(401).json({ message: "用户不存在，请重新登录。" });
+    setMediaCookie(res, bearerToken(req));
     res.json({ user: publicUser(user) });
   })
 );
@@ -983,6 +1045,11 @@ app.get("/api/content/projects/:id/versions", asyncRoute(async (req, res) => {
   const userId = requestUserId(req);
   if (!userId) return res.status(401).json({ message: "请先登录。" });
   res.json(await handleGetContentVersions(userId, paramId(req.params.id)));
+}));
+
+app.post("/api/content/projects/:id/production/sync", asyncRoute(async (req, res) => {
+  const productionProjectId = await syncContentToProduction(requestUserId(req)!, paramId(req.params.id));
+  res.json({ productionProjectId });
 }));
 
 app.post("/api/content/projects/:id/generate", asyncRoute(async (req, res) => {
@@ -1168,6 +1235,7 @@ app.post(
 app.post(
   "/api/auth/logout",
   asyncRoute(async (req, res) => {
+    res.clearCookie(MEDIA_COOKIE, { httpOnly: true, secure: isProduction, sameSite: "lax", path: "/storage" });
     const token = bearerToken(req);
     if (token) {
       await prisma.authSession.updateMany({
@@ -1242,6 +1310,10 @@ app.post(
   asyncRoute(async (req, res) => {
     const parsed = showcaseCreateSchema.safeParse(req.body ?? {});
     if (!parsed.success) return res.status(400).json(parsed.error.flatten());
+    const coverPath = parsed.data.coverUrl ? localMediaPath(parsed.data.coverUrl) : undefined;
+    if (coverPath && !(await userCanReadMedia(requestUserId(req)!, coverPath))) {
+      return res.status(403).json({ message: "只能发布本人项目中的私有素材" });
+    }
     res.status(201).json(await createCreatorShowcaseWork(requestUserId(req)!, parsed.data));
   })
 );
@@ -1437,6 +1509,11 @@ app.post(
   asyncRoute(async (req, res) => {
     const parsed = characterReferenceSchema.safeParse(req.body ?? {});
     if (!parsed.success) return res.status(400).json(parsed.error.flatten());
+    const localReference = localMediaPath(parsed.data.referenceUrl);
+    if (localReference && !(await userCanReadMedia(requestUserId(req)!, localReference))) {
+      return res.status(403).json({ message: "只能引用本人项目中的私有素材" });
+    }
+    if (localReference) parsed.data.referenceUrl = localReference;
     res.json(await setCharacterReferenceImageV2(paramId(req.params.id), paramId(req.params.characterId), requestUserId(req), parsed.data));
   })
 );
@@ -1501,12 +1578,18 @@ app.get(
   })
 );
 
+app.post("/api/projects/:id/exports/quote", asyncRoute(async (req, res) => {
+  const parsed = exportJobCreateSchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json(parsed.error.flatten());
+  res.json(await quoteProjectExport(paramId(req.params.id), requestUserId(req)!, parsed.data.type, parsed.data.storyboardIds));
+}));
+
 app.post(
   "/api/projects/:id/export/jobs",
   asyncRoute(async (req, res) => {
     const parsed = exportJobCreateSchema.safeParse(req.body ?? {});
     if (!parsed.success) return res.status(400).json(parsed.error.flatten());
-    res.status(201).json(await createProjectExportJob(paramId(req.params.id), requestUserId(req), parsed.data.type));
+    res.status(201).json(await createProjectExportJob(paramId(req.params.id), requestUserId(req), parsed.data.type, parsed.data.storyboardIds, parsed.data.maxCredits));
   })
 );
 
@@ -1566,19 +1649,11 @@ app.post(
     const estimate = estimateCreation(parsed.data);
     const { projectId, taskId, task, estimatedCredits } = await createProjectAndTask(parsed.data, userId);
 
-    const job = await generationQueue.add(
-      "create-project",
-      { projectId, taskId, userId, input: parsed.data, estimatedCredits },
-      {
-        attempts: Number(process.env.GENERATION_JOB_ATTEMPTS ?? 3),
-        backoff: { type: "exponential", delay: Number(process.env.GENERATION_JOB_BACKOFF_MS ?? 5000) },
-        removeOnComplete: 100,
-        removeOnFail: 100
-      }
-    );
-    await prisma.generationTask.update({ where: { id: taskId }, data: { jobId: job.id } });
+    // The request and reservation already exist in PostgreSQL. A failed Redis
+    // dispatch stays pending and is recovered by the outbox loop.
+    const job = await enqueueCreationTask(taskId).catch(() => undefined);
 
-    const result = (await job.waitUntilFinished(generationQueueEvents, 60_000).catch(() => ({ mode: "queued" }))) as {
+    const result = (await (job ? job.waitUntilFinished(generationQueueEvents, 60_000).catch(() => ({ mode: "queued" })) : Promise.resolve({ mode: "queued" }))) as {
       mode?: "real" | "local" | "queued";
     };
     const workflow = await getProjectWorkflow(projectId, userId);
@@ -1622,42 +1697,21 @@ app.post(
     const task = await prisma.generationTask.findFirst({ where: { id: taskId, userId } });
     if (!task) return res.status(404).json({ message: "任务不存在。" });
     if (task.status === "succeeded") return res.status(409).json({ message: "已成功任务不需要重试。" });
+    if (/^(content|media):/.test(task.jobId ?? "")) return res.status(409).json({ message: "请回到对应创作步骤继续生成，视频会优先查询已有任务结果。" });
 
     if (task.type === "text") {
-      const originalJob = task.jobId ? await generationQueue.getJob(task.jobId) : null;
-      if (!originalJob?.data) {
+      const originalJob = !task.requestPayload && task.jobId ? await generationQueue.getJob(task.jobId) : null;
+      if (!originalJob?.data && !task.requestPayload) {
         return res.status(409).json({ message: "该文本任务缺少队列快照，无法自动重试。请新建项目或重新提交剧本。" });
       }
-      const project = task.projectId
-        ? await prisma.project.findFirst({ where: { id: task.projectId, userId } })
-        : null;
-      const retryInput = project
-        ? {
-            ...originalJob.data.input,
-            textProvider: project.textProvider ?? originalJob.data.input.textProvider,
-            textModel: project.textModel ?? originalJob.data.input.textModel,
-            imageProvider: project.imageProvider ?? originalJob.data.input.imageProvider,
-            imageModel: project.imageModel ?? originalJob.data.input.imageModel,
-            imageSize: project.imageSize ?? originalJob.data.input.imageSize,
-            imageQuality: project.imageQuality ?? originalJob.data.input.imageQuality,
-            videoProvider: project.videoProvider ?? originalJob.data.input.videoProvider,
-            videoModel: project.videoModel ?? originalJob.data.input.videoModel
-          }
-        : originalJob.data.input;
-      const retryData = { ...originalJob.data, input: retryInput };
-      const updated = await retryTask(taskId, userId);
-      const retryJob = await generationQueue.add(
-        "create-project",
-        retryData,
-        {
-          attempts: Number(process.env.GENERATION_JOB_ATTEMPTS ?? 3),
-          backoff: { type: "exponential", delay: Number(process.env.GENERATION_JOB_BACKOFF_MS ?? 5000) },
-          removeOnComplete: 100,
-          removeOnFail: 100
-        }
-      );
-      const refreshed = await prisma.generationTask.update({ where: { id: taskId }, data: { jobId: retryJob.id } });
-      return res.json({ ...updated, jobId: refreshed.jobId ?? updated.jobId });
+      const storedInput = task.requestPayload as unknown as import("@aifilm/shared").CreateProjectInput | null;
+      const originalInput = storedInput || originalJob!.data.input;
+      // Retries retain the original model and quoted task budget. Changing the
+      // project's route must not silently change an existing task's purchase.
+      const retryInput = originalInput;
+      const updated = await retryTask(taskId, userId, retryInput);
+      await enqueueCreationTask(taskId).catch(() => undefined);
+      return res.json(updated);
     }
 
     if (!task.projectId) return res.status(409).json({ message: "该任务没有绑定作品，无法按阶段重试。" });
@@ -1772,8 +1826,8 @@ app.get(
 
 app.get(
   "/api/providers",
-  asyncRoute(async (_req, res) => {
-    res.json(await listProviders());
+  asyncRoute(async (req, res) => {
+    res.json(await listProviders(requestAuthUser(req)?.role === "admin"));
   })
 );
 
@@ -1786,6 +1840,7 @@ app.get(
 
 app.post(
   "/api/settings/model-test",
+  requireAdminPermission("models:manage"),
   asyncRoute(async (req, res) => {
     const parsed = z.object({ textProvider: z.string().optional(), textModel: z.string().optional() }).safeParse(req.body ?? {});
     if (!parsed.success) return res.status(400).json(parsed.error.flatten());
@@ -1813,6 +1868,7 @@ app.post(
 
 app.post(
   "/api/settings/image-model-test",
+  requireAdminPermission("models:manage"),
   asyncRoute(async (req, res) => {
     const parsed = z.object({ imageProvider: z.string().optional(), imageModel: z.string().optional() }).safeParse(req.body ?? {});
     if (!parsed.success) return res.status(400).json(parsed.error.flatten());
@@ -1830,6 +1886,7 @@ app.post(
 
 app.post(
   "/api/settings/video-model-test",
+  requireAdminPermission("models:manage"),
   asyncRoute(async (req, res) => {
     const parsed = z.object({ videoProvider: z.string().optional(), videoModel: z.string().optional() }).safeParse(req.body ?? {});
     if (!parsed.success) return res.status(400).json(parsed.error.flatten());
@@ -1887,7 +1944,7 @@ app.get(
   "/api/admin/relay-gateway/policy",
   requireAdminPermission("models:manage"),
   asyncRoute(async (_req, res) => {
-    const providers = await listProviders();
+    const providers = await listProviders(true);
     res.json(createRelayGatewayPolicy(providers));
   })
 );
@@ -1896,7 +1953,7 @@ app.get(
   "/api/admin/plugins/visual-pipelines",
   requireAdminPermission("models:manage"),
   asyncRoute(async (_req, res) => {
-    const providers = await listProviders();
+    const providers = await listProviders(true);
     res.json(listVisualPipelines(providers));
   })
 );
@@ -1907,7 +1964,7 @@ app.post(
   asyncRoute(async (req, res) => {
     const parsed = visualPipelineTestSchema.safeParse(req.body ?? {});
     if (!parsed.success) return res.status(400).json(parsed.error.flatten());
-    const providers = await listProviders();
+    const providers = await listProviders(true);
     res.json(await testVisualPipeline(parsed.data.pipelineId, providers));
   })
 );
@@ -2038,7 +2095,7 @@ app.get(
 
 app.post(
   "/api/admin/evaluation/datasets",
-  requireAdminPermission("dashboard:read"),
+  requireAdminPermission("evaluation:manage"),
   asyncRoute(async (req, res) => {
     const parsed = evaluationDatasetCreateSchema.safeParse(req.body ?? {});
     if (!parsed.success) return res.status(400).json(parsed.error.flatten());
@@ -2048,7 +2105,7 @@ app.post(
 
 app.delete(
   "/api/admin/evaluation/datasets/:id",
-  requireAdminPermission("dashboard:read"),
+  requireAdminPermission("evaluation:manage"),
   asyncRoute(async (req, res) => {
     res.json(await deleteEvaluationDataset(paramId(req.params.id)));
   })
@@ -2092,7 +2149,7 @@ app.get(
 
 app.post(
   "/api/admin/evaluation/prompt-versions",
-  requireAdminPermission("dashboard:read"),
+  requireAdminPermission("evaluation:manage"),
   asyncRoute(async (req, res) => {
     const parsed = promptVersionCreateSchema.safeParse(req.body ?? {});
     if (!parsed.success) return res.status(400).json(parsed.error.flatten());
@@ -2102,7 +2159,7 @@ app.post(
 
 app.patch(
   "/api/admin/evaluation/prompt-versions/:id",
-  requireAdminPermission("dashboard:read"),
+  requireAdminPermission("evaluation:manage"),
   asyncRoute(async (req, res) => {
     const parsed = promptVersionUpdateSchema.safeParse(req.body ?? {});
     if (!parsed.success) return res.status(400).json(parsed.error.flatten());
@@ -2125,7 +2182,7 @@ app.get(
 
 app.post(
   "/api/admin/evaluation/experiments",
-  requireAdminPermission("dashboard:read"),
+  requireAdminPermission("evaluation:manage"),
   asyncRoute(async (req, res) => {
     const parsed = experimentRunCreateSchema.safeParse(req.body ?? {});
     if (!parsed.success) return res.status(400).json(parsed.error.flatten());
@@ -2263,7 +2320,7 @@ app.get(
 
 app.patch(
   "/api/admin/feedback/:id",
-  requireAdminPermission("dashboard:read"),
+  requireAdminPermission("evaluation:manage"),
   asyncRoute(async (req, res) => {
     const parsed = feedbackUpdateSchema.safeParse(req.body ?? {});
     if (!parsed.success) return res.status(400).json(parsed.error.flatten());
@@ -2273,7 +2330,7 @@ app.patch(
 
 app.delete(
   "/api/admin/evaluation/runs/:id",
-  requireAdminPermission("dashboard:read"),
+  requireAdminPermission("evaluation:manage"),
   asyncRoute(async (req, res) => {
     res.json(await deleteEvaluationRun(paramId(req.params.id)));
   })
@@ -2281,7 +2338,7 @@ app.delete(
 
 app.delete(
   "/api/admin/evaluation/projects/:id",
-  requireAdminPermission("dashboard:read"),
+  requireAdminPermission("evaluation:manage"),
   asyncRoute(async (req, res) => {
     res.json(await deleteProjectQualityData(paramId(req.params.id)));
   })
@@ -2289,7 +2346,7 @@ app.delete(
 
 app.post(
   "/api/admin/evaluation/run",
-  requireAdminPermission("dashboard:read"),
+  requireAdminPermission("evaluation:manage"),
   asyncRoute(async (req, res) => {
     const parsed = evaluationRunSchema.safeParse(req.body ?? {});
     if (!parsed.success) return res.status(400).json(parsed.error.flatten());
@@ -2500,6 +2557,23 @@ app.delete(
   })
 );
 
+const adminPageQuery = z.object({
+  page: z.coerce.number().int().min(1).max(1000000).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(30),
+  keyword: z.string().max(120).optional(), role: z.string().max(30).optional(),
+  status: z.string().max(30).optional(), actorId: z.string().max(100).optional()
+});
+app.get("/api/admin/users/page", requireAdminPermission("users:read"), asyncRoute(async (req, res) => {
+  const parsed = adminPageQuery.safeParse(req.query);
+  if (!parsed.success) return res.status(400).json(parsed.error.flatten());
+  res.json(await listAdminUsersPage(parsed.data));
+}));
+app.get("/api/admin/audit-logs", requireAdminPermission("audit:read"), asyncRoute(async (req, res) => {
+  const parsed = adminPageQuery.safeParse(req.query);
+  if (!parsed.success) return res.status(400).json(parsed.error.flatten());
+  res.json(await listAdminAuditLogs({ ...parsed.data, status: parsed.data.status === "all" ? undefined : parsed.data.status }));
+}));
+
 app.get(
   "/api/admin/users",
   requireAdminPermission("users:read"),
@@ -2524,7 +2598,7 @@ app.patch(
   asyncRoute(async (req, res) => {
     const parsed = adminUserUpdateSchema.safeParse(req.body ?? {});
     if (!parsed.success) return res.status(400).json(parsed.error.flatten());
-    res.json(await updateAdminUser(paramId(req.params.id), parsed.data));
+    res.json(await updateAdminUser(paramId(req.params.id), parsed.data, requestUserId(req)));
   })
 );
 
@@ -2570,7 +2644,7 @@ app.use((error: unknown, req: express.Request, res: express.Response, _next: exp
     causeMessage.includes("ConnectionReset") ||
     causeMessage.includes("ECONNREFUSED")
   ) {
-    return res.status(503).json({ message: "后端依赖未就绪：请先打开 Docker Desktop，并启动 PostgreSQL 与 Redis。可运行 start_admin_server.bat 自动启动。" });
+    return res.status(503).json({ message: "服务暂时不可用，请稍后重试或联系管理员。" });
   }
   if (code === "P2002") {
     return res.status(409).json({ message: "数据已存在，请检查邮箱、兑换码或唯一配置是否重复。" });
@@ -2583,7 +2657,7 @@ app.use((error: unknown, req: express.Request, res: express.Response, _next: exp
   }
 
   if (isProduction) {
-    return res.status(500).json({ message: "Internal server error." });
+    return res.status(500).json({ message: "暂时无法完成操作，请稍后重试。" });
   }
   res.status(500).json({ message, detail: causeMessage || undefined });
 });
@@ -2965,19 +3039,25 @@ function contentDisposition(fileName: string) {
 }
 
 async function startBackgroundServices() {
-  try {
-    await ensureSeedData();
-    console.log("[api] seed data ready");
-  } catch (error) {
-    console.warn(`[api] seed data skipped: ${formatStartupError(error)}`);
-  }
-
-  try {
-    await pingRedis();
-    startGenerationWorker();
-    console.log("[api] generation worker ready");
-  } catch (error) {
-    console.warn(`[api] generation worker skipped: ${formatStartupError(error)}`);
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      if (!catalogReady) {
+        await ensureSeedData();
+        catalogReady = true;
+      }
+      await pingRedis();
+      await startGenerationWorker();
+      await recoverCreationDispatches();
+      const recoveryTimer = setInterval(() => {
+        void recoverCreationDispatches().catch(() => console.warn("[api] creation dispatch recovery will retry"));
+      }, 15_000);
+      recoveryTimer.unref();
+      console.log("[api] catalog and generation worker ready");
+      return;
+    } catch (error) {
+      console.warn(`[api] background startup failed; retrying: ${formatStartupError(error)}`);
+      await new Promise(resolve => setTimeout(resolve, Math.min(30_000, 1000 * 2 ** Math.min(attempt, 5))));
+    }
   }
 }
 

@@ -5,6 +5,7 @@ import { imageOutputQualityOptions, imageOutputSizeOptions, imageParameterMultip
 import { api } from "../lib/api";
 import { ModelRoutePicker } from "../components/ModelRoutePicker";
 import { analyzeSourceEpisodes, episodeScopeOptions, parseSampleManifest, type SourceEpisodeAnalysis } from "./wizardSourceModel";
+import { clearWizardDraft, readWizardDraft, saveWizardDraft } from "./wizardDraftStorage";
 
 interface WizardPageProps {
   providers: ModelProvider[];
@@ -72,6 +73,8 @@ export function WizardPage({ providers, onCreated, onCreateContent }: WizardPage
   const [isTestingImageModel, setIsTestingImageModel] = useState(false);
   const [generationStartedAt, setGenerationStartedAt] = useState<number | null>(null);
   const [generationElapsed, setGenerationElapsed] = useState(0);
+
+  useEffect(() => { saveWizardDraft(form); }, [form]);
 
   const words = useMemo(() => form.content.trim().length, [form.content]);
   const episodeAnalysis = useMemo(() => analyzeSourceEpisodes(form.content, form.sourceType), [form.content, form.sourceType]);
@@ -172,7 +175,7 @@ export function WizardPage({ providers, onCreated, onCreateContent }: WizardPage
     try {
       const result = await api.startCreation(input);
       void api.trackEvent({ eventName: "create_project_success", projectId: result.project.id, entityType: "project", entityId: result.project.id, taskId: result.task.id, properties: { mode: result.mode } }).catch(() => undefined);
-      localStorage.removeItem("aifilm_creation_draft");
+      clearWizardDraft();
       setMessage(`已生成项目，模式：${result.mode === "real" ? "真实模型" : result.mode === "queued" ? "队列处理中" : "本地结构化"}`);
       onCreated(result.project.id);
     } catch (err) {
@@ -259,16 +262,23 @@ export function WizardPage({ providers, onCreated, onCreateContent }: WizardPage
   }
 
   async function importTextFile(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
+    const input = event.currentTarget;
+    const file = input.files?.[0];
     if (!file) return;
-    const text = await file.text();
-    setForm({ ...form, title: form.title || file.name.replace(/\.[^.]+$/, ""), content: text });
-    setEstimate(null);
-    event.currentTarget.value = "";
+    try {
+      const text = await file.text();
+      setForm((current) => ({ ...current, title: current.title || file.name.replace(/\.[^.]+$/, ""), content: text }));
+      setEstimate(null);
+    } catch {
+      setError("读取文件失败，请重试或直接粘贴正文。");
+    } finally { input.value = ""; }
   }
 
   function saveDraft() {
-    localStorage.setItem("aifilm_creation_draft", JSON.stringify(form));
+    if (!saveWizardDraft(form, true)) {
+      setError("当前浏览器无法保存草稿，请复制正文到本地文档后再离开。");
+      return;
+    }
     setMessage("草稿已保存在当前浏览器。");
     setError("");
   }
@@ -839,10 +849,5 @@ function stepHint(step: WizardStep, sourceType: CreateProjectInput["sourceType"]
 }
 
 function loadDraft(): CreateProjectInput | null {
-  try {
-    const raw = localStorage.getItem("aifilm_creation_draft");
-    return raw ? (JSON.parse(raw) as CreateProjectInput) : null;
-  } catch {
-    return null;
-  }
+  return readWizardDraft();
 }

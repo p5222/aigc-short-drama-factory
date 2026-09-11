@@ -1,6 +1,7 @@
 ﻿import { useCallback, useEffect, useMemo, useState } from "react";
 import { Bell, ChartNoAxesCombined, ChevronDown, CircleDollarSign, FilePenLine, Gift, LayoutDashboard, Layers3, Megaphone, Moon, ReceiptText, SlidersHorizontal, UserRound, Video } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import { firstAdminRefreshFailure } from "./admin/adminRefreshModel";
 import { useLayoutEffect } from "react";
 import type {
   AdminUserRow,
@@ -30,6 +31,7 @@ import { api, type AuthUser } from "./lib/api";
 import { contentApi } from "./lib/contentApi";
 import { AdminPage } from "./pages/AdminPage";
 import { AdminShell } from "./admin";
+import { readAdminHash } from "./admin/adminActionModel";
 import { LedgerPage, RechargePage } from "./pages/CreditsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { ScriptsPage } from "./pages/ScriptsPage";
@@ -41,11 +43,14 @@ import { WizardPage } from "./pages/WizardPage";
 import { WorkbenchPage } from "./pages/WorkbenchPage";
 import { ContentCreatorPage } from "./pages/ContentCreatorPage";
 import { resolveThemePreference, type WorkbenchTheme } from "./workbench/model";
-import { AUTH_SESSION_EXPIRED_EVENT } from "./lib/httpClient";
+import { AUTH_SESSION_EXPIRED_EVENT, HttpError } from "./lib/httpClient";
+import { clearAuthToken, readAuthToken } from "./lib/authStorage";
+import { clearWizardDraft } from "./pages/wizardDraftStorage";
 
 const THEME_STORAGE_KEY = "manjiao-theme";
 const AUTH_RESUME_PAGE_KEY = "manjiao-auth-resume-page";
 const AUTH_RESUME_PROJECT_KEY = "manjiao-auth-resume-project";
+const AUTH_RESUME_USER_KEY = "manjiao-auth-resume-user";
 
 function getInitialTheme(): WorkbenchTheme {
   let storedTheme: string | null = null;
@@ -77,6 +82,7 @@ export function App() {
       items: [
         { name: "运营总览", icon: LayoutDashboard },
         { name: "用户管理", icon: UserRound },
+        { name: "操作记录", icon: ReceiptText },
         { name: "平台公告", icon: Megaphone },
         { name: "创作现场管理", icon: Video },
         { name: "创作质量中心", icon: ChartNoAxesCombined }
@@ -100,7 +106,7 @@ export function App() {
     }
   ], []);
   const [activePage, setActivePage] = useState<PageKey>("workbench");
-  const [adminHash, setAdminHash] = useState(() => normalizeAdminHash(decodeURIComponent(window.location.hash.replace(/^#/, "")) || "运营总览"));
+  const [adminHash, setAdminHash] = useState(() => normalizeAdminHash(readAdminHash(window.location.hash)));
   const [adminMobileOpen, setAdminMobileOpen] = useState(false);
   const [tourOpen, setTourOpen] = useState(false);
   const [tourIndex, setTourIndex] = useState(0);
@@ -157,14 +163,14 @@ export function App() {
 
   useEffect(() => {
     if (!isAdminRoute) return;
-    const syncAdminHash = () => setAdminHash(normalizeAdminHash(decodeURIComponent(window.location.hash.replace(/^#/, "")) || "运营总览"));
+    const syncAdminHash = () => setAdminHash(normalizeAdminHash(readAdminHash(window.location.hash)));
     window.addEventListener("hashchange", syncAdminHash);
     syncAdminHash();
     return () => window.removeEventListener("hashchange", syncAdminHash);
   }, [isAdminRoute]);
 
   useEffect(() => {
-    const token = localStorage.getItem("aifilm_auth_token");
+    const token = readAuthToken();
     if (!token) {
       setAuthReady(true);
       return;
@@ -172,13 +178,17 @@ export function App() {
     void api
       .me()
       .then((result) => setUser(result.user))
-      .catch(() => localStorage.removeItem("aifilm_auth_token"))
+      .catch((reason) => {
+        if (reason instanceof HttpError && reason.status === 401) clearAuthToken();
+        else setError(reason instanceof Error ? reason.message : "暂时无法恢复登录，请检查网络后刷新页面。");
+      })
       .finally(() => setAuthReady(true));
   }, []);
 
   useEffect(() => {
     const handleSessionExpired = () => {
       sessionStorage.setItem(AUTH_RESUME_PAGE_KEY, activePage);
+      if (user?.id) sessionStorage.setItem(AUTH_RESUME_USER_KEY, user.id);
       if (activePage === "project" && workflow?.project.id) sessionStorage.setItem(AUTH_RESUME_PROJECT_KEY, workflow.project.id);
       setSessionExpired(true);
       setError("");
@@ -186,7 +196,7 @@ export function App() {
     };
     window.addEventListener(AUTH_SESSION_EXPIRED_EVENT, handleSessionExpired);
     return () => window.removeEventListener(AUTH_SESSION_EXPIRED_EVENT, handleSessionExpired);
-  }, [activePage, workflow?.project.id]);
+  }, [activePage, workflow?.project.id, user?.id]);
 
   const loadAdmin = useCallback(async () => {
     if (!user || !adminRoles.has(user.role)) return;
@@ -234,13 +244,12 @@ export function App() {
       if (evaluationRes.status === "fulfilled") setEvaluationOverview(evaluationRes.value);
       if (qualityProjectsRes.status === "fulfilled") setQualityProjects(qualityProjectsRes.value);
 
-      const failures = [adminPlansRes, adminMembershipPlansRes, redeemCodesRes, announcementsRes, helpArticlesRes, adminUsersRes, providersRes, modelPricesRes, templatesRes, adminRes, evaluationRes, qualityProjectsRes]
-        .filter((result) => result.status === "rejected")
-        .map((result) => (result as PromiseRejectedResult).reason)
-        .filter((reason) => reason instanceof Error && !reason.message.includes("没有此模块权限"));
-      setError(failures[0] instanceof Error ? failures[0].message : "");
+      const failure = firstAdminRefreshFailure([adminPlansRes, adminMembershipPlansRes, redeemCodesRes, announcementsRes, helpArticlesRes, adminUsersRes, providersRes, modelPricesRes, templatesRes, adminRes, evaluationRes, qualityProjectsRes]);
+      if (failure) throw failure;
+      setError("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "API 连接异常");
+      throw err;
     }
   }, [adminRoles, user]);
 
@@ -314,11 +323,17 @@ export function App() {
     await load();
   }
 
-  function clearAuthState() {
-    localStorage.removeItem("aifilm_auth_token");
+  function clearAuthState(preserveToken = false) {
+    if (!preserveToken) clearAuthToken();
+    clearWizardDraft();
+    sessionStorage.removeItem(AUTH_RESUME_PAGE_KEY);
+    sessionStorage.removeItem(AUTH_RESUME_PROJECT_KEY);
+    sessionStorage.removeItem(AUTH_RESUME_USER_KEY);
     setUser(null);
     setSummary(undefined);
     setProjects([]);
+    setContentProjects([]);
+    setContentFocusId("");
     setTasks([]);
     setAccount(undefined);
     setTransactions([]);
@@ -334,6 +349,8 @@ export function App() {
     setModelPrices([]);
     setTemplates([]);
     setAdminSummary(undefined);
+    setEvaluationOverview(undefined);
+    setQualityProjects([]);
     setWorkflow(undefined);
     setActivePage("workbench");
   }
@@ -343,7 +360,7 @@ export function App() {
   }
 
   useEffect(() => {
-    void load();
+    void load().catch(() => undefined);
   }, [load]);
 
   useEffect(() => {
@@ -358,7 +375,7 @@ export function App() {
       void api.tasks().then((nextTasks) => {
         setTasks(nextTasks);
         const stillActive = nextTasks.some((task) => task.status === "running" || task.status === "pending");
-        if (hasActiveTask && !stillActive) void load();
+        if (hasActiveTask && !stillActive) void load().catch(() => undefined);
       }).catch(() => undefined);
       if (activePage === "project" && workflow?.project.id) {
         void api.workflow(workflow.project.id).then(setWorkflow).catch(() => undefined);
@@ -370,7 +387,7 @@ export function App() {
 
   const page = useMemo(() => {
     const openFreshWizard = () => {
-      localStorage.removeItem("aifilm_creation_draft");
+      clearWizardDraft();
       setActivePage("wizard");
     };
     const openFreshContent = () => {
@@ -381,10 +398,10 @@ export function App() {
       case "workbench":
         return <WorkbenchPage summary={summary} onStart={openFreshWizard} onOpen={(projectId) => void openProject(projectId)} onOpenTasks={() => setActivePage("tasks")} onRecharge={() => setActivePage("recharge")} />;
       case "content":
-        return <ContentCreatorPage providers={providers} initialSelectedId={contentFocusId} onBack={() => setActivePage("scripts")} onEnterProduction={(draft) => {
-          localStorage.setItem("aifilm_creation_draft", JSON.stringify(draft));
+        return <ContentCreatorPage providers={providers} initialSelectedId={contentFocusId} onBack={() => setActivePage("scripts")} onEnterProduction={async (projectId) => {
           setContentFocusId("");
-          setActivePage("wizard");
+          await load();
+          await openProject(projectId);
         }} />;
       case "wizard":
         return (
@@ -392,7 +409,7 @@ export function App() {
             providers={providers}
             onCreateContent={openFreshContent}
             onCreated={(projectId) => {
-              void load().then(() => openProject(projectId));
+              void load().then(() => openProject(projectId)).catch(() => undefined);
             }}
           />
         );
@@ -416,9 +433,9 @@ export function App() {
         return (
           <TaskCenterPage
             tasks={tasks}
-            onRetry={(taskId) => void refreshTaskAction(() => api.retryTask(taskId))}
-            onCancel={(taskId) => void refreshTaskAction(() => api.cancelTask(taskId))}
-            onRefresh={() => void load()}
+            onRetry={(taskId) => refreshTaskAction(() => api.retryTask(taskId))}
+            onCancel={(taskId) => refreshTaskAction(() => api.cancelTask(taskId))}
+            onRefresh={() => load()}
           />
         );
       case "profile":
@@ -446,7 +463,7 @@ export function App() {
             users={adminUsers}
             evaluation={evaluationOverview}
             qualityProjects={qualityProjects}
-            onRefresh={() => void load()}
+            onRefresh={() => loadAdmin()}
           />
         );
       default:
@@ -461,18 +478,22 @@ export function App() {
   if (!user) {
     return <LoginPage
       variant={isAdminRoute ? "admin" : "creator"}
-      initialAuthOpen={sessionExpired}
-      sessionMessage={sessionExpired ? "登录状态已过期，当前页面和草稿已保留。重新登录后将返回原位置。" : ""}
+      initialAuthOpen={sessionExpired || Boolean(error)}
+      sessionMessage={sessionExpired ? "登录已过期，请重新登录。未保存的修改可能需要重新填写；新建项目输入会在当前标签页临时保留。" : error}
       onAuthed={(_token, nextUser) => {
-        setUser(nextUser);
-        setSessionExpired(false);
         const resumePage = sessionStorage.getItem(AUTH_RESUME_PAGE_KEY) as PageKey | null;
         const resumeProjectId = sessionStorage.getItem(AUTH_RESUME_PROJECT_KEY);
+        const resumeUserId = sessionStorage.getItem(AUTH_RESUME_USER_KEY);
+        const canResume = resumeUserId === nextUser.id;
+        if (resumeUserId && !canResume) clearAuthState(true);
+        setUser(nextUser);
+        setSessionExpired(false);
         sessionStorage.removeItem(AUTH_RESUME_PAGE_KEY);
         sessionStorage.removeItem(AUTH_RESUME_PROJECT_KEY);
-        if (resumePage === "project" && resumeProjectId) {
+        sessionStorage.removeItem(AUTH_RESUME_USER_KEY);
+        if (canResume && resumePage === "project" && resumeProjectId) {
           void openProject(resumeProjectId);
-        } else if (resumePage) {
+        } else if (canResume && resumePage) {
           setActivePage(resumePage);
         }
       }}
@@ -519,7 +540,7 @@ export function App() {
           users={adminUsers}
           evaluation={evaluationOverview}
           qualityProjects={qualityProjects}
-          onRefresh={() => void loadAdmin()}
+          onRefresh={() => loadAdmin()}
         />
       </AdminShell>
     );

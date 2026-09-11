@@ -80,16 +80,28 @@ export function mapTask(row: any): GenerationTask {
     progress: row.progress,
     estimatedCredits: row.estimatedCredits,
     finalCredits: row.finalCredits ?? undefined,
-    errorReason: row.errorReason ?? undefined,
+    errorReason: publicTaskError(row.errorReason),
     estimatedSeconds,
     refundPolicy: refundPolicyForTask(status),
-    retryable: ["failed", "canceled", "refunded"].includes(status),
-    cancelable: ["pending", "running"].includes(status),
+    retryable: !/^(content|media):/.test(String(row.jobId ?? "")) && ["failed", "canceled", "refunded"].includes(status),
+    cancelable: !/^(content|media):/.test(String(row.jobId ?? "")) && ["pending", "running"].includes(status),
     fallbackAvailable: ["text", "storyboard", "character", "image", "video"].includes(type),
     fallbackHint: fallbackHintForTask(type, row.provider, row.model),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString()
   };
+}
+
+function publicTaskError(value: unknown): string | undefined {
+  if (typeof value !== "string" || !value) return undefined;
+  try {
+    const parsed = JSON.parse(value);
+    if (parsed?.kind === "creation_lease") return undefined;
+    if (parsed?.kind === "media_checkpoint") {
+      return typeof parsed.metadata?.lastError === "string" ? parsed.metadata.lastError : undefined;
+    }
+  } catch { /* Plain-language errors are already suitable for the task view. */ }
+  return value;
 }
 
 function normalizeTaskStatus(value: unknown): TaskStatus {
@@ -119,7 +131,7 @@ function refundPolicyForTask(status: string) {
 }
 
 function fallbackHintForTask(type: string, provider?: string, model?: string) {
-  if (type === "text" || type === "storyboard") return "可在项目模型路由切换文本模型后重试，不会卡死当前作品。";
+  if (type === "text" || type === "storyboard") return "重试沿用本次任务的模型与报价；更换模型后请重新发起生成。";
   if (type === "character" || type === "image") return "可切换生图模型，继续使用已上传角色参考图和分镜引用资产。";
   if (type === "video") return "可切换视频模型，沿用已生成分镜图首帧继续生成。";
   return provider || model ? "可在后台检查渠道配置后重试。" : "可重试或改用备用处理方式。";
@@ -239,8 +251,9 @@ export function mapExportJob(row: any): ExportJob {
     outputKind: diagnostics.outputKind,
     ffmpegReady: diagnostics.ffmpegReady,
     clipCount: diagnostics.clipCount,
+    storyboardIds: diagnostics.storyboardIds,
     warnings: diagnostics.warnings,
-    errorReason: diagnostics.message ?? row.errorReason ?? undefined,
+    errorReason: diagnostics.message,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString()
   };
@@ -256,6 +269,7 @@ function parseExportDiagnostics(value?: string | null) {
     previewUrl?: string;
     ffmpegReady?: boolean;
     clipCount?: number;
+    storyboardIds?: string[];
     warnings?: string[];
   };
   try {
@@ -270,6 +284,8 @@ function parseExportDiagnostics(value?: string | null) {
       previewUrl: typeof parsed.previewUrl === "string" ? parsed.previewUrl : undefined,
       ffmpegReady: typeof parsed.ffmpegReady === "boolean" ? parsed.ffmpegReady : undefined,
       clipCount: typeof parsed.clipCount === "number" ? parsed.clipCount : undefined,
+      storyboardIds: Array.isArray(parsed.storyboardIds) && parsed.storyboardIds.length > 0 && parsed.storyboardIds.every((id) => typeof id === "string" && id.trim().length > 0) && new Set(parsed.storyboardIds).size === parsed.storyboardIds.length
+        ? parsed.storyboardIds as string[] : undefined,
       warnings: Array.isArray(parsed.warnings) ? parsed.warnings.filter((item): item is string => typeof item === "string") : undefined
     };
   } catch {
@@ -403,8 +419,8 @@ function providerEnvApiKey(providerId: string) {
   return "";
 }
 
-function uniqueStrings(values: string[]) {
-  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+function uniqueStrings(values: Array<string | undefined>) {
+  return [...new Set(values.filter((value): value is string => typeof value === "string").map((value) => value.trim()).filter(Boolean))];
 }
 
 export function mapModelPrice(row: any): ModelPrice {

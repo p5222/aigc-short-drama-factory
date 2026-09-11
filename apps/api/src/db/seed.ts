@@ -179,7 +179,8 @@ const defaultShowcaseWorks = [
 
 export async function ensureSeedData() {
   const syncEditableCatalog = process.env.SEED_SYNC_EDITABLE_CONFIG === "true";
-  const syncBillingPreset = process.env.SEED_SYNC_BILLING_PRESET !== "false";
+  const syncBillingPreset = process.env.SEED_SYNC_BILLING_PRESET === "true";
+  const resetDefaultUsers = process.env.SEED_RESET_DEFAULT_USERS === "true";
   const isProduction = process.env.NODE_ENV === "production";
   const seedDefaultUsers = process.env.SEED_DEFAULT_USERS === "true" || (!isProduction && process.env.SEED_DEFAULT_USERS !== "false");
   const seedDemoUser = process.env.SEED_DEMO_USER === "true" || (!isProduction && process.env.SEED_DEMO_USER !== "false");
@@ -193,14 +194,14 @@ export async function ensureSeedData() {
   if (seedDefaultUsers) {
     await prisma.user.upsert({
       where: { id: ADMIN_USER_ID },
-      update: {
+      update: resetDefaultUsers ? {
         name: "运营管理员",
         email: "admin@aifilm.local",
         phone: "13900000001",
         passwordHash: adminPasswordHash,
         role: "admin",
         status: "active"
-      },
+      } : {},
       create: {
         id: ADMIN_USER_ID,
         name: "运营管理员",
@@ -230,14 +231,14 @@ export async function ensureSeedData() {
     const demoPasswordHash = await hashPassword("demo123456");
     await prisma.user.upsert({
       where: { id: DEMO_USER_ID },
-      update: {
+      update: resetDefaultUsers ? {
         name: "用户1829",
         email: "demo@aifilm.local",
         phone: "13900000002",
         passwordHash: demoPasswordHash,
         role: "creator",
         status: "active"
-      },
+      } : {},
       create: {
         id: DEMO_USER_ID,
         name: "用户1829",
@@ -266,7 +267,7 @@ export async function ensureSeedData() {
   for (const plan of plans) {
     await prisma.plan.upsert({
       where: { id: plan.id },
-      update: {
+      update: syncEditableCatalog || syncBillingPreset ? {
         name: plan.name,
         price: plan.price,
         credits: plan.credits,
@@ -275,7 +276,7 @@ export async function ensureSeedData() {
         features: plan.features,
         shopUrl: plan.shopUrl,
         enabled: true
-      },
+      } : {},
       create: {
         id: plan.id,
         name: plan.name,
@@ -305,11 +306,7 @@ export async function ensureSeedData() {
             shopUrl: membership.shopUrl,
             enabled: membership.enabled
           }
-        : {
-            name: membership.name,
-            features: membership.features,
-            shopUrl: membership.shopUrl
-          },
+        : {},
       create: {
         id: membership.id,
         name: membership.name,
@@ -325,7 +322,8 @@ export async function ensureSeedData() {
     });
   }
 
-  for (const code of redeemCodes) {
+  if (isProduction) await prisma.redeemCode.updateMany({ where: { id: { in: redeemCodes.map((code) => code.id) }, code: { in: redeemCodes.map((code) => code.code) } }, data: { enabled: false } });
+  for (const code of isProduction ? [] : redeemCodes) {
     await prisma.redeemCode.upsert({
       where: { code: code.code },
       update: syncEditableCatalog
@@ -335,9 +333,7 @@ export async function ensureSeedData() {
             maxRedemptions: code.maxRedemptions,
             enabled: code.enabled
           }
-        : {
-            name: code.name
-          },
+        : {},
       create: {
         id: code.id,
         code: code.code,
@@ -414,11 +410,7 @@ export async function ensureSeedData() {
             capability: provider.capability as any,
             costHint: provider.costHint
           }
-        : {
-            name: provider.name,
-            modality: provider.modality,
-            capability: provider.capability as any
-          },
+        : {},
       create: {
         id: provider.id,
         name: provider.name,
@@ -432,6 +424,7 @@ export async function ensureSeedData() {
     });
   }
 
+  if (syncEditableCatalog) {
   await prisma.modelProvider.updateMany({
     where: { id: { in: ["zml-text", "zml-image"] } },
     data: { enabled: false }
@@ -484,6 +477,8 @@ export async function ensureSeedData() {
   });
   await prisma.modelProvider.deleteMany({ where: { id: { in: deprecatedProviderIds } } });
 
+  }
+
   for (const price of modelPrices.filter((item) => !deprecatedPriceIds.includes(item.id) && !deprecatedProviderIds.includes(item.providerId ?? ""))) {
     await prisma.modelPrice.upsert({
       where: { id: price.id },
@@ -498,13 +493,7 @@ export async function ensureSeedData() {
             vendorCostCny: price.vendorCostCny,
             enabled: price.enabled
           }
-        : {
-            providerId: price.providerId,
-            providerName: price.providerName,
-            modality: price.modality,
-            model: price.model,
-            unit: price.unit
-          },
+        : {},
       create: {
         id: price.id,
         providerId: price.providerId,
@@ -522,14 +511,14 @@ export async function ensureSeedData() {
   for (const template of templates) {
     await prisma.promptTemplate.upsert({
       where: { id: template.id },
-      update: {
+      update: syncEditableCatalog ? {
         name: template.name,
         type: template.type,
         version: template.version,
         enabled: template.enabled,
         summary: template.summary,
         content: template.content ?? template.summary
-      },
+      } : {},
       create: {
         id: template.id,
         name: template.name,

@@ -1,3 +1,4 @@
+import { lockCreditAccount } from "../billing/accountCredits.js";
 import crypto from "node:crypto";
 import { Prisma } from "@prisma/client";
 import type {
@@ -50,6 +51,9 @@ const stageLabels: Record<Stage, string> = {
 };
 
 export async function recordAnalyticsEvent(userId: string | undefined, input: AnalyticsEventInput) {
+  if (userId && input.projectId && !await prisma.project.findFirst({ where: { id: input.projectId, userId }, select: { id: true } })) throw new Error("事件关联项目不属于当前用户");
+  if (userId && input.taskId && !await prisma.generationTask.findFirst({ where: { id: input.taskId, userId, ...(input.projectId ? { projectId: input.projectId } : {}) }, select: { id: true } })) throw new Error("事件关联任务不属于当前用户或项目");
+
   const event = await prisma.analyticsEvent.create({
     data: {
       id: `event_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`,
@@ -69,20 +73,22 @@ export async function recordAnalyticsEvent(userId: string | undefined, input: An
 }
 
 export async function createUserFeedback(userId: string, input: FeedbackInput): Promise<UserFeedback> {
+  if (input.assetId) {
+    const asset = await prisma.asset.findFirst({ where: { id: input.assetId, project: { userId }, ...(input.projectId ? { projectId: input.projectId } : {}) }, select: { projectId: true } });
+    if (!asset) throw new Error("反馈关联的资产不存在或不属于当前用户。");
+    input = { ...input, projectId: asset.projectId };
+  }
   if (input.projectId) {
     const project = await prisma.project.findFirst({ where: { id: input.projectId, userId }, select: { id: true } });
     if (!project) throw new Error("反馈关联的项目不存在或不属于当前用户。");
   }
   if (input.taskId) {
-    const task = await prisma.generationTask.findFirst({ where: { id: input.taskId, userId }, select: { id: true } });
-    if (!task) throw new Error("反馈关联的任务不存在或不属于当前用户。");
-  }
-  if (input.assetId && input.projectId) {
-    const asset = await prisma.asset.findFirst({ where: { id: input.assetId, projectId: input.projectId }, select: { id: true } });
-    if (!asset) throw new Error("反馈关联的资产不存在。");
+    const task = await prisma.generationTask.findFirst({ where: { id: input.taskId, userId }, select: { id: true, projectId: true } });
+    if (!task || (input.projectId && task.projectId !== input.projectId)) throw new Error("反馈关联的任务不存在或与项目不匹配。");
   }
 
   const feedback = await prisma.$transaction(async (tx) => {
+    if (input.projectId) await tx.$queryRaw`SELECT true AS locked FROM pg_advisory_xact_lock(hashtext(${`feedback:${userId}:${input.projectId}:${input.stage}`}))`;
     const priorStageFeedback = input.projectId
       ? await tx.userFeedback.findFirst({
           where: { userId, projectId: input.projectId, stage: input.stage },
@@ -108,18 +114,7 @@ export async function createUserFeedback(userId: string, input: FeedbackInput): 
     });
 
     if (input.projectId && !priorStageFeedback) {
-      const account = await tx.creditAccount.upsert({
-        where: { userId },
-        update: {},
-        create: {
-          id: `credit_${userId}`,
-          userId,
-          balance: 0,
-          frozenBalance: 0,
-          totalRecharge: 0,
-          totalConsume: 0
-        }
-      });
+      const account = await lockCreditAccount(tx, userId);
       const updated = await tx.creditAccount.update({
         where: { userId },
         data: {
@@ -155,7 +150,7 @@ export async function createUserFeedback(userId: string, input: FeedbackInput): 
       usability: input.usability,
       tags: input.tags
     }
-  });
+  }).catch(() => undefined);
 
   return mapUserFeedback(feedback);
 }

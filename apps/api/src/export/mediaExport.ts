@@ -1,6 +1,6 @@
 import type { ProjectWorkflow } from "@aifilm/shared";
 import { persistTextReference } from "../storage/objectStorage.js";
-import { buildExportSrt, composeVideoExport, createTtsAudioAsset, type VideoCompositionResult } from "./videoComposer.js";
+import { buildExportSrt, composeVideoExport, type TtsAudioAsset, type VideoCompositionResult } from "./videoComposer.js";
 
 export type MediaExportResult = {
   outputUrl: string;
@@ -26,8 +26,7 @@ export async function createSubtitleAsset(workflow: ProjectWorkflow): Promise<Me
   };
 }
 
-export async function createTtsManifest(workflow: ProjectWorkflow): Promise<MediaExportResult> {
-  const audio = await createTtsAudioAsset(workflow);
+export async function createTtsManifest(workflow: ProjectWorkflow, audio: TtsAudioAsset): Promise<MediaExportResult> {
   return {
     outputUrl: audio.audioUrl,
     outputKind: "audio",
@@ -40,8 +39,8 @@ export async function createTtsManifest(workflow: ProjectWorkflow): Promise<Medi
   };
 }
 
-export async function createVideoExportPackage(workflow: ProjectWorkflow): Promise<MediaExportResult> {
-  const result = await composeVideoExport(workflow);
+export async function createVideoExportPackage(workflow: ProjectWorkflow, audio: TtsAudioAsset): Promise<MediaExportResult> {
+  const result = await composeVideoExport(workflow, audio);
   return {
     outputUrl: result.outputUrl,
     outputKind: result.mimeType === "video/mp4" ? "mp4" : "diagnostic_bundle",

@@ -1,0 +1,270 @@
+"""Isolated Linux deployment fault tests; Docker/HTTP are mocked, Git/rsync/flock are real."""
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import tempfile
+import unittest
+
+ROOT = Path(__file__).resolve().parent.parent
+HELPER = ROOT / "deploy/manjiao_remote.sh"
+HOOK = ROOT / "deploy/server_git_post_receive.sh"
+REQUIRED = ("bash", "git", "rsync", "flock", "python3", "tar", "sha256sum")
+
+
+@unittest.skipUnless(all(shutil.which(tool) for tool in REQUIRED), "Linux deployment tools are required")
+class DeploymentTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="manjiao-deploy-test-")
+        self.base = Path(self.temp.name)
+        self.app = self.base / "app"
+        self.repo = self.base / "repo"
+        self.bin = self.base / "bin"
+        for directory in (self.app, self.repo, self.bin):
+            directory.mkdir()
+        self.events = self.base / "events"
+        self.env = dict(os.environ, PATH=f"{self.bin}:{os.environ['PATH']}",
+                        TEST_EVENTS=str(self.events), TEST_APP=str(self.app),
+                        TEST_COUNT=str(self.base / "build-count"),
+                        MANJIAO_REPO_DIR=str(self.repo / ".git"), MANJIAO_APP_DIR=str(self.app),
+                        MANJIAO_BACKUP_ROOT=str(self.base / "backups"),
+                        MANJIAO_LOG_ROOT=str(self.base / "logs"),
+                        MANJIAO_REDIS_PERSISTENCE_ATTEMPTS="1",
+                        MANJIAO_READY_ATTEMPTS="1", MANJIAO_READY_INTERVAL="0")
+        self.shim("docker", r'''#!/usr/bin/env bash
+set -eu
+printf '%s\n' "$*" >> "$TEST_EVENTS"
+case "$*" in
+  'image inspect '*) exit 1;;
+  *pg_dump*)
+    [ "${TEST_FAIL:-}" != backup ] || exit 41
+    printf 'TEST_CUSTOM_DUMP';;
+  *pg_restore*) cat >/dev/null; [ "${TEST_FAIL:-}" != dump_validation ] || exit 43;;
+  *'redis-cli --raw CONFIG SET'*)
+    if [ "${TEST_FAIL:-}" = redis_config ]; then printf 'ERR CONFIG disabled'; else printf 'OK'; fi;;
+  *'redis-cli --raw INFO persistence'*)
+    if [ "${TEST_FAIL:-}" = redis_rewrite ]; then printf 'aof_enabled:1\naof_rewrite_in_progress:1\n';
+    else printf 'loading:0\naof_enabled:1\naof_rewrite_in_progress:0\naof_rewrite_scheduled:0\naof_last_bgrewrite_status:ok\naof_last_write_status:ok\n'; fi;;
+  *db:push:deploy*) [ "${TEST_FAIL:-}" != schema ] || exit 44;;
+  *'tar -czf - storage'*)
+    if [ "${TEST_FAIL:-}" = storage ]; then printf 'corrupt'; else tar -czf - -C "$TEST_APP" storage; fi;;
+  *'build api'*)
+    count=0; [ ! -f "$TEST_COUNT" ] || count="$(cat "$TEST_COUNT")"
+    count=$((count+1)); printf '%s' "$count" > "$TEST_COUNT"
+    if [ "${TEST_FAIL:-}" = recovery ] || { [ "${TEST_FAIL:-}" = rebuild ] && [ "$count" = 1 ]; }; then exit 42; fi;;
+esac
+''')
+        self.shim("curl", r'''#!/usr/bin/env bash
+printf 'readiness %s\n' "$*" >> "$TEST_EVENTS"
+if [ -n "${TEST_READY_BODY:-}" ]; then printf '%s' "$TEST_READY_BODY"; else printf '{"ok":true,"revision":"%s"}' "${MANJIAO_RELEASE:-local}"; fi
+''')
+        self.write_app(self.app, "old")
+        self.write_app(self.repo, "old")
+        self.git("init", "--initial-branch=main", cwd=self.repo)
+        self.git("config", "user.name", "Deployment Test", cwd=self.repo)
+        self.git("config", "user.email", "deployment-test@example.invalid", cwd=self.repo)
+        self.git("add", ".", cwd=self.repo)
+        self.git("commit", "-qm", "old release", cwd=self.repo)
+        self.old = self.git("rev-parse", "HEAD", cwd=self.repo)
+        self.git("update-ref", "refs/heads/deployed", self.old, cwd=self.repo)
+        (self.repo / "obsolete.txt").unlink()
+        (self.repo / "version.txt").write_text("new")
+        self.git("add", "-A", cwd=self.repo)
+        self.git("commit", "-qm", "new release", cwd=self.repo)
+        self.new = self.git("rev-parse", "HEAD", cwd=self.repo)
+        (self.app / ".env.production").write_text("PRESERVE_TEST_VALUE=1\n")
+        (self.app / "storage").mkdir()
+        (self.app / "storage/customer.txt").write_text("persistent media")
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def shim(self, name, source):
+        target = self.bin / name
+        target.write_text(source)
+        target.chmod(0o755)
+
+    def write_app(self, directory, version):
+        (directory / "deploy").mkdir()
+        shutil.copyfile(HELPER, directory / "deploy/manjiao_remote.sh")
+        (directory / "deploy/Dockerfile").write_text("# test image marker\n")
+        (directory / "package.json").write_text('{"name":"fixture"}')
+        (directory / "docker-compose.prod.yml").write_text("services: {}\n")
+        (directory / "version.txt").write_text(version)
+        (directory / "obsolete.txt").write_text("remove in next release")
+
+    def git(self, *args, cwd=None):
+        return subprocess.check_output(["git", *args], cwd=cwd or self.repo, env=self.env, text=True).strip()
+
+    def run_helper(self, command, *, extra_env=None, backup=None):
+        return subprocess.run(["bash", str(HELPER), command, str(self.app), str(backup or self.base / "backup")],
+                              env=self.env | (extra_env or {}), text=True, capture_output=True)
+
+    def run_hook(self, *, extra_env=None, ref="refs/heads/main"):
+        return subprocess.run(["bash", str(HOOK)], input=f"{self.old} {self.new} {ref}\n",
+                              env=self.env | (extra_env or {}), text=True, capture_output=True)
+
+    def deployed(self):
+        return self.git("rev-parse", "refs/heads/deployed")
+
+    def test_database_backup_failure_leaves_live_release_unchanged(self):
+        result = self.run_hook(extra_env={"TEST_FAIL": "backup"})
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertEqual((self.app / "version.txt").read_text(), "old")
+        self.assertEqual(self.deployed(), self.old)
+        self.assertFalse(list((self.base / "backups").rglob("COMPLETE")))
+        self.assertNotIn("build api", self.events.read_text())
+
+    def test_corrupt_storage_backup_is_rejected(self):
+        result = self.run_helper("backup", extra_env={"TEST_FAIL": "storage"})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.base / "backup/COMPLETE").exists())
+
+    def test_invalid_database_archive_prevents_storage_backup(self):
+        result = self.run_helper("backup", extra_env={"TEST_FAIL": "dump_validation"})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.base / "backup/COMPLETE").exists())
+        self.assertNotIn("tar -czf - storage", self.events.read_text())
+
+    def test_spa_or_false_readiness_cannot_certify_release(self):
+        for body in ("<html>SPA fallback</html>", '{"ok":false}', '"ok":true'):
+            result = self.run_helper("ready", extra_env={"TEST_READY_BODY": body})
+            self.assertNotEqual(result.returncode, 0, body)
+
+    def test_success_deletes_obsolete_code_and_preserves_customer_state(self):
+        result = self.run_hook()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.deployed(), self.new)
+        self.assertEqual((self.app / "version.txt").read_text(), "new")
+        self.assertFalse((self.app / "obsolete.txt").exists())
+        self.assertEqual((self.app / "storage/customer.txt").read_text(), "persistent media")
+        self.assertIn("PRESERVE_TEST_VALUE", (self.app / ".env.production").read_text())
+        backup = next((self.base / "backups").iterdir())
+        self.assertTrue((backup / "COMPLETE").is_file())
+        self.assertEqual(backup.stat().st_mode & 0o777, 0o700)
+        self.assertEqual((backup / "source.tgz").stat().st_mode & 0o777, 0o600)
+
+    def test_missing_or_wrong_ready_revision_cannot_confirm_new_image(self):
+        for body in ('{"ok":true}', '{"ok":true,"revision":"old-container"}'):
+            result = self.run_helper("ready", extra_env={"TEST_READY_BODY": body, "MANJIAO_RELEASE": self.new})
+            self.assertNotEqual(result.returncode, 0, body)
+        result = self.run_helper("ready", extra_env={"TEST_READY_BODY": json.dumps({"ok": True, "revision": self.new}), "MANJIAO_RELEASE": self.new})
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_failed_rebuild_restores_source_without_schema_downgrade(self):
+        result = self.run_hook(extra_env={"TEST_FAIL": "rebuild"})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("previous source readiness verified", result.stderr)
+        self.assertEqual(self.deployed(), self.old)
+        self.assertEqual((self.app / "version.txt").read_text(), "old")
+        self.assertTrue((self.app / "obsolete.txt").exists())
+        self.assertNotIn("db:push:deploy", self.events.read_text())
+
+    def test_failed_rollback_is_not_reported_as_recovered(self):
+        result = self.run_hook(extra_env={"TEST_FAIL": "recovery"})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("RECOVERY_FAILED", result.stderr)
+        self.assertNotIn("previous source readiness verified", result.stderr)
+        self.assertEqual(self.deployed(), self.old)
+
+    def test_rejected_schema_change_rolls_back_without_reapplying_schema(self):
+        result = self.run_hook(extra_env={"TEST_FAIL": "schema"})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("previous source readiness verified", result.stderr)
+        self.assertEqual(self.events.read_text().count("db:push:deploy"), 1)
+        self.assertEqual((self.app / "version.txt").read_text(), "old")
+        self.assertEqual(self.deployed(), self.old)
+
+    def test_redis_configuration_failure_does_not_replace_redis_or_sync_schema(self):
+        result = self.run_hook(extra_env={"TEST_FAIL": "redis_config"})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Redis refused persistence setting", result.stdout)
+        self.assertNotIn("--no-deps redis", self.events.read_text())
+        self.assertNotIn("db:push:deploy", self.events.read_text())
+        self.assertEqual(self.deployed(), self.old)
+
+    def test_incomplete_redis_aof_rewrite_prevents_container_replacement(self):
+        result = self.run_hook(extra_env={"TEST_FAIL": "redis_rewrite"})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Redis AOF did not finish", result.stdout)
+        self.assertNotIn("--no-deps redis", self.events.read_text())
+        self.assertNotIn("db:push:deploy", self.events.read_text())
+        self.assertEqual(self.deployed(), self.old)
+
+    def test_redis_is_persisted_before_replacement_and_schema(self):
+        result = self.run_hook()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        events = self.events.read_text()
+        positions = [events.index(part) for part in ("pg_dump", "build api", "CONFIG SET appendonly yes", "INFO persistence", "--no-deps redis", "db:push:deploy")]
+        self.assertEqual(positions, sorted(positions))
+        self.assertEqual(events.count("INFO persistence"), 2)
+
+    def test_same_commit_can_retry_after_failure(self):
+        self.assertNotEqual(self.run_hook(extra_env={"TEST_FAIL": "backup"}).returncode, 0)
+        ref = "refs/heads/deploy-requests/retry-test"
+        self.git("update-ref", ref, self.new)
+        result = self.run_hook(ref=ref)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.deployed(), self.new)
+        self.assertEqual(self.git("for-each-ref", "--format=%(refname)", ref), "")
+
+    def test_foreign_commit_request_cannot_deploy(self):
+        self.git("update-ref", "refs/heads/main", self.old)
+        result = self.run_hook(ref="refs/heads/deploy-requests/stale")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("refusing stale deployment", result.stderr)
+        self.assertEqual((self.app / "version.txt").read_text(), "old")
+
+    def test_held_deployment_lock_prevents_any_application_mutation(self):
+        lock = self.repo / ".git/manjiao-deploy.lock"
+        held = self.base / "held"
+        process = subprocess.Popen(["bash", "-c", 'exec 8>"$1"; flock 8; touch "$2"; sleep 10', "lock", str(lock), str(held)], env=self.env)
+        try:
+            import time
+            deadline = time.monotonic() + 3
+            while not held.exists() and time.monotonic() < deadline:
+                time.sleep(0.02)
+            self.assertTrue(held.exists())
+            result = self.run_hook(extra_env={"MANJIAO_DEPLOY_LOCK_TIMEOUT": "0"})
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("holds the lock", result.stderr)
+            self.assertEqual((self.app / "version.txt").read_text(), "old")
+            self.assertFalse(self.events.exists())
+        finally:
+            process.terminate()
+            process.wait(timeout=3)
+
+    def test_hook_install_is_atomic_and_rejects_invalid_replacements(self):
+        bare = self.base / "bare.git"
+        self.git("init", "--bare", "--initial-branch=main", str(bare))
+        old_hook = bare / "hooks/post-receive"
+        old_hook.write_text("#!/bin/sh\necho old-hook\n")
+        env = self.env | {"MANJIAO_REPO_DIR": str(bare)}
+        installer = ROOT / "deploy/install_git_hook.sh"
+        result = subprocess.run(["bash", str(installer), str(HOOK)], env=env, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(old_hook.read_text(), HOOK.read_text())
+        self.assertEqual(old_hook.stat().st_mode & 0o777, 0o700)
+        backups = list((bare / "hooks-backups").iterdir())
+        self.assertEqual(len(backups), 1)
+        self.assertIn("old-hook", backups[0].read_text())
+        bad_hook = self.base / "invalid-hook"
+        bad_hook.write_text("#!/bin/bash\nif\n")
+        result = subprocess.run(["bash", str(installer), str(bad_hook)], env=env, text=True, capture_output=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(old_hook.read_text(), HOOK.read_text())
+
+
+class DeploymentContractTests(unittest.TestCase):
+    def test_restarts_do_not_apply_schema_and_schema_sync_rejects_data_loss(self):
+        package = json.loads((ROOT / "apps/api/package.json").read_text())
+        self.assertNotIn("--accept-data-loss", package["scripts"]["db:push:deploy"])
+        compose = (ROOT / "docker-compose.prod.yml").read_text()
+        self.assertNotIn("db:push", compose)
+        self.assertIn('command: ["node", "apps/api/dist/server.js"]', compose)
+        self.assertIn("APP_REVISION:", compose)
+
+
+if __name__ == "__main__":
+    unittest.main()

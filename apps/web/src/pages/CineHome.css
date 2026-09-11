@@ -5,6 +5,10 @@ body.auth-surface {
 }
 
 .cine-home-page {
+  height: 100vh;
+  height: 100dvh;
+  overflow-x: hidden;
+  overflow-y: auto;
   font-family:
     "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Source Han Sans SC",
     "Microsoft YaHei", "Geist Sans", ui-sans-serif, system-ui, sans-serif;
@@ -21,6 +25,8 @@ body.auth-surface {
 }
 
 .cine-hero {
+  height: 100vh;
+  height: 100dvh;
   min-height: 680px;
   background: #000;
   isolation: isolate;
@@ -1240,14 +1246,8 @@ body.auth-surface {
     overflow: auto;
   }
 
-  .cine-home-page,
   .cine-hero {
-    min-height: 100vh;
-    height: auto;
-  }
-
-  .cine-hero {
-    min-height: 844px;
+    min-height: 600px;
   }
 
   .cine-top-nav {
@@ -1300,7 +1300,7 @@ body.auth-surface {
   .cine-mobile-start {
     position: absolute;
     right: 20px;
-    bottom: 66px;
+    bottom: max(66px, calc(env(safe-area-inset-bottom) + 24px));
     z-index: 35;
     min-height: 42px;
     display: inline-flex;

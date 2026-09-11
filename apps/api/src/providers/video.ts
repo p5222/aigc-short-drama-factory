@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { generateEmbeddedMjpegVideo } from "../export/embeddedVideo.js";
 import { storageRoot } from "../storage/objectStorage.js";
+import { signProviderMediaUrl } from "../storage/mediaAccess.js";
 import { blockModelUntilNextDay, coolDownModel, getModelQuotaDecision, recordModelSubmission } from "./modelQuota.js";
 
 interface AsyncTaskResponse {
@@ -147,7 +148,7 @@ export async function testVideoModelConnection(options: { provider?: string; mod
   const started = Date.now();
   const provider = normalizeVideoProvider(options.provider || process.env.VIDEO_PROVIDER || "mock-video");
   const model = options.model || currentVideoModel(provider);
-  const runtime = resolveVideoRuntime({ provider, model, baseUrl: options.baseUrl, prompt: "test" });
+  const runtime = resolveVideoRuntime({ provider, model, baseUrl: options.baseUrl, apiKey: options.apiKey, prompt: "test" });
   const configOnly = process.env.VIDEO_MODEL_TEST_MODE !== "real";
 
   try {
@@ -167,14 +168,15 @@ export async function testVideoModelConnection(options: { provider?: string; mod
       provider,
       model,
       baseUrl: options.baseUrl,
+      apiKey: options.apiKey,
       prompt: "AI 漫剧测试镜头，雨夜街口，轻微推镜，人物保持稳定，电影感光影，无字幕无水印。",
       ratio: "9:16",
       duration: 3
     });
 
     return {
-      ok: true,
-      mode: result.videoUrl ? "real" as const : "queued" as const,
+      ok: !["failed", "timeout", "canceled"].includes(result.status),
+      mode: ["failed", "timeout", "canceled"].includes(result.status) ? "failed" as const : result.videoUrl ? "real" as const : "queued" as const,
       provider: result.provider || runtime.name,
       model: result.model || runtime.model,
       taskId: result.taskId,
@@ -264,6 +266,7 @@ async function submitDashScopeVideo(
   const data = parseProviderJson(text, "DashScope video") as AsyncTaskResponse;
   const taskId = data.output?.task_id || data.task_id || data.request_id || `dashscope_video_${Date.now()}`;
   const directUrl = extractVideoUrl(data);
+  if (data.output?.task_id || data.task_id) await input.onTaskSubmitted?.({ taskId, provider: "dashscope-video", model });
   if (directUrl) {
     return { taskId, status: "succeeded", videoUrl: directUrl, provider: runtime.name, model };
   }
@@ -365,6 +368,8 @@ async function submitDoubaoSeedanceVideo(
 
   const data = parseProviderJson(text, "Doubao Seedance video") as AsyncTaskResponse;
   const taskId = data.id || data.task_id || data.data?.id || data.data?.task_id || `doubao_video_${Date.now()}`;
+  if (!data.id && !data.task_id && !data.data?.id && !data.data?.task_id) throw new Error("Doubao Seedance response did not include task_id");
+  await input.onTaskSubmitted?.({ taskId, provider: "doubao-seedance", model });
   const directUrl = extractVideoUrl(data);
   const taskResult: VideoGenerationResult = directUrl
     ? { taskId, status: "succeeded" as const, videoUrl: directUrl }
@@ -526,6 +531,7 @@ function currentVideoModel(provider: string) {
 }
 
 function resolveModelCandidates(input: VideoGenerationInput, provider: string, preferredModel: string) {
+  if (input.modelPool !== undefined) return uniqueStrings([preferredModel, ...input.modelPool]);
   const envPool =
     provider === "doubao-seedance"
       ? process.env.DOUBAO_SEEDANCE_MODEL_POOL
@@ -701,7 +707,7 @@ async function providerReadableImageUrl(url: string, provider: string) {
   if (!process.env.PUBLIC_API_BASE_URL) {
     throw new Error("视频模型需要可公网访问的首帧图片；当前是本地 /storage 文件。请配置 PUBLIC_API_BASE_URL 或先部署到服务器。");
   }
-  return absoluteAssetUrl(url);
+  return signProviderMediaUrl(url);
 }
 
 async function storedAssetDataUrl(url: string) {

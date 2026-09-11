@@ -16,9 +16,10 @@ import {
   UserRound,
   Volume2
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { GenerationTask, TaskStatus, TaskType } from "@aifilm/shared";
+import { canCancelTask, canRetryTask, createTaskActionRunner, type PendingTaskActions, type TaskAction } from "./taskActionModel";
 
 type QueueFilter = "all" | "active" | "failed" | "succeeded" | "pending" | "canceled";
 
@@ -39,13 +40,25 @@ export function TaskCenterPage({
   onRefresh
 }: {
   tasks: GenerationTask[];
-  onRetry: (taskId: string) => void;
-  onCancel: (taskId: string) => void;
-  onRefresh: () => void;
+  onRetry: (taskId: string) => void | Promise<void>;
+  onCancel: (taskId: string) => void | Promise<void>;
+  onRefresh: () => void | Promise<void>;
 }) {
   const [activeFilter, setActiveFilter] = useState<QueueFilter>("all");
   const [activeStage, setActiveStage] = useState<TaskType | "all">("all");
   const [selectedTaskId, setSelectedTaskId] = useState("");
+  const [pendingActions, setPendingActions] = useState<PendingTaskActions>({});
+  const [actionError, setActionError] = useState("");
+  const [actionMessage, setActionMessage] = useState("");
+  const actionRunner = useRef(createTaskActionRunner()).current;
+
+  async function runAction(taskId: string, action: TaskAction) {
+    setActionError("");
+    setActionMessage("");
+    const result = await actionRunner.run(taskId, action, () => action === "retry" ? onRetry(taskId) : action === "cancel" ? onCancel(taskId) : onRefresh(), setPendingActions);
+    if (result.status === "failed") setActionError(result.message);
+    if (result.status === "succeeded") setActionMessage(action === "retry" ? "重试请求已提交，任务状态已刷新。" : action === "cancel" ? "取消请求已处理，任务状态已刷新。" : "队列已刷新。");
+  }
 
   const queueStats = useMemo(() => getQueueStats(tasks), [tasks]);
   const queuePolicy = useMemo(() => buildQueuePolicy(tasks), [tasks]);
@@ -67,7 +80,7 @@ export function TaskCenterPage({
       .sort((a, b) => statusPriority[a.status] - statusPriority[b.status] || new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
   }, [activeFilter, activeStage, tasks]);
 
-  const selectedTask = filteredTasks.find((task) => task.id === selectedTaskId) ?? filteredTasks[0] ?? tasks[0];
+  const selectedTask = filteredTasks.find((task) => task.id === selectedTaskId) ?? filteredTasks[0];
 
   useEffect(() => {
     if (!selectedTask) {
@@ -88,12 +101,15 @@ export function TaskCenterPage({
           <p>剧本、分镜、角色三视图、分镜生图、图生视频和导出任务统一在这里查看进度、定位失败原因，并选择重试或取消。</p>
         </div>
         <div className="queue-hero-actions">
-          <button className="ghost-button" onClick={onRefresh}>
+          <button className="ghost-button" onClick={() => void runAction("__refresh__", "refresh")} disabled={Boolean(pendingActions.__refresh__)}>
             <RefreshCw size={18} />
-            刷新队列
+            {pendingActions.__refresh__ ? "刷新中…" : "刷新队列"}
           </button>
         </div>
       </div>
+
+      {actionError ? <p className="danger-text" role="alert">{actionError}</p> : null}
+      {actionMessage ? <p className="success-text" role="status">{actionMessage}</p> : null}
 
       <div className="queue-stat-grid">
         <QueueStat icon={<Layers3 size={21} />} label="总任务" value={tasks.length} hint={`${queueStats.totalCredits} 预计积分`} />
@@ -155,8 +171,8 @@ export function TaskCenterPage({
           </div>
           <div className="queue-task-list">
             {filteredTasks.map((task) => {
-              const failedLike = task.status === "failed" || task.status === "canceled" || task.status === "refunded";
-              const cancelableRow = Boolean(task.cancelable ?? (task.status === "pending" || task.status === "running"));
+              const failedLike = canRetryTask(task);
+              const cancelableRow = canCancelTask(task);
               return (
                 <div
                   role="button"
@@ -182,13 +198,13 @@ export function TaskCenterPage({
                     {failedLike || cancelableRow ? (
                       <span className="queue-task-actions">
                         {failedLike ? (
-                          <button type="button" onClick={(event) => { event.stopPropagation(); onRetry(task.id); }}>
-                            <RotateCcw size={13} />重试
+                          <button type="button" disabled={Boolean(pendingActions[task.id])} onClick={(event) => { event.stopPropagation(); void runAction(task.id, "retry"); }}>
+                            <RotateCcw size={13} />{pendingActions[task.id] === "retry" ? "提交中…" : "重试"}
                           </button>
                         ) : null}
                         {cancelableRow ? (
-                          <button type="button" className="danger" onClick={(event) => { event.stopPropagation(); onCancel(task.id); }}>
-                            <Square size={12} />取消
+                          <button type="button" className="danger" disabled={Boolean(pendingActions[task.id])} onClick={(event) => { event.stopPropagation(); void runAction(task.id, "cancel"); }}>
+                            <Square size={12} />{pendingActions[task.id] === "cancel" ? "取消中…" : "取消"}
                           </button>
                         ) : null}
                       </span>
@@ -205,7 +221,7 @@ export function TaskCenterPage({
           </div>
         </div>
 
-        <TaskDetailPanel task={selectedTask} queuePolicy={queuePolicy} onRetry={onRetry} onCancel={onCancel} />
+        <TaskDetailPanel task={selectedTask} queuePolicy={queuePolicy} pendingAction={selectedTask ? pendingActions[selectedTask.id] : undefined} onRetry={(id) => void runAction(id, "retry")} onCancel={(id) => void runAction(id, "cancel")} />
       </section>
     </div>
   );
@@ -214,11 +230,13 @@ export function TaskCenterPage({
 function TaskDetailPanel({
   task,
   queuePolicy,
+  pendingAction,
   onRetry,
   onCancel
 }: {
   task?: GenerationTask;
   queuePolicy: ReturnType<typeof buildQueuePolicy>;
+  pendingAction?: TaskAction;
   onRetry: (taskId: string) => void;
   onCancel: (taskId: string) => void;
 }) {
@@ -226,14 +244,14 @@ function TaskDetailPanel({
     return (
       <aside className="queue-detail-card empty">
         <Megaphone size={28} />
-        <strong>暂无生成任务</strong>
-        <p>新建漫剧、生成分镜图或视频后，这里会展示当前任务的进度、模型和失败原因。</p>
+        <strong>当前筛选下没有任务</strong>
+        <p>可切回全部查看历史任务，或前往项目工作台开始生成。</p>
       </aside>
     );
   }
 
-  const canRetry = task.status === "failed" || task.status === "canceled" || task.status === "refunded";
-  const canCancel = Boolean(task.cancelable ?? (task.status === "pending" || task.status === "running"));
+  const canRetry = canRetryTask(task);
+  const canCancel = canCancelTask(task);
   const progress = normalizeProgress(task.progress);
   const queuePosition = task.status === "pending" ? pendingPosition(task, queuePolicy.pendingTasks) : 0;
 
@@ -305,13 +323,13 @@ function TaskDetailPanel({
       </div>
 
       <div className="queue-detail-actions">
-        <button type="button" onClick={() => onRetry(task.id)} disabled={!canRetry}>
+        <button type="button" onClick={() => onRetry(task.id)} disabled={!canRetry || Boolean(pendingAction)}>
           <RotateCcw size={16} />
-          切模型后重试
+          {pendingAction === "retry" ? "提交重试中…" : "重试任务"}
         </button>
-        <button type="button" className="danger" onClick={() => onCancel(task.id)} disabled={!canCancel}>
+        <button type="button" className="danger" onClick={() => onCancel(task.id)} disabled={!canCancel || Boolean(pendingAction)}>
           <Square size={15} />
-          取消任务
+          {pendingAction === "cancel" ? "取消中…" : "取消任务"}
         </button>
       </div>
     </aside>

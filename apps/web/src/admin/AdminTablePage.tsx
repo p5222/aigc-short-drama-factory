@@ -46,7 +46,7 @@ export function AdminTablePage<T>({
       </header>
       {filters ? <div className="adm-filterbar">{filters}</div> : null}
       {error ? <div className="adm-error" role="alert">{error}</div> : null}
-      <div className="adm-table-scroll">
+      <div className="adm-table-scroll" aria-busy={loading}>
         <table>
           <thead><tr>{columns.map((column) => <th key={column.key} style={{ width: column.width }}>{column.label}</th>)}</tr></thead>
           <tbody>
@@ -55,9 +55,12 @@ export function AdminTablePage<T>({
                 key={rowKey(row)}
                 className={onRowClick ? "adm-clickable-row" : undefined}
                 tabIndex={onRowClick ? 0 : undefined}
-                onClick={() => onRowClick?.(row)}
+                onClick={(event) => {
+                  if ((event.target as HTMLElement).closest("button,input,select,textarea,a,label,summary")) return;
+                  onRowClick?.(row);
+                }}
                 onKeyDown={(event) => {
-                  if (!onRowClick || (event.key !== "Enter" && event.key !== " ")) return;
+                  if (event.target !== event.currentTarget || !onRowClick || (event.key !== "Enter" && event.key !== " ")) return;
                   event.preventDefault();
                   onRowClick(row);
                 }}
@@ -67,14 +70,14 @@ export function AdminTablePage<T>({
             ))}
           </tbody>
         </table>
-        {loading ? <div className="adm-table-state" role="status">正在加载数据...</div> : !rows.length ? <div className="adm-table-state">{emptyText}</div> : null}
+        {loading ? <div className="adm-table-state" role="status">正在加载数据...</div> : !rows.length && !error ? <div className="adm-table-state">{emptyText}</div> : null}
       </div>
       {page != null && totalPages != null ? (
         <footer className="adm-pagination">
           <span>第 {page} / {Math.max(1, totalPages)} 页</span>
           <div>
-            <button type="button" disabled={page <= 1} onClick={() => onPageChange?.(page - 1)}>上一页</button>
-            <button type="button" disabled={page >= totalPages} onClick={() => onPageChange?.(page + 1)}>下一页</button>
+            <button type="button" disabled={loading || !onPageChange || page <= 1} onClick={() => onPageChange?.(page - 1)}>上一页</button>
+            <button type="button" disabled={loading || !onPageChange || page >= totalPages} onClick={() => onPageChange?.(page + 1)}>下一页</button>
           </div>
         </footer>
       ) : null}

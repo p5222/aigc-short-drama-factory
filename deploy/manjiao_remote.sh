@@ -1,76 +1,150 @@
 #!/usr/bin/env bash
-# =============================================================================
-# manjiao_remote.sh —— 在服务器上执行的部署助手（由 deploy_to_manjiao.ps1 scp 过来调用）。
-# 纯 bash，无 PowerShell 插值，避开跨壳转义坑。用法：
-#   bash manjiao_remote.sh backup      <RemoteDir> <BackupDir>
-#   bash manjiao_remote.sh extract     <RemoteDir>              # 解压 /tmp/manjiao_release_HEAD.tar
-#   bash manjiao_remote.sh merge_pipp  <RemoteDir>              # 合并 /tmp/pipp.env 到 .env.production
-#   bash manjiao_remote.sh rebuild     <RemoteDir>
-#   bash manjiao_remote.sh health
-#   bash manjiao_remote.sh fingerprint
-#   bash manjiao_remote.sh rollback    <RemoteDir> <BackupDir>
-# =============================================================================
-set -e
-COMPOSE="docker compose -f docker-compose.prod.yml"
+# Deployment-host helper. Persistent state is excluded from source sync.
+set -euo pipefail
+umask 077
 cmd="${1:-}"; RD="${2:-/opt/manjiao}"; BD="${3:-}"
-
+COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.prod.yml}"
+READY_URL="${MANJIAO_READY_URL:-http://127.0.0.1:8080/ready}"
+READY_ATTEMPTS="${MANJIAO_READY_ATTEMPTS:-60}"
+READY_INTERVAL="${MANJIAO_READY_INTERVAL:-5}"
+REDIS_ATTEMPTS="${MANJIAO_REDIS_PERSISTENCE_ATTEMPTS:-60}"
+COMPOSE=(docker compose -f "$COMPOSE_FILE")
+WORK=""
+cleanup() { if [ -n "$WORK" ]; then rm -rf -- "$WORK"; fi; }
+trap cleanup EXIT
+check_app_dir() {
+  RD="$(realpath -e -- "$RD")"
+  if [ "$RD" = / ] || [ "$RD" = /opt ] || [ "$RD" = /home ]; then echo "Unsafe application directory" >&2; exit 2; fi
+  test -f "$RD/package.json"; test -f "$RD/$COMPOSE_FILE"
+  cd "$RD"
+}
+private_workdir() { if [ -z "$WORK" ]; then WORK="$(mktemp -d "${TMPDIR:-/tmp}/manjiao-helper.XXXXXXXX")"; fi; }
+ready_once() {
+  local body expected_revision="${2:-${MANJIAO_RELEASE:-}}"
+  body="$(curl --fail --silent --show-error --connect-timeout 3 --max-time 10 "$1")" || return 1
+  printf '%s' "$body" | python3 -c 'import json,sys; v=json.load(sys.stdin); expected=sys.argv[1]; sys.exit(0 if isinstance(v,dict) and v.get("ok") is True and (expected == "legacy" or not expected or v.get("revision") == expected) else 1)' "$expected_revision" 2>/dev/null
+}
+wait_ready() {
+  local allow_legacy="${1:-false}" attempt
+  for ((attempt=1; attempt<=READY_ATTEMPTS; attempt++)); do
+    if ready_once "$READY_URL"; then echo "READY_OK"; return 0; fi
+    if [ "$allow_legacy" = true ] && ready_once "${MANJIAO_LEGACY_READY_URL:-http://127.0.0.1:8080/api/system/health/dependencies}" legacy; then
+      echo "LEGACY_DEPENDENCIES_OK (older release has no worker readiness contract)"; return 0
+    fi
+    if ((attempt < READY_ATTEMPTS)); then sleep "$READY_INTERVAL"; fi
+  done
+  echo "Readiness did not pass" >&2; return 1
+}
+redis_aof_ready() {
+  local state
+  state="$("${COMPOSE[@]}" exec -T redis redis-cli --raw INFO persistence)" || return 1
+  printf '%s' "$state" | python3 -c 'import sys; d=dict(line.split(":",1) for line in sys.stdin.read().splitlines() if ":" in line); expected={"loading":"0","aof_enabled":"1","aof_rewrite_in_progress":"0","aof_rewrite_scheduled":"0","aof_last_bgrewrite_status":"ok","aof_last_write_status":"ok"}; sys.exit(0 if all(d.get(k)==v for k,v in expected.items()) else 1)' 2>/dev/null
+}
+wait_redis_aof() {
+  local attempt
+  for ((attempt=1; attempt<=REDIS_ATTEMPTS; attempt++)); do
+    if redis_aof_ready; then return 0; fi
+    if ((attempt < REDIS_ATTEMPTS)); then sleep "$READY_INTERVAL"; fi
+  done
+  echo "Redis AOF did not finish a healthy rewrite; refusing to replace its container" >&2
+  return 1
+}
+ensure_redis_persistence() {
+  local setting value reply
+  # Enable AOF on the LIVE instance first. Replacing an RDB-only container first
+  # could lose queue writes that have not reached a snapshot. Redis rewrites the
+  # current dataset into AOF and buffers concurrent writes before reporting ready.
+  for setting in appendfsync maxmemory-policy appendonly; do
+    case "$setting" in appendfsync) value=everysec;; maxmemory-policy) value=noeviction;; appendonly) value=yes;; esac
+    reply="$("${COMPOSE[@]}" exec -T redis redis-cli --raw CONFIG SET "$setting" "$value")"
+    if [ "$reply" != OK ]; then echo "Redis refused persistence setting $setting" >&2; return 1; fi
+  done
+  wait_redis_aof
+  # The existing redis_data volume is preserved. A graceful stop flushes AOF.
+  "${COMPOSE[@]}" up -d --no-deps redis
+  wait_redis_aof
+  echo "REDIS_AOF_READY"
+}
+sync_source() {
+  command -v rsync >/dev/null
+  private_workdir; mkdir -p "$WORK/source"
+  tar -xzf "$1" -C "$WORK/source"
+  test -f "$WORK/source/package.json"; test -f "$WORK/source/$COMPOSE_FILE"
+  rsync -a --checksum --delete --exclude='/.git/' --exclude='/.env' --exclude='/.env.*' \
+    --exclude='node_modules/' --exclude='/storage/' --exclude='/backups/' \
+    --exclude='/outputs/' --exclude='/tmp/' --exclude='*.local.txt' \
+    "$WORK/source/" "$RD/"
+}
 case "$cmd" in
   backup)
-    mkdir -p "$BD"; cd "$RD"
-    $COMPOSE exec -T postgres sh -lc 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > "$BD/aigc_drama.dump" || echo "WARN: pg_dump skipped"
-    $COMPOSE exec -T api sh -lc 'cd /app && tar -czf - storage' > "$BD/storage.tar.gz" 2>/dev/null || echo "WARN: storage backup skipped"
-    tar --exclude=node_modules --exclude=.git --exclude=storage --exclude=backups -czf "$BD/source.tgz" -C "$RD" . || true
-    echo "BACKUP_DONE"; ls -la "$BD"
+    check_app_dir; test -n "$BD"; mkdir -p -- "$BD"; BD="$(realpath -e -- "$BD")"
+    case "$BD/" in "$RD/"*) echo "Backup must be outside the application directory" >&2; exit 2;; esac
+    test ! -e "$BD/COMPLETE"; chmod 700 "$BD"
+    "${COMPOSE[@]}" exec -T postgres sh -lc 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > "$BD/aigc_drama.dump.partial"
+    test -s "$BD/aigc_drama.dump.partial"
+    "${COMPOSE[@]}" exec -T postgres pg_restore --list < "$BD/aigc_drama.dump.partial" > /dev/null
+    mv "$BD/aigc_drama.dump.partial" "$BD/aigc_drama.dump"
+    "${COMPOSE[@]}" exec -T api sh -lc 'cd /app && tar -czf - storage' > "$BD/storage.tar.gz.partial"
+    tar -tzf "$BD/storage.tar.gz.partial" > /dev/null
+    mv "$BD/storage.tar.gz.partial" "$BD/storage.tar.gz"
+    tar --exclude=node_modules --exclude=.git --exclude=storage --exclude=backups --exclude=outputs --exclude=tmp -czf "$BD/source.tgz.partial" -C "$RD" .
+    tar -tzf "$BD/source.tgz.partial" > /dev/null
+    mv "$BD/source.tgz.partial" "$BD/source.tgz"
+    (cd "$BD" && sha256sum aigc_drama.dump storage.tar.gz source.tgz > SHA256SUMS)
+    printf 'source-and-data-backup-v1\n' > "$BD/COMPLETE"
+    echo "BACKUP_DONE $BD"
     ;;
   extract)
-    cd "$RD"
-    tar -xf /tmp/manjiao_release_HEAD.tar
-    rm -f /tmp/manjiao_release_HEAD.tar
-    echo "EXTRACTED"
-    ;;
-  merge_pipp|merge_env)
-    cd "$RD"; touch .env.production
-    SRC=/tmp/keys.env
-    [ -f "$SRC" ] || SRC=/tmp/pipp.env
-    if [ ! -f "$SRC" ]; then echo "no keys file, skip"; exit 0; fi
-    merged=0
-    while IFS= read -r line; do
-      case "$line" in ''|\#*) continue;; esac
-      case "$line" in *=*) ;; *) continue;; esac
-      key="${line%%=*}"
-      if grep -q "^${key}=" .env.production; then
-        sed -i "s|^${key}=.*|${line}|" .env.production
-      else
-        echo "$line" >> .env.production
-      fi
-      merged=$((merged+1))
-    done < "$SRC"
-    rm -f /tmp/keys.env /tmp/pipp.env
-    if grep -q "^MANJIAO_TEXT_API_KEY=." .env.production; then echo "MANJIAO key present"; else echo "WARN: MANJIAO_TEXT_API_KEY empty"; fi
-    echo "ENV_MERGED ($merged keys)"
+    check_app_dir
+    archive="${MANJIAO_RELEASE_ARCHIVE:?A private release archive path is required}"
+    test -s "$archive"; sync_source "$archive"; echo "EXTRACTED"
     ;;
   rebuild)
-    cd "$RD"
-    $COMPOSE up web
-    $COMPOSE up -d --force-recreate api
-    $COMPOSE restart nginx
-    echo "REBUILD_TRIGGERED"
+    check_app_dir
+    "${COMPOSE[@]}" build api
+    ensure_redis_persistence
+    # Existing database has no complete migration baseline. Destructive sync fails.
+    # Schema sync is a release step and never runs on ordinary container restart.
+    "${COMPOSE[@]}" run --rm --no-deps --entrypoint pnpm api --filter @aifilm/api db:push:deploy
+    "${COMPOSE[@]}" up -d --no-deps --force-recreate api
+    "${COMPOSE[@]}" up -d --no-deps --force-recreate nginx
+    wait_ready
+    "${COMPOSE[@]}" run --rm --no-deps web
+    echo "REBUILD_READY"
     ;;
-  health)
-    curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/health || true
-    ;;
-  fingerprint)
-    curl -s http://127.0.0.1:8080/ | grep -oE 'assets/index-[A-Za-z0-9_-]+[.](js|css)' | tr '\n' ' ' || true
-    ;;
+  ready) wait_ready;;
+  health) curl --silent --show-error --connect-timeout 3 --max-time 10 -o /dev/null -w '%{http_code}' "$READY_URL";;
   rollback)
-    cd "$RD"
-    tar --exclude=node_modules --exclude=.git --exclude=storage -xzf "$BD/source.tgz" -C "$RD"
-    $COMPOSE up web || true
-    $COMPOSE up -d --force-recreate api || true
-    $COMPOSE restart nginx || true
-    echo "ROLLED_BACK"
+    check_app_dir; test -f "$BD/COMPLETE"
+    (cd "$BD" && sha256sum --check --status SHA256SUMS)
+    sync_source "$BD/source.tgz"
+    if [ -f deploy/Dockerfile ]; then
+      if ! docker image inspect "manjiao-app:${MANJIAO_RELEASE:-local}" >/dev/null 2>&1; then
+        "${COMPOSE[@]}" build api
+      fi
+      "${COMPOSE[@]}" up -d --no-deps --force-recreate api
+      "${COMPOSE[@]}" up -d --no-deps --force-recreate nginx
+      wait_ready
+      "${COMPOSE[@]}" run --rm --no-deps web
+    else
+      # Legacy startup performed destructive schema sync. Never run it on rollback.
+      private_workdir
+      cat > "$WORK/legacy-rollback.yml" <<'EOF'
+services:
+  api:
+    command: >
+      sh -lc "corepack enable && corepack prepare pnpm@11.7.0 --activate &&
+      pnpm install --frozen-lockfile && pnpm --filter @aifilm/shared build &&
+      pnpm --filter @aifilm/api db:generate && pnpm --filter @aifilm/api build &&
+      node apps/api/dist/server.js"
+EOF
+      COMPOSE+=(-f "$WORK/legacy-rollback.yml")
+      "${COMPOSE[@]}" run --rm --no-deps web
+      "${COMPOSE[@]}" up -d --no-deps --force-recreate api
+      "${COMPOSE[@]}" up -d --no-deps --force-recreate nginx
+      wait_ready true
+    fi
+    echo "SOURCE_ROLLBACK_READY (database and storage were not reverted)"
     ;;
-  *)
-    echo "unknown cmd: $cmd"; exit 2
-    ;;
+  *) echo "Usage: manjiao_remote.sh {backup|extract|rebuild|ready|health|rollback} [app_dir] [backup_dir]" >&2; exit 2;;
 esac

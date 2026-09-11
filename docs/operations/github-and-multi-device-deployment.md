@@ -1,6 +1,6 @@
 # GitHub 与跨设备发布指南
 
-核实日期：2026-09-09。本指南作为当前跨设备开发与发布入口，旧部署记录中的“尚未安装 / 需要重装服务器”是历史状态，不要照做。
+手册修订：2026-09-12。本指南是跨设备开发与发布入口。以下新版发布流程需要先安装对应服务器 hook，首次升级见 [部署升级说明](../../deploy/UPGRADE.md)。文档更新不代表生产已经部署这个版本。
 
 ## 当前结构
 
@@ -8,26 +8,30 @@
 - 默认分支：`main`；日常开发分支：`codex/<任务名>`。
 - 腾讯云轻量应用服务器：`43.139.101.102`，SSH 用户 `ubuntu`。
 - 生产源码：`/opt/manjiao`；服务器 Git：`/opt/git/aigc-short-drama-factory.git`。
-- 网站：https://manjiao.cloud；健康检查：https://manjiao.cloud/health。
-- GitHub 是日常代码入口。PR 合并到 main 后，手动运行 `pnpm deploy:server`，服务器已有的 post-receive hook 负责备份、解包、重建和健康检查。
+- 网站：https://manjiao.cloud；存活检查：`/health`；新版就绪检查：`/ready`。
+- GitHub 是日常代码入口。PR 合并到 main 后，手动运行 `pnpm deploy:server`，新版 post-receive hook 负责加锁、校验备份、构建镜像、同步 schema 和就绪检查。
 - GitHub push 本身不会自动更新生产。服务器 `main` 表示已接收版本，`deployed` 才表示通过部署健康检查的版本。
 
 ## 1. 换一台电脑拉代码
 
 希望通过网页操作 Git，可使用仓库内的 [Git Workbench 便携版](../../tools/git-workbench/README.md)。工具左侧「操作手册 · 换电脑」提供完整步骤，也可打开 `http://127.0.0.1:4318/manual`。Windows 双击 `tools/git-workbench/start-windows.bat`；macOS / Linux 运行 `sh tools/git-workbench/start-unix.sh`。工具在本机网页运行，每台电脑使用自己的 GitHub 登录，服务器发布仍使用本文第 5 节的独立命令。
 
-安装 Git、Node.js 24、pnpm 11.7.0；本地运行后端还需要 Docker。使用自己的 GitHub 账号登录，账号必须有这个私有仓库的权限。
+安装 Git、Node.js 24、GitHub CLI 和 pnpm 11.7.0；本地运行后端还需要 Docker。使用自己的 GitHub 账号登录，账号必须有这个私有仓库的权限。Windows 便携工作台已经验证运行；macOS / Linux 提供启动脚本，但仍需在目标设备验收。无需安装 Codex。
 
 ```bash
 gh auth login
 gh auth setup-git
+gh auth status
+git config --global user.name "你的名字"
+git config --global user.email "你的GitHub提交邮箱"
+npm install -g pnpm@11.7.0
 git clone https://github.com/p5222/aigc-short-drama-factory.git
 cd aigc-short-drama-factory
 git switch -c codex/my-feature
 pnpm install --frozen-lockfile
 ```
 
-将仓库根目录 `.env.example` 复制为 `.env`（Windows PowerShell：`Copy-Item .env.example .env`；macOS/Linux：`cp .env.example .env`），按需填入开发环境配置。
+仅在本地配置尚不存在时，将仓库根目录 `.env.example` 复制为 `.env`（Windows PowerShell：`Copy-Item .env.example .env`；macOS/Linux：`cp .env.example .env`），按需填入开发环境配置；不要覆盖已有配置。
 
 ```bash
 docker compose up -d postgres redis
@@ -37,7 +41,7 @@ pnpm --filter @aifilm/api db:push
 pnpm dev
 ```
 
-前端 http://localhost:5173；API http://localhost:4000/health。这里的 `db:push` 仅用于本地开发数据库。生产数据库、生成素材和真实密钥没有放进 GitHub；clone 不会下载它们。用本地测试数据开发，开发密钥通过安全渠道单独配置。
+前端 http://localhost:5173；API 存活检查 http://localhost:4000/health；新版依赖与任务执行器就绪检查 http://localhost:4000/ready。这里的 `db:push` 仅用于本地开发数据库。生产数据库、生成素材和真实密钥不随代码同步；clone 不会下载它们。用本地测试数据开发，开发密钥通过安全渠道单独配置，不能把开发数据库地址改成生产库。
 
 ## 2. 每次开发、提交与合并
 
@@ -61,6 +65,19 @@ gh pr create --base main --fill
 ```
 
 在 GitHub 审查并合并 PR，其他环境从最新 main 再建分支；继续已有分支时使用 `git switch <分支名>` 和 `git pull --ff-only origin <分支名>`。不要把旧本地 main 直接当成服务器最新版本，也不要通过强推覆盖分叉历史。
+
+首次接续只有远端存在的分支，执行 `git fetch origin` 和 `git switch --track origin/codex/任务名`。旧电脑离开前必须完成 push，单独 commit 只保存在那台电脑。
+
+### 两台电脑修改了同一分支
+
+先审查并提交本机需要保留的内容，确认工作区干净，再执行：
+
+```bash
+git fetch origin
+git merge origin/codex/your-feature
+```
+
+把示例替换为当前功能分支。出现冲突时，在编辑器逐个理解并保留需要的双方改动，删除冲突标记，运行验证，只 `git add` 已确认文件，然后 `git commit` 完成合并并 push。无法确认时用 `git merge --abort` 退出这次合并；它依赖开始前工作区干净。不要用强推、`reset --hard` 或一键覆盖双方文件来解决未知冲突。
 
 ## 3. 新设备连接服务器：给设备加公钥
 
@@ -146,6 +163,31 @@ macOS/Linux 对应写法：
 MANJIAO_GIT_REMOTE=ssh://manjiao/opt/git/aigc-short-drama-factory.git pnpm deploy:server
 ```
 
-同一时间只发布一个版本。现有服务器 hook 没有并发部署锁；部署失败后 main 可能已更新，重复推送相同提交不会重新执行 hook，应先查看 `/tmp/manjiao_git_deploy_<提交前8位>.log` 并处理。当前备份和回滚沿用旧部署助手；备份失败可能仅告警，且源码回滚不能自动恢复数据库。当前生产 Compose 启动会执行带 `--accept-data-loss` 的 Prisma db push，因此涉及表结构修改时先审查 SQL 并确认数据库备份可恢复。
+新版服务器 hook 为整个发布加锁，使用独立临时目录，并要求数据库 dump 可列出内容、素材归档可读取且源码备份完整才继续。构建带 FFmpeg 和中文字库的应用镜像；schema 同步不接受可能的数据丢失；API 数据库、Redis 和任务执行器通过 `/ready` 后才更新前端和 deployed。普通容器重启不执行依赖安装或 schema 变更。
 
-此流程保留服务器上的 `.env.production`、数据库卷和生成素材卷。旧的 `pnpm ship:server` 是直接推服务器的备用入口，可能造成 GitHub 落后；日常优先走本指南。
+此流程保留服务器 `.env.production`、数据库和生成素材卷。旧的 `pnpm ship:server`、`deploy_to_manjiao` 和一键发布入口已转到统一流程；不会自动提交，也不再跳过 GitHub main。首次升级必须先由管理员安装新版 hook，否则以上保障不成立。2026-09-12 只读检查时，服务器仍是旧 hook，所需 rsync、python3、flock 等命令已经存在；这不是新版本已上线的记录。
+
+## 6. 失败重试、回滚与发布验收
+
+Git post-receive 执行失败不会撤销服务器已接收的 main，因此 Git push 返回成功不足以证明服务更新成功。保留本次提交号、日志和备份路径。新版日志位于 `/opt/manjiao-deploy-logs/`；Git-only 设备应把路径交给有终端权限的管理员读取。
+
+| 状态 | 含义与处置 |
+| --- | --- |
+| 备份失败 | 尚未覆盖源码；修复数据库、素材卷或磁盘问题后重试。 |
+| `RELEASE_FAILED` 且旧版本就绪已验证 | 发布未完成，deployed 保持旧版本；修复原因后重新发布。 |
+| `RECOVERY_FAILED` | 自动恢复未通过，必须人工恢复和重新验收。 |
+| main 与 deployed 不同 | 接收代码与运行版本不一致；不要把它记录为上线成功。 |
+
+管理员处理失败原因后，同一提交重试使用：
+
+```bash
+pnpm deploy:server --retry
+```
+
+HEAD 必须同时等于 GitHub main 和服务器 main。专用命令通过一次性请求 ref 重新触发新版 hook，并检查请求完成标记；普通重复 push 相同 main 不会触发部署。
+
+常规代码回滚是在 `codex/revert-release` 分支对问题提交执行 `git revert`，验证并通过 PR 合并，再按第 5 节发布新的 main。合并提交需要明确主线，不能盲目套用命令；不要强推共享 main。紧急源码恢复及旧镜像选择由管理员按 [部署升级说明](../../deploy/UPGRADE.md) 执行。
+
+源码回滚不撤回数据库和客户素材的新写入。恢复数据前先保留当前数据库，在隔离库验证备份，再停止写入并执行经过确认的恢复方案。当前迁移历史尚无完整 baseline，禁止直接 `migrate reset`、删除生产卷或用 `--accept-data-loss` 绕过 schema 阻断。
+
+发布后核对 deployed、GitHub SHA 与公网 `/ready` 的 revision 一致，再验证真实登录、项目创建、任务恢复、积分结算、私有素材预览与 MP4 下载，以及后台运营流程。完整记录见 [发布验收单](./release-acceptance.md)。CI、HTTP 200 或一次编码成功都不能代替这份业务验收。
