@@ -23,6 +23,7 @@ import type { ImageGenerationResult, VideoGenerationResult } from "../providers/
 import { generateVideo, queryVideoTaskResult } from "../providers/video.js";
 import { persistImageBuffer, persistImageReference, persistVideoReference, readStoredAsset } from "../storage/objectStorage.js";
 import { prisma } from "./client.js";
+import { AnnouncementScheduleError, assertAnnouncementSchedule } from "./announcementSafety.js";
 import { captureMediaSource } from "./mediaSource.js";
 import { persistCurrentShotImages, persistCurrentShotVideo, persistStaleShotOutputs } from "./mediaPersistence.js";
 import { DEMO_USER_ID } from "./seed.js";
@@ -77,7 +78,8 @@ export async function getWorkbenchSummary(userId = DEMO_USER_ID): Promise<Workbe
       id: item.id,
       title: item.title,
       body: item.body,
-      type: item.type
+      type: item.type,
+      pinned: item.pinned
     }))
   };
 }
@@ -109,8 +111,9 @@ export async function createPlatformAnnouncement(input: {
   pinned?: boolean;
   startsAt?: Date | null;
   endsAt?: Date | null;
-}) {
-  const announcement = await prisma.platformAnnouncement.create({
+}, db: PrismaClient = prisma) {
+  assertAnnouncementSchedule(input.startsAt, input.endsAt);
+  const announcement = await db.platformAnnouncement.create({
     data: {
       id: `ann_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`,
       title: input.title.trim(),
@@ -135,7 +138,8 @@ export async function updatePlatformAnnouncement(
     pinned: boolean;
     startsAt: Date | null;
     endsAt: Date | null;
-  }>
+  }>,
+  db: PrismaClient = prisma
 ) {
   const data: Record<string, unknown> = {};
   if (input.title !== undefined) data.title = input.title.trim();
@@ -147,7 +151,14 @@ export async function updatePlatformAnnouncement(
   if (input.endsAt !== undefined) data.endsAt = input.endsAt;
   if (data.title === "") throw new Error("公告标题不能为空");
   if (data.body === "") throw new Error("公告内容不能为空");
-  return mapPlatformAnnouncement(await prisma.platformAnnouncement.update({ where: { id }, data }));
+  return db.$transaction(async tx => {
+    await tx.$queryRaw`SELECT "id" FROM "PlatformAnnouncement" WHERE "id" = ${id} FOR UPDATE`;
+    const current = await tx.platformAnnouncement.findUnique({ where: { id } });
+    if (!current) throw new AnnouncementScheduleError(404, "公告不存在或已被删除，请刷新后重试。");
+    assertAnnouncementSchedule(input.startsAt === undefined ? current.startsAt : input.startsAt,
+      input.endsAt === undefined ? current.endsAt : input.endsAt);
+    return mapPlatformAnnouncement(await tx.platformAnnouncement.update({ where: { id }, data }));
+  });
 }
 
 export async function deletePlatformAnnouncement(id: string) {

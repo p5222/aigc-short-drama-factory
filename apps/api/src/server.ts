@@ -1,4 +1,4 @@
-﻿import "./config/env.js";
+import "./config/env.js";
 import crypto from "node:crypto";
 import { access } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
@@ -90,6 +90,8 @@ import { prisma } from "./db/client.js";
 import { beginAdminAudit, finishAdminAudit, listAdminAuditLogs } from "./admin/audit.js";
 import { captureStoryboardTailFrame, deleteCharacterReferenceImageV2, generateCharacterReferenceImages, generateSceneEnvironmentImage, regenerateStoryboardShotImage, runProjectStoryboardTasks, setCharacterReferenceImageV2, updateStoryboardShot } from "./db/storyboardActions.js";
 import { MediaSourceConflict } from "./db/mediaSource.js";
+import { AnnouncementScheduleError } from "./db/announcementSafety.js";
+import { closeSupportTicket, createSupportTicket, getSupportTicket, listSupportTickets, replySupportTicket, SupportTicketError } from "./db/supportTickets.js";
 import {
   createEvaluationDataset,
   createExperimentRun,
@@ -576,6 +578,16 @@ const announcementCreateSchema = z.object({
 
 const announcementUpdateSchema = announcementCreateSchema.partial();
 
+const supportRequestIdSchema = z.string().min(8).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/);
+const supportVersionSchema = z.number().int().min(1).max(2_147_483_646);
+const supportBodySchema = z.string().trim().min(1).max(5000).refine(value => !value.includes("\0"), "正文不能包含空字符");
+const supportCreateSchema = z.object({ requestId: supportRequestIdSchema, subject: z.string().trim().min(1).max(120),
+  category: z.enum(["account", "billing", "generation", "export", "other"]), body: supportBodySchema }).strict();
+const supportReplySchema = z.object({ requestId: supportRequestIdSchema, expectedVersion: supportVersionSchema, body: supportBodySchema }).strict();
+const supportCloseSchema = z.object({ expectedVersion: supportVersionSchema }).strict();
+const supportListSchema = z.object({ page: z.coerce.number().int().min(1).max(100_000).optional(), pageSize: z.coerce.number().int().min(1).max(50).optional(),
+  status: z.enum(["open", "answered", "closed"]).optional() });
+
 const helpArticleCategorySchema = z.enum(["getting_started", "workflow", "billing", "account", "troubleshooting", "community"]);
 
 const helpArticleCreateSchema = z.object({
@@ -755,7 +767,8 @@ function asyncRoute<TReq extends express.Request, TRes extends express.Response>
       // Persist the intent before any administrator mutation. A process crash
       // leaves a visible unfinished record instead of silently losing history.
       const audit = audited ? await beginAdminAudit({ actorId: actor.id, actorRole: actor.role,
-        method: req.method, path: req.path, body: req.body, ip: req.ip }) : null;
+        // Ticket transcripts remain only in their access-controlled message table, never the admin audit payload.
+        method: req.method, path: req.path, body: req.path.startsWith("/api/admin/support/tickets") ? {} : req.body, ip: req.ip }) : null;
       if (audit) {
         // The error middleware can map a thrown error to 409/404/503. Record
         // the actual response, never a guessed 500 before that mapping runs.
@@ -1984,6 +1997,57 @@ app.get(
   })
 );
 
+app.get("/api/support/tickets", asyncRoute(async (req, res) => {
+  const parsed = supportListSchema.safeParse(req.query);
+  if (!parsed.success) return res.status(400).json({ message: "工单列表查询参数无效。" });
+  res.json(await listSupportTickets({ id: requestUserId(req)! }, parsed.data));
+}));
+
+app.post("/api/support/tickets", asyncRoute(async (req, res) => {
+  const parsed = supportCreateSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ message: "请检查问题标题、分类、正文和提交标识。" });
+  const result = await createSupportTicket(requestUserId(req)!, parsed.data);
+  res.status(result.replayed ? 200 : 201).json(result);
+}));
+
+app.get("/api/support/tickets/:id", asyncRoute(async (req, res) => {
+  res.json(await getSupportTicket({ id: requestUserId(req)! }, paramId(req.params.id)));
+}));
+
+app.post("/api/support/tickets/:id/messages", asyncRoute(async (req, res) => {
+  const parsed = supportReplySchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ message: "请检查回复正文、工单版本和提交标识。" });
+  res.json(await replySupportTicket({ id: requestUserId(req)! }, paramId(req.params.id), parsed.data));
+}));
+
+app.post("/api/support/tickets/:id/close", asyncRoute(async (req, res) => {
+  const parsed = supportCloseSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ message: "工单版本无效，请刷新后重试。" });
+  res.json(await closeSupportTicket({ id: requestUserId(req)! }, paramId(req.params.id), parsed.data));
+}));
+
+app.get("/api/admin/support/tickets", requireAdminPermission("support:read"), asyncRoute(async (req, res) => {
+  const parsed = supportListSchema.safeParse(req.query);
+  if (!parsed.success) return res.status(400).json({ message: "工单列表查询参数无效。" });
+  res.json(await listSupportTickets({ id: requestUserId(req)!, staff: true }, parsed.data));
+}));
+
+app.get("/api/admin/support/tickets/:id", requireAdminPermission("support:read"), asyncRoute(async (req, res) => {
+  res.json(await getSupportTicket({ id: requestUserId(req)!, staff: true }, paramId(req.params.id)));
+}));
+
+app.post("/api/admin/support/tickets/:id/messages", requireAdminPermission("support:manage"), asyncRoute(async (req, res) => {
+  const parsed = supportReplySchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ message: "请检查回复正文、工单版本和提交标识。" });
+  res.json(await replySupportTicket({ id: requestUserId(req)!, staff: true }, paramId(req.params.id), parsed.data));
+}));
+
+app.post("/api/admin/support/tickets/:id/close", requireAdminPermission("support:manage"), asyncRoute(async (req, res) => {
+  const parsed = supportCloseSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ message: "工单版本无效，请刷新后重试。" });
+  res.json(await closeSupportTicket({ id: requestUserId(req)!, staff: true }, paramId(req.params.id), parsed.data));
+}));
+
 app.get(
   "/api/admin/announcements",
   requireAdminPermission("dashboard:read"),
@@ -2630,7 +2694,7 @@ app.post(
 );
 
 app.use((error: unknown, req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  if (error instanceof ProjectRequestError || error instanceof MediaSourceConflict) return res.status(error.status).json({ message: error.message });
+  if (error instanceof ProjectRequestError || error instanceof MediaSourceConflict || error instanceof AnnouncementScheduleError || error instanceof SupportTicketError) return res.status(error.status).json({ message: error.message });
   const message = error instanceof Error ? error.message : "服务器异常";
   const cause = error instanceof Error && "cause" in error ? (error as Error & { cause?: unknown }).cause : undefined;
   const causeMessage = cause instanceof Error ? `${cause.name}: ${cause.message}` : typeof cause === "object" && cause ? JSON.stringify(cause).slice(0, 240) : "";

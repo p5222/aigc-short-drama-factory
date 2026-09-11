@@ -46,6 +46,8 @@ model User {
   analyticsEvents AnalyticsEvent[]
   feedbacks    UserFeedback[]
   showcaseWorks ShowcaseWork[]
+  supportTickets SupportTicket[]
+  supportRequests SupportTicketRequest[] @relation("SupportRequestActor")
   lastLoginAt  DateTime?
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
@@ -359,6 +361,56 @@ model PlatformAnnouncement {
   @@index([startsAt])
   @@index([endsAt])
   @@index([createdAt])
+}
+
+model SupportTicket {
+  id        String   @id
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subject   String
+  category  String
+  status    String   @default("open")
+  version   Int      @default(1)
+  closedAt  DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  messages  SupportTicketMessage[]
+  requests  SupportTicketRequest[]
+
+  @@index([userId, updatedAt, id])
+  @@index([status, updatedAt, id])
+}
+
+model SupportTicketMessage {
+  id         String   @id
+  ticketId   String
+  ticket     SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  sequence   Int
+  authorId   String
+  authorName String
+  authorRole String
+  body       String
+  createdAt  DateTime @default(now())
+  requests   SupportTicketRequest[]
+
+  @@unique([ticketId, sequence])
+}
+
+model SupportTicketRequest {
+  id          String   @id
+  actorId     String
+  actor       User     @relation("SupportRequestActor", fields: [actorId], references: [id], onDelete: Cascade)
+  kind        String
+  requestId   String
+  requestHash String
+  ticketId    String
+  ticket      SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  messageId   String
+  message     SupportTicketMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+
+  @@unique([actorId, kind, requestId])
+  @@index([ticketId])
 }
 
 model HelpArticle {

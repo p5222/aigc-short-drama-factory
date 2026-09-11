@@ -9,6 +9,7 @@ import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
 import { PrismaClient } from "@prisma/client";
+import type { SupportTicketList, SupportTicketMutationResult, SupportTicketDetail } from "@aifilm/shared";
 import { hashPassword } from "../auth/password.js";
 import { releaseTaskCredits, reserveTaskCredits } from "../billing/taskCredits.js";
 
@@ -27,6 +28,7 @@ test("HTTP business boundaries: sessions, administrator writes, private media an
   const ids = [`api_owner_${run}`, `api_other_${run}`, `api_admin_${run}`];
   const projectId = `api_project_${run}`;
   const providerId = `api_provider_${run}`;
+  const announcementIds: string[] = [];
   const port = 41000 + Math.floor(Math.random() * 10000);
   const base = `http://127.0.0.1:${port}`;
   const passwordHash = await hashPassword(password);
@@ -212,6 +214,134 @@ test("HTTP business boundaries: sessions, administrator writes, private media an
       assert.ok(!JSON.stringify(entry).includes(password));
       assert.equal(await db.user.count({ where: { email: `${ids[0]}@example.test` } }), 1);
     });
+    await t.test("announcement schedule errors are HTTP 400 with unchanged rows and matching final audit status", async () => {
+      const title = `HTTP announcement ${run}`;
+      const startsAt = "2030-01-09T16:00:00.123Z", endsAt = "2030-01-10T15:59:59.999Z";
+      for (const invalid of [{ startsAt: endsAt, endsAt: startsAt }, { startsAt, endsAt: startsAt }, { startsAt: "not-a-date", endsAt }]) {
+        const response = await request("/api/admin/announcements", admin.token, "POST", { title, body: "Schedule fixture", ...invalid });
+        assert.equal(response.status, 400);
+      }
+      assert.equal(await db.platformAnnouncement.count({ where: { title } }), 0);
+      const created = await request("/api/admin/announcements", admin.token, "POST", { title, body: "Schedule fixture", startsAt, endsAt });
+      assert.equal(created.status, 201);
+      const row = await created.json() as { id: string }; announcementIds.push(row.id);
+      const before = await db.platformAnnouncement.findUniqueOrThrow({ where: { id: row.id } });
+      for (const invalid of [{ startsAt: "2030-01-11T00:00:00.000Z" }, { endsAt: startsAt }]) {
+        const response = await request(`/api/admin/announcements/${row.id}`, admin.token, "PATCH", { pinned: true, ...invalid });
+        assert.equal(response.status, 400); assert.match((await response.json() as { message: string }).message, /结束时间必须晚于开始时间/);
+        assert.deepEqual(await db.platformAnnouncement.findUniqueOrThrow({ where: { id: row.id } }), before);
+      }
+      const renamed = await request(`/api/admin/announcements/${row.id}`, admin.token, "PATCH", { body: "Body changed without date edits" });
+      assert.equal(renamed.status, 200);
+      const renamedBody = await renamed.json() as { startsAt: string; endsAt: string };
+      assert.equal(renamedBody.startsAt, startsAt); assert.equal(renamedBody.endsAt, endsAt);
+      const clear = await request(`/api/admin/announcements/${row.id}`, admin.token, "PATCH", { endsAt: null });
+      assert.equal(clear.status, 200); assert.equal((await db.platformAnnouncement.findUniqueOrThrow({ where: { id: row.id } })).endsAt, null);
+      const page = await waitForAudit(row.id, page => page.items.filter(item => item.action === "PATCH").length === 4 && page.items.every(item => item.status !== "started"));
+      assert.equal(page.items.filter(item => item.status === "failed" && item.statusCode === 400).length, 2);
+      assert.equal(page.items.filter(item => item.status === "succeeded" && item.statusCode === 200).length, 2);
+      assert.equal((await request(`/api/admin/announcements/missing_${run}`, admin.token, "PATCH", { startsAt })).status, 404);
+      assert.equal((await request(`/api/admin/announcements/${row.id}`, admin.token, "PATCH", { startsAt: null, pinned: true })).status, 200);
+      const summary = await (await request("/api/workbench/summary", owner.token)).json() as { announcements: Array<{ id: string; pinned?: boolean }> };
+      assert.equal(summary.announcements.find(item => item.id === row.id)?.pinned, true);
+    });
+    await t.test("support HTTP creates and replays actual tickets, enforces ownership and rejects client-supplied roles", async () => {
+      const path = "/api/support/tickets";
+      const payload = { requestId: `support-http-${run}`, subject: "导出进度问题", category: "export", body: "这是本机 HTTP 工单验收，不调用供应商。" };
+      for (const [method, body] of [["GET", undefined], ["POST", payload]] as const) assert.equal((await request(path, undefined, method, body)).status, 401);
+      for (const extra of [{ authorRole: "staff" }, { userId: ids[1] }, { category: "invalid" }, { body: " " }, { requestId: undefined }]) {
+        assert.equal((await request(path, owner.token, "POST", { ...payload, ...extra })).status, 400);
+      }
+      assert.equal(await db.supportTicket.count({ where: { userId: ids[0]! } }), 0);
+      const first = await request(path, owner.token, "POST", payload);
+      assert.equal(first.status, 201, await first.clone().text());
+      const row = await first.json() as SupportTicketMutationResult;
+      assert.equal(row.ticket.userId, ids[0]); assert.equal(row.ticket.status, "open"); assert.equal(row.ticket.version, 1);
+      assert.equal(row.messages.length, 1); assert.equal(row.messages[0]!.authorRole, "user"); assert.equal(row.replayed, false);
+      const repeat = await request(path, owner.token, "POST", payload);
+      assert.equal(repeat.status, 200); const replay = await repeat.json() as SupportTicketMutationResult;
+      assert.equal(replay.ticket.id, row.ticket.id); assert.equal(replay.replayed, true); assert.equal(replay.messages.length, 1);
+      assert.equal((await request(path, owner.token, "POST", { ...payload, body: "相同标识的新内容" })).status, 409);
+      const ownerPage = await (await request(`${path}?page=1&pageSize=1`, owner.token)).json() as SupportTicketList;
+      assert.equal(ownerPage.total, 1); assert.equal(ownerPage.items[0]!.id, row.ticket.id);
+      const otherPage = await (await request(path, other.token)).json() as SupportTicketList;
+      assert.equal(otherPage.total, 0); assert.deepEqual(otherPage.items, []);
+      for (const [suffix, method, body] of [["", "GET", undefined], ["/messages", "POST", { requestId: `other-${run}`, expectedVersion: 1, body: "越权回复" }], ["/close", "POST", { expectedVersion: 1 }]] as const) {
+        assert.equal((await request(`${path}/${row.ticket.id}${suffix}`, other.token, method, body)).status, 404);
+      }
+      assert.equal((await request(`${path}?pageSize=51`, owner.token)).status, 400);
+      for (const adminPath of ["/api/admin/support/tickets", `/api/admin/support/tickets/${row.ticket.id}`]) assert.equal((await request(adminPath, owner.token)).status, 403);
+      for (const suffix of ["messages", "close"]) assert.equal((await request(`/api/admin/support/tickets/${row.ticket.id}/${suffix}`, owner.token, "POST", { expectedVersion: 1, requestId: run, body: "伪装员工" })).status, 403);
+      assert.equal((await request(`/api/admin/support/tickets/${row.ticket.id}`, admin.token)).status, 200);
+      assert.equal((await db.supportTicket.findUniqueOrThrow({ where: { id: row.ticket.id } })).version, 1);
+    });
+    await t.test("support answer, supplement and terminal close preserve messages, reject stale versions and redact admin audit transcripts", async () => {
+      const created = await request("/api/support/tickets", owner.token, "POST", { requestId: `support-thread-${run}`, subject: "账号使用问题", category: "account", body: "请协助检查账号。" });
+      assert.equal(created.status, 201);
+      const original = await created.json() as SupportTicketMutationResult;
+      const path = `/api/support/tickets/${original.ticket.id}`, adminPath = `/api/admin/support/tickets/${original.ticket.id}`;
+      const secretText = `support-private-transcript-${run}`;
+      const reply = { requestId: `support-answer-${run}`, expectedVersion: 1, body: `<b>${secretText}</b> 已答复` };
+      const answeredResponse = await request(`${adminPath}/messages`, admin.token, "POST", reply);
+      assert.equal(answeredResponse.status, 200, await answeredResponse.clone().text());
+      const answered = await answeredResponse.json() as SupportTicketMutationResult;
+      assert.equal(answered.ticket.status, "answered"); assert.equal(answered.ticket.version, 2);
+      assert.equal(answered.messages[1]!.body, reply.body); assert.equal(answered.messages[1]!.authorRole, "staff");
+      const replayResponse = await request(`${adminPath}/messages`, admin.token, "POST", reply);
+      assert.equal(replayResponse.status, 200); assert.equal((await replayResponse.json() as SupportTicketMutationResult).replayed, true);
+      const supplement = { requestId: `support-more-${run}`, expectedVersion: 2, body: "问题仍有一个补充。" };
+      const reopened = await request(`${path}/messages`, owner.token, "POST", supplement);
+      assert.equal(reopened.status, 200); const reopenedRow = await reopened.json() as SupportTicketMutationResult;
+      assert.equal(reopenedRow.ticket.status, "open"); assert.equal(reopenedRow.ticket.version, 3);
+      assert.deepEqual(reopenedRow.messages.slice(0, 2), answered.messages);
+      assert.equal((await request(`${adminPath}/messages`, admin.token, "POST", { ...reply, requestId: `stale-${run}` })).status, 409);
+      assert.equal((await request(`${adminPath}/messages`, admin.token, "POST", { ...reply, body: "同标识不同正文", expectedVersion: 3 })).status, 409);
+      assert.equal((await request(`${adminPath}/messages`, admin.token, "POST", { ...reply, expectedVersion: 3, description: secretText })).status, 400);
+      assert.equal((await request(`${path}/close`, owner.token, "POST", { expectedVersion: 1 })).status, 409);
+      const closedResponse = await request(`${adminPath}/close`, admin.token, "POST", { expectedVersion: 3 });
+      assert.equal(closedResponse.status, 200); const closed = await closedResponse.json() as SupportTicketMutationResult;
+      assert.equal(closed.ticket.status, "closed"); assert.equal(closed.ticket.version, 4); assert.ok(closed.ticket.closedAt);
+      assert.equal((await request(`${path}/messages`, owner.token, "POST", { requestId: `closed-${run}`, expectedVersion: 4, body: "不能再回复" })).status, 409);
+      const safeReplay = await request(`${path}/messages`, owner.token, "POST", supplement);
+      assert.equal(safeReplay.status, 200); const safeRow = await safeReplay.json() as SupportTicketMutationResult;
+      assert.equal(safeRow.replayed, true); assert.equal(safeRow.ticket.status, "closed"); assert.equal(safeRow.messages.length, 3);
+      const finalDetail = await (await request(path, owner.token)).json() as SupportTicketDetail;
+      assert.deepEqual(finalDetail.messages, reopenedRow.messages);
+      const page = await waitForAudit(original.ticket.id, page => page.items.length === 6 && page.items.every(item => item.status !== "started"));
+      assert.equal(page.items.filter(item => item.statusCode === 200).length, 3);
+      assert.equal(page.items.filter(item => item.statusCode === 409).length, 2);
+      assert.equal(page.items.filter(item => item.statusCode === 400).length, 1);
+      assert.ok(!JSON.stringify(page).includes(secretText), "support body must not enter the administrator audit log");
+      assert.ok(!logs.includes(secretText), "support body must not enter API console logs");
+    });
+    await t.test("administrator password reset revokes every old API/media session and only the new password can sign in", async () => {
+      const resetPath = `/api/admin/users/${ids[0]}/password`;
+      const secondLogin = await request("/api/auth/login", undefined, "POST", { account: `${ids[0]}@example.test`, password });
+      assert.equal(secondLogin.status, 200);
+      const secondToken = (await secondLogin.json() as { token: string }).token;
+      const secondCookie = secondLogin.headers.get("set-cookie")!.split(";")[0]!;
+      const resetPassword = `Reset-${crypto.randomUUID()}`;
+      assert.equal((await request(resetPath, other.token, "POST", { password: resetPassword })).status, 403);
+      assert.equal((await request(resetPath, admin.token, "POST", { password: "short" })).status, 400);
+      assert.equal((await request("/api/auth/me", owner.token)).status, 200);
+      assert.equal((await request("/api/auth/me", secondToken)).status, 200);
+      const reset = await request(resetPath, admin.token, "POST", { password: resetPassword });
+      assert.equal(reset.status, 200, await reset.clone().text());
+      assert.equal(await db.authSession.count({ where: { userId: ids[0]!, revokedAt: null } }), 0);
+      for (const token of [owner.token, secondToken]) assert.equal((await request("/api/auth/me", token)).status, 401);
+      for (const cookie of [owner.cookie, secondCookie]) assert.equal((await request(mediaPath, undefined, "GET", undefined, { Cookie: cookie })).status, 404);
+      assert.equal((await request("/api/auth/login", undefined, "POST", { account: `${ids[0]}@example.test`, password })).status, 401);
+      const freshLogin = await request("/api/auth/login", undefined, "POST", { account: `${ids[0]}@example.test`, password: resetPassword });
+      assert.equal(freshLogin.status, 200);
+      owner.token = (await freshLogin.json() as { token: string }).token;
+      owner.cookie = freshLogin.headers.get("set-cookie")!.split(";")[0]!;
+      assert.equal((await request("/api/auth/me", owner.token)).status, 200);
+      assert.equal((await request(mediaPath, undefined, "GET", undefined, { Cookie: owner.cookie })).status, 200);
+      const page = await waitForAudit(resetPath, page => page.items.length === 2 && page.items.every(item => item.status !== "started"));
+      assert.equal(page.items.filter(item => item.statusCode === 400 && item.status === "failed").length, 1);
+      assert.equal(page.items.filter(item => item.statusCode === 200 && item.status === "succeeded").length, 1);
+      assert.ok(!JSON.stringify(page).includes(resetPassword));
+    });
     await t.test("self-disable is rejected and disabling another account revokes both API and media sessions", async () => {
       const self = await request(`/api/admin/users/${ids[2]}`, admin.token, "PATCH", { status: "disabled" });
       assert.ok(self.status >= 400);
@@ -224,6 +354,7 @@ test("HTTP business boundaries: sessions, administrator writes, private media an
     child.kill();
     if (child.exitCode === null) await Promise.race([once(child, "exit"), new Promise(resolve => setTimeout(resolve, 5000))]);
     await db.adminAuditLog.deleteMany({ where: { actorId: { in: ids } } });
+    await db.platformAnnouncement.deleteMany({ where: { id: { in: announcementIds } } });
     await db.modelPrice.deleteMany({ where: { id: { in: [`api_text_price_${run}`, `api_other_price_${run}`, `api_image_price_${run}`, `api_video_price_${run}`] } } });
     await db.modelProvider.deleteMany({ where: { id: providerId } });
     await db.user.deleteMany({ where: { id: { in: ids } } });

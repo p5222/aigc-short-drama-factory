@@ -805,7 +805,7 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
             <button
               type="button"
               onClick={() =>
-                setMessage(locale === "cn" ? "请联系管理员重置密码，或在个人页绑定邮箱后自助修改。" : "Please contact an administrator or bind email in Profile to reset it.")
+                setMessage(locale === "cn" ? "忘记密码时，请向该账号所属平台的管理员申请重置。只有已登录且记得当前密码，才能在个人页修改密码。" : "If you forgot your password, ask the administrator of the platform that manages your account to reset it. You can change it in Profile only when signed in and you know your current password.")
               }
             >
               {t.forgot}

@@ -4,7 +4,15 @@
 
 ## 最近一次已执行记录
 
-本次基础设施发布通过，完整产品商业验收仍进行中。以下记录仅适用于提交 `0e34b857aaa858bc58ada9ac4fedc39a319e5c3d`，后续代码变化须重新验证。
+最近生产版本为 **`ff5bd6807aad0692116a83b6f79f316810291e2c`**，PR #4 已合并，文件树与 CI 提交 `ce26d3464cac8101daedbc49fb60169768336d60` 一致。[CI 34651340055](https://github.com/p5222/aigc-short-drama-factory/actions/runs/34651340055) 共 31 步成功，API 217、Web 191、部署恢复 19 项及真实生产镜像检查通过。
+
+Project Hub 拉取任务 `6e5b97d2-0b40-46f5-814b-9840af10ea49`、发布任务 `28729423-2cc8-4dbe-92d5-c3599e3b08fc` 均成功。发布于 2026-09-12 06:00:49（Asia/Shanghai）完成，06:02:26 核验服务器 main/deployed、公网 JSON ready 与上述 revision 一致，21 张业务表计数均未变化，无真实生成、导出或排队工作，Redis AOF 与 FFmpeg 正常。06:02:35 确认 CreationRequest 表及两个索引、任务 JSON 请求载荷有效。私有记录为 `/opt/manjiao-deploy-logs/release-verification-ff5bd6807aad0692116a83b6f79f316810291e2c.json`。
+
+首次 CI 的锁等待测试使用同一个三连接池观察锁而耗尽连接。修复仅增加独立只读观察连接，保留原竞争和锁顺序断言；同样三连接配置下 12/12 通过，随后完整 CI 成功。更多本轮功能与浏览器证据见[前后台流程迭代](./ui-flow-iteration-20260912.md)。完整产品商业验收仍进行中。
+
+## 前次基础设施发布记录
+
+以下历史记录仅适用于提交 `0e34b857aaa858bc58ada9ac4fedc39a319e5c3d`。
 
 | 项目 | 实际证据 |
 | --- | --- |

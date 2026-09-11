@@ -1047,6 +1047,7 @@ export interface WorkbenchSummary {
     title: string;
     body: string;
     type: AnnouncementType;
+    pinned?: boolean;
   }>;
 }
 
@@ -1098,6 +1099,65 @@ export interface CreateProjectInput {
   apiKey?: string;
   episodeScripts?: Array<{ episodeNo: number; title: string; content: string }>;
   entityHints?: { characters?: string[]; scenes?: string[]; props?: string[] };
+}
+
+export type SupportTicketCategory = "account" | "billing" | "generation" | "export" | "other";
+export type SupportTicketStatus = "open" | "answered" | "closed";
+
+export interface SupportTicketSummary {
+  id: string;
+  userId: string;
+  userName: string;
+  subject: string;
+  category: SupportTicketCategory;
+  status: SupportTicketStatus;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+  closedAt?: string;
+}
+
+export interface SupportTicketMessage {
+  id: string;
+  ticketId: string;
+  authorId: string;
+  authorName: string;
+  authorRole: "user" | "staff";
+  body: string;
+  createdAt: string;
+}
+
+export interface SupportTicketDetail {
+  ticket: SupportTicketSummary;
+  messages: SupportTicketMessage[];
+}
+
+export interface SupportTicketList {
+  items: SupportTicketSummary[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export interface SupportTicketMutationResult extends SupportTicketDetail {
+  replayed: boolean;
+}
+
+export interface CreateSupportTicketInput {
+  requestId: string;
+  subject: string;
+  category: SupportTicketCategory;
+  body: string;
+}
+
+export interface ReplySupportTicketInput {
+  requestId: string;
+  expectedVersion: number;
+  body: string;
+}
+
+export interface CloseSupportTicketInput {
+  expectedVersion: number;
 }
 
 export interface AdminSummary {

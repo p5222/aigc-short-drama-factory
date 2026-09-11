@@ -28,9 +28,10 @@ import {
   Settings
 } from "lucide-react";
 import { useEffect, useMemo, useState, type ChangeEvent, type ReactNode } from "react";
-import type { CreditAccount, CreditTransaction, HelpArticle, ModelTestResult, RechargeOrder, WorkbenchSummary } from "@aifilm/shared";
+import type { CreditAccount, CreditTransaction, HelpArticle, RechargeOrder, WorkbenchSummary } from "@aifilm/shared";
 import { api, type AuthUser } from "../lib/api";
 import type { PageKey } from "../components/Shell";
+import { SupportTicketPanel, type SupportTicketIntent } from "../support/SupportTicketPanel";
 
 const maxAvatarBytes = 20 * 1024;
 
@@ -386,7 +387,7 @@ export function ProfilePage({
             <div className="panel-head">
               <div>
                 <h2>积分概览</h2>
-                <small>1 积分 ≈ 1 元人民币消费参考，充值积分永久有效。</small>
+                <small>积分用于生成与导出；购买价格以充值套餐为准，生成前会显示本次预估消耗。</small>
               </div>
             </div>
             <div className="profile-v2-balance">
@@ -438,9 +439,10 @@ export function ProfilePage({
             </div>
             <div className="profile-v2-shortcut-list">
               <ProfileShortcut icon={<BookOpen size={19} />} title="我的作品" desc={`${summary?.projects ?? 0} 部漫剧 · 继续创作`} onClick={() => onNavigate("scripts")} />
-              <ProfileShortcut icon={<Film size={19} />} title="剪辑中心" desc="跨作品合成与导出" onClick={() => onNavigate("studio")} />
+              <ProfileShortcut icon={<Film size={19} />} title="剪辑中心" desc="选择作品，预览并导出成片" onClick={() => onNavigate("studio")} />
               <ProfileShortcut icon={<ClipboardList size={19} />} title="生成队列" desc="查看任务进度与失败原因" onClick={() => onNavigate("tasks")} />
               <ProfileShortcut icon={<CircleHelp size={19} />} title="帮助中心" desc="新手教程 · 积分规则 · 故障排查" onClick={() => onNavigate("help")} />
+              <ProfileShortcut icon={<Settings size={19} />} title="设置" desc="显示主题 · 账号安全" onClick={() => onNavigate("settings")} />
             </div>
           </section>
         </div>
@@ -449,44 +451,32 @@ export function ProfilePage({
   );
 }
 
-export function SettingsPage() {
-  const [result, setResult] = useState<ModelTestResult | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  async function testModel() {
-    setLoading(true);
-    try {
-      setResult(await api.modelTest());
-    } finally {
-      setLoading(false);
-    }
-  }
-
+export function SettingsPage({ theme, onThemeChange, onNavigate }: {
+  theme: "light" | "dark";
+  onThemeChange: (theme: "light" | "dark") => void;
+  onNavigate: (page: PageKey) => void;
+}) {
   return (
     <div className="page-stack">
       <div className="page-title">
         <h1>设置</h1>
-        <p>平台配置、模型测试、本地 Docker 演示模式和 ComfyUI 高级模式。</p>
+        <p>调整显示主题，管理自己的账号和创作记录。</p>
       </div>
-      <section className="panel centered-panel">
-        <Settings size={32} />
-        <div className="admin-grid">
-          {["DeepSeek V4 Pro", "通义万相适配器", "ComfyUI base_url", "任务并发"].map((item) => (
-            <button key={item}>{item}</button>
-          ))}
+      <section className="panel creator-settings-panel">
+        <div className="panel-head"><div><h2>显示主题</h2><small>切换后立即应用；浏览器允许保存时，下次访问会沿用当前选择。</small></div></div>
+        <div className="creator-theme-options" role="group" aria-label="显示主题">
+          <button type="button" className={theme === "light" ? "primary-button" : "ghost-button"} aria-pressed={theme === "light"} onClick={() => onThemeChange("light")}>浅色模式</button>
+          <button type="button" className={theme === "dark" ? "primary-button" : "ghost-button"} aria-pressed={theme === "dark"} onClick={() => onThemeChange("dark")}>深色模式</button>
         </div>
-        <button className="primary-button" onClick={testModel} disabled={loading}>
-          {loading ? "检测中..." : "测试文本生成模型"}
-        </button>
-        {result ? (
-          <div className="model-result">
-            <strong>
-              {result.provider} / {result.model}
-            </strong>
-            <span>{result.mode}</span>
-            <p>{result.message}</p>
-          </div>
-        ) : null}
+      </section>
+      <section className="panel creator-settings-panel">
+        <div className="panel-head"><div><h2>账号与使用记录</h2><small>修改资料、处理生成任务或核对积分。</small></div></div>
+        <div className="profile-v2-shortcut-list">
+          <ProfileShortcut icon={<ShieldCheck size={19} />} title="账号安全" desc="修改资料、邮箱与登录密码" onClick={() => onNavigate("profile")} />
+          <ProfileShortcut icon={<ClipboardList size={19} />} title="生成队列" desc="查看当前任务与失败原因" onClick={() => onNavigate("tasks")} />
+          <ProfileShortcut icon={<Coins size={19} />} title="积分明细" desc="核对冻结、消耗与退还记录" onClick={() => onNavigate("ledger")} />
+          <ProfileShortcut icon={<CircleHelp size={19} />} title="帮助中心" desc="查看制作流程和常见问题" onClick={() => onNavigate("help")} />
+        </div>
       </section>
     </div>
   );
@@ -521,7 +511,7 @@ const fallbackHelpArticles: HelpArticle[] = [
     id: "fallback-billing",
     title: "积分的冻结、扣费和退还是怎么运作的？",
     summary: "先冻结预估积分，成功扣实际消耗，失败自动退回。",
-    content: "1 积分约等于 1 元人民币消费参考，充值积分永久有效。\n提交生成任务时先按预估用量冻结积分；任务成功后按实际消耗正式扣费，多余部分退回；任务失败或取消时冻结积分自动退还。每一笔都可以在「积分明细」按类型筛选核对。",
+    content: "积分用于生成与导出，购买价格以充值页面的具体套餐为准。生成前请核对所选模型、范围和预估积分。\n提交生成任务时先冻结预估积分；结束后按已交付结果结算，多余部分退回。已提交供应商但结果尚未确认的任务，需要先核对远端状态，不能把取消当作立即退款。每一笔都可以在「积分明细」按类型筛选核对。",
     category: "billing",
     tags: ["积分", "账单"],
     enabled: true,
@@ -545,12 +535,12 @@ const fallbackHelpArticles: HelpArticle[] = [
   }
 ];
 
-export function HelpPage({ articles = [] }: { articles?: HelpArticle[] }) {
+export function HelpPage({ articles = [], userId }: { articles?: HelpArticle[]; userId: string }) {
   const [keyword, setKeyword] = useState("");
   const [category, setCategory] = useState<HelpArticle["category"] | "all">("all");
   const sourceArticles = articles.length ? articles : fallbackHelpArticles;
   const [openArticleId, setOpenArticleId] = useState(sourceArticles[0]?.id ?? "");
-  const [supportMessage, setSupportMessage] = useState("");
+  const [supportIntent, setSupportIntent] = useState<SupportTicketIntent>();
   useEffect(() => {
     if (!sourceArticles.some((article) => article.id === openArticleId)) {
       setOpenArticleId(sourceArticles[0]?.id ?? "");
@@ -581,17 +571,16 @@ export function HelpPage({ articles = [] }: { articles?: HelpArticle[] }) {
       <div className="page-title row-title">
         <div>
           <h1>帮助中心</h1>
-          <p>常见问题、操作教程、客服和工单。</p>
+          <p>查找操作教程，提交问题并查看站内回复。</p>
         </div>
         <div className="inline-actions">
-          <button className="ghost-button" type="button" onClick={() => setSupportMessage("在线客服已收到请求：请描述你遇到的问题，我们会优先看失败任务和积分流水。")}>
+          <button className="ghost-button" type="button" onClick={() => setSupportIntent(current => ({ view: "list", key: (current?.key ?? 0) + 1 }))}>
             <Headphones size={18} />
-            在线客服
+            我的工单
           </button>
-          <button className="primary-button" type="button" onClick={() => setSupportMessage("工单草稿已创建：建议附上项目名称、失败任务 ID、截图和你希望达到的效果。")}><Send size={18} />提交工单</button>
+          <button className="primary-button" type="button" onClick={() => setSupportIntent(current => ({ view: "new", key: (current?.key ?? 0) + 1 }))}><Send size={18} />提交问题</button>
         </div>
       </div>
-      {supportMessage ? <p className="success-text help-support-message">{supportMessage}</p> : null}
       <div className="help-grid help-action-grid">
         <HelpCard title="10 分钟入门" desc="从零生成第一集" icon={<MonitorPlay size={30} />} onClick={() => focusCategory("getting_started")} />
         <HelpCard title="详细文档" desc="每个功能讲解" icon={<FileText size={30} />} onClick={() => focusCategory("workflow")} />
@@ -646,6 +635,7 @@ export function HelpPage({ articles = [] }: { articles?: HelpArticle[] }) {
           </aside>
         </div>
       </section>
+      <SupportTicketPanel userId={userId} intent={supportIntent} />
     </div>
   );
 }
