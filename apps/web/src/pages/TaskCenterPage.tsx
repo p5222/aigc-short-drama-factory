@@ -1,4 +1,4 @@
-import {
+﻿import {
   AlertTriangle,
   CheckCircle2,
   Clock3,
@@ -37,12 +37,14 @@ export function TaskCenterPage({
   tasks,
   onRetry,
   onCancel,
-  onRefresh
+  onRefresh,
+  onOpenProject
 }: {
   tasks: GenerationTask[];
   onRetry: (taskId: string) => void | Promise<void>;
   onCancel: (taskId: string) => void | Promise<void>;
   onRefresh: () => void | Promise<void>;
+  onOpenProject: (projectId: string) => void;
 }) {
   const [activeFilter, setActiveFilter] = useState<QueueFilter>("all");
   const [activeStage, setActiveStage] = useState<TaskType | "all">("all");
@@ -112,15 +114,15 @@ export function TaskCenterPage({
       {actionMessage ? <p className="success-text" role="status">{actionMessage}</p> : null}
 
       <div className="queue-stat-grid">
-        <QueueStat icon={<Layers3 size={21} />} label="总任务" value={tasks.length} hint={`${queueStats.totalCredits} 预计积分`} />
-        <QueueStat icon={<Loader2 size={21} className={queueStats.active ? "spin-icon" : ""} />} label="生成中" value={queueStats.active} hint={`${queueStats.avgProgress}% 平均进度`} tone="blue" />
-        <QueueStat icon={<CheckCircle2 size={21} />} label="已完成" value={queueStats.succeeded} hint={`${queueStats.successRate}% 成功率`} tone="green" />
+        <QueueStat icon={<Layers3 size={21} />} label="总任务" value={tasks.length} hint={`已结算 ${queueStats.totalCredits} 积分`} />
+        <QueueStat icon={<Loader2 size={21} className={queueStats.active ? "spin-icon" : ""} />} label="生成中" value={queueStats.active} hint={queueStats.active ? `${queueStats.avgProgress}% 在途任务平均进度` : "当前没有在途任务"} tone="blue" />
+        <QueueStat icon={<CheckCircle2 size={21} />} label="已完成" value={queueStats.succeeded} hint={`共 ${tasks.length} 条任务记录`} tone="green" />
         <QueueStat icon={<AlertTriangle size={21} />} label="失败待处理" value={queueStats.failed} hint="可在右侧查看原因" tone="red" />
       </div>
 
       <section className="queue-policy-strip">
-        <PolicyPill label="并发限制" value={`同时 ${queuePolicy.concurrency} 个`} hint={queuePolicy.running >= queuePolicy.concurrency ? "已达上限，新任务会排队" : "仍可接收新任务"} />
-        <PolicyPill label="等待任务" value={`${queuePolicy.pending} 个`} hint="文本任务由 BullMQ 调度；图片/视频按阶段限流" />
+        <PolicyPill label="当前执行" value={`${queuePolicy.running} 个`} hint="仅显示当前账号的执行任务" />
+        <PolicyPill label="等待任务" value={`${queuePolicy.pending} 个`} hint="系统按模型可用额度与阶段调度" />
         <PolicyPill label="退费规则" value="失败/取消退冻结" hint="成功后正式扣费，失败任务可重试或切模型继续" />
       </section>
 
@@ -221,7 +223,7 @@ export function TaskCenterPage({
           </div>
         </div>
 
-        <TaskDetailPanel task={selectedTask} queuePolicy={queuePolicy} pendingAction={selectedTask ? pendingActions[selectedTask.id] : undefined} onRetry={(id) => void runAction(id, "retry")} onCancel={(id) => void runAction(id, "cancel")} />
+        <TaskDetailPanel task={selectedTask} onOpenProject={onOpenProject} queuePolicy={queuePolicy} pendingAction={selectedTask ? pendingActions[selectedTask.id] : undefined} onRetry={(id) => void runAction(id, "retry")} onCancel={(id) => void runAction(id, "cancel")} />
       </section>
     </div>
   );
@@ -229,12 +231,14 @@ export function TaskCenterPage({
 
 function TaskDetailPanel({
   task,
+  onOpenProject,
   queuePolicy,
   pendingAction,
   onRetry,
   onCancel
 }: {
   task?: GenerationTask;
+  onOpenProject: (projectId: string) => void;
   queuePolicy: ReturnType<typeof buildQueuePolicy>;
   pendingAction?: TaskAction;
   onRetry: (taskId: string) => void;
@@ -295,8 +299,8 @@ function TaskDetailPanel({
       <div className="queue-detail-group">
         <h3>执行信息</h3>
         <div className="queue-detail-grid">
-          <QueueDetail label="预计耗时" value={formatDuration(task.estimatedSeconds ?? estimateTaskSeconds(task))} />
-          <QueueDetail label="队列位置" value={queuePosition ? `第 ${queuePosition} 位` : task.status === "running" ? "执行中" : "-"} />
+          <QueueDetail label="参考耗时" value={task.estimatedSeconds ? formatDuration(task.estimatedSeconds) : "等待渠道返回"} />
+          <QueueDetail label="我的待处理序号" value={queuePosition ? `第 ${queuePosition} 条` : task.status === "running" ? "执行中" : "-"} />
           <QueueDetail label="创建时间" value={formatTaskTime(task.createdAt)} />
           <QueueDetail label="更新时间" value={formatTaskTime(task.updatedAt)} />
         </div>
@@ -322,6 +326,7 @@ function TaskDetailPanel({
         <p>{task.fallbackHint ?? "可切换模型或检查后台渠道配置后重试。"}</p>
       </div>
 
+      {task.projectId ? <button type="button" className="primary-button" onClick={() => onOpenProject(task.projectId!)}><Film size={16} /> 打开所属作品</button> : <p className="muted">对应作品已不可用，任务记录仍保留。</p>}
       <div className="queue-detail-actions">
         <button type="button" onClick={() => onRetry(task.id)} disabled={!canRetry || Boolean(pendingAction)}>
           <RotateCcw size={16} />
@@ -384,10 +389,10 @@ function getQueueStats(tasks: GenerationTask[]) {
   const active = tasks.filter((task) => isActiveStatus(task.status)).length;
   const succeeded = tasks.filter((task) => task.status === "succeeded").length;
   const failed = tasks.filter((task) => task.status === "failed").length;
-  const totalCredits = tasks.reduce((sum, task) => sum + (task.finalCredits ?? task.estimatedCredits ?? 0), 0);
-  const avgProgress = tasks.length ? Math.round(tasks.reduce((sum, task) => sum + normalizeProgress(task.progress), 0) / tasks.length) : 0;
-  const successRate = tasks.length ? Math.round((succeeded / tasks.length) * 100) : 0;
-  return { active, succeeded, failed, totalCredits, avgProgress, successRate };
+  const totalCredits = tasks.reduce((sum, task) => sum + (task.finalCredits ?? 0), 0);
+  const activeTasks = tasks.filter((task) => isActiveStatus(task.status));
+  const avgProgress = activeTasks.length ? Math.round(activeTasks.reduce((sum, task) => sum + normalizeProgress(task.progress), 0) / activeTasks.length) : 0;
+  return { active, succeeded, failed, totalCredits, avgProgress };
 }
 
 function buildQueuePolicy(tasks: GenerationTask[]) {
@@ -396,7 +401,6 @@ function buildQueuePolicy(tasks: GenerationTask[]) {
     .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
   const running = tasks.filter((task) => task.status === "running").length;
   return {
-    concurrency: 1,
     running,
     pending: pendingTasks.length,
     pendingTasks
@@ -482,24 +486,11 @@ function progressHint(status: TaskStatus) {
 }
 
 function nextStepText(task: GenerationTask) {
-  if (task.status === "pending") return "任务已经进入队列，等待后端 worker 调度。";
-  if (task.status === "running") return "任务生成中，页面切换不会影响后端队列继续执行。";
+  if (task.status === "pending") return "任务已进入队列，实际开始时间取决于模型和阶段的可用额度。";
+  if (task.status === "running") return "任务生成中，切换页面后仍会继续执行。";
   if (task.status === "succeeded") return "可以回到项目生产台查看生成结果，继续下一阶段。";
   if (task.status === "failed") return "建议先检查模型渠道、图片 URL、内容审核或余额后再重试。";
   return "如需重新生成，可在失败或取消后使用重试。";
-}
-
-function estimateTaskSeconds(task: GenerationTask) {
-  const base: Record<TaskType, number> = {
-    text: 45,
-    storyboard: 35,
-    character: 90,
-    image: 75,
-    video: 180,
-    tts: 30,
-    export: 20
-  };
-  return Math.max(base[task.type] ?? 40, Math.round((task.estimatedCredits || 1) * (task.type === "video" ? 8 : 3)));
 }
 
 function formatDuration(seconds: number) {

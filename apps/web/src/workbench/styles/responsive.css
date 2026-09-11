@@ -164,42 +164,130 @@
   }
 }
 
+.wb-header[data-layout="project-production"] .wb-more-mobile-action {
+  display: none;
+}
+
 @media (max-width: 767px) {
-  .wb-header {
-    grid-template-columns: minmax(120px, 1fr) minmax(0, 1.5fr) auto;
-    gap: 8px;
-    padding: 0 8px;
+  .wb-shell.project-workbench {
+    --wb-mobile-header-height: 105px;
+    grid-template-rows: var(--wb-mobile-header-height) minmax(0, 1fr);
   }
 
-  .wb-header__project {
+  /* Keep stage navigation in normal flow, in a separate row from every tool. */
+  .wb-shell .wb-header[data-layout="project-production"] {
+    position: relative;
+    inset: auto;
+    width: 100%;
+    min-width: 0;
+    height: var(--wb-mobile-header-height);
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: 56px 48px;
+    grid-template-areas: "project actions" "stages stages";
+    gap: 0 4px;
+    padding: 0 8px;
+    overflow: visible;
+  }
+
+  .wb-shell .wb-header[data-layout="project-production"] > .wb-header__project {
+    grid-area: project;
     gap: 2px;
   }
 
-  .wb-header__project-copy strong {
-    max-width: 100px;
+  .wb-shell .wb-header[data-layout="project-production"] .wb-header__project-copy {
+    flex: 1;
+  }
+
+  .wb-shell .wb-header[data-layout="project-production"] .wb-header__project-copy strong {
+    max-width: 100%;
     font-size: var(--text-sm);
   }
 
-  .wb-stage-nav button {
-    min-width: 56px;
-    height: 68px;
+  .wb-shell .wb-header[data-layout="project-production"] > .wb-stage-nav {
+    position: static;
+    inset: auto;
+    transform: none;
+    grid-area: stages;
+    align-self: stretch;
+    justify-self: stretch;
+    width: 100%;
+    height: 48px;
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    align-items: stretch;
+    gap: 0;
+    overflow: visible;
+    border-top: 1px solid var(--divider);
+  }
+
+  .wb-shell .wb-header[data-layout="project-production"] > .wb-stage-nav > button {
+    position: relative;
+    inset: auto;
+    transform: none;
+    width: 100%;
+    min-width: 44px;
+    min-height: 44px;
+    height: 47px;
+    margin: 0;
     padding: 0 4px;
-    font-size: var(--text-xs);
+    gap: 6px;
+    white-space: nowrap;
+    font-size: var(--text-sm);
   }
 
-  .wb-stage-complete {
-    display: none;
-  }
-
-  .wb-header__actions {
+  .wb-shell .wb-header[data-layout="project-production"] > .wb-header__actions {
+    grid-area: actions;
     gap: 0;
   }
 
-  .wb-header__actions .wb-icon-button,
-  .wb-header__project > .wb-icon-button {
+  .wb-shell .wb-header[data-layout="project-production"] .wb-icon-button {
     width: 44px;
+    min-width: 44px;
     height: 44px;
+    min-height: 44px;
     flex-basis: 44px;
+  }
+
+  .wb-shell .wb-header[data-layout="project-production"] .wb-header__overflow-action {
+    display: none;
+  }
+
+  .wb-shell .wb-header[data-layout="project-production"] .wb-more-mobile-action {
+    display: flex;
+  }
+
+  .wb-shell .wb-header[data-layout="project-production"] .wb-more-popover > button {
+    min-height: 44px;
+    white-space: nowrap;
+  }
+
+  .wb-shell .wb-content-canvas__heading {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  .wb-shell .wb-content-canvas__heading > div {
+    flex: 1 1 180px;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .wb-shell .wb-content-edit-button,
+  .wb-shell .wb-content-save-button {
+    flex-shrink: 0;
+    min-height: 44px;
+    padding: 0 12px;
+    white-space: nowrap;
+  }
+
+  .wb-shell .wb-content-edit-button > svg,
+  .wb-shell .wb-content-save-button > svg {
+    flex-shrink: 0;
   }
 
   .wb-canvas__legacy {
@@ -210,6 +298,11 @@
   .wb-entity-rail,
   .wb-inspector {
     width: 100vw;
+  }
+
+  .wb-shell.project-workbench .wb-entity-rail,
+  .wb-shell.project-workbench .wb-inspector {
+    top: var(--wb-mobile-header-height);
   }
 
   .wb-entity-rail .wb-drawer-scrim,

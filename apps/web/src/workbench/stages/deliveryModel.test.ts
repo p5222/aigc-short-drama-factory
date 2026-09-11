@@ -53,7 +53,7 @@ test("normalizes invalid durations and lays clips sequentially", () => {
 test("publishing resolves one latest MP4, otherwise one shot", () => {
   const shots = [shot("a", 2), shot("b", 4)];
   const assets = [asset("a", "a", "https://cdn.test/a.mp4"), asset("b", "b", "https://cdn.test/b.mp4")];
-  const jobs: ExportJob[] = [{ id: "new", projectId: "p", type: "video_export", status: "succeeded", outputUrl: "https://cdn.test/new.mp4", outputKind: "mp4", createdAt: "2025-01-02", updatedAt: "2025-01-02" }];
+  const jobs: ExportJob[] = [{ id: "new", projectId: "p", type: "video_export", status: "succeeded", sourceStatus: "current", outputUrl: "https://cdn.test/new.mp4", outputKind: "mp4", createdAt: "2025-01-02", updatedAt: "2025-01-02" }];
   assert.equal(resolveSingleDeliveryCandidate(shots, assets, jobs)?.id, "export:new");
   assert.equal(resolveSingleDeliveryCandidate(shots, assets, [])?.id, "asset:video_a");
 });
@@ -62,8 +62,8 @@ test("returns only persisted playable videos and latest successful mp4", () => {
   const shots = [shot("a", 2), shot("b", 4)];
   const assets = [asset("a", "a", "https://cdn.test/a.mp4"), asset("b", "b", "task-123")];
   const jobs: ExportJob[] = [
-    { id: "old", projectId: "p", type: "video_export", status: "succeeded", outputUrl: "https://cdn.test/old.mp4", outputKind: "mp4", createdAt: "2025-01-01", updatedAt: "2025-01-01" },
-    { id: "new", projectId: "p", type: "video_export", status: "succeeded", outputUrl: "https://cdn.test/new.mp4", outputKind: "mp4", createdAt: "2025-01-02", updatedAt: "2025-01-02" }
+    { id: "old", projectId: "p", type: "video_export", status: "succeeded", sourceStatus: "current", outputUrl: "https://cdn.test/old.mp4", outputKind: "mp4", createdAt: "2025-01-01", updatedAt: "2025-01-01" },
+    { id: "new", projectId: "p", type: "video_export", status: "succeeded", sourceStatus: "current", outputUrl: "https://cdn.test/new.mp4", outputKind: "mp4", createdAt: "2025-01-02", updatedAt: "2025-01-02" }
   ];
   assert.deepEqual(getDeliveryCandidates(shots, assets, jobs).map((candidate) => candidate.id), ["export:new", "asset:video_a"]);
   assert.equal(getNextPlayableShotId(shots, assets, ""), "a");
@@ -172,8 +172,8 @@ test("getDeliveryStats counts videos, falls back to full-track tts audio and det
   const none = getDeliveryStats(shots, assets, []);
   assert.deepEqual([none.total, none.videoReady, none.audioCovered, none.hasTrackAudio, none.hasSubtitle], [2, 1, 0, false, false]);
   const jobs: ExportJob[] = [
-    { id: "t", projectId: "p", type: "tts", status: "succeeded", storyboardIds: ["a", "b"], audioUrl: "/storage/tts.mp3", createdAt: "", updatedAt: "" },
-    { id: "s", projectId: "p", type: "subtitle", status: "succeeded", storyboardIds: ["a", "b"], subtitleUrl: "/storage/sub.srt", createdAt: "", updatedAt: "" }
+    { id: "t", projectId: "p", type: "tts", status: "succeeded", sourceStatus: "current", storyboardIds: ["a", "b"], audioUrl: "/storage/tts.mp3", createdAt: "", updatedAt: "" },
+    { id: "s", projectId: "p", type: "subtitle", status: "succeeded", sourceStatus: "current", storyboardIds: ["a", "b"], subtitleUrl: "/storage/sub.srt", createdAt: "", updatedAt: "" }
   ];
   const full = getDeliveryStats(shots, assets, jobs);
   assert.deepEqual([full.audioCovered, full.hasTrackAudio, full.hasSubtitle], [2, true, true]);
@@ -182,7 +182,7 @@ test("getDeliveryStats counts videos, falls back to full-track tts audio and det
 });
 
 test("export scope requires exact order and excludes unknown historical ranges", () => {
-  const base: ExportJob = { id: "current", projectId: "p", type: "tts", status: "succeeded", audioUrl: "/storage/audio.mp3", createdAt: "", updatedAt: "", storyboardIds: ["b", "a"] };
+  const base: ExportJob = { id: "current", projectId: "p", type: "tts", status: "succeeded", sourceStatus: "current", audioUrl: "/storage/audio.mp3", createdAt: "", updatedAt: "", storyboardIds: ["b", "a"] };
   const jobs = [base, { ...base, id: "reordered", storyboardIds: ["a", "b"] }, { ...base, id: "other-episode", storyboardIds: ["c"] }, { ...base, id: "history", storyboardIds: undefined }];
   const scoped = partitionDeliveryExportJobs(jobs, ["b", "a"]);
   assert.deepEqual(scoped.current.map((job) => job.id), ["current"]);
@@ -195,6 +195,22 @@ test("project-wide legacy audio assets never mark another episode complete", () 
   const shots = [shot("a", 2), shot("b", 4)];
   const assets = [rawAsset({ id: "project_audio", type: "audio", status: "succeeded", referenceUrl: "/storage/old.mp3" }), rawAsset({ id: "project_subtitle", type: "subtitle", status: "succeeded", referenceUrl: "/storage/old.srt" })];
   assert.deepEqual(getDeliveryStats(shots, assets, []), { total: 2, videoReady: 0, audioCovered: 0, hasTrackAudio: false, hasSubtitle: false });
+});
+
+test("changed and unverified exports remain downloadable history but cannot satisfy current delivery", () => {
+  const shots = [shot("a", 2), shot("b", 4)];
+  const base: ExportJob = { id: "old", projectId: "p", type: "video_export", status: "succeeded", outputUrl: "/storage/old.mp4", outputKind: "mp4", audioUrl: "/storage/old.mp3", subtitleUrl: "/storage/old.srt", storyboardIds: ["a", "b"], createdAt: "", updatedAt: "" };
+  for (const sourceStatus of ["stale", "unknown", undefined] as const) {
+    const jobs = [{ ...base, sourceStatus }];
+    const partition = partitionDeliveryExportJobs(jobs, ["a", "b"]);
+    assert.equal(partition.current.length, 0);
+    assert.equal(partition.history[0]?.outputUrl, "/storage/old.mp4");
+    assert.equal(getDeliveryCandidates(shots, [], jobs).length, 0);
+    assert.equal(getDeliveryStats(shots, [], jobs).audioCovered, 0);
+    assert.equal(getDeliveryStats(shots, [], jobs).hasSubtitle, false);
+  }
+  const running = { ...base, id: "running", status: "running" as const };
+  assert.equal(partitionDeliveryExportJobs([running], ["a", "b"]).current[0]?.id, "running");
 });
 
 test("getRemainingVideoShots mirrors server eligibility: no playable video and an existing frame image", () => {

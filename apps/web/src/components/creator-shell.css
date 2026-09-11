@@ -1,0 +1,44 @@
+.creator-search { position: relative; flex: 1 1 220px; min-width: 150px; max-width: 380px; }
+.creator-search .search-box { width: 100%; min-width: 0; }
+.creator-search-results { position: absolute; z-index: 120; inset: calc(100% + 8px) 0 auto; min-width: 240px; max-height: min(440px, 65dvh); overflow: auto; padding: 8px; background: var(--ds-bg-surface); border: 1px solid var(--ds-border-default); border-radius: var(--ds-radius-dialog); box-shadow: var(--ds-shadow-floating); }
+.creator-search-results p { padding: 8px; margin: 0; color: var(--ds-text-muted); font-size: 12px; }
+.creator-search-results button { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; padding: 12px 10px; text-align: left; background: transparent; color: var(--ds-text-primary); border: 0; border-radius: var(--ds-radius-control); }
+.creator-search-results button:hover, .creator-search-results button:focus-visible { background: var(--ds-action-soft); }
+.creator-search-results strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.creator-search-results span { color: var(--ds-text-muted); font-size: 12px; white-space: nowrap; }
+.creator-task-notice { position: relative; }
+.creator-notice-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ds-status-danger); position: absolute; top: 7px; right: 7px; }
+.app-shell .topbar { gap: 16px; }
+.app-shell .topbar > div:first-child { min-width: 160px; }
+.app-shell .top-actions { min-width: 0; flex: 1; justify-content: flex-end; overflow: visible; }
+.app-shell .guide-button, .app-shell .user-pill { white-space: nowrap; flex-shrink: 0; }
+.app-shell .user-pill { max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
+.app-shell .icon-button { flex-shrink: 0; }
+.error-banner button { margin-left: 12px; border: 1px solid currentColor; border-radius: var(--ds-radius-control); padding: 5px 10px; background: transparent; color: inherit; }
+@media (max-width: 1100px) {
+  .app-shell .topbar { flex-wrap: wrap; }
+  .app-shell .topbar > div:first-child { flex-basis: 100%; }
+  .app-shell .top-actions { width: 100%; justify-content: flex-start; flex-wrap: wrap; gap: 8px; }
+  .app-shell .creator-search { max-width: none; }
+}
+@media (max-width: 600px) {
+  .app-shell .sidebar { display: grid !important; grid-template-columns: minmax(0, 1fr) auto; }
+  .app-shell .sidebar .brand { padding: 0 !important; }
+  .app-shell .sidebar .brand strong { font-size: 16px !important; }
+  .app-shell .sidebar .side-create { width: auto; padding: 0 12px !important; margin: 0; font-size: 13px; }
+  .app-shell .sidebar .nav { grid-column: 1 / -1; }
+  .app-shell .creator-search { flex-basis: 100%; order: 2; }
+  .app-shell .top-actions .search-box { display: flex; min-width: 0; width: 100%; }
+  .app-shell .topbar small { display: none; }
+  .app-shell .user-pill { flex: 1; max-width: none; min-width: 0; }
+  .app-shell .scripts-page .row-title { align-items: stretch; gap: 14px; }
+  .app-shell .scripts-page .row-title h1 { font-size: 26px; }
+  .app-shell .scripts-page .row-title .inline-actions { display: grid; grid-template-columns: 1fr 1fr; width: 100%; margin: 0; gap: 8px; }
+  .app-shell .scripts-page .row-title .inline-actions button { justify-content: center; font-size: 13px; padding: 0 8px; min-height: 44px; }
+  .app-shell .studio-preview-panel .studio-panel-head { flex-wrap: wrap; gap: 12px; align-items: flex-start; }
+  .app-shell .studio-preview-panel .studio-panel-head > div { min-width: 0; width: 100%; }
+  .app-shell .studio-preview-panel .studio-actions-inline { margin: 0; }
+  .app-shell .studio-preview-panel .studio-actions-inline button { white-space: nowrap; min-height: 44px; }
+  .product-tour-card .product-tour-actions { flex-wrap: wrap; }
+  .product-tour-card .product-tour-actions > div { margin-left: auto; }
+}

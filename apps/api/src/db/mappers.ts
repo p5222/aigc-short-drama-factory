@@ -29,6 +29,7 @@ import type {
   AnalyticsEvent
 } from "@aifilm/shared";
 import { getProviderQuotaSnapshot } from "../providers/modelQuota.js";
+import { isHistoricalAssetId } from "./mediaAssetIdentity.js";
 
 export function mapProject(row: any): Project {
   return {
@@ -235,13 +236,14 @@ export function mapHelpArticle(row: any): HelpArticle {
   };
 }
 
-export function mapExportJob(row: any): ExportJob {
+export function mapExportJob(row: any, sourceStatus: NonNullable<ExportJob["sourceStatus"]> = "unknown"): ExportJob {
   const diagnostics = parseExportDiagnostics(row.errorReason);
   return {
     id: row.id,
     projectId: row.projectId,
     type: row.type,
     status: row.status,
+    sourceStatus,
     outputUrl: row.outputUrl ?? undefined,
     downloadUrl: row.outputUrl ? `/api/projects/${row.projectId}/export/jobs/${row.id}/download` : undefined,
     previewUrl: diagnostics.previewUrl ?? (row.outputUrl?.endsWith(".mp4") ? row.outputUrl : undefined),
@@ -489,7 +491,8 @@ export function mapAsset(row: any): AssetItem {
     prompt: row.prompt,
     referenceUrl: row.referenceUrl ?? undefined,
     status: row.status,
-    relatedCharacterId: row.relatedCharacterId ?? undefined
+    relatedCharacterId: row.relatedCharacterId ?? undefined,
+    isHistorical: isHistoricalAssetId(row.id)
   };
 }
 

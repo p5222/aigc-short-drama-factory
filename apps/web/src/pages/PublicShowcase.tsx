@@ -1,5 +1,5 @@
 import { Check, ChevronLeft, ChevronRight, Clock3, Copy, Play, Search, Sparkles, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { ShowcaseWork } from "@aifilm/shared";
 import { api } from "../lib/api";
 import "./PublicShowcase.css";
@@ -35,9 +35,42 @@ function StudioPage({ locale, scenes, onStart }: Omit<PublicShowcaseProps, "view
   const [totalPages, setTotalPages] = useState(1);
   const [works, setWorks] = useState<ShowcaseWork[]>([]);
   const [preview, setPreview] = useState<ShowcaseWork | null>(null);
+  const previewDialog = useRef<HTMLElement>(null);
+  const previewTitleId = useId();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const cn = locale === "cn";
+
+  useEffect(() => {
+    if (!preview) return;
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const dialog = previewDialog.current;
+    dialog?.querySelector<HTMLButtonElement>(".public-preview-close")?.focus({ preventScroll: true });
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !document.fullscreenElement) {
+        event.preventDefault();
+        setPreview(null);
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const controls = Array.from(dialog?.querySelectorAll<HTMLElement>('button:not(:disabled), video[controls], [tabindex="0"]') ?? []).filter(item => item.getClientRects().length > 0);
+      const first = controls[0], last = controls[controls.length - 1];
+      if (!first || !last) { event.preventDefault(); dialog?.focus(); return; }
+      if (event.shiftKey && (document.activeElement === first || !dialog?.contains(document.activeElement))) {
+        event.preventDefault(); last.focus();
+      } else if (!event.shiftKey && (document.activeElement === last || !dialog?.contains(document.activeElement))) {
+        event.preventDefault(); first.focus();
+      }
+    };
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("keydown", handleKey);
+      document.body.style.overflow = previousOverflow;
+      if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true });
+    };
+  }, [preview?.id]);
 
   useEffect(() => {
     setPage(1);
@@ -130,12 +163,12 @@ function StudioPage({ locale, scenes, onStart }: Omit<PublicShowcaseProps, "view
       ) : null}
 
       {preview ? (
-        <div className="public-preview-modal" role="dialog" aria-modal="true" aria-label={preview.title}>
-          <button className="public-preview-backdrop" type="button" onClick={() => setPreview(null)} aria-label="关闭预览" />
-          <section>
+        <div className="public-preview-modal" data-appearance="dark" role="dialog" aria-modal="true" aria-labelledby={previewTitleId}>
+          <button className="public-preview-backdrop" type="button" tabIndex={-1} onClick={() => setPreview(null)} aria-label="关闭预览" />
+          <section ref={previewDialog} tabIndex={-1}>
             <button className="public-preview-close" type="button" onClick={() => setPreview(null)} aria-label="关闭"><X size={19} /></button>
-            <video src={preview.videoUrl} poster={preview.coverUrl} controls autoPlay playsInline preload="metadata" />
-            <div><span>{preview.category}</span><h3>{preview.title}</h3><p>{preview.creatorName} · {preview.durationLabel}</p><button type="button" onClick={onStart}><Copy size={16} />开始同款创作</button></div>
+            <video src={preview.videoUrl} poster={preview.coverUrl} controls autoPlay playsInline preload="metadata" aria-label={preview.title} tabIndex={0} />
+            <div className="public-preview-information"><div className="public-preview-copy"><span>{preview.category}</span><h3 id={previewTitleId}>{preview.title}</h3><p>{preview.creatorName} · {preview.durationLabel}</p></div><button type="button" onClick={onStart}><Copy size={16} />开始同款创作</button></div>
           </section>
         </div>
       ) : null}

@@ -17,7 +17,9 @@ import {
   UserRound,
   WandSparkles
 } from "lucide-react";
-import type { ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import type { ContentProjectSummary, GenerationTask, Project } from "@aifilm/shared";
+import { searchCreatorItems, type CreatorSearchItem } from "./creatorSearchModel";
 
 export type PageKey =
   | "workbench"
@@ -44,6 +46,11 @@ interface ShellProps {
   onStartGuide: () => void;
   userName: string;
   onLogout: () => void;
+  projects: Project[];
+  contentProjects: ContentProjectSummary[];
+  tasks: GenerationTask[];
+  onOpenProject: (id: string) => void;
+  onOpenContent: (id: string) => void;
 }
 
 const sections: Array<{ label: string; items: Array<{ key: PageKey; label: string; icon: ReactNode }> }> = [
@@ -73,7 +80,29 @@ const sections: Array<{ label: string; items: Array<{ key: PageKey; label: strin
   }
 ];
 
-export function Shell({ active, onNavigate, children, credits = 0, theme, onToggleTheme, onStartGuide, userName, onLogout }: ShellProps) {
+export function Shell({ active, onNavigate, children, credits = 0, theme, onToggleTheme, onStartGuide, userName, onLogout, projects, contentProjects, tasks, onOpenProject, onOpenContent }: ShellProps) {
+  const [query, setQuery] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const searchRef = useRef<HTMLFormElement>(null);
+  const searchItems = useMemo<CreatorSearchItem[]>(() => [
+    ...projects.map((item) => ({ id: item.id, label: item.name, detail: "漫剧作品", kind: "project" as const })),
+    ...contentProjects.map((item) => ({ id: item.id, label: item.title, detail: "内容创作", kind: "content" as const })),
+    ...tasks.map((item) => ({ id: item.id, label: item.title, detail: "生成任务", kind: "task" as const, projectId: item.projectId }))
+  ], [projects, contentProjects, tasks]);
+  const results = useMemo(() => searchCreatorItems(searchItems, query), [searchItems, query]);
+  const failedCount = tasks.filter((task) => task.status === "failed").length;
+  useEffect(() => { setSearchOpen(false); }, [active]);
+  useEffect(() => {
+    const close = (event: PointerEvent) => { if (!searchRef.current?.contains(event.target as Node)) setSearchOpen(false); };
+    document.addEventListener("pointerdown", close);
+    return () => document.removeEventListener("pointerdown", close);
+  }, []);
+  const openResult = (item: CreatorSearchItem) => {
+    setSearchOpen(false);
+    if (item.kind === "project") onOpenProject(item.id);
+    else if (item.kind === "content") onOpenContent(item.id);
+    else onNavigate("tasks");
+  };
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -100,6 +129,7 @@ export function Shell({ active, onNavigate, children, credits = 0, theme, onTogg
                   className={item.key === active ? "nav-item active" : "nav-item"}
                   onClick={() => onNavigate(item.key)}
                   data-tour-id={`nav-${item.key}`}
+                  aria-current={item.key === active ? "page" : undefined}
                 >
                   {item.icon}
                   {item.label}
@@ -123,10 +153,16 @@ export function Shell({ active, onNavigate, children, credits = 0, theme, onTogg
             <small>内容、分镜、图片、视频任务统一管理</small>
           </div>
           <div className="top-actions">
-            <label className="search-box">
-              <Search size={19} />
-              <input placeholder="搜索作品 / 角色 / 分镜 / 任务" />
-            </label>
+            <form className="creator-search" role="search" ref={searchRef} onSubmit={(event) => { event.preventDefault(); if (results[0]) openResult(results[0]); }} onKeyDown={(event) => { if (event.key === "Escape") { setSearchOpen(false); searchRef.current?.querySelector("input")?.focus(); } }}>
+              <label className="search-box">
+                <Search size={19} aria-hidden="true" />
+                <input aria-label="搜索我的作品和任务" placeholder="搜索作品或任务" value={query} onChange={(event) => { setQuery(event.target.value); setSearchOpen(true); }} onFocus={() => setSearchOpen(true)} aria-controls="creator-search-results" aria-expanded={searchOpen && Boolean(query.trim())} />
+              </label>
+              {searchOpen && query.trim() ? <div className="creator-search-results" id="creator-search-results">
+                <p role="status">{results.length ? `${results.length} 条匹配结果` : "没有找到匹配的作品或任务"}</p>
+                {results.map((item) => <button key={`${item.kind}:${item.id}`} type="button" onClick={() => openResult(item)}><strong>{item.label}</strong><span>{item.detail}</span></button>)}
+              </div> : null}
+            </form>
             <button className="guide-button" onClick={onStartGuide}>
               <Sparkles size={18} />
               新手引导
@@ -134,13 +170,13 @@ export function Shell({ active, onNavigate, children, credits = 0, theme, onTogg
             <button className="icon-button" onClick={onToggleTheme} aria-label="切换主题">
               {theme === "dark" ? <Sun size={19} /> : <Moon size={19} />}
             </button>
-            <button className="icon-button" aria-label="通知">
-              <Bell size={19} />
+            <button className="icon-button creator-task-notice" onClick={() => onNavigate("tasks")} aria-label={failedCount ? `查看生成队列，${failedCount} 个任务失败` : "查看生成队列"} title={failedCount ? `${failedCount} 个任务失败，点击查看` : "查看生成队列"}>
+              <Bell size={19} />{failedCount ? <span className="creator-notice-dot" /> : null}
             </button>
-            <div className="user-pill">
+            <button className="user-pill" type="button" onClick={() => onNavigate("profile")} aria-label={`打开个人账户：${userName}`}>
               <Coins size={17} />
               {userName}
-            </div>
+            </button>
             <button className="icon-button" onClick={onLogout} aria-label="退出登录">
               <LogOut size={19} />
             </button>

@@ -134,6 +134,32 @@ function imageProvider(id: string, models: string[], enabled = true): ModelProvi
   return { id, modality: "image", models, enabled } as ModelProvider;
 }
 
+test("current shot media excludes archived output versions and deleted shots", () => {
+  const shots = [shot("a", 1, 1), shot("b", 1, 1)];
+  const assets = [
+    asset("image_a", "image", undefined, "/storage/current.png"),
+    asset("image_b_history_1", "image", undefined, "/storage/old.png"),
+    asset("video_a_history_1", "video", undefined, "/storage/old.mp4"),
+    asset("video_b", "video", undefined, "/storage/current.mp4"),
+    asset("video_deleted", "video", undefined, "/storage/deleted.mp4"),
+    asset("asset_history_task_1", "video", undefined, "/storage/late.mp4")
+  ];
+  assert.deepEqual([...buildShotAssetMap(shots, assets, "image").keys()], ["a"]);
+  assert.deepEqual([...buildShotAssetMap(shots, assets, "video").keys()], ["b"]);
+  assert.deepEqual(collectPendingShotIds(shots, assets), ["b"]);
+});
+
+test("archived reference assets never replace a character identity or reappear as current scenes", () => {
+  const history = { ...asset("old", "role", "c", "/storage/old.png"), isHistorical: true };
+  const reference = { ...asset("reference", "role_reference", "c", "/storage/ref.png"), isHistorical: true };
+  const scene = { ...asset("scene", "scene", undefined, "/storage/scene.png"), isHistorical: true };
+  const current = asset("current", "role", "c", "/storage/current.png");
+  assert.equal(resolveCharacterIdentityAsset({ id: "c", referenceAssetId: "old" }, [history, current])?.id, "current");
+  assert.equal(resolveCharacterIdentityAsset({ id: "c" }, [history]), undefined);
+  assert.deepEqual(listCharacterReferenceAssets("c", [reference]), []);
+  assert.deepEqual(deriveSceneAssetList([scene]), []);
+});
+
 function imagePrice(providerId: string, model: string, unitCredits: number, enabled = true): ModelPrice {
   return { providerId, model, unitCredits, enabled, modality: "image" } as ModelPrice;
 }

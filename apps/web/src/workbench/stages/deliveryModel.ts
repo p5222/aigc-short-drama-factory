@@ -33,7 +33,7 @@ export function partitionDeliveryExportJobs(jobs: ExportJob[], storyboardIds: st
   const history: ExportJob[] = [];
   const other: ExportJob[] = [];
   for (const job of [...jobs].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || b.createdAt.localeCompare(a.createdAt))) {
-    if (!job.storyboardIds?.length) history.push(job);
+    if (!job.storyboardIds?.length || (job.status === "succeeded" && job.sourceStatus !== "current")) history.push(job);
     else if (storyboardIds.length === job.storyboardIds.length && storyboardIds.every((id, index) => id === job.storyboardIds![index])) current.push(job);
     else other.push(job);
   }
@@ -44,7 +44,7 @@ export function getDeliveryCandidates(shots: StoryboardShot[], assets: AssetItem
   const cover = assets.find((asset) => asset.type === "image" && asset.referenceUrl)?.referenceUrl ?? "";
   const total = shots.reduce((sum, shot) => sum + normalizeShotDuration(shot.duration), 0);
   const exports = jobs
-    .filter((job) => job.status === "succeeded" && (job.type === "video_export" || job.outputKind === "mp4") && isPublishableVideoUrl(job.outputUrl))
+    .filter((job) => job.status === "succeeded" && job.sourceStatus === "current" && (job.type === "video_export" || job.outputKind === "mp4") && isPublishableVideoUrl(job.outputUrl))
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || b.createdAt.localeCompare(a.createdAt));
   const exportCandidates = exports.slice(0, 1).map((job) => ({ id: `export:${job.id}`, label: "最新合成 MP4", videoUrl: job.outputUrl!, coverUrl: cover, durationLabel: formatClock(total) }));
   const clipCandidates = shots.flatMap((shot, index) => {

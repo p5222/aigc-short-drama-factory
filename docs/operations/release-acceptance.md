@@ -2,6 +2,35 @@
 
 修订：2026-09-12。本文件定义每个待发布提交需要留下的证据，空白项表示未验收；不能把这份清单本身当成商业可用认证。首次升级先执行 [部署升级说明](../../deploy/UPGRADE.md)，换电脑步骤见 [跨设备指南](./github-and-multi-device-deployment.md) 和工作台内置手册。
 
+## 最近一次已执行记录
+
+本次基础设施发布通过，完整产品商业验收仍进行中。以下记录仅适用于提交 `0e34b857aaa858bc58ada9ac4fedc39a319e5c3d`，后续代码变化须重新验证。
+
+| 项目 | 实际证据 |
+| --- | --- |
+| GitHub | PR #1、#2、#3已合并；main为`0e34b857aaa858bc58ada9ac4fedc39a319e5c3d`，与CI提交`0d78acfea0ca6af697ebca2808e5d78a2b1dff74`的树一致。 |
+| CI | [34642050664](https://github.com/p5222/aigc-short-drama-factory/actions/runs/34642050664)成功，4分18秒；部署故障测试19/19，GitHub日志确认两个真实root属主发布/恢复用例均执行成功、无跳过。API 137、Web 144、Hub 18及完整生产镜像/FFmpeg检查通过。 |
+| 发起与核验时间 | Project Hub任务`1c6497ef-400e-494f-8e1e-5668f39a4c14`于2026-09-12 04:09:38发起；04:14:20完成基线核验。时区Asia/Shanghai，对应UTC为2026-09-11 20:09:38、20:14:20。 |
+| 线上版本 | 服务器main/deployed与公网JSON `/ready` revision均为上述main；`ok=true`。应用镜像`manjiao-app:0e34b857aaa858bc58ada9ac4fedc39a319e5c3d`；API/Redis健康，FFmpeg可用。 |
+| 备份 | `/opt/manjiao-backups/20260912_040940_0e34b857aaa8_manjiao-deploy.03YS5PXc`；发布日志显示备份完成后才同步源码。 |
+| 发布日志 | `/opt/manjiao-deploy-logs/20260912_040940_0e34b857aaa8_manjiao-deploy.03YS5PXc.log`；REDIS_AOF_READY、安全schema同步、REBUILD_READY与两次READY_OK。 |
+| 数据与队列 | 核验表计数均不变，减少/增加表均为空；无真实生成、导出或排队工作。新增请求载荷列、后台审计表和账本查询索引有效，Redis AOF健康。 |
+| 私有基线记录 | `/opt/manjiao-deploy-logs/release-verification-0e34b857aaa858bc58ada9ac4fedc39a319e5c3d.json`；业务计数明细仅保存在服务器。 |
+| 多项目平台 | `https://manjiao.cloud/ops/`已部署；独立登录、私库克隆、功能分支实际push、main拉取、平台发起正式发布均已验证。每个项目的发布目标需管理员配置。 |
+| 跨电脑交付 | `git-workbench-05d3ca7.zip`已归档；源工具目录与本次main无差异；SHA256 `C0486F39BDF506DE3906D66388A44D809E43088E3B676914DE3480D7AE99CE9E`。第二台个人电脑的人工演练仍待留证。 |
+
+首次发布曾因旧root属主运行产物导致rsync失败，已修复并在此次实际发布验证；旧备份漏掉的`src/storage`源码已从旧Git树恢复，备份排除规则现仅针对根持久目录。数据库与客户素材未回退。
+
+尚不能标记为通过的项目：真实供应商短样片质量与成本、生产专用验收账号的实际流程、真实现金购买/履约、第二台电脑及完整多模块/设备矩阵。本机隔离样本的跨集字幕、内容变更失效、作品同ID驳回重提/审批/匿名播放、375/812弹窗和后台手机导航已验证，见[前后台流程记录](./ui-flow-iteration-20260912.md)。发布后发现的创建重放与旧prune入口风险已完成本地修复，17项真实数据库/HTTP定向测试、完整API 147/147与API类型检查通过，均无测试跳过；仍需新版本CI与实际发布，详见[商业闭环迭代记录](./commercial-readiness-review.md)。新增CreationRequest表与请求协议不属于本表0e34b857的线上验收结论。
+
+2026-09-12 05:36:49（Asia/Shanghai）再次生产只读复核：21张核验表计数不变、真实在途工作0，refs与公网ready仍为0e34b857；没有付费供应商调用或业务数据写入。
+
+此后素材失效、持久输入指纹、跨模态并发保护、尾帧来源校验和角色/场景参考源安全又通过35/35定向回归、零跳过，日志`outputs/commercial-review/tests/media-source-safety.log`。导出新增原范围/输入快照与`sourceStatus`三值协议，完整当前MP4才使整部项目完成；历史文件仍可下载。作品来源一致性、驳回修改重提、项目过滤和后台版本冲突保护也已完成本地验证。
+
+上述本地追加修改于2026-09-12 **05:25:07（Asia/Shanghai）**完成新的完整API回归：**212/212通过、零失败、零跳过，65.4秒**；shared构建、API类型检查和`git diff --check`通过。日志`outputs/commercial-review/tests/api-media-source-full.log`，仅使用本地隔离PostgreSQL/Redis及测试媒体，未付费调用供应商或写生产数据。仍需新版本CI、镜像和实际发布核验，不属于本表0e34b857已上线版本的证明。
+
+尾帧入边保留与同批父子镜头生成前409守卫补漏后，2026-09-12 **05:38:58（Asia/Shanghai）**最终完整API回归**217/217通过、零失败、零跳过，49.1秒**，API类型检查通过，日志`outputs/commercial-review/tests/api-media-source-final.log`。真实数据库证明拒绝发生在供应商调用、任务创建和冻结前，未选中的已完成父镜头不会误阻止其余目标。真实供应商下一步按[10秒短样片方案](./real-provider-acceptance.md)执行；首轮330平台积分、限定修正后累计466积分，供应商现金成本未知，尚未付费生成或完成质量验收。
+
 ## 版本与环境记录
 
 ```text
@@ -24,7 +53,7 @@ GitHub PR / main SHA：
 | 安装与静态检查 | 锁定依赖可安装；Prisma Client、shared、API 和 web 构建成功；typecheck 和必要单元测试成功。 |
 | 数据库与队列测试 | CI 的真实 PostgreSQL / Redis 测试已启用，关键账本、订单、并发、幂等和队列用例没有被跳过。不得使用生产数据库运行测试。 |
 | 生产镜像 | 从当前提交构建成功；真实 H.264 / AAC、中文字库及静音短片 smoke 通过，并保留可播放 MP4。 |
-| 部署故障演练 | 隔离环境通过备份失败、构建失败、schema 失败、回滚失败、重复发布和并发锁测试。 |
+| 部署故障演练 | 隔离环境通过备份失败、构建失败、schema 失败、回滚失败、重复发布和并发锁测试；使用非root发布用户对真实root属主的遗留dist/缓存验证发布与恢复，不跳过。备份需包含嵌套src/storage源码。 |
 | schema 兼容 | 列明新增/修改字段，对现有数据做兼容性审查。db push 拒绝风险时停止；禁止 accept-data-loss、migrate reset 或删除生产卷。 |
 
 仓库 CI：`.github/workflows/verify.yml`。部署控制流测试使用真实临时 Git / rsync / flock，模拟 Docker 和 HTTP；它们不能替代真实数据库恢复或真实供应商调用。

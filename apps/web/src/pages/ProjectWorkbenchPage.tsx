@@ -47,6 +47,7 @@ import {
   normalizeImageOutputSize
 } from "@aifilm/shared";
 import { api } from "../lib/api";
+import { BEFORE_CREATOR_NAVIGATION } from "../lib/creatorNavigation";
 import { ProductionWorkspace } from "../workbench/components/ProductionWorkspace";
 import { WorkbenchHeader } from "../workbench/components/WorkbenchHeader";
 import { WorkbenchProvider, type WorkbenchSaveState } from "../workbench/WorkbenchContext";
@@ -57,14 +58,18 @@ import { DeliveryStage } from "../workbench/stages/DeliveryStage";
 import { TaskDrawer } from "../workbench/components/TaskDrawer";
 import { EvaluationDrawer } from "../workbench/components/EvaluationDrawer";
 import { type DeliveryCandidate } from "../workbench/stages/deliveryModel";
-import { buildShowcaseCandidates, createShowcaseSubmitGuard, resolveShowcaseSelection, showcaseCandidateKey } from "./showcasePublishModel";
+import { buildShowcaseCandidates, canReviseShowcase, createShowcaseSubmitGuard, mergeShowcaseRecord, resolveShowcaseRevision, resolveShowcaseSelection, showcaseCandidateKey, showcaseSubmissionKey } from "./showcasePublishModel";
 import { generateCharacterImages, generateStoryboards, generateImages, generateVideos, createExportJob, generateQualityReports, submitFeedback } from "../workbench/workbenchActions";
-import { createWorkbenchState, resolveCharacterIdentityAsset, shouldReconcileStoryboardSelection, workbenchReducer, type WorkbenchStage, type WorkbenchTheme } from "../workbench/model";
+import { buildShotAssetMap as buildCurrentShotAssetMap, resolveCharacterIdentityAsset, shouldReconcileStoryboardSelection, workbenchReducer, type WorkbenchStage, type WorkbenchTheme } from "../workbench/model";
 import { buildTimelineClipLayout } from "./projectWorkbenchModel";
+import { createWorkbenchSourceSync, isWorkbenchDeliveryComplete, workbenchPageSession } from "./workbenchPageModel";
 import "./ProjectStudioV4.css";
 
 interface ProjectWorkbenchPageProps {
   workflow?: ProjectWorkflow;
+  loading?: boolean;
+  error?: string;
+  onRetry?: () => void;
   providers: ModelProvider[];
   modelPrices: ModelPrice[];
   theme: WorkbenchTheme;
@@ -87,8 +92,20 @@ const statusText: Record<TaskStatus, string> = {
 
 const failedImageModels = new Set(["wanx-v1", "wan2.5-t2i-preview"]);
 
-export function ProjectWorkbenchPage({ workflow, providers, modelPrices, theme, onThemeChange, onBack, onRefresh }: ProjectWorkbenchPageProps) {
-  const [workbenchState, dispatch] = useReducer(workbenchReducer, undefined, createWorkbenchState);
+export function ProjectWorkbenchPage(props: ProjectWorkbenchPageProps) {
+  const { workflow, loading = false, error: loadError, onRetry, onBack } = props;
+  if (!workflow) {
+    return <main className="page-stack"><section className="panel centered-panel" aria-busy={loading}>
+      <h1>{loading ? "正在打开制作项目" : loadError ? "暂时无法打开项目" : "尚未选择制作项目"}</h1>
+      <p role={loadError ? "alert" : "status"}>{loading ? "正在读取剧本、镜头与生成记录，请稍候。" : loadError || "从作品列表选择一个项目，继续制作。"}</p>
+      <div className="studio-actions-inline"><button type="button" className="ghost-button" onClick={onBack}>返回作品列表</button>{onRetry ? <button type="button" className="primary-button" disabled={loading} onClick={onRetry}><RefreshCw size={16} />重新加载</button> : null}</div>
+    </section></main>;
+  }
+  return <LoadedProjectWorkbenchPage key={workflow.project.id} {...props} workflow={workflow} />;
+}
+
+function LoadedProjectWorkbenchPage({ workflow, providers, modelPrices, theme, onThemeChange, onBack, onRefresh }: ProjectWorkbenchPageProps & { workflow: ProjectWorkflow }) {
+  const [workbenchState, dispatch] = useReducer(workbenchReducer, workflow, workbenchPageSession.load);
   const [saveState, setSaveState] = useState<WorkbenchSaveState>("unchanged");
   const [railOpen, setRailOpen] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(false);
@@ -101,9 +118,28 @@ export function ProjectWorkbenchPage({ workflow, providers, modelPrices, theme, 
   const [publishCandidate, setPublishCandidate] = useState<DeliveryCandidate>();
   const [exportJobs, setExportJobs] = useState<ExportJob[]>([]);
   const [productionPackage, setProductionPackage] = useState<StoryboardProductionPackage | null>(null);
+  const sourceSync = useRef(createWorkbenchSourceSync()).current;
+  const latestSourceWorkflow = useRef(workflow);
   const [previewImage, setPreviewImage] = useState<{ url: string; title: string } | null>(null);
   const [taskDrawerOpen, setTaskDrawerOpen] = useState(false);
   const [evaluationDrawerOpen, setEvaluationDrawerOpen] = useState(false);
+
+  useEffect(() => {
+    workbenchPageSession.save(workflow.project.id, workbenchState);
+  }, [workflow.project.id, workbenchState.activeStage, workbenchState.activeEpisodeNo]);
+
+  useEffect(() => {
+    const guardNavigation = (event: Event) => {
+      if (saveState === "saving" || ((saveState === "dirty" || saveState === "error") && !window.confirm("当前镜头有未保存修改。确认放弃这些修改并离开？"))) event.preventDefault();
+    };
+    const guardUnload = (event: BeforeUnloadEvent) => {
+      if (saveState !== "dirty" && saveState !== "error" && saveState !== "saving") return;
+      event.preventDefault(); event.returnValue = "";
+    };
+    window.addEventListener(BEFORE_CREATOR_NAVIGATION, guardNavigation);
+    window.addEventListener("beforeunload", guardUnload);
+    return () => { window.removeEventListener(BEFORE_CREATOR_NAVIGATION, guardNavigation); window.removeEventListener("beforeunload", guardUnload); };
+  }, [saveState]);
 
   useEffect(() => {
     if (!operation) return;
@@ -113,18 +149,20 @@ export function ProjectWorkbenchPage({ workflow, providers, modelPrices, theme, 
 
   useEffect(() => {
     if (!workflow?.project.id) return;
-    void api.exportJobs(workflow.project.id).then(setExportJobs).catch(() => setExportJobs([]));
-    void api.storyboardProductionPackage(workflow.project.id).then(setProductionPackage).catch(() => setProductionPackage(null));
-  }, [workflow?.project.id, workflow?.assets.length, workflow?.storyboards.length]);
+    latestSourceWorkflow.current = workflow;
+    const request = sourceSync.begin();
+    setExportJobs(current => current.map(job => job.status === "succeeded" ? { ...job, sourceStatus: "unknown" } : job));
+    setProductionPackage(null);
+    void syncProjectSources(request).catch(() => {
+      if (request.isCurrent()) setError("导出版本暂时无法核验，旧文件保留下载；请刷新后再确认当前成片状态。");
+    });
+    return () => { sourceSync.invalidate(); };
+  }, [workflow, sourceSync]);
 
   useEffect(() => {
     if (!workflow || !shouldReconcileStoryboardSelection(workbenchState.activeStage)) return;
     dispatch({ type: "reconcile-workflow", storyboards: workflow.storyboards });
   }, [workbenchState.activeStage, workflow]);
-
-  if (!workflow) {
-    return <div className="page-stack"><section className="panel centered-panel">正在加载项目生产数据...</section></div>;
-  }
 
   const { project, script, characters, storyboards } = workflow;
   const activeTab = workbenchState.activeStage;
@@ -138,21 +176,21 @@ export function ProjectWorkbenchPage({ workflow, providers, modelPrices, theme, 
     dispatch({ type: "set-stage", stage });
   };
   const assets = workflow.assets ?? [];
-  const roleAssets = assets.filter((asset) => asset.type === "role" || asset.type === "role_derivative" || asset.type === "role_reference");
-  const sceneAssets = assets.filter((asset) => asset.type === "scene" || asset.type === "prop");
+  const roleAssets = assets.filter((asset) => !asset.isHistorical && (asset.type === "role" || asset.type === "role_derivative" || asset.type === "role_reference"));
+  const sceneAssets = assets.filter((asset) => !asset.isHistorical && (asset.type === "scene" || asset.type === "prop"));
   const qualityReports = workflow.qualityReports ?? [];
   const feedbacks = workflow.feedbacks ?? [];
-  const primaryRoleAssets = assets.filter((asset) => asset.type === "role" && asset.referenceUrl);
-  const imageAssets = assets.filter((asset) => asset.type === "image");
-  const videoAssets = assets.filter((asset) => asset.type === "video");
+  const primaryRoleAssets = roleAssets.filter((asset) => asset.type === "role" && asset.referenceUrl);
+  const imageAssets = [...buildCurrentShotAssetMap(storyboards, assets, "image").values()];
+  const videoAssets = [...buildCurrentShotAssetMap(storyboards, assets, "video").values()];
   const completedImages = imageAssets.filter((asset) => asset.referenceUrl && asset.status === "succeeded").length;
-  const completedVideos = videoAssets.filter((asset) => isPersistedPlayableVideoReference(asset.referenceUrl)).length;
+  const completedVideos = videoAssets.filter((asset) => asset.status === "succeeded" && isPersistedPlayableVideoReference(asset.referenceUrl)).length;
   const completedRoleRefs = countCompletedCharacterSheets(characters, roleAssets);
   const pipelineSteps = [
     { id: "content" as const, label: "内容", detail: "大纲 / 分集 / 剧本", done: Boolean(script) },
     { id: "assets" as const, label: "资产", detail: "角色 / 场景 / 道具", done: characters.length === 0 || completedRoleRefs >= characters.length },
     { id: "shots" as const, label: "分镜", detail: "脚本 / 首帧 / 视频", done: storyboards.length > 0 && completedImages >= storyboards.length },
-    { id: "delivery" as const, label: "成片", detail: "配音 / 字幕 / 导出", done: storyboards.length > 0 && completedVideos > 0 }
+    { id: "delivery" as const, label: "成片", detail: "配音 / 字幕 / 导出", done: isWorkbenchDeliveryComplete(project, storyboards, exportJobs) }
   ];
 
   function beginOperation(key: OperationKey, title: string, detail: string) {
@@ -223,11 +261,26 @@ export function ProjectWorkbenchPage({ workflow, providers, modelPrices, theme, 
     }
   }
 
+  async function syncProjectSources(request: ReturnType<typeof sourceSync.begin>) {
+    void request.read(() => api.storyboardProductionPackage(project.id), setProductionPackage).catch(() => {
+      if (request.isCurrent()) setProductionPackage(null);
+    });
+    await request.read(() => api.exportJobs(project.id), setExportJobs);
+  }
+
   async function refreshProject() {
-    const refreshed = await onRefresh(project.id);
-    await api.exportJobs(project.id).then(setExportJobs);
-    void api.storyboardProductionPackage(project.id).then(setProductionPackage).catch(() => undefined);
-    return refreshed;
+    const request = sourceSync.begin();
+    setExportJobs(current => current.map(job => job.status === "succeeded" ? { ...job, sourceStatus: "unknown" } : job));
+    setProductionPackage(null);
+    try {
+      const refreshed = await request.read(() => onRefresh(project.id), () => {}) ?? latestSourceWorkflow.current;
+      // If a fresh workflow effect took ownership while onRefresh was pending, its reads win.
+      await syncProjectSources(request);
+      return refreshed;
+    } catch (cause) {
+      if (request.isCurrent()) setError(cause instanceof Error ? cause.message : "项目刷新失败，请稍后重试。");
+      throw cause;
+    }
   }
 
   async function createExport(type: "tts" | "subtitle" | "video_export", storyboardIds?: string[], maxCredits?: number) {
@@ -272,17 +325,15 @@ export function ProjectWorkbenchPage({ workflow, providers, modelPrices, theme, 
     <div className="wb-shell project-workbench" data-theme={theme}>
       <WorkbenchHeader
         projectName={project.name}
-        projectMeta={`第 1 集 · ${project.videoRatio}`}
+        projectMeta={`${project.episodes} 集 · ${project.videoRatio}`}
         stages={pipelineSteps}
         activeStage={activeTab}
         saveState={saveState}
         theme={theme}
-        onBack={() => {
-          if (canLeaveShotDraft()) onBack();
-        }}
+        onBack={onBack}
         onStageChange={setActiveTab}
         onThemeChange={onThemeChange}
-        onRefresh={() => void refreshProject()}
+        onRefresh={() => void refreshProject().catch(() => undefined)}
         onOpenRail={() => {
           setInspectorOpen(false);
           setRailOpen(true);
@@ -295,14 +346,15 @@ export function ProjectWorkbenchPage({ workflow, providers, modelPrices, theme, 
         onOpenEvaluation={() => setEvaluationDrawerOpen(true)}
       />
       <TaskDrawer open={taskDrawerOpen} tasks={workflow.tasks} onClose={() => setTaskDrawerOpen(false)} />
-      <EvaluationDrawer open={evaluationDrawerOpen} reports={qualityReports} feedbacks={feedbacks} onClose={() => setEvaluationDrawerOpen(false)} onRefresh={() => void refreshProject()} />
+      <EvaluationDrawer open={evaluationDrawerOpen} reports={qualityReports} feedbacks={feedbacks} onClose={() => setEvaluationDrawerOpen(false)} onRefresh={() => void refreshProject().catch(() => undefined)} />
       {activeTab === "content" ? (
         <ContentStage
+          onSaveStateChange={setSaveState}
           railOpen={railOpen}
           inspectorOpen={inspectorOpen}
           onCloseRail={() => setRailOpen(false)}
           onCloseInspector={() => setInspectorOpen(false)}
-          onRefresh={onRefresh}
+          onRefresh={refreshProject}
         />
       ) : activeTab === "assets" ? (
         <AssetStage
@@ -312,7 +364,7 @@ export function ProjectWorkbenchPage({ workflow, providers, modelPrices, theme, 
           inspectorOpen={inspectorOpen}
           onCloseRail={() => setRailOpen(false)}
           onCloseInspector={() => setInspectorOpen(false)}
-          onRefresh={onRefresh}
+          onRefresh={refreshProject}
           onPreview={setPreviewImage}
         />
       ) : activeTab === "shots" ? (
@@ -323,7 +375,7 @@ export function ProjectWorkbenchPage({ workflow, providers, modelPrices, theme, 
           inspectorOpen={inspectorOpen}
           onCloseRail={() => setRailOpen(false)}
           onCloseInspector={() => setInspectorOpen(false)}
-          onRefresh={onRefresh}
+          onRefresh={refreshProject}
           onPreview={setPreviewImage}
           onSaveStateChange={setSaveState}
         />
@@ -341,6 +393,8 @@ export function ProjectWorkbenchPage({ workflow, providers, modelPrices, theme, 
         onExport={createExport}
         isBusy={isBusy}
         activeShotId={workbenchState.activeShotId}
+        activeEpisodeNo={workbenchState.activeEpisodeNo}
+        onEpisodeChange={(episodeNo) => dispatch({ type: "set-episode", episodeNo, storyboards })}
         onSelectShot={(shotId) => dispatch({ type: "set-shot", shotId })}
         selectedShotIds={workbenchState.selectedShotIds}
         onSelectShots={(shotIds) => dispatch({ type: "set-selected-shots", shotIds })}
@@ -1355,6 +1409,13 @@ function ShowcasePublishModal({
   const [category, setCategory] = useState("AI短剧");
   const [coverUrl, setCoverUrl] = useState(selectedCandidate?.coverUrl ?? "");
   const [works, setWorks] = useState<ShowcaseWork[]>([]);
+  const [recordsReload, setRecordsReload] = useState(0);
+  const [revisionId, setRevisionId] = useState<string>();
+  const revision = works.find(work => work.id === revisionId);
+  const submissionKey = showcaseSubmissionKey(candidateKey, revision);
+  const revisionSubmitted = Boolean(revision && !canReviseShowcase(revision));
+  const projectWorks = works.filter(work => work.projectId === project.id);
+  const titleInput = useRef<HTMLInputElement>(null);
   const [loading, setLoading] = useState(false);
   const [submittedKeys, setSubmittedKeys] = useState<string[]>([]);
   const submitGuard = useRef(createShowcaseSubmitGuard());
@@ -1366,9 +1427,30 @@ function ShowcasePublishModal({
 
   useEffect(() => {
     let active = true;
-    void api.myShowcaseWorks().then((items) => { if (active) setWorks(items); }).catch((reason) => { if (active) setWorksError(reason instanceof Error ? reason.message : "发布记录加载失败，请重新打开查看。"); }).finally(() => { if (active) setWorksLoading(false); });
+    setWorksLoading(true); setWorksError("");
+    void api.myShowcaseWorks(project.id).then((items) => { if (active) setWorks(items); }).catch((reason) => { if (active) setWorksError(reason instanceof Error ? reason.message : "发布记录加载失败，请重新打开查看。"); }).finally(() => { if (active) setWorksLoading(false); });
     return () => { active = false; };
-  }, []);
+  }, [project.id, recordsReload]);
+
+  function revise(work: ShowcaseWork) {
+    if (loading) return;
+    const selected = resolveShowcaseRevision(project.id, work, candidates);
+    if (!selected) return;
+    setRevisionId(work.id);
+    setCandidateKey(selected.candidateKey);
+    setTitle(work.title); setDescription(work.description); setCategory(work.category); setCoverUrl(work.coverUrl);
+    setMessage("");
+    setError(selected.candidateKey ? "" : "原提交视频已更新或不可用，请重新选择并确认视频后提交修改。");
+    titleInput.current?.focus();
+    titleInput.current?.scrollIntoView({ block: "center" });
+  }
+
+  function startNewSubmission() {
+    if (loading) return;
+    setRevisionId(undefined);
+    setTitle(project.name); setDescription(project.intro || "分享这次创作的成片与镜头方法。");
+    setCategory("AI短剧"); setCoverUrl(selectedCandidate?.coverUrl ?? ""); setMessage(""); setError("");
+  }
 
   function changeCandidate(nextKey: string) {
     setCandidateKey(nextKey);
@@ -1379,7 +1461,7 @@ function ShowcasePublishModal({
   }
 
   async function publish() {
-    if (publishPending.current || submittedKeys.includes(candidateKey)) return;
+    if (publishPending.current || worksLoading || revisionSubmitted || submittedKeys.includes(submissionKey)) return;
     if (!selectedCandidate) {
       setError("当前项目还没有可提交的视频或 MP4 导出文件。");
       return;
@@ -1390,7 +1472,7 @@ function ShowcasePublishModal({
     setMessage("");
     setError("");
     try {
-      const created = await submitGuard.current(candidateKey, () => api.createShowcaseWork({
+      const input = {
         projectId: project.id,
         sourceAssetId: selectedCandidate.sourceAssetId,
         videoUrl: selectedCandidate.videoUrl,
@@ -1398,12 +1480,15 @@ function ShowcasePublishModal({
         description,
         category,
         coverUrl: coverUrl.trim(),
-        durationLabel: selectedCandidate.durationLabel
-      }));
+        durationLabel: revision?.videoUrl === selectedCandidate.videoUrl ? revision.durationLabel : selectedCandidate.durationLabel
+      };
+      const created = await submitGuard.current(submissionKey, () => revision
+        ? api.resubmitShowcaseWork(revision.id, input)
+        : api.createShowcaseWork(input));
       if (!created) return;
-      setWorks((current) => [created, ...current]);
-      setSubmittedKeys((current) => [...current, candidateKey]);
-      setMessage("作品已提交审核。后台通过后会自动出现在前台创作现场。");
+      setWorks((current) => mergeShowcaseRecord(current, created));
+      setSubmittedKeys((current) => [...current, submissionKey]);
+      setMessage(revision ? "修改已重新提交审核，原作品记录和上次审核意见已保留。" : "作品已提交审核。后台通过后会自动出现在前台创作现场。");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "作品提交失败");
     } finally {
@@ -1420,22 +1505,23 @@ function ShowcasePublishModal({
         <div className="showcase-publish-body">
           <div className="showcase-publish-preview">
             {selectedCandidate ? <video src={selectedCandidate.videoUrl} poster={coverUrl || selectedCandidate.coverUrl} controls playsInline preload="metadata" /> : <div><Film size={36} /><strong>暂无可发布视频</strong><span>先生成镜头视频或合成 MP4。</span></div>}
-            <label><span>选择作品视频</span><select value={selectedCandidate ? candidateKey : ""} onChange={(event) => changeCandidate(event.target.value)} disabled={loading || !candidates.length}>{!selectedCandidate ? <option value="" disabled>请选择可用视频</option> : null}{candidates.map((item) => <option value={showcaseCandidateKey(item)} key={item.id}>{item.label}</option>)}</select></label>
+            <label><span>选择作品视频</span><select value={selectedCandidate ? candidateKey : ""} onChange={(event) => changeCandidate(event.target.value)} disabled={loading || revisionSubmitted || !candidates.length}>{!selectedCandidate ? <option value="" disabled>请选择可用视频</option> : null}{candidates.map((item) => <option value={showcaseCandidateKey(item)} key={item.id}>{item.label}</option>)}</select></label>
             {candidateKey && !selectedCandidate ? <p className="danger-text" role="alert">原选视频已不可用或已更新，请重新选择并确认预览。</p> : null}
           </div>
           <div className="showcase-publish-form">
-            <label><span>作品标题</span><input value={title} onChange={(event) => setTitle(event.target.value)} maxLength={120} /></label>
-            <label><span>作品分类</span><select value={category} onChange={(event) => setCategory(event.target.value)}><option>AI短剧</option><option>动画短片</option><option>电商广告</option><option>品牌广告</option><option>概念片</option><option>电影感</option><option>科幻风</option></select></label>
-            <label className="wide"><span>作品说明</span><textarea value={description} onChange={(event) => setDescription(event.target.value)} maxLength={1200} /></label>
-            <label className="wide"><span>封面地址</span><input value={coverUrl} onChange={(event) => setCoverUrl(event.target.value)} placeholder="默认使用当前镜头首帧" /></label>
+            {revision ? <div className="showcase-revision-notice wide"><strong>{revisionSubmitted ? "当前作品已提交审核" : "正在修改原提交作品"}</strong>{revision.reviewNote ? <p>上次审核意见：{revision.reviewNote}</p> : null}<button type="button" className="ghost-button" disabled={loading} onClick={startNewSubmission}>改为发布新作品</button></div> : null}
+            <label><span>作品标题</span><input ref={titleInput} value={title} onChange={(event) => setTitle(event.target.value)} maxLength={120} disabled={loading || revisionSubmitted} /></label>
+            <label><span>作品分类</span><select value={category} onChange={(event) => setCategory(event.target.value)} disabled={loading || revisionSubmitted}><option>AI短剧</option><option>动画短片</option><option>电商广告</option><option>品牌广告</option><option>概念片</option><option>电影感</option><option>科幻风</option></select></label>
+            <label className="wide"><span>作品说明</span><textarea value={description} onChange={(event) => setDescription(event.target.value)} maxLength={1200} disabled={loading || revisionSubmitted} /></label>
+            <label className="wide"><span>封面地址</span><input value={coverUrl} onChange={(event) => setCoverUrl(event.target.value)} placeholder={selectedCandidate?.coverUrl ? "确认或修改所选视频封面" : "请填写与此版本视频对应的封面地址"} disabled={loading || revisionSubmitted} /></label>
             {message ? <p className="success-text wide" role="status">{message}</p> : null}
             {error ? <p className="danger-text wide" role="alert">{error}</p> : null}
-            <button className="primary-button wide" type="button" disabled={loading || !selectedCandidate || submittedKeys.includes(candidateKey) || !title.trim() || !coverUrl.trim()} onClick={() => void publish()}><Upload size={17} />{loading ? "提交中..." : submittedKeys.includes(candidateKey) ? "已提交审核" : "提交后台审核"}</button>
+            <button className="primary-button wide" type="button" disabled={loading || worksLoading || revisionSubmitted || !selectedCandidate || submittedKeys.includes(submissionKey) || !title.trim() || !coverUrl.trim()} onClick={() => void publish()}><Upload size={17} />{loading ? "提交中..." : revisionSubmitted || submittedKeys.includes(submissionKey) ? "已提交审核" : revision ? "保存修改并重新提交审核" : "提交后台审核"}</button>
           </div>
         </div>
         <footer>
-          <strong>我的发布记录</strong>
-          <div>{works.slice(0, 4).map((work) => <span className={`showcase-publish-status ${work.status}`} key={work.id}>{work.title} · {showcaseCreatorStatus(work.status)}</span>)}{worksLoading ? <small role="status">正在加载发布记录…</small> : worksError ? <small className="danger-text" role="alert">{worksError}</small> : !works.length ? <small>暂无提交记录</small> : null}</div>
+          <div className="showcase-records-heading"><strong>本项目发布记录</strong><button type="button" className="ghost-button" disabled={loading || worksLoading} onClick={() => setRecordsReload(value => value + 1)}><RefreshCw size={14} />刷新记录</button></div>
+          <div className="showcase-creator-records">{projectWorks.map((work) => <article className="showcase-creator-record" key={work.id}><div><strong>{work.title}</strong><span className={`showcase-publish-status ${work.status}`}>{showcaseCreatorStatus(work.status)}</span></div>{work.reviewNote ? <p>{work.status === "rejected" ? "审核意见" : "上次审核意见"}：{work.reviewNote}</p> : null}{canReviseShowcase(work) ? <button className="ghost-button" type="button" disabled={loading} onClick={() => revise(work)}>修改后重新提交</button> : null}</article>)}{worksLoading ? <small role="status">正在加载发布记录…</small> : worksError ? <small className="danger-text" role="alert">{worksError}</small> : !projectWorks.length ? <small>本项目暂无提交记录</small> : null}</div>
         </footer>
       </section>
     </div>

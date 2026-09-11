@@ -1,16 +1,19 @@
 import { BookOpenCheck, Clock3, MapPin, Pencil, RefreshCw, Save, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { ProjectWorkflow, StoryboardShot } from "@aifilm/shared";
 import type { ContentSceneRow } from "../model";
 import {
   buildContentSceneRows,
   buildStoryboardGenerationPayload,
   collectContentEpisodeNumbers,
-  reconcileContentSelection
+  reconcileContentSelection,
+  createShotDraftState,
+  reduceShotDraftState
 } from "../model";
-import { useWorkbench } from "../WorkbenchContext";
+import { useWorkbench, type WorkbenchSaveState } from "../WorkbenchContext";
 import { ProductionWorkspace } from "../components/ProductionWorkspace";
 import { api } from "../../lib/api";
+import { canDiscardContentDraft, contentShotDraft } from "./contentDraftModel";
 
 interface ContentStageProps {
   railOpen: boolean;
@@ -18,6 +21,7 @@ interface ContentStageProps {
   onCloseRail: () => void;
   onCloseInspector: () => void;
   onRefresh: (projectId: string) => Promise<ProjectWorkflow>;
+  onSaveStateChange: (state: WorkbenchSaveState) => void;
 }
 
 type ContentActionPhase = "idle" | "generating" | "syncing" | "refresh-required";
@@ -27,11 +31,12 @@ export function ContentStage({
   inspectorOpen,
   onCloseRail,
   onCloseInspector,
-  onRefresh
+  onRefresh,
+  onSaveStateChange
 }: ContentStageProps) {
   const { workflow } = useWorkbench();
   if (!workflow) return null;
-  return <LoadedContentStage workflow={workflow} railOpen={railOpen} inspectorOpen={inspectorOpen} onCloseRail={onCloseRail} onCloseInspector={onCloseInspector} onRefresh={onRefresh} />;
+  return <LoadedContentStage workflow={workflow} railOpen={railOpen} inspectorOpen={inspectorOpen} onCloseRail={onCloseRail} onCloseInspector={onCloseInspector} onRefresh={onRefresh} onSaveStateChange={onSaveStateChange} />;
 }
 
 function LoadedContentStage({
@@ -40,14 +45,19 @@ function LoadedContentStage({
   inspectorOpen,
   onCloseRail,
   onCloseInspector,
-  onRefresh
+  onRefresh,
+  onSaveStateChange
 }: ContentStageProps & { workflow: ProjectWorkflow }) {
   const { state, dispatch } = useWorkbench();
   const [actionPhase, setActionPhase] = useState<ContentActionPhase>("idle");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [editing, setEditing] = useState(false);
-  const [shotDraft, setShotDraft] = useState<Partial<StoryboardShot>>({});
+  const [draftState, updateDraft] = useReducer(reduceShotDraftState, createShotDraftState("", {}));
+  const operationRef = useRef<{ token: string; shotId: string } | null>(null);
+  const sequence = useRef(0);
+  const structurePending = useRef(false);
+  const shotDraft = draftState.draft;
 
   const { project, script, storyboards } = workflow;
   const scenes = useMemo(() => buildContentSceneRows(script, storyboards), [script, storyboards]);
@@ -67,8 +77,37 @@ function LoadedContentStage({
 
   useEffect(() => {
     setEditing(false);
-    setShotDraft(selectedShot ? { pictureDesc: selectedShot.pictureDesc, action: selectedShot.action, dialogue: selectedShot.dialogue, voiceOver: selectedShot.voiceOver, emotion: selectedShot.emotion } : {});
+    operationRef.current = null;
+    updateDraft({ type: "rebuild", shotId: selectedShot?.id ?? "", draft: contentShotDraft(selectedShot) });
   }, [selectedShot?.id]);
+
+  useEffect(() => {
+    if (selectedShot) updateDraft({ type: "reconcile-canonical", shotId: selectedShot.id, draft: contentShotDraft(selectedShot) });
+  }, [selectedShot]);
+
+  const actionPending = actionPhase === "generating" || actionPhase === "syncing" || Boolean(draftState.activeOperation);
+  useEffect(() => { onSaveStateChange(actionPending ? "saving" : draftState.status); }, [actionPending, draftState.status, onSaveStateChange]);
+  useEffect(() => () => { operationRef.current = null; onSaveStateChange("unchanged"); }, [onSaveStateChange]);
+
+  function canLeaveDraft() {
+    if (structurePending.current || operationRef.current) return false;
+    return canDiscardContentDraft(draftState, () => window.confirm("当前镜头有未保存修改。确认放弃这些修改并继续？"));
+  }
+
+  function toggleEditing() {
+    if (actionPending) return;
+    if (editing) {
+      if (!canLeaveDraft()) return;
+      updateDraft({ type: "rebuild", shotId: selectedShot?.id ?? "", draft: contentShotDraft(selectedShot) });
+    }
+    setEditing(value => !value);
+    setError(""); setMessage("");
+  }
+
+  function edit(patch: Partial<StoryboardShot>) {
+    if (actionPending || operationRef.current) return;
+    updateDraft({ type: "edit", patch });
+  }
 
   useEffect(() => {
     if (
@@ -84,6 +123,7 @@ function LoadedContentStage({
   }, [dispatch, selection.activeEpisodeNo, selection.activeSceneKey, state.activeEpisodeNo, state.activeSceneKey, storyboards]);
 
   function selectEpisode(episodeNo: number) {
+    if (episodeNo === selection.activeEpisodeNo || !canLeaveDraft()) return;
     const next = reconcileContentSelection(episodeNo, null, episodeNumbers, scenes);
     dispatch({
       type: "set-content-selection",
@@ -94,6 +134,7 @@ function LoadedContentStage({
   }
 
   function selectScene(scene: ContentSceneRow) {
+    if (sceneKeyEquals(scene, selection.activeSceneKey) || !canLeaveDraft()) return;
     dispatch({
       type: "set-content-selection",
       episodeNo: scene.episodeNo,
@@ -103,6 +144,8 @@ function LoadedContentStage({
   }
 
   async function syncGeneratedWorkflow() {
+    if (structurePending.current) return;
+    structurePending.current = true;
     setActionPhase("syncing");
     setMessage("镜头结构已生成，正在刷新项目数据。");
     setError("");
@@ -114,14 +157,17 @@ function LoadedContentStage({
       setActionPhase("refresh-required");
       setMessage("");
       setError("镜头结构已生成，但刷新失败");
+    } finally {
+      structurePending.current = false;
     }
   }
 
   async function generateStoryboardStructure() {
-    if (!script || actionPhase !== "idle") return;
+    if (!script || actionPhase !== "idle" || !canLeaveDraft()) return;
     if (storyboards.length && !window.confirm("重建镜头结构会覆盖现有镜头、分镜图和视频草稿，确认继续？")) return;
 
     setActionPhase("generating");
+    structurePending.current = true;
     setMessage("");
     setError("");
     try {
@@ -129,28 +175,68 @@ function LoadedContentStage({
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "镜头结构生成失败");
       setActionPhase("idle");
+      structurePending.current = false;
       return;
     }
+    structurePending.current = false;
     await syncGeneratedWorkflow();
   }
 
   async function saveShotChanges() {
-    if (!selectedShot) return;
-    setActionPhase("syncing"); setError(""); setMessage("");
+    if (!selectedShot || operationRef.current || structurePending.current || (draftState.status !== "dirty" && draftState.status !== "error")) return;
+    const shotId = selectedShot.id;
+    const token = `content-save:${++sequence.current}:${shotId}`;
+    operationRef.current = { token, shotId };
+    const isCurrent = () => operationRef.current?.token === token && operationRef.current.shotId === shotId;
+    updateDraft({ type: "save-start", token }); setError(""); setMessage("");
+    let updated: StoryboardShot;
     try {
-      await api.updateStoryboardShot(project.id, selectedShot.id, shotDraft);
+      updated = await api.updateStoryboardShot(project.id, shotId, { ...shotDraft });
+      if (!isCurrent()) return;
+      updateDraft({ type: "save-committed", token, draft: contentShotDraft(updated) });
+    } catch (cause) {
+      if (!isCurrent()) return;
+      const detail = cause instanceof Error ? cause.message : "镜头保存失败";
+      updateDraft({ type: "save-failed", token, error: detail });
+      operationRef.current = null;
+      setError(detail);
+      return;
+    }
+    try {
       const refreshedWorkflow = await onRefresh(project.id);
+      if (!isCurrent()) return;
+      updateDraft({ type: "sync-succeeded", token, draft: contentShotDraft(refreshedWorkflow.storyboards.find(shot => shot.id === shotId) ?? updated) });
       dispatch({ type: "reconcile-workflow", storyboards: refreshedWorkflow.storyboards });
       setEditing(false);
       setMessage("镜头内容已保存。后续生成将使用修改后的内容。");
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "镜头保存失败");
+      if (!isCurrent()) return;
+      const detail = "镜头已保存，但项目刷新失败。请仅重试刷新，无需再次保存。";
+      updateDraft({ type: "save-committed", token, draft: contentShotDraft(updated), refreshError: detail });
+      setError(detail);
     } finally {
-      setActionPhase("idle");
+      if (isCurrent()) operationRef.current = null;
     }
   }
 
-  const actionPending = actionPhase === "generating" || actionPhase === "syncing";
+  async function retrySavedShotRefresh() {
+    if (operationRef.current || draftState.status !== "sync-required") return;
+    const shotId = draftState.shotId;
+    const token = `content-refresh:${++sequence.current}:${shotId}`;
+    operationRef.current = { token, shotId };
+    updateDraft({ type: "sync-start", token }); setError("");
+    try {
+      const refreshed = await onRefresh(project.id);
+      if (operationRef.current?.token !== token) return;
+      updateDraft({ type: "sync-succeeded", token, draft: contentShotDraft(refreshed.storyboards.find(shot => shot.id === shotId) ?? selectedShot) });
+      setEditing(false); setMessage("镜头已保存，项目数据已刷新。");
+    } catch (cause) {
+      if (operationRef.current?.token !== token) return;
+      const detail = cause instanceof Error ? cause.message : "刷新失败，请稍后再试。";
+      updateDraft({ type: "sync-failed", token, error: detail }); setError(detail);
+    } finally { if (operationRef.current?.token === token) operationRef.current = null; }
+  }
+
   const refreshOnly = actionPhase === "refresh-required";
 
   return (
@@ -173,6 +259,7 @@ function LoadedContentStage({
                   key={episodeNo}
                   type="button"
                   aria-pressed={selection.activeEpisodeNo === episodeNo}
+                  disabled={actionPending}
                   className={selection.activeEpisodeNo === episodeNo ? "is-active" : undefined}
                   onClick={() => selectEpisode(episodeNo)}
                 >
@@ -189,6 +276,7 @@ function LoadedContentStage({
                 type="button"
                 className={sceneKeyEquals(scene, selection.activeSceneKey) ? "is-selected" : undefined}
                 aria-pressed={sceneKeyEquals(scene, selection.activeSceneKey)}
+                disabled={actionPending}
                 onClick={() => selectScene(scene)}
               >
                 <span className="wb-scene-list__index">{String(scene.sceneNo).padStart(2, "0")}</span>
@@ -209,7 +297,7 @@ function LoadedContentStage({
               <span>第 {selection.activeEpisodeNo ?? "-"} 集</span>
               <h1>{selectedScene?.title || "暂无镜头"}</h1>
             </div>
-            {selectedShot ? <button type="button" className="wb-content-edit-button" onClick={() => setEditing((value) => !value)}>{editing ? <X size={15} /> : <Pencil size={15} />}{editing ? "取消编辑" : "编辑镜头"}</button> : selectedScene ? <small>{selectedScene.sourceLabel}</small> : null}
+            {selectedShot ? <button type="button" className="wb-content-edit-button" disabled={actionPending || actionPhase === "refresh-required" || draftState.status === "sync-required"} onClick={toggleEditing}>{editing ? <X size={15} /> : <Pencil size={15} />}{editing ? "取消编辑" : "编辑镜头"}</button> : selectedScene ? <small>{selectedScene.sourceLabel}</small> : null}
           </header>
           <section className="wb-content-synopsis" aria-labelledby="content-synopsis-heading">
             <h2 id="content-synopsis-heading">剧情梗概</h2>
@@ -217,13 +305,14 @@ function LoadedContentStage({
           </section>
           {selectedScene && editing && selectedShot ? (
             <div className="wb-content-shot-editor">
-              <p className="wb-content-edit-warning">人工修改会直接影响后续图片、视频和成片生成。系统无法保证自行调整后的提示、动作或台词仍能获得原有生成效果，请确认后再保存。</p>
-              <EditField label="画面描述" value={String(shotDraft.pictureDesc ?? "")} onChange={(value) => setShotDraft((current) => ({ ...current, pictureDesc: value }))} />
-              <EditField label="动作与调度" value={String(shotDraft.action ?? "")} onChange={(value) => setShotDraft((current) => ({ ...current, action: value }))} />
-              <EditField label="台词" value={String(shotDraft.dialogue ?? "")} onChange={(value) => setShotDraft((current) => ({ ...current, dialogue: value }))} />
-              <EditField label="旁白" value={String(shotDraft.voiceOver ?? "")} onChange={(value) => setShotDraft((current) => ({ ...current, voiceOver: value }))} />
-              <EditField label="情绪" value={String(shotDraft.emotion ?? "")} onChange={(value) => setShotDraft((current) => ({ ...current, emotion: value }))} />
-              <button type="button" className="wb-content-save-button" disabled={actionPending} onClick={() => void saveShotChanges()}><Save size={16} />保存镜头修改</button>
+          <p className="wb-content-edit-warning">保存后，本镜头及实际承接它的镜头需要重新生成画面和视频。旧素材与导出文件保留为历史版本，已发布作品保持原视频。</p>
+              <EditField label="画面描述" value={String(shotDraft.pictureDesc ?? "")} disabled={actionPending || draftState.status === "sync-required"} onChange={(value) => edit({ pictureDesc: value })} />
+              <EditField label="动作与调度" value={String(shotDraft.action ?? "")} disabled={actionPending || draftState.status === "sync-required"} onChange={(value) => edit({ action: value })} />
+              <EditField label="台词" value={String(shotDraft.dialogue ?? "")} disabled={actionPending || draftState.status === "sync-required"} onChange={(value) => edit({ dialogue: value })} />
+              <EditField label="旁白" value={String(shotDraft.voiceOver ?? "")} disabled={actionPending || draftState.status === "sync-required"} onChange={(value) => edit({ voiceOver: value })} />
+              <EditField label="情绪" value={String(shotDraft.emotion ?? "")} disabled={actionPending || draftState.status === "sync-required"} onChange={(value) => edit({ emotion: value })} />
+              {draftState.status === "sync-required" ? <button type="button" className="wb-content-save-button" disabled={actionPending} onClick={() => void retrySavedShotRefresh()}><RefreshCw size={16} />已保存，仅重试刷新</button> : <button type="button" className="wb-content-save-button" disabled={actionPending || (draftState.status !== "dirty" && draftState.status !== "error")} onClick={() => void saveShotChanges()}><Save size={16} />{actionPending ? "保存中…" : draftState.status === "error" ? "重试保存" : "保存镜头修改"}</button>}
+              {error ? <p className="wb-action-feedback--error" role="alert">{error}</p> : null}
             </div>
           ) : selectedScene ? (
             <div className="wb-content-fields">
@@ -255,7 +344,7 @@ function LoadedContentStage({
             <button
               type="button"
               onClick={() => void (refreshOnly ? syncGeneratedWorkflow() : generateStoryboardStructure())}
-              disabled={(!script && !refreshOnly) || actionPending}
+              disabled={(!script && !refreshOnly) || actionPending || draftState.status === "sync-required"}
             >
               {refreshOnly || actionPhase === "syncing" ? <RefreshCw aria-hidden="true" /> : <BookOpenCheck aria-hidden="true" />}
               {actionPhase === "generating"
@@ -286,8 +375,8 @@ function ContentField({ label, value, wide = false }: { label: string; value: st
   );
 }
 
-function EditField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
-  return <label className="wb-content-edit-field"><span>{label}</span><textarea value={value} onChange={(event) => onChange(event.target.value)} /></label>;
+function EditField({ label, value, onChange, disabled }: { label: string; value: string; onChange: (value: string) => void; disabled?: boolean }) {
+  return <label className="wb-content-edit-field"><span>{label}</span><textarea value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)} /></label>;
 }
 
 function sceneKeyEquals(scene: ContentSceneRow, key: typeof scene.key | null): boolean {

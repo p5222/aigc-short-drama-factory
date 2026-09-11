@@ -1,46 +1,8 @@
 import { BookOpen, Clapperboard, LoaderCircle, Plus, Trash2 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { ContentProjectSummary, Project } from "@aifilm/shared";
-
-type WorksFilter = "all" | "running" | "done" | "draft";
-
-const filterTabs: Array<{ id: WorksFilter; label: string }> = [
-  { id: "all", label: "全部" },
-  { id: "running", label: "进行中" },
-  { id: "done", label: "已完成" },
-  { id: "draft", label: "草稿" }
-];
-
-const contentStepLabels: Record<string, string> = {
-  source: "创作意图",
-  analysis: "结构拆解",
-  outline: "大纲确认",
-  chapter: "正文创作",
-  script: "剧本生成",
-  entity: "实体提取"
-};
-
-function contentStatusMeta(project: ContentProjectSummary): { label: string; tone: "ok" | "busy" | "bad" | "muted" } {
-  if (project.status === "failed") return { label: "生成失败", tone: "bad" };
-  if (project.status === "running") return { label: "生成中", tone: "busy" };
-  if (project.scriptCount > 0) return { label: "已完成", tone: "ok" };
-  return { label: `进行到 · ${contentStepLabels[project.activeStep] ?? project.activeStep}`, tone: "muted" };
-}
-
-function contentMatchesFilter(project: ContentProjectSummary, filter: WorksFilter): boolean {
-  if (filter === "all") return true;
-  if (filter === "running") return project.status === "running" || (project.status !== "failed" && project.scriptCount === 0 && project.chapterCount > 0);
-  if (filter === "done") return project.scriptCount > 0;
-  return project.status === "draft" || (project.chapterCount === 0 && project.scriptCount === 0);
-}
-
-function productionMatchesFilter(project: Project, filter: WorksFilter): boolean {
-  if (filter === "all") return true;
-  const status = String(project.status);
-  if (filter === "running") return ["generating", "running", "in_progress", "processing"].includes(status);
-  if (filter === "done") return ["completed", "succeeded", "done", "exported"].includes(status);
-  return ["draft", "created", "pending"].includes(status);
-}
+import { contentMatchesFilter, contentWorkState, createWorkDeletionRunner, productionMatchesFilter, productionWorkState, worksFilterTabs, type WorksFilter } from "./scriptsPageModel";
+import "./scripts-page.css";
 
 export function ScriptsPage({
   projects,
@@ -59,42 +21,61 @@ export function ScriptsPage({
   onOpenContent: (contentProjectId: string) => void;
   onNew: () => void;
   onNewContent: () => void;
-  onDelete: (projectId: string) => void;
+  onDelete: (projectId: string) => Promise<void>;
 }) {
   const [filter, setFilter] = useState<WorksFilter>("all");
+  const [deletingIds, setDeletingIds] = useState(new Set<string>());
+  const [deleteErrors, setDeleteErrors] = useState<Record<string, string>>({});
+  const [deleteNotice, setDeleteNotice] = useState("");
+  const deletionRunner = useRef(createWorkDeletionRunner((state) => {
+    setDeletingIds((current) => {
+      const next = new Set(current);
+      if (state.pending) next.add(state.projectId); else next.delete(state.projectId);
+      return next;
+    });
+    setDeleteErrors((current) => ({ ...current, [state.projectId]: state.error }));
+  }));
   const visibleContent = useMemo(() => contentProjects.filter((item) => contentMatchesFilter(item, filter)), [contentProjects, filter]);
   const visibleProjects = useMemo(() => projects.filter((item) => productionMatchesFilter(item, filter)), [projects, filter]);
   const totalCount = contentProjects.length + projects.length;
 
+  async function deleteWork(project: Project) {
+    if (deletionRunner.current.isPending(project.id) || openingId === project.id) return;
+    if (!window.confirm(`确认删除“${project.name}”？作品下的脚本、分镜、资产和生成任务都会删除，此操作不可恢复。`)) return;
+    setDeleteNotice("");
+    if (await deletionRunner.current.run(project.id, () => onDelete(project.id))) setDeleteNotice(`已删除作品“${project.name}”。`);
+  }
+
   return (
-    <div className="page-stack">
+    <div className="page-stack scripts-page">
       <div className="page-title row-title">
         <div>
           <h1>我的作品</h1>
-          <p>共 {totalCount} 部作品：{contentProjects.length} 部内容创作、{projects.length} 部漫剧作品。点击卡片继续创作。</p>
+          <p>共 {totalCount} 部作品：{contentProjects.length} 部内容创作、{projects.length} 部漫剧作品。选择作品继续创作。</p>
         </div>
         <div className="inline-actions">
-          <button className="ghost-button" onClick={onNewContent}>
+          <button className="ghost-button" type="button" onClick={onNewContent}>
             <BookOpen size={16} /> 新建内容创作
           </button>
-          <button className="primary-button" onClick={onNew}>
+          <button className="primary-button" type="button" onClick={onNew}>
             <Plus size={16} /> 新建漫剧作品
           </button>
         </div>
       </div>
-      <div className="tabs">
-        {filterTabs.map((tab) => (
-          <button key={tab.id} className={tab.id === filter ? "active" : ""} onClick={() => setFilter(tab.id)}>
+      <div className="tabs" role="group" aria-label="按作品状态筛选">
+        {worksFilterTabs.map((tab) => (
+          <button key={tab.id} type="button" className={tab.id === filter ? "active" : ""} aria-pressed={tab.id === filter} onClick={() => setFilter(tab.id)}>
             {tab.label}
           </button>
         ))}
       </div>
+      {deleteNotice ? <p className="works-feedback" role="status">{deleteNotice}</p> : null}
 
-      <section className="panel works-section">
+      <section className="panel works-section" aria-labelledby="works-content-heading">
         <header className="works-section-head">
           <BookOpen size={17} />
           <div>
-            <strong>内容创作</strong>
+            <h2 id="works-content-heading">内容创作</h2>
             <small>小说 / 大纲 / 章节，从这里开始，可交接进入漫剧制作</small>
           </div>
           <span className="works-count">{visibleContent.length}</span>
@@ -102,16 +83,16 @@ export function ScriptsPage({
         {visibleContent.length ? (
           <div className="project-grid">
             {visibleContent.map((item) => {
-              const status = contentStatusMeta(item);
+              const status = contentWorkState(item);
               return (
-                <article className="project-card clickable content-work-card" key={item.id} onClick={() => onOpenContent(item.id)}>
-                  <div>
-                    <strong>{item.title}</strong>
+                <article className="project-card content-work-card" key={item.id} aria-labelledby={`content-work-${item.id}`}>
+                  <div className="works-card-heading">
+                    <h3 id={`content-work-${item.id}`}><button className="works-card-open" type="button" aria-label={`打开内容创作 ${item.title}`} onClick={() => onOpenContent(item.id)}>{item.title}</button></h3>
                     <span className={`work-status is-${status.tone}`}>{status.label}</span>
                   </div>
                   <p>
                     {item.chapterCount > 0 ? `已生成 ${item.chapterCount} 章正文` : "尚未生成正文"}
-                    {item.scriptCount > 0 ? " · 剧本已就绪，可进入漫剧制作" : ""}
+                    {status.filter === "done" ? " · 剧本已就绪，可进入漫剧制作" : item.scriptCount > 0 ? " · 保留已有剧本，请先处理当前阶段" : ""}
                   </p>
                   <div className="project-stats">
                     <span>{item.chapterCount} 章</span>
@@ -130,25 +111,28 @@ export function ScriptsPage({
         )}
       </section>
 
-      <section className="panel works-section" data-tour-id="project-list">
+      <section className="panel works-section" data-tour-id="project-list" aria-labelledby="works-production-heading">
         <header className="works-section-head">
           <Clapperboard size={17} />
           <div>
-            <strong>漫剧作品</strong>
+            <h2 id="works-production-heading">漫剧作品</h2>
             <small>分镜、图片、视频与成片都在作品生产台里</small>
           </div>
           <span className="works-count">{visibleProjects.length}</span>
         </header>
         {visibleProjects.length ? (
           <div className="project-grid">
-            {visibleProjects.map((project) => (
-              <article className={`project-card clickable ${openingId === project.id ? "is-opening" : ""}`} key={project.id} onClick={() => onOpen(project.id)}>
-                <div>
-                  <strong>{project.name}</strong>
-                  <button className="icon-button danger" title="删除作品" aria-label={`删除作品 ${project.name}`} onClick={(event) => { event.stopPropagation(); if (window.confirm(`确认删除“${project.name}”？作品下的脚本、分镜、资产和生成任务都会删除。`)) onDelete(project.id); }}><Trash2 size={15} /></button>
-                  <span>
+            {visibleProjects.map((project) => {
+              const status = productionWorkState(project);
+              const opening = openingId === project.id;
+              const deleting = deletingIds.has(project.id);
+              return <article className={`project-card ${opening ? "is-opening" : ""}`} key={project.id} aria-labelledby={`production-work-${project.id}`} aria-busy={opening || deleting}>
+                <div className="works-card-heading">
+                  <h3 id={`production-work-${project.id}`}><button className="works-card-open" type="button" disabled={opening || deleting} aria-label={`打开漫剧作品 ${project.name}`} onClick={() => onOpen(project.id)}>{project.name}</button></h3>
+                  <span className={`work-status is-${status.tone}`}>{status.label}</span>
+                  <small>
                     {project.type} · {project.videoRatio}
-                  </span>
+                  </small>
                 </div>
                 <p>{project.intro}</p>
                 <div className="project-stats">
@@ -157,13 +141,18 @@ export function ScriptsPage({
                   <span>{project.characters} 角色</span>
                   <span>{project.creditsSpent} 积分</span>
                 </div>
-                {openingId === project.id ? (
-                  <div className="card-opening-mask">
+                <div className="works-card-footer">
+                  <span>{deleting ? "正在删除，请稍候…" : "进入生产台继续制作"}</span>
+                  <button className="works-card-delete" type="button" disabled={opening || deleting} aria-label={`删除作品 ${project.name}`} onClick={() => void deleteWork(project)}>{deleting ? <LoaderCircle size={15} className="spin" /> : <Trash2 size={15} />}<span>{deleting ? "删除中" : "删除"}</span></button>
+                </div>
+                {deleteErrors[project.id] ? <p className="works-delete-error" role="alert">删除失败：{deleteErrors[project.id]} 当前作品仍保留在列表中。</p> : null}
+                {opening ? (
+                  <div className="card-opening-mask" role="status">
                     <LoaderCircle size={18} className="spin" /> 正在打开…
                   </div>
                 ) : null}
-              </article>
-            ))}
+              </article>;
+            })}
           </div>
         ) : (
           <div className="empty-state">

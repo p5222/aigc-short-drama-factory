@@ -37,6 +37,7 @@ model User {
   credit       CreditAccount?
   transactions CreditTransaction[]
   tasks        GenerationTask[]
+  creationRequests CreationRequest[]
   redemptions  RedeemRedemption[]
   sessions     AuthSession[]
   orders       RechargeOrder[]
@@ -232,6 +233,22 @@ model Storyboard {
   promptVersion     String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
+  @@index([projectId])
+}
+
+// Keep the original creation identity even if its project is later deleted.
+model CreationRequest {
+  id          String   @id
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  requestId   String
+  requestHash String
+  projectId   String
+  taskId      String
+  estimate    Json
+  createdAt   DateTime @default(now())
+
+  @@unique([userId, requestId])
   @@index([projectId])
 }
 

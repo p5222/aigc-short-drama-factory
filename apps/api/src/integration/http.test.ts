@@ -10,6 +10,7 @@ import { pathToFileURL } from "node:url";
 import test from "node:test";
 import { PrismaClient } from "@prisma/client";
 import { hashPassword } from "../auth/password.js";
+import { releaseTaskCredits, reserveTaskCredits } from "../billing/taskCredits.js";
 
 const databaseUrl = process.env.AIFILM_TEST_API_DATABASE_URL;
 test("HTTP business boundaries: sessions, administrator writes, private media and audit history", { skip: !databaseUrl, timeout: 120_000 }, async t => {
@@ -50,6 +51,7 @@ test("HTTP business boundaries: sessions, administrator writes, private media an
   const child = spawn(process.execPath, ["--import", pathToFileURL(require.resolve("tsx")).href, "src/server.ts"], {
     cwd: resolve(import.meta.dirname, "../.."), stdio: ["ignore", "pipe", "pipe"], env: {
       ...process.env, AIFILM_LOAD_ENV_FILES: "false", NODE_ENV: "test", DATABASE_URL: databaseUrl!,
+      DEEPSEEK_API_KEY: "",
       REDIS_URL: redisUrl.toString(), API_PORT: String(port), PUBLIC_API_BASE_URL: base,
       OBJECT_STORAGE_LOCAL_DIR: root, MEDIA_SIGNING_KEY: "http-review-test-signing-key-at-least-32-bytes",
       SEED_DEFAULT_USERS: "false", SEED_DEMO_USER: "false", SEED_DEMO_DATA: "false", API_RATE_LIMIT_MAX: "1000"
@@ -123,7 +125,7 @@ test("HTTP business boundaries: sessions, administrator writes, private media an
       assert.ok(!JSON.stringify(page).includes(password));
     });
     await t.test("creation quotes charge only the exact text model and reject unconfirmed or stale caps without side effects", async () => {
-      const input = { title: "Quoted creation", sourceType: "script", content: "第1集 夜行\n场景1 庭院\n甲：回来。\n第2集 清晨\n场景1 客厅\n乙：我到了。", mode: "director", targetEpisodes: 2,
+      const input = { requestId: `quoted-${run}`, title: "Quoted creation", sourceType: "script", content: "第1集 夜行\n场景1 庭院\n甲：回来。\n第2集 清晨\n场景1 客厅\n乙：我到了。", mode: "director", targetEpisodes: 2,
         genre: "test", videoRatio: "9:16", artStyle: "test", textProvider: providerId, textModel: "test-model", imageProvider: providerId, imageModel: "test-image", videoProvider: providerId, videoModel: "test-video" };
       const quoteResponse = await request("/api/creation/estimate", owner.token, "POST", input);
       assert.equal(quoteResponse.status, 200, await quoteResponse.clone().text());
@@ -146,6 +148,58 @@ test("HTTP business boundaries: sessions, administrator writes, private media an
       assert.deepEqual(await snapshot(), before);
       const fresh = await request("/api/creation/estimate", owner.token, "POST", input);
       assert.equal((await fresh.json() as typeof quote).estimatedCredits, 80);
+    });
+    await t.test("creation HTTP replay returns the original project, rejects mismatched input and isolates users", async () => {
+      // This provider has no key or URL: the test worker uses only its local fixture generator.
+      await db.modelProvider.update({ where: { id: providerId }, data: { apiKey: null, baseUrl: null } });
+      const input = { requestId: `http-create-${run}`, title: "HTTP replay", sourceType: "script", content: "第1集 雨后\n场景1 书店\n小林：雨停了。", mode: "director", targetEpisodes: 1,
+        genre: "test", videoRatio: "9:16", artStyle: "test", textProvider: providerId, textModel: "test-model", maxCredits: 40 };
+      assert.equal((await request("/api/creation/start", owner.token, "POST", { ...input, requestId: undefined })).status, 400);
+      const responses = await Promise.all(Array.from({ length: 4 }, () => request("/api/creation/start", owner.token, "POST", input)));
+      assert.equal(responses.filter(response => response.status === 201).length, 1);
+      assert.equal(responses.filter(response => response.status === 200).length, 3);
+      const results = await Promise.all(responses.map(response => response.json())) as Array<{ project: { id: string }; task: { id: string }; estimate: { estimatedCredits: number }; replayed: boolean }>;
+      assert.equal(new Set(results.map(row => row.project.id)).size, 1);
+      assert.equal(new Set(results.map(row => row.task.id)).size, 1);
+      const original = results[0]!;
+      assert.equal(await db.creationRequest.count({ where: { userId: ids[0], requestId: input.requestId } }), 1);
+      assert.equal(await db.creditTransaction.count({ where: { taskId: original.task.id, type: "freeze" } }), 1);
+      assert.equal(await db.creditTransaction.count({ where: { taskId: original.task.id, type: "consume" } }), 1);
+      const before = await db.creditAccount.findUniqueOrThrow({ where: { userId: ids[0] } });
+      await db.modelProvider.update({ where: { id: providerId }, data: { enabled: false } });
+      const replay = await request("/api/creation/start", owner.token, "POST", { ...input, maxCredits: 0 });
+      assert.equal(replay.status, 200);
+      const replayBody = await replay.json() as typeof original;
+      assert.equal(replayBody.project.id, original.project.id); assert.equal(replayBody.task.id, original.task.id); assert.equal(replayBody.replayed, true);
+      assert.deepEqual(replayBody.estimate, original.estimate);
+      assert.equal((await request("/api/creation/start", owner.token, "POST", { ...input, title: "Changed creation" })).status, 409);
+      assert.deepEqual(await db.creditAccount.findUniqueOrThrow({ where: { userId: ids[0] } }), before);
+      await db.modelProvider.update({ where: { id: providerId }, data: { enabled: true } });
+      const secondUser = await request("/api/creation/start", other.token, "POST", input);
+      assert.equal(secondUser.status, 201);
+      assert.notEqual((await secondUser.json() as typeof original).project.id, original.project.id);
+    });
+    await t.test("retired prune and unsafe project deletion cannot discard active tasks or billing history", async () => {
+      const id = `api_delete_${run}`, taskId = `api_delete_task_${run}`;
+      await db.project.create({ data: { id, userId: ids[0]!, name: "Deletion safety", type: "test", sourceType: "script", artStyle: "test", videoRatio: "9:16", status: "planning" } });
+      await db.generationTask.create({ data: { id: taskId, userId: ids[0]!, projectId: id, type: "text", title: "Pending delete fixture", provider: "fixture", model: "fixture", status: "pending", estimatedCredits: 5 } });
+      await db.$transaction(tx => reserveTaskCredits(tx, { taskId, userId: ids[0]! }));
+      const snapshot = async () => ({ account: await db.creditAccount.findUniqueOrThrow({ where: { userId: ids[0] } }), tasks: await db.generationTask.count({ where: { userId: ids[0] } }), projects: await db.project.count({ where: { userId: ids[0] } }), ledger: await db.creditTransaction.count({ where: { userId: ids[0] } }) });
+      const before = await snapshot();
+      assert.equal((await request("/api/projects/prune-to-latest", owner.token, "POST", {})).status, 410);
+      assert.equal((await request(`/api/projects/${id}`, owner.token, "DELETE")).status, 409);
+      assert.equal((await request(`/api/projects/${id}`, other.token, "DELETE")).status, 404);
+      assert.deepEqual(await snapshot(), before);
+      await db.generationTask.update({ where: { id: taskId }, data: { status: "failed" } });
+      assert.equal((await request(`/api/projects/${id}`, owner.token, "DELETE")).status, 409, "terminal status alone must not erase unresolved reservations");
+      await db.$transaction(tx => releaseTaskCredits(tx, { taskId, userId: ids[0]! }));
+      const settled = await snapshot();
+      assert.equal((await request(`/api/projects/${id}`, owner.token, "DELETE")).status, 200);
+      const after = await snapshot();
+      assert.deepEqual(after.account, settled.account); assert.equal(after.tasks, settled.tasks); assert.equal(after.ledger, settled.ledger);
+      assert.equal(after.projects, settled.projects - 1);
+      assert.equal((await db.generationTask.findUniqueOrThrow({ where: { id: taskId } })).projectId, null);
+      assert.equal(await db.creditTransaction.count({ where: { taskId, projectId: null } }), 2);
     });
     await t.test("a duplicate admin-created email is HTTP 409 in both the response and completed audit", async () => {
       const response = await request("/api/admin/users", admin.token, "POST", {

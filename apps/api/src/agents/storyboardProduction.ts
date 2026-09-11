@@ -1,5 +1,6 @@
 import type { AssetItem, CharacterProfile, ProjectWorkflow, StoryboardShot } from "@aifilm/shared";
 import { renderProfiledVideoPrompt } from "../production/storyboardProfiles.js";
+import { isHistoricalAssetId } from "../db/mediaAssetIdentity.js";
 
 type AssetLookup = Map<string, Pick<AssetItem, "id" | "name" | "type" | "description" | "prompt" | "referenceUrl" | "relatedCharacterId">>;
 
@@ -149,7 +150,7 @@ export function buildSeedanceVideoPrompt(input: {
 }
 
 export function createSceneCards(workflow: ProjectWorkflow): SceneCard[] {
-  const sceneAssets = workflow.assets.filter((asset) => asset.type === "scene" || asset.type === "prop");
+  const sceneAssets = workflow.assets.filter((asset) => !isHistoricalAssetId(asset.id) && (asset.type === "scene" || asset.type === "prop"));
   const sceneGroups = new Map<string, StoryboardShot[]>();
   for (const shot of workflow.storyboards) {
     const key = normalizeSceneName(shot.scene);
@@ -177,13 +178,15 @@ export function createSceneCards(workflow: ProjectWorkflow): SceneCard[] {
 
 export function createStoryboardProductionPackage(workflow: ProjectWorkflow): StoryboardProductionPackage {
   const roleIdentityBoards = workflow.assets.filter((asset) =>
-    asset.type === "role_derivative" &&
+    !isHistoricalAssetId(asset.id) && asset.type === "role_derivative" &&
     Boolean(asset.referenceUrl) &&
     /identity|turnaround|三视图|身份板|多视图|大头照/i.test(`${asset.id} ${asset.name} ${asset.description}`)
   );
   const sceneCards = createSceneCards(workflow);
-  const storyboardImages = workflow.assets.filter((asset) => asset.type === "image" && asset.referenceUrl);
-  const videoClips = workflow.assets.filter((asset) => asset.type === "video" && asset.referenceUrl);
+  const currentImageIds = new Set(workflow.storyboards.map(shot => `image_${shot.id}`));
+  const currentVideoIds = new Set(workflow.storyboards.map(shot => `video_${shot.id}`));
+  const storyboardImages = workflow.assets.filter((asset) => asset.type === "image" && currentImageIds.has(asset.id) && asset.referenceUrl);
+  const videoClips = workflow.assets.filter((asset) => asset.type === "video" && currentVideoIds.has(asset.id) && asset.referenceUrl);
   return {
     version: "v3",
     meaning: "把角色一致性、故事板首帧和图生视频从一次性生成，升级为可检查、可重生、可评测、可沉淀数据的生产模块。",
@@ -325,12 +328,12 @@ export function resolveStoryboardReferenceAssets(workflow: ProjectWorkflow, shot
   for (const name of shot.characters ?? []) {
     const character = workflow.characters.find((item) => normalized(name).includes(normalized(item.name)) || normalized(item.name).includes(normalized(name)));
     if (!character) continue;
-    const candidates = workflow.assets.filter((asset) => asset.relatedCharacterId === character.id && (asset.type === "role" || asset.type === "role_derivative"));
+    const candidates = workflow.assets.filter((asset) => !isHistoricalAssetId(asset.id) && asset.relatedCharacterId === character.id && (asset.type === "role" || asset.type === "role_derivative"));
     add(candidates.find((asset) => asset.id === character.referenceAssetId && asset.referenceUrl) ?? candidates.find((asset) => asset.referenceUrl));
   }
   const sceneName = normalized(shot.scene ?? "");
   const scene = workflow.assets
-    .filter((asset) => asset.type === "scene" || asset.type === "prop")
+    .filter((asset) => !isHistoricalAssetId(asset.id) && (asset.type === "scene" || asset.type === "prop"))
     .find((asset) => sceneName.includes(normalized(asset.name)) || normalized(asset.name).includes(sceneName));
   add(scene);
   return references;

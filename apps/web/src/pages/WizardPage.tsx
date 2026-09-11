@@ -1,4 +1,4 @@
-import { BookOpenCheck, BrainCircuit, CheckCircle2, ChevronDown, ChevronRight, CircleDollarSign, FileText, FileUp, Image, Layers3, Loader2, Route, Save, Sparkles, UsersRound, Video, WandSparkles } from "lucide-react";
+﻿import { BookOpenCheck, BrainCircuit, CheckCircle2, ChevronDown, ChevronRight, CircleDollarSign, FileText, FileUp, Image, Layers3, Loader2, Route, Save, Sparkles, UsersRound, Video, WandSparkles } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 import type { CreateProjectInput, CreationEstimate, ModelProvider } from "@aifilm/shared";
 import { imageOutputQualityOptions, imageOutputSizeOptions, imageParameterMultiplier, normalizeImageOutputQuality, normalizeImageOutputSize } from "@aifilm/shared";
@@ -7,6 +7,8 @@ import { ModelRoutePicker } from "../components/ModelRoutePicker";
 import { analyzeSourceEpisodes, episodeScopeOptions, parseSampleManifest, type SourceEpisodeAnalysis } from "./wizardSourceModel";
 import { clearWizardDraft, readWizardDraft, saveWizardDraft } from "./wizardDraftStorage";
 import { buildEstimateInput, buildGenerationInput, creationBillingSignature, createCreationQuoteGate, isConfiguredModelRoute, normalizeWizardSourceType } from "./wizardRequestModel";
+import { getCreationRequestId } from "./creationAttemptStorage";
+import { BEFORE_CREATOR_NAVIGATION } from "../lib/creatorNavigation";
 
 interface WizardPageProps {
   providers: ModelProvider[];
@@ -85,6 +87,17 @@ export function WizardPage({ providers, canManageModels = false, onCreated, onCr
   const [generationElapsed, setGenerationElapsed] = useState(0);
 
   useEffect(() => { saveWizardDraft(form); }, [form]);
+  useEffect(() => {
+    const guard = (event: Event) => {
+      if (!startInFlight.current) return;
+      event.preventDefault();
+      if (event.type === "beforeunload") (event as BeforeUnloadEvent).returnValue = "";
+      else setError("创建请求正在确认，请等待结果后再离开。无需重复点击创建。");
+    };
+    window.addEventListener(BEFORE_CREATOR_NAVIGATION, guard);
+    window.addEventListener("beforeunload", guard);
+    return () => { window.removeEventListener(BEFORE_CREATOR_NAVIGATION, guard); window.removeEventListener("beforeunload", guard); };
+  }, []);
   useEffect(() => {
     setEstimateSnapshot(null);
     setMessage(current => current.startsWith("本次文本解析将冻结") ? "" : current);
@@ -197,9 +210,15 @@ export function WizardPage({ providers, canManageModels = false, onCreated, onCr
     setError("");
     void api.trackEvent({ eventName: "create_project_start", properties: { mode: input.mode, sourceType: input.sourceType, targetEpisodes: input.targetEpisodes } }).catch(() => undefined);
     try {
-      const result = await api.startCreation({ ...input, maxCredits: estimate.estimatedCredits });
+      let requestId: string;
+      try {
+        if (!saveWizardDraft(form)) throw new Error("draft storage unavailable");
+        requestId = getCreationRequestId(window.sessionStorage, { ...input }, () => crypto.randomUUID());
+      } catch { throw new Error("当前浏览器无法保存创建请求编号，请允许此站点使用浏览器存储后重试。尚未提交生成任务。"); }
+      const result = await api.startCreation({ ...input, requestId, maxCredits: estimate.estimatedCredits });
       void api.trackEvent({ eventName: "create_project_success", projectId: result.project.id, entityType: "project", entityId: result.project.id, taskId: result.task.id, properties: { mode: result.mode } }).catch(() => undefined);
       clearWizardDraft();
+      startInFlight.current = false;
       setMessage(`已生成项目，模式：${result.mode === "real" ? "真实模型" : result.mode === "queued" ? "队列处理中" : "本地结构化"}`);
       onCreated(result.project.id);
     } catch (err) {
@@ -319,11 +338,11 @@ export function WizardPage({ providers, canManageModels = false, onCreated, onCr
   }
 
   if (!entrySelected) {
-    return <div className="page-stack creation-entry-page"><header><span>NEW MANJIAO</span><h1>新建漫剧</h1><p>选择创作内容，后续只展示与你当前任务相关的步骤。</p></header><div className="creation-entry-grid"><button type="button" onClick={onCreateContent}><Sparkles size={22} /><strong>创作新内容</strong><span>输入标题、小说名、风格或参考作品名，系统先识别方向并拆解同类爆款</span><ChevronRight size={18} /></button><button type="button" onClick={() => { setForm((current) => ({ ...current, sourceType: "novel", content: "" })); setEntrySelected(true); }}><BookOpenCheck size={22} /><strong>导入小说 / 剧本</strong><span>进入原稿类型选择：小说自动转剧本，已有剧本直接拆解场次和资产</span><ChevronRight size={18} /></button></div></div>;
+    return <div className="page-stack creation-entry-page" data-tour-id="creation-entry"><header><span>NEW MANJIAO</span><h1>新建漫剧</h1><p>选择创作内容，后续只展示与你当前任务相关的步骤。</p></header><div className="creation-entry-grid"><button type="button" onClick={onCreateContent}><Sparkles size={22} /><strong>创作新内容</strong><span>输入标题、小说名、风格或参考作品名，系统先识别方向并拆解同类爆款</span><ChevronRight size={18} /></button><button type="button" onClick={() => { setForm((current) => ({ ...current, sourceType: "novel", content: "" })); setEntrySelected(true); }}><BookOpenCheck size={22} /><strong>导入小说 / 剧本</strong><span>进入原稿类型选择：小说自动转剧本，已有剧本直接拆解场次和资产</span><ChevronRight size={18} /></button></div></div>;
   }
 
   return (
-    <div className="page-stack creation-workbench u-wizard">
+    <div className="page-stack creation-workbench u-wizard" data-tour-id="creation-entry">
       <div className="u-wizard-heading">
         <div>
           <h1>新建漫剧</h1>

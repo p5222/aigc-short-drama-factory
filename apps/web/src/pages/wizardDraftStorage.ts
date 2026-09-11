@@ -1,6 +1,7 @@
 import type { CreateProjectInput } from "@aifilm/shared";
 
 type StorageLike = Pick<Storage, "getItem" | "setItem" | "removeItem">;
+import { CREATION_ATTEMPT_KEY } from "./creationAttemptStorage.ts";
 export const MANUAL_WIZARD_DRAFT_KEY = "aifilm_creation_draft";
 export const SESSION_WIZARD_DRAFT_KEY = "aifilm_creation_session_draft";
 
@@ -30,6 +31,7 @@ export function createWizardDraftStorage(stores: () => { local?: StorageLike; se
       const { local, session } = stores();
       try { local?.removeItem(MANUAL_WIZARD_DRAFT_KEY); } catch { /* unavailable */ }
       try { session?.removeItem(SESSION_WIZARD_DRAFT_KEY); } catch { /* unavailable */ }
+      try { session?.removeItem(CREATION_ATTEMPT_KEY); } catch { /* unavailable */ }
     }
   };
 }

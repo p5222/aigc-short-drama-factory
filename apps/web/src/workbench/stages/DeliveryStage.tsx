@@ -97,6 +97,8 @@ export interface DeliveryStageProps {
   onExport: (type: "tts" | "subtitle" | "video_export", storyboardIds?: string[], maxCredits?: number) => void | Promise<void>;
   isBusy: boolean;
   activeShotId: string | null;
+  activeEpisodeNo?: number | null;
+  onEpisodeChange?: (episodeNo: number) => void;
   onSelectShot: (shotId: string) => void;
   selectedShotIds: string[];
   onSelectShots: (shotIds: string[]) => void;
@@ -117,6 +119,8 @@ export function DeliveryStage({
   onExport,
   isBusy,
   activeShotId,
+  activeEpisodeNo,
+  onEpisodeChange,
   onSelectShot,
   selectedShotIds,
   onSelectShots,
@@ -130,6 +134,7 @@ export function DeliveryStage({
   /** 每次导出提交当前集的有序镜头；刷新后仍回到服务端顺序。 */
   const [orderByEpisode, setOrderByEpisode] = useState<Record<number, string[]>>({});
   const [pxPerSecond, setPxPerSecond] = useState(DELIVERY_DEFAULT_PX_PER_SECOND);
+  const [compactTimeline, setCompactTimeline] = useState(() => window.matchMedia("(max-width: 767px)").matches);
   const [progress, setProgress] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [durationByShotId, setDurationByShotId] = useState<Map<string, number>>(() => new Map());
@@ -160,8 +165,17 @@ export function DeliveryStage({
   const onRefreshRef = useRef(onRefresh);
   onRefreshRef.current = onRefresh;
 
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 767px)");
+    const update = () => setCompactTimeline(media.matches);
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
+
   const episodes = useMemo(() => collectDeliveryEpisodes(storyboards, project.episodes), [storyboards, project.episodes]);
-  const activeEpisode = episodeNo !== null && episodes.includes(episodeNo) ? episodeNo : episodes[0] ?? 1;
+  const requestedEpisode = activeEpisodeNo !== undefined ? activeEpisodeNo : episodeNo;
+  const activeEpisode = requestedEpisode !== null && episodes.includes(requestedEpisode) ? requestedEpisode : episodes[0] ?? 1;
   const episodeShots = useMemo(
     () => storyboards.filter((shot) => Math.max(1, shot.episodeNo || 1) === activeEpisode),
     [storyboards, activeEpisode]
@@ -180,11 +194,13 @@ export function DeliveryStage({
   const activeUrl = activeShot && isPersistedPlayableVideoReference(activeVideo?.referenceUrl) ? activeVideo!.referenceUrl! : "";
   const activeStatus = resolveShotVideoStatus(activeVideo);
 
-  const layout = useMemo(() => clipLayout(shots, pxPerSecond, durationByShotId), [shots, pxPerSecond, durationByShotId]);
+  // Mobile uses a larger visual time scale; clips, ruler and playhead share it.
+  const timelinePixelsPerSecond = compactTimeline ? Math.max(DELIVERY_DEFAULT_PX_PER_SECOND, pxPerSecond) * 4 : pxPerSecond;
+  const layout = useMemo(() => clipLayout(shots, timelinePixelsPerSecond, durationByShotId), [shots, timelinePixelsPerSecond, durationByShotId]);
   const totalDuration = layout.reduce((sum, clip) => sum + clip.duration, 0);
   const totalWidth = layout.reduce((sum, clip) => sum + clip.width, 0);
   const ticks = rulerTicks(totalDuration);
-  const playheadLeft = playheadOffset(layout, activeShot?.id ?? "", progress, pxPerSecond);
+  const playheadLeft = playheadOffset(layout, activeShot?.id ?? "", progress, timelinePixelsPerSecond);
   const absoluteSeconds = (layout.find((clip) => clip.id === activeShot?.id)?.start ?? 0) + progress;
 
   const exportsByScope = partitionDeliveryExportJobs(exportJobs, shots.map((shot) => shot.id));
@@ -400,7 +416,8 @@ export function DeliveryStage({
 
   function fitZoom() {
     const width = timelineScrollRef.current?.clientWidth ?? 0;
-    setPxPerSecond(fitPxPerSecond(Math.max(0, width - 48), totalDuration));
+    const scale = compactTimeline ? 4 : 1;
+    setPxPerSecond(fitPxPerSecond(Math.max(0, width - 48) / scale, totalDuration, compactTimeline ? DELIVERY_DEFAULT_PX_PER_SECOND : DELIVERY_MIN_PX_PER_SECOND));
   }
 
   async function downloadJob(job: ExportJob) {
@@ -495,7 +512,7 @@ export function DeliveryStage({
           <span className="dlv2-title"><Film size={15} />成片</span>
           <label className="dlv2-episode">
             <span>剧集</span>
-            <select value={activeEpisode} onChange={(event) => setEpisodeNo(Number(event.target.value))} aria-label="选择剧集">
+            <select value={activeEpisode} onChange={(event) => { const next = Number(event.target.value); setEpisodeNo(next); onEpisodeChange?.(next); }} aria-label="选择剧集">
               {episodes.map((episode) => <option key={episode} value={episode}>第 {episode} 集</option>)}
             </select>
           </label>
@@ -749,7 +766,7 @@ export function DeliveryStage({
               </button>
             ))}
             {otherDownloads.length ? <details className="dlv2-job-line"><summary>其他集或其他镜头顺序的导出</summary>{otherDownloads.map((job) => <button className="dlv2-btn dlv2-download" type="button" key={job.id} disabled={Boolean(downloadingJobId)} onClick={() => void downloadJob(job)}><Download size={13} />{downloadingJobId === job.id ? "下载中…" : `${JOB_TYPE_LABEL[job.type]} · ${job.storyboardIds?.length} 镜 · ${new Date(job.createdAt).toLocaleString()}`}</button>)}</details> : null}
-            {historicalDownloads.length ? <details className="dlv2-job-line"><summary>项目历史导出（范围未记录）</summary><p>这些记录无法确认集数和镜头顺序，不计入本集配音或字幕完成状态。</p>{historicalDownloads.map((job) => <button className="dlv2-btn dlv2-download" type="button" key={job.id} disabled={Boolean(downloadingJobId)} onClick={() => void downloadJob(job)}><Download size={13} />{downloadingJobId === job.id ? "下载中…" : `历史${JOB_TYPE_LABEL[job.type]} · ${new Date(job.createdAt).toLocaleString()}`}</button>)}</details> : null}
+            {historicalDownloads.length ? <details className="dlv2-job-line"><summary>历史导出与旧版本</summary><p>这些文件的内容已更新或原始输入未核验，保留下载，不计入当前配音、字幕或成片完成状态。</p>{historicalDownloads.map((job) => <button className="dlv2-btn dlv2-download" type="button" key={job.id} disabled={Boolean(downloadingJobId)} onClick={() => void downloadJob(job)}><Download size={13} />{downloadingJobId === job.id ? "下载中…" : `${job.sourceStatus === "stale" ? "内容已更新" : "输入未核验"} · ${JOB_TYPE_LABEL[job.type]} · ${new Date(job.createdAt).toLocaleString()}`}</button>)}</details> : null}
             <button className="dlv2-btn dlv2-btn-primary" type="button" onClick={() => { if (publishableCandidate) onPublish(publishableCandidate); }} disabled={!publishableCandidate}>
               <Upload size={14} />发布到创作现场
             </button>
@@ -770,21 +787,21 @@ export function DeliveryStage({
           <div className="dlv2-tl-zoom">
             <input
               type="range"
-              min={DELIVERY_MIN_PX_PER_SECOND}
+              min={compactTimeline ? DELIVERY_DEFAULT_PX_PER_SECOND : DELIVERY_MIN_PX_PER_SECOND}
               max={DELIVERY_MAX_PX_PER_SECOND}
               step={1}
-              value={pxPerSecond}
+              value={compactTimeline ? Math.max(DELIVERY_DEFAULT_PX_PER_SECOND, pxPerSecond) : pxPerSecond}
               onChange={(event) => setPxPerSecond(Number(event.target.value))}
               aria-label="时间线缩放"
             />
             <button className="dlv2-btn" type="button" onClick={fitZoom} disabled={!totalDuration}>适配</button>
           </div>
         </div>
-        <div className="dlv2-tl-scroll" ref={timelineScrollRef}>
+        <div className="dlv2-tl-scroll" ref={timelineScrollRef} tabIndex={0} role="region" aria-label="横向滚动查看视频、配音和字幕轨道">
           <div className="dlv2-tl-content" style={{ width: `${totalWidth + 48}px` }}>
             <div className="dlv2-tl-ruler">
               {ticks.map((second) => (
-                <span key={second} className="dlv2-tick" style={{ left: `${second * pxPerSecond}px` }}>{formatTimecode(second)}</span>
+                <span key={second} className="dlv2-tick" style={{ left: `${second * timelinePixelsPerSecond}px` }}>{formatTimecode(second)}</span>
               ))}
             </div>
             <div className="dlv2-track dlv2-track-video" data-label="视频">
@@ -837,7 +854,7 @@ export function DeliveryStage({
                   <WaveformSvg seed={trackAudioUrl} width={Math.max(totalWidth, 120)} />
                 </div>
               ) : (
-                <div className="dlv2-track-empty">暂无配音 · 在右侧「配音与字幕」批量生成</div>
+                <div className="dlv2-track-empty">暂无配音 · 打开检查器中的「配音与字幕」生成</div>
               )}
             </div>
             <div className="dlv2-track dlv2-track-subtitle" data-label="字幕">
@@ -852,7 +869,7 @@ export function DeliveryStage({
                   );
                 })
               ) : (
-                <div className="dlv2-track-empty">暂无字幕 · 在右侧「配音与字幕」生成字幕轨</div>
+                <div className="dlv2-track-empty">暂无字幕 · 打开检查器中的「配音与字幕」生成</div>
               )}
             </div>
             <div className="dlv2-playhead" style={{ left: `${playheadLeft}px` }} aria-hidden="true" />
