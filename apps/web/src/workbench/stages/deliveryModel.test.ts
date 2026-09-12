@@ -7,6 +7,7 @@ import {
   buildShotMediaIndex,
   clipLayout,
   collectDeliveryEpisodes,
+  deliveryTimelineCanvas,
   fitPxPerSecond,
   formatTimecode,
   getDeliveryCandidates,
@@ -263,4 +264,22 @@ test("waveformPoints is deterministic, bounded and polyline-ready", () => {
     assert.ok(x! >= 0 && x! <= 120);
     assert.ok(y! >= 0 && y! <= 28);
   }
+});
+
+
+test("short timelines retain the viewport for track labels and empty states without stretching clips", () => {
+  const clips = clipLayout([shot("short-a", 1), shot("short-b", 1)], 16);
+  assert.deepEqual(clips.map(clip => clip.width), [16, 16]);
+  const canvas = deliveryTimelineCanvas(1422, clips.reduce((sum, clip) => sum + clip.width, 0));
+  assert.equal(canvas.contentWidth, 1422);
+  assert.equal(canvas.laneWidth, 1334);
+  assert.equal(canvas.labelWidth, 64);
+  assert.equal(deliveryTimelineCanvas(375, 32).laneWidth, 287);
+});
+
+test("long timelines scroll without truncating clips and invalid measurements use a readable baseline", () => {
+  assert.equal(deliveryTimelineCanvas(375, 2400).laneWidth, 2448);
+  assert.equal(deliveryTimelineCanvas(375, 2400).contentWidth, 2536);
+  assert.equal(deliveryTimelineCanvas(Number.NaN, Number.NaN).laneWidth, 240);
+  assert.equal(deliveryTimelineCanvas(-1, -1).contentWidth, 328);
 });

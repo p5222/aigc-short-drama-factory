@@ -2,8 +2,10 @@ import { useMemo, useRef, useState } from "react";
 import { CheckCircle2, ClipboardList, Coins, CreditCard, Gift, ReceiptText, Sparkles, WalletCards } from "lucide-react";
 import type { CreditAccount, CreditTransaction, MembershipPlan, ModelPrice, Plan } from "@aifilm/shared";
 import { api } from "../lib/api";
-import { rechargeCheckoutUrl } from "./creditCheckoutModel";
+import { modelCreditRange, rechargeCheckoutUrl } from "./creditCheckoutModel";
 import { createTaskActionRunner } from "./taskActionModel";
+import { InlineNotice, PageHeader, StatePanel } from "../design-system/ui";
+import "./creator-pages.css";
 
 const modalityOrder: Record<string, number> = { text: 0, image: 1, video: 2, tts: 3, embedding: 4 };
 
@@ -55,19 +57,24 @@ export function RechargePage({ plans, modelPrices, onRefresh }: { plans: Plan[];
       eventName: "recharge_shop_open",
       properties: { itemId: item.id, itemName: item.name, amountCny: item.price, shopUrl }
     }).catch(() => undefined);
-    window.open(shopUrl, "_blank", "noopener,noreferrer");
-    setMessage(`已打开「${item.name}」购买页。购买后请在店铺获取卡密，再回到本页兑换入账。`);
+    setMessage(`购买「${item.name}」后，请在店铺获取卡密，再回到本页兑换入账。`);
   }
 
   return (
-    <div className="page-stack recharge-page">
-      <div className="page-title">
-        <h1>积分充值</h1>
-        <p>充值即获积分，用于 AI 生成，永久有效；消费参考会按后台价格策略同步展示。</p>
-      </div>
+    <div className="page-stack recharge-page creator-page">
+      <PageHeader title="积分充值" description="从店铺购买卡密，回到这里兑换。每次生成前可查看本次费用。" />
+      <section className="panel creator-redeem-panel" aria-labelledby="creator-redeem-title">
+        <div><h2 id="creator-redeem-title">已有卡密？直接兑换</h2><p>兑换成功后，积分立即计入当前账户。</p></div>
+        <form className="redeem-row" onSubmit={event => { event.preventDefault(); void redeem(); }}>
+          <label className="creator-redeem-input"><span className="creator-sr-only">兑换码</span><input value={redeemCode} disabled={redeeming} onChange={event => setRedeemCode(event.target.value.toUpperCase())} placeholder="输入店铺提供的兑换码" autoComplete="off" /></label>
+          <button type="submit" className="primary-button" disabled={redeeming || !redeemCode.trim()}>{redeeming ? "兑换中…" : "兑换积分"}</button>
+        </form>
+        {message ? <InlineNotice tone={message.startsWith("兑换成功") ? "success" : "info"} onDismiss={() => setMessage("")}>{message}</InlineNotice> : null}
+        {error ? <InlineNotice tone="error">{error}</InlineNotice> : null}
+      </section>
       <section className="panel recharge-plan-panel">
         <div className="panel-head">
-          <div><h2>选择充值金额</h2><small>购买后请在店铺获取卡密，再回到本页兑换入账。</small></div>
+          <div><h2>购买积分</h2><small>选择套餐后将在新窗口打开购买页。</small></div>
           <span className="recharge-validity">积分永久有效 · 可用于所有 AI 生成能力</span>
         </div>
         <div className="plan-grid recharge-plan-grid" data-tour-id="recharge-plans">
@@ -97,22 +104,16 @@ export function RechargePage({ plans, modelPrices, onRefresh }: { plans: Plan[];
                   <li key={feature}><CheckCircle2 size={14} />{feature}</li>
                 ))}
               </ul>
-              <button
-                className="primary-button"
-                disabled={!rechargeCheckoutUrl(plan)}
-                onClick={() => openCheckout(plan)}
-              >
-                {rechargeCheckoutUrl(plan) ? "前往充值" : "暂未开放购买"}
-              </button>
+              {rechargeCheckoutUrl(plan) ? <a className="primary-button creator-purchase-link" href={rechargeCheckoutUrl(plan)!} target="_blank" rel="noopener noreferrer" onClick={() => openCheckout(plan)}>前往店铺购买</a> : <span className="creator-unavailable">暂未开放购买</span>}
             </article>
           );
         })}
         </div>
-        {!availablePlans.length ? <p className="empty-state">暂没有开放购买的充值套餐。已有卡密可以在下方兑换。</p> : null}
+        {!availablePlans.length ? <StatePanel compact title="暂未开放新套餐" description="已有卡密仍可在上方兑换。套餐开放后会显示在这里。" /> : null}
       </section>
       <section className="panel credit-usage-panel">
         <div className="panel-head">
-          <div><h2>积分消费参考</h2><small>按后台价格策略实时渲染；实际消耗以生成时选择的模型、画质与时长为准，生成先冻结、成功扣费、失败退回。</small></div>
+          <div><h2>生成费用参考</h2><small>以下为已开放模型的价格范围；实际消耗以每次生成前的报价为准。</small></div>
           <span className="recharge-validity"><ClipboardList size={16} /> 共 {enabledModelPrices.length} 条启用价格</span>
         </div>
         <div className="credit-usage-grid">
@@ -127,7 +128,7 @@ export function RechargePage({ plans, modelPrices, onRefresh }: { plans: Plan[];
             </article>
           ))}
         </div>
-        <div className="model-price-table compact-model-price-table credit-usage-table">
+        <details className="creator-price-details"><summary>查看全部模型价格 · {enabledModelPrices.length} 条</summary><div className="model-price-table compact-model-price-table credit-usage-table">
           <div className="model-price-row header"><span>渠道</span><span>模型</span><span>类型</span><span>计费单位</span><span>积分</span></div>
           {sortedModelPrices.map((price) => (
             <div className="model-price-row" key={price.id}>
@@ -138,24 +139,8 @@ export function RechargePage({ plans, modelPrices, onRefresh }: { plans: Plan[];
               <b>{price.unitCredits}</b>
             </div>
           ))}
-          {!enabledModelPrices.length ? <div className="empty-state">后台还没有启用的模型价格策略。</div> : null}
-        </div>
-      </section>
-      {message ? <p className="success-text" role="status">{message}</p> : null}
-      {error ? <p className="danger-text" role="alert">{error}</p> : null}
-      <section className="panel">
-        <div className="panel-head">
-          <div><h2>兑换体验额度</h2><small>适合新用户试用、内测邀请和运营活动；兑换到账积分永久有效。</small></div>
-        </div>
-        <div className="redeem-row">
-          <input value={redeemCode} disabled={redeeming} onChange={(event) => setRedeemCode(event.target.value.toUpperCase())} aria-label="兑换码" placeholder="输入兑换码" />
-          <button className="ghost-button" onClick={() => void redeem()} disabled={redeeming || !redeemCode.trim()}>{redeeming ? "兑换中…" : "兑换"}</button>
-        </div>
-      </section>
-      <section className="panel">
-        <div className="panel-head">
-          <div><h2>订阅会员暂未开放</h2><small>当前仅提供积分充值与卡密兑换。月度额度、会员折扣和优先队列尚未上线，暂不销售订阅。</small></div>
-        </div>
+          {!enabledModelPrices.length ? <StatePanel compact title="暂无可用价格信息" description="请稍后刷新，或在生成前获取对应模型的报价。" /> : null}
+        </div></details>
       </section>
       <section className="panel payment-method-panel">
         <div className="panel-head">
@@ -188,21 +173,21 @@ function priceUnitText(value: ModelPrice["unit"]) {
 }
 
 function buildCreditUsageReferences(prices: ModelPrice[]) {
-  const textRun = creditFor(prices, (price) => price.unit === "text_run" || price.modality === "text", 50);
-  const image = creditFor(prices, (price) => price.modality === "image", 100);
-  const videoSecond = creditFor(prices, (price) => price.unit === "video_second" || price.modality === "video", 80);
+  const reference = (unit: ModelPrice["unit"], label: string) => {
+    const range = modelCreditRange(prices, unit);
+    return range === null ? "暂无报价" : `${range} 积分 / ${label}`;
+  };
+  const textRun = reference("text_run", "次");
+  const image = reference("image", "张");
+  const videoSecond = reference("video_second", "秒");
   return [
-    { title: "内容分析", desc: "题材、人物与剧情结构", credits: `${textRun} 积分 / 次`, icon: <Coins size={19} /> },
-    { title: "剧本生成", desc: "小说改编与分集剧本", credits: `${textRun} 积分 / 次`, icon: <ReceiptText size={19} /> },
-    { title: "分镜规划", desc: "按剧本场次规划镜头", credits: `${textRun} 积分 / 次`, icon: <ClipboardList size={19} /> },
-    { title: "角色与场景图", desc: "视觉资产图片生成", credits: `${image} 积分 / 张`, icon: <CreditCard size={19} /> },
-    { title: "镜头画面", desc: "分镜画面图片生成", credits: `${image} 积分 / 张`, icon: <Gift size={19} /> },
-    { title: "镜头视频", desc: "图生视频 · 按秒计费", credits: `${videoSecond} 积分 / 秒`, icon: <WalletCards size={19} /> }
+    { title: "内容分析", desc: "题材、人物与剧情结构", credits: textRun, icon: <Coins size={19} /> },
+    { title: "剧本生成", desc: "小说改编与分集剧本", credits: textRun, icon: <ReceiptText size={19} /> },
+    { title: "分镜规划", desc: "按剧本场次规划镜头", credits: textRun, icon: <ClipboardList size={19} /> },
+    { title: "角色与场景图", desc: "视觉资产图片生成", credits: image, icon: <CreditCard size={19} /> },
+    { title: "镜头画面", desc: "分镜画面图片生成", credits: image, icon: <Gift size={19} /> },
+    { title: "镜头视频", desc: "图生视频 · 按秒计费", credits: videoSecond, icon: <WalletCards size={19} /> }
   ];
-}
-
-function creditFor(prices: ModelPrice[], predicate: (price: ModelPrice) => boolean, fallback: number) {
-  return prices.find(predicate)?.unitCredits ?? fallback;
 }
 
 const ledgerPageSize = 20;
@@ -222,11 +207,8 @@ export function LedgerPage({ account, transactions }: { account?: CreditAccount;
   }
 
   return (
-    <div className="page-stack ledger-page">
-      <div className="page-title">
-        <h1>积分明细</h1>
-        <p>中文化展示消费、充值、冻结、退款和后台调整记录，方便你核对每一次生成成本。</p>
-      </div>
+    <div className="page-stack ledger-page creator-page">
+      <PageHeader title="积分明细" description="核对每一笔充值、冻结、消耗和退还。" />
       <div className="ledger-summary-grid">
         <article>
           <WalletCards size={22} />
@@ -248,38 +230,27 @@ export function LedgerPage({ account, transactions }: { account?: CreditAccount;
         <div className="panel-head">
           <div><h2>流水记录</h2><small>共 {transactions.length} 条，筛选后 {filteredTransactions.length} 条，已显示 {visibleTransactions.length} 条。</small></div>
         </div>
-        <div className="ledger-filter-tabs">
+        <div className="ledger-filter-tabs" role="group" aria-label="流水类型">
           {ledgerFilters.map((item) => (
-            <button className={filter === item.id ? "active" : undefined} key={item.id} type="button" onClick={() => changeFilter(item.id)}>
+            <button className={filter === item.id ? "active" : undefined} aria-pressed={filter === item.id} key={item.id} type="button" onClick={() => changeFilter(item.id)}>
               {item.label}
             </button>
           ))}
         </div>
-        <div className="task-table ledger ledger-table-cn">
-          <div className="task-row header">
-            <span>类型</span>
-            <span>积分变动</span>
-            <span>余额</span>
-            <span>说明</span>
-            <span>时间</span>
-          </div>
+        <div className="creator-table-scroll" tabIndex={0} role="region" aria-label="积分流水，可横向滚动"><table className="creator-data-table"><caption className="creator-sr-only">当前筛选的积分流水</caption><thead><tr><th scope="col">类型</th><th scope="col">积分变动</th><th scope="col">余额</th><th scope="col">说明</th><th scope="col">时间</th></tr></thead><tbody>
           {visibleTransactions.map((tx) => (
-            <div className="task-row" key={tx.id}>
-              <span className={`ledger-type-chip ${tx.type}`}>{transactionTypeLabel(tx.type)}</span>
-              <strong className={tx.amount >= 0 ? "ledger-positive" : "ledger-negative"}>{tx.amount >= 0 ? "+" : ""}{tx.amount}</strong>
-              <span>{tx.balanceAfter}</span>
-              <span>{transactionDescriptionText(tx.description)}{tx.taskId || tx.projectId ? <small className="ledger-trace">{tx.projectId ? `项目 ${tx.projectId.slice(0, 10)}` : ""}{tx.taskId ? ` · 任务 ${tx.taskId.slice(0, 10)}` : ""}</small> : null}</span>
-              <span>{formatLedgerDate(tx.createdAt)}</span>
-            </div>
+            <tr key={tx.id}>
+              <td><span className={`ledger-type-chip ${tx.type}`}>{transactionTypeLabel(tx.type)}</span></td>
+              <td><strong className={tx.amount >= 0 ? "ledger-positive" : "ledger-negative"}>{tx.amount >= 0 ? "+" : ""}{tx.amount}</strong></td>
+              <td>{tx.balanceAfter}</td>
+              <td>{transactionDescriptionText(tx.description)}{tx.taskId || tx.projectId ? <small className="ledger-trace">{tx.projectId ? `项目 ${tx.projectId}` : ""}{tx.taskId ? ` · 任务 ${tx.taskId}` : ""}</small> : null}</td>
+              <td>{formatLedgerDate(tx.createdAt)}</td>
+            </tr>
           ))}
+          </tbody></table></div>
           {!filteredTransactions.length ? (
-            <div className="empty-state">
-              {filter === "all"
-                ? "暂无积分流水。充值入账或开始生成任务后，这里会出现每一笔冻结、扣费与退还记录。"
-                : `暂无「${ledgerFilters.find((item) => item.id === filter)?.label ?? ""}」类型的流水记录，切回「全部」查看完整历史。`}
-            </div>
+            <StatePanel compact title={filter === "all" ? "暂无积分流水" : "此类型暂无记录"} description={filter === "all" ? "兑换积分或开始生成后，每一笔变动都会保留在这里。" : "可以切回全部类型查看完整历史。"} action={filter !== "all" ? <button type="button" className="ghost-button" onClick={() => changeFilter("all")}>查看全部</button> : undefined} />
           ) : null}
-        </div>
         {remainingCount > 0 ? (
           <button className="ghost-button ledger-load-more" type="button" onClick={() => setVisibleCount((value) => value + ledgerPageSize)}>
             加载更多（还有 {remainingCount} 条）

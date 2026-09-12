@@ -1,0 +1,210 @@
+/* Shared layout for the creator's library, account and support pages. */
+.app-shell .creator-page { gap: 20px; }
+.creator-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+.creator-confirm-error { display: block; margin-top: 12px; color: var(--ds-status-danger); }
+.app-shell .creator-list-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.app-shell .creator-search-field { display: flex; min-width: 220px; max-width: 360px; flex: 1; }
+.app-shell .creator-search-field input { width: 100%; min-height: 44px; padding: 10px 12px; border: 1px solid var(--ds-border-default); border-radius: var(--ds-radius-control); box-shadow: none; appearance: none; }
+.app-shell .creator-page .tabs { gap: 4px; flex-wrap: wrap; margin: 0; }
+.app-shell .creator-page .tabs button { min-height: 40px; padding: 8px 14px; border-radius: 7px; }
+.app-shell .creator-page .works-section { padding: 0; overflow: hidden; }
+.app-shell .creator-page .works-section-head { padding: 18px 20px; margin: 0; border-bottom: 1px solid var(--ds-border-default); }
+.app-shell .creator-page .works-section .project-grid { padding: 16px; gap: 12px; }
+:root .app-shell.product-shell .creator-page .works-section { padding: 0; }
+:root .app-shell.product-shell .creator-page .works-section.is-compact-empty .works-section-head { border-bottom: 0; padding: 16px 20px; gap: 12px; }
+.app-shell .creator-page .works-section-head > button { flex-shrink: 0; }
+.app-shell .creator-page .project-card { border-radius: 10px; box-shadow: none; padding: 18px; min-height: 0; }
+.app-shell .creator-page .works-card-open { font-size: 16px; line-height: 1.5; }
+:root .app-shell.product-shell .creator-page .works-card-open { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
+:root .app-shell.product-shell .creator-page .project-card > p { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; line-height: 1.7; color: var(--ds-text-secondary); }
+:root .app-shell.product-shell .creator-page .project-stats span { color: var(--ds-text-secondary) !important; background: var(--ds-bg-subtle) !important; opacity: 1; border-color: var(--ds-border-default); }
+.app-shell .creator-page .works-card-delete { min-height: 40px; padding: 7px 10px; }
+.app-shell .creator-page .ui-state { margin: 12px; }
+.app-shell .creator-page .creator-metrics { display: flex; flex-wrap: wrap; gap: 0; margin: 0; padding: 14px 18px; border: 1px solid var(--ds-border-default); border-radius: 10px; background: var(--ds-bg-surface); }
+.app-shell .creator-metrics > div { display: flex; align-items: baseline; gap: 10px; padding: 4px 20px; border-left: 1px solid var(--ds-border-default); }
+.app-shell .creator-metrics > div:first-child { border-left: 0; padding-left: 0; }
+.app-shell .creator-metrics dt { color: var(--ds-text-muted); font-size: 13px; }
+.app-shell .creator-metrics dd { margin: 0; font-size: 22px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.app-shell .creator-filter-select { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--ds-text-muted); }
+.app-shell .creator-filter-select select { min-height: 42px; min-width: 170px; }
+.app-shell .creator-page .queue-filter-row { display: flex; gap: 4px; flex-wrap: wrap; padding: 0; margin: 0; background: transparent; border: 0; }
+.app-shell .creator-page .queue-filter-row button { min-height: 40px; padding: 8px 14px; border-radius: 7px; }
+.app-shell .creator-page .queue-workspace { grid-template-columns: minmax(0,1.45fr) minmax(300px,1fr); align-items: start; gap: 18px; }
+.app-shell .creator-page .queue-workspace.is-empty { grid-template-columns: minmax(0,1fr); }
+.app-shell .creator-page .queue-workspace.is-empty .queue-task-list { max-height: none; }
+.app-shell .creator-page .queue-workspace.is-empty .ui-state { border: 0; margin: 0; }
+.app-shell .creator-page .queue-workspace.is-empty a { text-decoration: none; }
+.app-shell .creator-page .queue-list-card, .app-shell .creator-page .queue-detail-card { min-width: 0; border-radius: 12px; box-shadow: none; }
+.app-shell .creator-page .queue-card-head { padding: 18px; }
+.app-shell .creator-page .queue-task-list { padding: 8px; max-height: min(780px, calc(100dvh - 300px)); overflow: auto; }
+.app-shell .creator-page .queue-task-row { display: block; padding: 0; border-radius: 8px; margin: 3px 0; overflow: hidden; }
+.app-shell .creator-page .queue-task-select { display: grid; grid-template-columns: 32px minmax(0,1fr) auto; gap: 12px; align-items: center; padding: 14px 12px; width: 100%; border: 0; color: inherit; background: transparent; text-align: left; border-radius: 8px; }
+.app-shell .creator-page .queue-task-main { min-width: 0; }
+.app-shell .creator-page .queue-task-main strong { font-size: 14px; line-height: 1.5; }
+.app-shell .creator-page .queue-task-main small { overflow-wrap: anywhere; }
+.app-shell .creator-page .queue-task-actions { display: flex; padding: 0 12px 10px 56px; gap: 8px; }
+.app-shell .creator-page .queue-task-actions button { min-height: 36px; }
+.app-shell .creator-page .queue-detail-card { padding: 20px; }
+.app-shell .creator-page .queue-detail-head { gap: 10px; }
+.app-shell .creator-page .queue-detail-head h2 { font-size: 17px; line-height: 1.5; }
+.app-shell .creator-page .queue-detail-group { padding-top: 16px; margin-top: 16px; }
+.app-shell .creator-page .queue-detail-grid { gap: 12px; }
+.app-shell .creator-page .queue-progress-card { margin-top: 18px; padding: 14px; }
+.app-shell .creator-page .queue-detail-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.app-shell .creator-page-footnote { margin: 0; font-size: 12px; line-height: 1.6; color: var(--ds-text-muted); }
+.app-shell .creator-page .creator-redeem-panel { display: grid; grid-template-columns: minmax(0,1fr) minmax(280px,1.2fr); gap: 18px; align-items: center; padding: 20px; }
+.app-shell .creator-redeem-panel h2 { margin: 0 0 6px; font-size: 17px; }
+.app-shell .creator-redeem-panel p { margin: 0; font-size: 13px; color: var(--ds-text-muted); }
+.app-shell .creator-redeem-panel .ui-notice { grid-column: 1 / -1; }
+.app-shell .creator-page .redeem-row { display: flex; width: 100%; gap: 8px; margin: 0; }
+.app-shell .creator-redeem-input { display: block; min-width: 0; flex: 1; }
+.app-shell .creator-redeem-input input { width: 100%; min-height: 44px; }
+.app-shell .creator-page .redeem-row button { white-space: nowrap; min-height: 44px; }
+.app-shell .creator-page .recharge-plan-panel, .app-shell .creator-page .credit-usage-panel { padding: 20px; }
+.app-shell .creator-page .recharge-plan-grid { grid-template-columns: repeat(auto-fit,minmax(195px,1fr)); gap: 12px; }
+.app-shell .creator-page .recharge-plan-grid .plan-card { padding: 20px; min-height: 0; box-shadow: none; border-radius: 10px; }
+.app-shell .creator-page .recharge-card-price strong { font-size: 34px; line-height: 1.2; }
+.app-shell .creator-page .recharge-card-credits { margin: 12px 0; }
+.app-shell .creator-page .recharge-card-features { margin: 14px 0; gap: 7px; font-size: 12px; }
+:root .app-shell.product-shell .creator-page .recharge-plan-grid .plan-card { padding: 18px; gap: 8px; min-height: 0; }
+:root .app-shell.product-shell .creator-page .recharge-card-price strong { font-size: 32px; line-height: 1.2; }
+:root .app-shell.product-shell .creator-page .recharge-card-credits { margin: 8px 0; padding: 9px 10px; border-radius: 7px; }
+:root .app-shell.product-shell .creator-page .recharge-card-credits b { font-size: 20px; }
+:root .app-shell.product-shell .creator-page .recharge-card-features { margin: 8px 0; gap: 7px; font-size: 12px; }
+.app-shell .creator-purchase-link { display: flex; align-items: center; justify-content: center; text-decoration: none; min-height: 44px; margin-top: auto; }
+.app-shell .creator-unavailable { display: block; color: var(--ds-text-muted); font-size: 13px; text-align: center; padding: 12px; border: 1px dashed var(--ds-border-default); border-radius: 8px; }
+.app-shell .creator-price-details { margin-top: 18px; border-top: 1px solid var(--ds-border-default); }
+.app-shell .creator-price-details summary { cursor: pointer; padding: 16px 0; font-size: 13px; font-weight: 600; }
+.app-shell .creator-page .credit-usage-grid { grid-template-columns: repeat(auto-fit,minmax(175px,1fr)); gap: 10px; }
+.app-shell .creator-page .credit-usage-card { padding: 14px; border-radius: 8px; }
+.app-shell .creator-page .ledger-summary-grid { gap: 12px; }
+.app-shell .creator-page .ledger-summary-grid article { padding: 18px; border-radius: 10px; box-shadow: none; }
+.app-shell .creator-page .ledger-summary-grid strong { font-size: 27px; }
+.app-shell .creator-page .ledger-filter-tabs { gap: 4px; padding: 0 0 14px; }
+.app-shell .creator-page .ledger-filter-tabs button { min-height: 40px; border-radius: 7px; }
+.creator-table-scroll { width: 100%; overflow: auto; border: 1px solid var(--ds-border-default); border-radius: 9px; }
+.creator-data-table { width: 100%; border-collapse: collapse; font-size: 13px; line-height: 1.55; text-align: left; }
+.creator-data-table th { background: var(--ds-bg-subtle, var(--ds-bg-surface)); color: var(--ds-text-muted); font-size: 12px; font-weight: 600; white-space: nowrap; }
+.creator-data-table th, .creator-data-table td { padding: 13px 16px; border-bottom: 1px solid var(--ds-border-default); vertical-align: top; }
+.creator-data-table tbody tr:last-child td { border-bottom: 0; }
+.creator-data-table td:nth-child(4) { min-width: 260px; overflow-wrap: anywhere; }
+.creator-data-table td:last-child { white-space: nowrap; }
+.app-shell .creator-form-fieldset { display: grid; gap: 16px; border: 0; margin: 0; padding: 0; min-width: 0; }
+.app-shell .creator-page .profile-v2-grid { grid-template-columns: minmax(0,1.35fr) minmax(290px,1fr); gap: 20px; }
+.app-shell .creator-page .profile-v2-column { gap: 20px; }
+.app-shell .creator-page .profile-v2-card { padding: 20px; border-radius: 12px; box-shadow: none; }
+.app-shell .creator-page .profile-v2-identity { padding: 4px 0 18px; }
+.app-shell .creator-page .profile-inline-editor { padding: 18px; margin: 0 0 16px; display: grid; gap: 14px; border-radius: 9px; }
+.app-shell .creator-page .profile-avatar-editor { display: grid; grid-template-columns: auto minmax(0,1fr); gap: 12px; }
+.app-shell .creator-page .profile-editor-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; }
+.app-shell .creator-page .profile-v2-collapse-body { display: grid; gap: 14px; padding: 18px; }
+.app-shell .creator-page .profile-v2-collapse-body .inline-actions { flex-wrap: wrap; }
+.app-shell .creator-page .profile-v2-collapse-body .profile-security-submit { width: auto; margin: 0; }
+.app-shell .creator-page .profile-v2-balance strong { font-size: 32px; }
+:root .app-shell.product-shell .creator-page .profile-avatar { color: var(--ds-action-primary); background: var(--ds-action-soft); box-shadow: none; border: 1px solid var(--ds-border-default); }
+:root .app-shell.product-shell .creator-page .profile-avatar span { font-weight: 600; }
+.app-shell .creator-page .profile-v2-shortcut-list { display: grid; gap: 0; }
+.app-shell .creator-page .profile-shortcut { padding: 14px 0; min-height: 60px; border: 0; border-bottom: 1px solid var(--ds-border-default); border-radius: 0; box-shadow: none; background: transparent; }
+.app-shell .creator-page .profile-shortcut:last-child { border-bottom: 0; }
+.app-shell .creator-settings-page { max-width: 1040px; }
+.app-shell .creator-help-docs { display: grid; gap: 16px; }
+.app-shell .creator-help-docs[hidden] { display: none; }
+.app-shell .creator-page .help-action-grid { grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; }
+.app-shell .creator-page .help-action-grid > * { padding: 16px; display: flex; align-items: center; gap: 12px; min-height: 84px; border-radius: 9px; text-align: left; box-shadow: none; }
+.app-shell .creator-page .help-action-grid h2, .app-shell .creator-page .help-action-grid h3 { font-size: 15px; margin: 0 0 4px; }
+.app-shell .creator-page .help-action-grid p { font-size: 12px; margin: 0; }
+.app-shell .creator-page .help-action-grid svg { width: 22px; height: 22px; flex-shrink: 0; }
+.app-shell .creator-page .help-toolbar { gap: 14px; flex-wrap: wrap; }
+.app-shell .creator-page .help-article-row > button { min-height: 68px; padding: 16px; text-align: left; }
+.app-shell .creator-page .help-article-row > button strong { font-size: 14px; }
+.app-shell .creator-page .help-article-body { font-size: 14px; line-height: 1.85; padding: 0 18px 18px 52px; }
+.app-shell .creator-page .help-category-tabs button { min-height: 40px; border-radius: 7px; }
+.app-shell .creator-page button:focus-visible, .app-shell .creator-page a:focus-visible, .creator-table-scroll:focus-visible { outline: 3px solid var(--ds-focus-ring); outline-offset: 3px; }
+.app-shell .creator-page .creator-wizard-fields { border: 0; padding: 0; margin: 0; min-width: 0; }
+.app-shell .creator-page.creation-entry-page .creation-entry-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px; max-width: 1040px; }
+.app-shell .creator-page.creation-entry-page .creation-entry-grid button { min-height: 210px; padding: 28px; border-radius: 12px; text-align: left; box-shadow: none; gap: 14px; }
+.app-shell .creator-page.creation-entry-page .creation-entry-grid strong { font-size: 20px; }
+.app-shell .creator-page.creation-entry-page .creation-entry-grid span { font-size: 14px; line-height: 1.75; }
+.app-shell .creator-page .u-step-tabs { margin: 0; padding: 6px; border-radius: 10px; gap: 5px; }
+.app-shell .creator-page .u-step-tabs button { padding: 12px 16px; border-radius: 7px; min-height: 58px; }
+.app-shell .creator-page .u-step-tabs button i { font-size: 14px; }
+.app-shell .creator-page .u-step-tabs button small { font-size: 12px; }
+.app-shell .creator-page .u-wizard-grid { grid-template-columns: minmax(0,1.55fr) minmax(300px,1fr); gap: 18px; align-items: start; }
+.app-shell .creator-page .u-card { padding: 22px; border-radius: 12px; box-shadow: none; min-width: 0; }
+.app-shell .creator-page .u-card-head h2 { font-size: 20px; line-height: 1.45; margin: 5px 0 8px; }
+.app-shell .creator-page .u-card-head p { font-size: 13px; line-height: 1.75; }
+.app-shell .creator-page .source-type-switch { gap: 10px; }
+.app-shell .creator-page .source-type-switch button { padding: 14px; border-radius: 8px; min-height: 72px; }
+.app-shell .creator-page .source-type-switch small { font-size: 12px; }
+.app-shell .creator-page .story-input-field textarea { min-height: 330px; font-size: 14px; line-height: 1.85; }
+.app-shell .creator-page .input-toolbar { gap: 8px; flex-wrap: wrap; }
+.app-shell .creator-page .input-toolbar button { font-size: 12px; min-height: 40px; padding: 8px 12px; }
+.app-shell .creator-page .ai-step-line { padding: 9px 0; font-size: 13px; }
+.app-shell .creator-page .mini-metrics strong { font-size: 26px; }
+.app-shell .creator-page .production-runway { display: none; }
+.app-shell .creator-page .script-output-map { gap: 8px; }
+.app-shell .creator-page .script-output-map > * { border-radius: 8px; padding: 12px; }
+.app-shell .creator-page .script-output-heading { margin-top: 14px; }
+.app-shell .creator-page .wizard-estimate-dock { padding: 18px; border-radius: 10px; margin-top: 18px; }
+.app-shell .creator-page .wizard-estimate-total strong { font-size: 28px; }
+.app-shell .creator-page .wizard-script-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; margin-top: 16px; }
+.app-shell .creator-page .wizard-script-actions button { min-height: 44px; font-size: 13px; }
+.app-shell .creator-page .model-route-head { margin-bottom: 14px; }
+.app-shell .creator-page .route-channel { padding: 12px; border-radius: 8px; min-height: 56px; }
+.app-shell .creator-page .route-channel-detail { padding: 12px; }
+.app-shell .creator-page .route-cost-note { font-size: 12px; line-height: 1.75; }
+.app-shell .creator-progress-indeterminate { overflow: hidden; }
+.app-shell .creator-progress-indeterminate > span { width: 30%; animation: creator-progress 1.7s ease-in-out infinite; }
+@keyframes creator-progress { from { transform: translateX(-110%); } to { transform: translateX(440%); } }
+@media (prefers-reduced-motion: reduce) { .app-shell .creator-progress-indeterminate > span { animation: none; width: 100%; opacity: .45; } }
+@media (max-width: 1100px) {
+  .app-shell .creator-page .queue-workspace { grid-template-columns: minmax(0,1fr); }
+  .app-shell .creator-page .queue-task-list { max-height: 430px; }
+  .app-shell .creator-page .profile-v2-grid { grid-template-columns: minmax(0,1fr); }
+  .app-shell .creator-page .profile-v2-side { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .app-shell .creator-page .u-wizard-grid { grid-template-columns: minmax(0,1fr); }
+}
+@media (max-width: 767px) {
+  .app-shell .creator-page { gap: 16px; }
+  .app-shell .creator-list-toolbar { align-items: stretch; }
+  .app-shell .creator-search-field { flex-basis: 100%; max-width: none; }
+  .app-shell .creator-page .tabs button, .app-shell .creator-page .works-card-delete { min-height: 44px; }
+  .app-shell .creator-page .works-section-head { padding: 16px; }
+  .app-shell .creator-page .works-section .project-grid { padding: 12px; grid-template-columns: minmax(0,1fr); }
+  :root .app-shell.product-shell .creator-page .works-section.is-compact-empty .works-section-head { flex-wrap: wrap; padding: 16px; }
+  .app-shell .creator-page .works-section.is-compact-empty .works-section-head > div { flex: 1 1 180px; }
+  .app-shell .creator-page .creator-metrics { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; padding: 16px; }
+  .app-shell .creator-metrics > div { border: 0; padding: 0; flex-direction: column; gap: 4px; }
+  .app-shell .creator-filter-select { width: 100%; }
+  .app-shell .creator-filter-select select { flex: 1; min-height: 44px; }
+  .app-shell .creator-page .queue-filter-row button, .app-shell .creator-page .queue-task-actions button, .app-shell .creator-page .ledger-filter-tabs button, .app-shell .creator-page .help-category-tabs button { min-height: 44px; }
+  .app-shell .creator-page .queue-task-select { grid-template-columns: 26px minmax(0,1fr); gap: 9px; }
+  .app-shell .creator-page .queue-task-side { grid-column: 2; flex-direction: row; justify-content: flex-start; gap: 10px; }
+  .app-shell .creator-page .queue-task-actions { padding-left: 47px; }
+  .app-shell .creator-page .queue-detail-card, .app-shell .creator-page .profile-v2-card { padding: 16px; }
+  .app-shell .creator-page .creator-redeem-panel { grid-template-columns: minmax(0,1fr); padding: 16px; }
+  .app-shell .creator-page .recharge-plan-panel, .app-shell .creator-page .credit-usage-panel { padding: 16px; }
+  .app-shell .creator-page .recharge-plan-grid { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; }
+  .app-shell .creator-page .recharge-plan-grid .plan-card { padding: 15px; }
+  .app-shell .creator-page .recharge-card-price strong { font-size: 28px; }
+  .app-shell .creator-page .recharge-card-features { padding-left: 0; }
+  .app-shell .creator-page .profile-v2-side { display: grid; grid-template-columns: minmax(0,1fr); }
+  .app-shell .creator-page .profile-inline-editor, .app-shell .creator-page .profile-v2-collapse-body { padding: 14px; }
+  .app-shell .creator-page .help-action-grid { grid-template-columns: minmax(0,1fr); }
+  .app-shell .creator-page .help-action-grid > * { min-height: 68px; }
+  .app-shell .creator-page .help-content-layout { grid-template-columns: minmax(0,1fr); }
+  .app-shell .creator-page .help-side-panel { border-left: 0; border-top: 1px solid var(--ds-border-default); padding: 18px 0 0; }
+  .app-shell .creator-page .help-article-body { padding: 0 16px 16px; }
+  .app-shell .creator-page.creation-entry-page .creation-entry-grid { grid-template-columns: minmax(0,1fr); }
+  .app-shell .creator-page.creation-entry-page .creation-entry-grid button { min-height: 174px; padding: 22px; }
+  .app-shell .creator-page .u-step-tabs { grid-template-columns: repeat(3,minmax(0,1fr)); }
+  .app-shell .creator-page .u-step-tabs button { padding: 10px 5px; min-height: 56px; }
+  .app-shell .creator-page .u-step-tabs button small { display: none; }
+  .app-shell .creator-page .u-step-tabs button span { width: 24px; height: 24px; flex-shrink: 0; }
+  .app-shell .creator-page .u-card { padding: 16px; }
+  .app-shell .creator-page .source-type-switch { grid-template-columns: minmax(0,1fr); }
+  .app-shell .creator-page .source-type-switch button { min-height: 64px; }
+  .app-shell .creator-page .story-input-field textarea { min-height: 260px; }
+  .app-shell .creator-page .input-toolbar button { min-height: 44px; }
+  .app-shell .creator-page .wizard-script-actions { flex-direction: column-reverse; align-items: stretch; }
+}

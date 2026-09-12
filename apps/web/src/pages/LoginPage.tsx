@@ -24,6 +24,7 @@ import "./CineHome.css";
 import { PublicShowcase, type PublicLocale, type PublicView } from "./PublicShowcase";
 import { cineScenes as scenes } from "./cineScenes";
 import { getCardPose, nextCardIndex, relativeCardOffset, shouldCorrectDrift, shouldReleasePreparedSlot } from "./cineHomeModel";
+import { Dialog, InlineNotice } from "../design-system/ui";
 
 interface LoginPageProps {
   onAuthed: (token: string, user: AuthUser) => void;
@@ -49,9 +50,9 @@ const copy = {
     navStudio: "创作现场",
     login: "登录",
     register: "注册",
-    heroKicker: "BRAND MANIFESTO",
+    heroKicker: "AI 漫剧创作工作台",
     heroTitle: "灵感即视界",
-    heroSubtitle: "让每一次灵感都即时进入镜头",
+    heroSubtitle: "把小说或剧本带进工作台，逐步完成分镜、画面与成片。",
     start: "开始创作",
     welcome: "欢迎回来",
     createAccount: "创建账号",
@@ -71,7 +72,7 @@ const copy = {
     email: "邮箱",
     emailPlaceholder: "请输入邮箱地址",
     setPassword: "设置密码",
-    setPasswordPlaceholder: "至少 6 位",
+    setPasswordPlaceholder: "至少 8 位",
     confirmPassword: "再次输入密码",
     confirmPasswordPlaceholder: "请再次输入密码",
     agreement: "我已阅读并同意《用户协议》《隐私政策》《内容合规协议》",
@@ -95,9 +96,9 @@ const copy = {
     navStudio: "Live Studio",
     login: "Log in",
     register: "Sign up",
-    heroKicker: "BRAND MANIFESTO",
+    heroKicker: "AI film workspace",
     heroTitle: "Inspiration In Sight",
-    heroSubtitle: "Turn every spark into a cinematic frame",
+    heroSubtitle: "Bring your story into a workspace for scripts, shots, visuals and final films.",
     start: "Start creating",
     welcome: "Welcome back",
     createAccount: "Create account",
@@ -117,7 +118,7 @@ const copy = {
     email: "Email",
     emailPlaceholder: "Enter email address",
     setPassword: "Set password",
-    setPasswordPlaceholder: "At least 6 characters",
+    setPasswordPlaceholder: "At least 8 characters",
     confirmPassword: "Confirm password",
     confirmPasswordPlaceholder: "Enter password again",
     agreement: "I agree to the User Agreement, Privacy Policy and Content Compliance Terms",
@@ -209,6 +210,8 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
   const [agree, setAgree] = useState(false);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState(sessionMessage);
+  const [messageKind, setMessageKind] = useState<"info" | "error">("info");
+  const submitPending = useRef(false);
   const bgRefs = useRef<Array<HTMLVideoElement | null>>([]);
   const visibleBgSlot = useRef<0 | 1>(0);
   const slotSceneIndexes = useRef<[number, number]>([0, 1]);
@@ -648,6 +651,8 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
   }
 
   async function submit() {
+    if (submitPending.current) return;
+    setMessageKind("error");
     const cleanAccount = account.trim();
     const cleanPhone = phone.trim();
     const cleanEmail = email.trim().toLowerCase();
@@ -669,8 +674,9 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
       setMessage(locale === "cn" ? "图形验证码不正确，请重新输入。" : "Captcha is incorrect. Please try again.");
       return;
     }
-    if (password.length < 6) {
-      setMessage(locale === "cn" ? "密码至少需要 6 位。" : "Password must be at least 6 characters.");
+    const minimumPasswordLength = activeMode === "register" ? 8 : 6;
+    if (password.length < minimumPasswordLength) {
+      setMessage(locale === "cn" ? `密码至少需要 ${minimumPasswordLength} 位。` : `Password must be at least ${minimumPasswordLength} characters.`);
       return;
     }
     if (activeMode === "register" && password !== confirmPassword) {
@@ -682,6 +688,7 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
       return;
     }
 
+    submitPending.current = true;
     setLoading(true);
     setMessage("");
     try {
@@ -702,6 +709,7 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
       setCaptchaInput("");
       setMessage(error instanceof Error ? error.message : locale === "cn" ? "登录失败，请稍后重试。" : "Login failed. Please try again.");
     } finally {
+      submitPending.current = false;
       setLoading(false);
     }
   }
@@ -749,7 +757,7 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
   }
 
   const authForm = (
-    <form className="cine-auth-form" onSubmit={handleSubmit}>
+    <form className="cine-auth-form" onSubmit={handleSubmit} aria-busy={loading}><fieldset className="creator-auth-fields" disabled={loading}>
       {activeMode === "login" ? (
         <>
           <label className="cine-auth-field">
@@ -757,6 +765,7 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
             <div className="cine-auth-input">
               <UserRound size={18} />
               <input
+                data-autofocus
                 autoComplete="username"
                 data-lpignore="true"
                 name={isAdmin ? "admin_account" : "creator_account"}
@@ -804,9 +813,7 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
             </label>
             <button
               type="button"
-              onClick={() =>
-                setMessage(locale === "cn" ? "忘记密码时，请向该账号所属平台的管理员申请重置。只有已登录且记得当前密码，才能在个人页修改密码。" : "If you forgot your password, ask the administrator of the platform that manages your account to reset it. You can change it in Profile only when signed in and you know your current password.")
-              }
+              onClick={() => { setMessageKind("info"); setMessage(locale === "cn" ? "忘记密码时，请向该账号所属平台的管理员申请重置。只有已登录且记得当前密码，才能在个人页修改密码。" : "If you forgot your password, ask the administrator of the platform that manages your account to reset it. You can change it in Profile only when signed in and you know your current password."); }}
             >
               {t.forgot}
             </button>
@@ -919,7 +926,8 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
         {loading ? t.loading : isAdmin ? t.submitAdmin : activeMode === "login" ? t.submitLogin : t.submitRegister}
         <ArrowRight size={17} />
       </button>
-      {message ? <p className="cine-auth-message">{message}</p> : null}
+      </fieldset>
+      {message ? <InlineNotice tone={messageKind}>{message}</InlineNotice> : null}
     </form>
   );
 
@@ -940,20 +948,22 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
   }
 
   return (
-    <main className={`cine-home-page relative w-screen bg-black text-white ${publicView === "home" ? "" : "cine-scroll-page"}`}>
+    <main className={`cine-home-page relative w-screen bg-black text-white ${publicView === "home" ? "" : "cine-scroll-page"}`} data-public-view={publicView}>
       <nav className={`cine-top-nav ${publicView === "home" ? "" : "solid"}`} aria-label="首页导航">
         <button className="cine-logo-text nav-logo" type="button" onClick={() => setPublicView("home")}>
           <span>漫角</span>
           <small>MANJIAO.CLOUD</small>
         </button>
         <div className="cine-nav-links">
-          <button className={publicView === "home" ? "active" : ""} type="button" onClick={() => setPublicView("home")}>{t.navHome}</button>
-          <button className={publicView === "studio" ? "active" : ""} type="button" onClick={() => setPublicView("studio")}>{t.navStudio}</button>
+          <button className={publicView === "home" ? "active" : ""} aria-current={publicView === "home" ? "page" : undefined} type="button" onClick={() => setPublicView("home")}>{t.navHome}</button>
+          <button className={publicView === "studio" ? "active" : ""} aria-current={publicView === "studio" ? "page" : undefined} type="button" onClick={() => setPublicView("studio")}>{t.navStudio}</button>
         </div>
         <div className="cine-nav-actions">
           <div className="cine-language">
             <button
               className={languageOpen ? "open" : undefined}
+              aria-expanded={languageOpen}
+              aria-label={locale === "cn" ? "选择语言" : "Select language"}
               type="button"
               onClick={() => setLanguageOpen((value) => !value)}
             >
@@ -1016,11 +1026,13 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
           <p>{t.heroKicker}</p>
           <h1>{t.heroTitle}</h1>
           <span>{t.heroSubtitle}</span>
+          <button type="button" className="cine-hero-start" onClick={() => openAuth("login")}>{locale === "cn" ? "开始制作我的故事" : "Create my story"}<ArrowRight size={17} /></button>
+          <small className="cine-workflow-caption">{locale === "cn" ? "导入故事 → 制作分镜 → 生成画面 → 合成导出" : "Story → Storyboard → Visuals → Export"}</small>
         </div>
 
         <div
           className={`cine-card-stack ${stackExpanded ? "expanded" : "collapsed"}`}
-          aria-label="CINE CAM 3D 视频卡片堆叠"
+          aria-label={locale === "cn" ? "浏览创作示例" : "Browse creative examples"}
           onPointerEnter={expandStackWithIntent}
           onPointerMove={(event) => {
             const hit = (event.target as HTMLElement).closest<HTMLButtonElement>(".cine-card-hit");
@@ -1078,20 +1090,12 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
                   <div className="cine-card-sheen" />
                   <div className="cine-card-corners" />
                   <div className="cine-card-head">
-                    <span>{scene.eyebrow}</span>
-                    {isActive ? <b>{scene.activeLabel ?? "REC"}</b> : null}
+                    <span>{locale === "cn" ? "视觉示例" : "Visual example"}</span>
+                    {isActive ? <b>{locale === "cn" ? "当前" : "Selected"}</b> : null}
                   </div>
                   <div className="cine-card-body">
-                    <p>{scene.meta}</p>
                     <strong>{scene.title[locale]}</strong>
-                    {isActive ? <small>00:00:00:00</small> : null}
                   </div>
-                  {isActive ? (
-                    <div className="cine-active-scan-ui">
-                      <i />
-                      <span>{scene.scanLabel[locale]}</span>
-                    </div>
-                  ) : null}
                 </div>
               );
             })}
@@ -1131,59 +1135,24 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
           </button>
         </div>
 
-        <button className="cine-mobile-start" type="button" onClick={() => openAuth("login")}>
-          <Sparkles size={16} />
-          {t.start}
-        </button>
       </section> : <PublicShowcase locale={locale} scenes={scenes} view={publicView} onStart={() => openAuth("login")} />}
 
-      <span className="cine-icp-line">© {ICP_YEAR} 漫角 manjiao.cloud · <a className="cine-icp-link" href="https://beian.miit.gov.cn/" target="_blank" rel="noreferrer">{ICP_NUMBER}</a>{ICP_COMPANY ? ` · ${ICP_COMPANY}` : ""}{ICP_REGION ? ` · ${ICP_REGION}` : ""}</span>
+      <footer className="cine-icp-line">© {ICP_YEAR} 漫角 manjiao.cloud · <a className="cine-icp-link" href="https://beian.miit.gov.cn/" target="_blank" rel="noreferrer">{ICP_NUMBER}</a>{ICP_COMPANY ? ` · ${ICP_COMPANY}` : ""}{ICP_REGION ? ` · ${ICP_REGION}` : ""}</footer>
 
-      {authOpen ? (
-        <div className="cine-auth-modal" role="dialog" aria-modal="true" aria-label={activeMode === "login" ? t.login : t.register}>
-          <button className="cine-auth-backdrop" type="button" aria-label={t.closeAuth} onClick={() => setAuthOpen(false)} />
-          <section className={`cine-auth-card ${activeMode === "register" ? "register-mode" : "login-mode"}`}>
-            <button className="cine-auth-close" type="button" aria-label="关闭" onClick={() => setAuthOpen(false)}>
-              <X size={18} />
-            </button>
-            <div className="cine-auth-brand">
-              <div className="cine-logo-text">
-                <span>漫角</span>
-                <small>MANJIAO.CLOUD</small>
-              </div>
-              <h2>{activeMode === "login" ? t.welcome : t.createAccount}</h2>
-              <p>{activeMode === "login" ? t.loginIntro : t.registerIntro}</p>
-            </div>
-            <div className="cine-auth-tabs">
-              <button className={activeMode === "login" ? "active" : undefined} type="button" onClick={() => switchMode("login")}>
+      <Dialog open={authOpen} title={activeMode === "login" ? t.welcome : t.createAccount} description={activeMode === "login" ? t.loginIntro : t.registerIntro} busy={loading} onClose={() => setAuthOpen(false)} className={`creator-auth-dialog ${activeMode === "register" ? "register-mode" : "login-mode"}`}>
+            <div className="creator-auth-wordmark">漫角 <span>MANJIAO STUDIO</span></div>
+            <div className="cine-auth-tabs" role="group" aria-label={locale === "cn" ? "登录或注册" : "Authentication mode"}>
+              <button className={activeMode === "login" ? "active" : undefined} aria-pressed={activeMode === "login"} disabled={loading} type="button" onClick={() => switchMode("login")}>
                 {t.login}
               </button>
-              <button className={activeMode === "register" ? "active" : undefined} type="button" onClick={() => switchMode("register")}>
+              <button className={activeMode === "register" ? "active" : undefined} aria-pressed={activeMode === "register"} disabled={loading} type="button" onClick={() => switchMode("register")}>
                 <UserPlus size={15} />
                 {t.register}
               </button>
             </div>
             {authForm}
-            <div className="cine-auth-bottom">
-              {activeMode === "login" ? (
-                <span>
-                  {t.noAccount}
-                  <button type="button" onClick={() => switchMode("register")}>{t.registerNow}</button>
-                </span>
-              ) : (
-                <span>
-                  {t.hasAccount}
-                  <button type="button" onClick={() => switchMode("login")}>{t.backLogin}</button>
-                </span>
-              )}
-              <small>
-                <Check size={13} />
-                {t.authNote}
-              </small>
-            </div>
-          </section>
-        </div>
-      ) : null}
+            <p className="creator-auth-note">{t.authNote}</p>
+      </Dialog>
     </main>
   );
 }

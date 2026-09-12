@@ -10,10 +10,8 @@ import {
   RefreshCw,
   RotateCcw,
   Save,
-  Scissors,
   SlidersHorizontal,
   Subtitles,
-  Trash2,
   Upload,
   WandSparkles,
   X
@@ -23,6 +21,7 @@ import type { ExportJob, ModelPrice, ModelProvider, ProjectWorkflow } from "@aif
 import { isPersistedPlayableVideoReference } from "@aifilm/shared";
 import { api } from "../../lib/api";
 import { ModelRoutePicker } from "../../components/ModelRoutePicker";
+import { useResponsiveDrawer } from "../components/useResponsiveDrawer";
 import { generateVideos } from "../workbenchActions";
 import { DeliveryExportQuoteDialog } from "./DeliveryExportQuoteDialog";
 import { confirmedDeliveryCredits, deliveryQuoteScopeKey, type DeliveryExportQuote, type DeliveryExportType } from "./deliveryQuoteModel";
@@ -34,6 +33,7 @@ import {
   buildShotMediaIndex,
   clipLayout,
   collectDeliveryEpisodes,
+  deliveryTimelineCanvas,
   fitPxPerSecond,
   formatTimecode,
   getDeliveryCandidates,
@@ -51,7 +51,6 @@ import {
   resolveShotVideoStatus,
   rulerTicks,
   videoUnitCredits,
-  waveformPoints,
   type DeliveryCandidate,
   type DeliveryShotVideoStatus
 } from "./deliveryModel";
@@ -76,8 +75,6 @@ const JOB_TYPE_LABEL: Record<ExportJob["type"], string> = {
   subtitle: "字幕"
 };
 
-/** api.ts 暂无按镜头的 TTS 生成方法（仅 createExportJob 整轨 tts），对应按钮保持 disabled 占位。 */
-const PER_SHOT_TTS_AVAILABLE = false;
 /** 与服务端 videoGenerateSchema 的 storyboardIds max(20) 对齐。 */
 const VIDEO_SELECTED_MAX = 20;
 
@@ -133,6 +130,7 @@ export function DeliveryStage({
   const [localShotId, setLocalShotId] = useState<string | null>(activeShotId);
   /** 每次导出提交当前集的有序镜头；刷新后仍回到服务端顺序。 */
   const [orderByEpisode, setOrderByEpisode] = useState<Record<number, string[]>>({});
+  const [timelineViewportWidth, setTimelineViewportWidth] = useState(0);
   const [pxPerSecond, setPxPerSecond] = useState(DELIVERY_DEFAULT_PX_PER_SECOND);
   const [compactTimeline, setCompactTimeline] = useState(() => window.matchMedia("(max-width: 767px)").matches);
   const [progress, setProgress] = useState(0);
@@ -162,6 +160,19 @@ export function DeliveryStage({
   const pendingAutoPlay = useRef<{ shotId: string; url: string } | null>(null);
   const timelineScrollRef = useRef<HTMLDivElement>(null);
   const dragFromIndex = useRef<number | null>(null);
+  useEffect(() => {
+    const viewport = timelineScrollRef.current;
+    if (!viewport) return;
+    const measure = () => setTimelineViewportWidth(Math.floor(viewport.clientWidth));
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(viewport);
+    return () => observer.disconnect();
+  }, []);
+  const queuePanelRef = useRef<HTMLElement>(null), queueCloseRef = useRef<HTMLButtonElement>(null);
+  const inspectorPanelRef = useRef<HTMLElement>(null), inspectorCloseRef = useRef<HTMLButtonElement>(null);
+  const queueDrawerActive = useResponsiveDrawer({ open: railOpen, maxWidth: 979, onClose: onCloseRail, panelRef: queuePanelRef, initialFocusRef: queueCloseRef });
+  const inspectorDrawerActive = useResponsiveDrawer({ open: inspectorOpen, maxWidth: 1199, onClose: onCloseInspector, panelRef: inspectorPanelRef, initialFocusRef: inspectorCloseRef });
   const onRefreshRef = useRef(onRefresh);
   onRefreshRef.current = onRefresh;
 
@@ -199,7 +210,8 @@ export function DeliveryStage({
   const layout = useMemo(() => clipLayout(shots, timelinePixelsPerSecond, durationByShotId), [shots, timelinePixelsPerSecond, durationByShotId]);
   const totalDuration = layout.reduce((sum, clip) => sum + clip.duration, 0);
   const totalWidth = layout.reduce((sum, clip) => sum + clip.width, 0);
-  const ticks = rulerTicks(totalDuration);
+  const timelineCanvas = deliveryTimelineCanvas(timelineViewportWidth, totalWidth);
+  const ticks = rulerTicks(Math.max(totalDuration, timelineCanvas.laneWidth / timelinePixelsPerSecond));
   const playheadLeft = playheadOffset(layout, activeShot?.id ?? "", progress, timelinePixelsPerSecond);
   const absoluteSeconds = (layout.find((clip) => clip.id === activeShot?.id)?.start ?? 0) + progress;
 
@@ -417,7 +429,7 @@ export function DeliveryStage({
   function fitZoom() {
     const width = timelineScrollRef.current?.clientWidth ?? 0;
     const scale = compactTimeline ? 4 : 1;
-    setPxPerSecond(fitPxPerSecond(Math.max(0, width - 48) / scale, totalDuration, compactTimeline ? DELIVERY_DEFAULT_PX_PER_SECOND : DELIVERY_MIN_PX_PER_SECOND));
+    setPxPerSecond(fitPxPerSecond(Math.max(0, width - 88) / scale, totalDuration, compactTimeline ? DELIVERY_DEFAULT_PX_PER_SECOND : DELIVERY_MIN_PX_PER_SECOND));
   }
 
   async function downloadJob(job: ExportJob) {
@@ -506,7 +518,8 @@ export function DeliveryStage({
   const otherDownloads = exportsByScope.other.filter((job) => job.status === "succeeded" && job.outputUrl).slice(0, 3);
 
   return (
-    <main className="dlv2-frame" data-rail-open={railOpen} data-inspector-open={inspectorOpen}>
+    <main className="dlv2-frame" data-rail-open={queueDrawerActive} data-inspector-open={inspectorDrawerActive}>
+      {queueDrawerActive || inspectorDrawerActive ? <button type="button" className="dlv2-panel-scrim" aria-label="关闭成片侧栏" tabIndex={-1} onClick={queueDrawerActive ? onCloseRail : onCloseInspector} /> : null}
       <header className="dlv2-topbar">
         <div className="dlv2-topbar-left">
           <span className="dlv2-title"><Film size={15} />成片</span>
@@ -542,11 +555,11 @@ export function DeliveryStage({
       </header>
 
       <div className="dlv2-main">
-        <aside className="dlv2-queue" aria-label="镜头队列">
+        <aside ref={queuePanelRef} className="dlv2-queue" aria-label="镜头队列" role={queueDrawerActive ? "dialog" : undefined} aria-modal={queueDrawerActive || undefined}>
           <header className="dlv2-panel-head">
             <strong>镜头队列</strong>
             <span>{shots.length} 镜</span>
-            <button className="dlv2-drawer-close" type="button" aria-label="收起镜头队列" onClick={onCloseRail}><X size={14} /></button>
+            <button ref={queueCloseRef} className="dlv2-drawer-close" type="button" aria-label="收起镜头队列" onClick={onCloseRail}><X size={14} /></button>
           </header>
           <div className="dlv2-queue-list" role="list">
             {shots.map((shot, index) => {
@@ -556,46 +569,19 @@ export function DeliveryStage({
               const expanded = expandedFailureId === shot.id;
               return (
                 <div key={shot.id} role="listitem" className="dlv2-shot-item">
-                  <div
-                    className={`dlv2-shot-row${activeShot?.id === shot.id ? " is-active" : ""}`}
-                    data-status={status}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => selectShot(shot.id)}
-                    onKeyDown={(event) => { if (event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); selectShot(shot.id); } }}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selectedShotIds.includes(shot.id)}
-                      onClick={(event) => event.stopPropagation()}
-                      onChange={(event) => toggleShotSelection(shot.id, event.target.checked)}
-                      aria-label={`选择镜头 ${label}`}
-                    />
-                    <span className="dlv2-shot-thumb">
-                      {image?.referenceUrl ? <img src={image.referenceUrl} alt="" loading="lazy" /> : <Film size={14} />}
-                    </span>
-                    <span className="dlv2-shot-info">
-                      <strong>镜头 {label}</strong>
-                      <small>{shot.scene || shot.pictureDesc || "未命名镜头"} · {normalizeShotDuration(shot.duration)}s</small>
-                    </span>
-                    <span className="dlv2-shot-flags">
-                      {usableShotIds.includes(shot.id) ? <span className="dlv2-badge" data-tone="usable">可用</span> : null}
-                      <span className="dlv2-badge" data-tone={status}>
-                        {status === "running" ? <Loader2 size={11} className="dlv2-spin" /> : null}
-                        {SHOT_STATUS_LABEL[status]}
+                  <div className={`dlv2-shot-row${activeShot?.id === shot.id ? " is-active" : ""}`} data-status={status}>
+                    <label className="dlv2-shot-check">
+                      <input type="checkbox" checked={selectedShotIds.includes(shot.id)} onChange={event => toggleShotSelection(shot.id, event.target.checked)} aria-label={`选择镜头 ${label}`} />
+                    </label>
+                    <button type="button" className="dlv2-shot-preview" aria-pressed={activeShot?.id === shot.id} aria-label={`预览镜头 ${label} · ${SHOT_STATUS_LABEL[status]}`} onClick={() => selectShot(shot.id)}>
+                      <span className="dlv2-shot-thumb">{image?.referenceUrl ? <img src={image.referenceUrl} alt="" loading="lazy" /> : <Film size={14} />}</span>
+                      <span className="dlv2-shot-info"><strong>镜头 {label}</strong><small>{shot.scene || shot.pictureDesc || "未命名镜头"} · {normalizeShotDuration(shot.duration)}s</small></span>
+                      <span className="dlv2-shot-flags">
+                        {usableShotIds.includes(shot.id) ? <span className="dlv2-badge" data-tone="usable">可用</span> : null}
+                        <span className="dlv2-badge" data-tone={status}>{status === "running" ? <Loader2 size={11} className="dlv2-spin" /> : null}{SHOT_STATUS_LABEL[status]}</span>
                       </span>
-                      {status === "failed" ? (
-                        <button
-                          className="dlv2-expand-error"
-                          type="button"
-                          aria-expanded={expanded}
-                          aria-label={`查看镜头 ${label} 失败原因`}
-                          onClick={(event) => { event.stopPropagation(); setExpandedFailureId(expanded ? null : shot.id); }}
-                        >
-                          <AlertTriangle size={13} />
-                        </button>
-                      ) : null}
-                    </span>
+                    </button>
+                    {status === "failed" ? <button className="dlv2-expand-error" type="button" aria-expanded={expanded} aria-label={`查看镜头 ${label} 失败原因`} onClick={() => setExpandedFailureId(expanded ? null : shot.id)}><AlertTriangle size={13} /></button> : null}
                   </div>
                   {expanded ? <p className="dlv2-shot-error">{getShotFailureMessage(videoByShot.get(shot.id), tasks)}</p> : null}
                 </div>
@@ -686,14 +672,6 @@ export function DeliveryStage({
             <button
               className="dlv2-btn"
               type="button"
-              disabled={!PER_SHOT_TTS_AVAILABLE}
-              title="需先在成片右栏批量生成配音"
-            >
-              <FileAudio size={14} />生成本镜配音
-            </button>
-            <button
-              className="dlv2-btn"
-              type="button"
               aria-pressed={activeShot ? usableShotIds.includes(activeShot.id) : false}
               disabled={!activeShot}
               onClick={() => activeShot && toggleUsable(activeShot.id)}
@@ -704,10 +682,10 @@ export function DeliveryStage({
           </div>
         </section>
 
-        <aside className="dlv2-side" aria-label="成片参数">
+        <aside ref={inspectorPanelRef} className="dlv2-side" aria-label="成片参数" role={inspectorDrawerActive ? "dialog" : undefined} aria-modal={inspectorDrawerActive || undefined}>
           <header className="dlv2-panel-head">
             <strong>参数与轨道</strong>
-            <button className="dlv2-drawer-close" type="button" aria-label="收起参数面板" onClick={onCloseInspector}><X size={14} /></button>
+            <button ref={inspectorCloseRef} className="dlv2-drawer-close" type="button" aria-label="收起参数面板" onClick={onCloseInspector}><X size={14} /></button>
           </header>
 
           <section className="dlv2-card">
@@ -777,10 +755,7 @@ export function DeliveryStage({
       <footer className="dlv2-timeline" aria-label="多轨时间线">
         <div className="dlv2-tl-toolbar">
           <div className="dlv2-tl-tools">
-            <button className="dlv2-icon-btn" type="button" disabled title="下个版本开放" aria-label="分割"><Scissors size={14} /></button>
-            <button className="dlv2-icon-btn" type="button" disabled title="下个版本开放" aria-label="删除"><Trash2 size={14} /></button>
-            <button className="dlv2-icon-btn" type="button" disabled title="下个版本开放" aria-label="撤销"><RotateCcw size={14} /></button>
-            <button className="dlv2-icon-btn dlv2-flip" type="button" disabled title="下个版本开放" aria-label="重做"><RotateCcw size={14} /></button>
+            <strong>镜头顺序</strong>
             <span className="dlv2-tl-hint" title="导出使用当前集的全部镜头及当前顺序；刷新页面恢复原始顺序。选中镜头仅用于生成。">拖拽排序 · 按此顺序导出本集 · 刷新恢复</span>
           </div>
           <div className="dlv2-tl-clock">{formatTimecode(absoluteSeconds, true)} / {formatTimecode(totalDuration)}</div>
@@ -798,13 +773,15 @@ export function DeliveryStage({
           </div>
         </div>
         <div className="dlv2-tl-scroll" ref={timelineScrollRef} tabIndex={0} role="region" aria-label="横向滚动查看视频、配音和字幕轨道">
-          <div className="dlv2-tl-content" style={{ width: `${totalWidth + 48}px` }}>
+          <div className="dlv2-tl-content" style={{ width: `${timelineCanvas.contentWidth}px`, minWidth: `${timelineCanvas.contentWidth}px` }}>
+            <div className="dlv2-track-labels" aria-hidden="true"><span /><strong>视频</strong><strong>配音</strong><strong>字幕</strong></div>
+            <div className="dlv2-track-lanes" style={{ width: `${timelineCanvas.laneWidth}px` }}>
             <div className="dlv2-tl-ruler">
               {ticks.map((second) => (
                 <span key={second} className="dlv2-tick" style={{ left: `${second * timelinePixelsPerSecond}px` }}>{formatTimecode(second)}</span>
               ))}
             </div>
-            <div className="dlv2-track dlv2-track-video" data-label="视频">
+            <div className="dlv2-track dlv2-track-video" aria-label="视频轨道">
               {layout.map((clip, index) => {
                 const status = resolveShotVideoStatus(videoByShot.get(clip.id));
                 const thumb = imageByShot.get(clip.id)?.referenceUrl;
@@ -828,36 +805,30 @@ export function DeliveryStage({
                   >
                     <span className="dlv2-clip-label">{clip.index + 1}</span>
                     <span className="dlv2-clip-duration">{clip.duration}s</span>
-                    {isActiveClip ? (
-                      <>
-                        <span className="dlv2-trim dlv2-trim-l" aria-hidden="true" />
-                        <span className="dlv2-trim dlv2-trim-r" aria-hidden="true" />
-                      </>
-                    ) : null}
                   </div>
                 );
               })}
             </div>
-            <div className="dlv2-track dlv2-track-audio" data-label="配音">
+            <div className="dlv2-track dlv2-track-audio" aria-label="配音轨道">
               {perShotAudioCount > 0 ? (
                 layout.map((clip) => {
                   const audio = audioByShot.get(clip.id);
                   const hasAudio = audio?.status === "succeeded" && Boolean(audio.referenceUrl);
                   return (
                     <div key={clip.id} className={hasAudio ? "dlv2-wave" : "dlv2-wave dlv2-wave-empty"} style={{ width: `${clip.width}px` }}>
-                      {hasAudio ? <WaveformSvg seed={`audio_${clip.id}`} width={clip.width} /> : null}
+                      {hasAudio ? <span className="dlv2-audio-label"><FileAudio size={13} />镜头 {clip.index + 1} 配音</span> : null}
                     </div>
                   );
                 })
               ) : trackAudioUrl ? (
                 <div className="dlv2-wave dlv2-wave-track" style={{ width: `${Math.max(totalWidth, 120)}px` }} title="整轨配音（TTS 导出）">
-                  <WaveformSvg seed={trackAudioUrl} width={Math.max(totalWidth, 120)} />
+                  <span className="dlv2-audio-label"><FileAudio size={13} />整轨配音已生成</span>
                 </div>
               ) : (
-                <div className="dlv2-track-empty">暂无配音 · 打开检查器中的「配音与字幕」生成</div>
+                <div className="dlv2-track-empty">暂无配音，可在检查器中生成</div>
               )}
             </div>
-            <div className="dlv2-track dlv2-track-subtitle" data-label="字幕">
+            <div className="dlv2-track dlv2-track-subtitle" aria-label="字幕轨道">
               {stats.hasSubtitle ? (
                 layout.map((clip) => {
                   const shot = shots.find((item) => item.id === clip.id);
@@ -869,10 +840,11 @@ export function DeliveryStage({
                   );
                 })
               ) : (
-                <div className="dlv2-track-empty">暂无字幕 · 打开检查器中的「配音与字幕」生成</div>
+                <div className="dlv2-track-empty">暂无字幕，可在检查器中生成</div>
               )}
             </div>
             <div className="dlv2-playhead" style={{ left: `${playheadLeft}px` }} aria-hidden="true" />
+            </div>
           </div>
         </div>
       </footer>
@@ -890,15 +862,6 @@ export function DeliveryStage({
         onClose={closeExportQuote}
       /> : null}
     </main>
-  );
-}
-
-function WaveformSvg({ seed, width }: { seed: string; width: number }): ReactElement {
-  const safeWidth = Math.max(24, Math.round(width));
-  return (
-    <svg viewBox={`0 0 ${safeWidth} 28`} preserveAspectRatio="none" aria-hidden="true" focusable="false">
-      <polyline points={waveformPoints(seed, safeWidth, 28, Math.max(8, Math.round(safeWidth / 8)))} fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
-    </svg>
   );
 }
 

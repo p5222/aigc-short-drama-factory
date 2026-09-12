@@ -9,6 +9,8 @@ import { clearWizardDraft, readWizardDraft, saveWizardDraft } from "./wizardDraf
 import { buildEstimateInput, buildGenerationInput, creationBillingSignature, createCreationQuoteGate, isConfiguredModelRoute, normalizeWizardSourceType } from "./wizardRequestModel";
 import { getCreationRequestId } from "./creationAttemptStorage";
 import { BEFORE_CREATOR_NAVIGATION } from "../lib/creatorNavigation";
+import { InlineNotice, PageHeader } from "../design-system/ui";
+import "./creator-pages.css";
 
 interface WizardPageProps {
   providers: ModelProvider[];
@@ -150,6 +152,7 @@ export function WizardPage({ providers, canManageModels = false, onCreated, onCr
   }, [episodeAnalysis, form.targetEpisodes]);
 
   function goTo(nextStep: WizardStep) {
+    if (startInFlight.current) return;
     if (stepOrder.indexOf(nextStep) > 0 && !form.content.trim()) {
       setError("请先粘贴故事正文或导入文本。");
       return;
@@ -219,13 +222,13 @@ export function WizardPage({ providers, canManageModels = false, onCreated, onCr
       void api.trackEvent({ eventName: "create_project_success", projectId: result.project.id, entityType: "project", entityId: result.project.id, taskId: result.task.id, properties: { mode: result.mode } }).catch(() => undefined);
       clearWizardDraft();
       startInFlight.current = false;
-      setMessage(`已生成项目，模式：${result.mode === "real" ? "真实模型" : result.mode === "queued" ? "队列处理中" : "本地结构化"}`);
+      setMessage("项目已创建，正在打开制作工作区。");
       onCreated(result.project.id);
     } catch (err) {
       setEstimateSnapshot(null);
       setMessage("");
       void api.trackEvent({ eventName: "create_project_fail", properties: { message: err instanceof Error ? err.message : "生成失败" } }).catch(() => undefined);
-      setError(err instanceof Error ? err.message : "生成失败，请检查模型配置、数据库或积分余额。");
+      setError(err instanceof Error ? err.message : "未能确认创建结果，原稿已保留。请稍后重试，或向支持人员提交问题。");
     } finally {
       startInFlight.current = false;
       setIsGenerating(false);
@@ -338,26 +341,22 @@ export function WizardPage({ providers, canManageModels = false, onCreated, onCr
   }
 
   if (!entrySelected) {
-    return <div className="page-stack creation-entry-page" data-tour-id="creation-entry"><header><span>NEW MANJIAO</span><h1>新建漫剧</h1><p>选择创作内容，后续只展示与你当前任务相关的步骤。</p></header><div className="creation-entry-grid"><button type="button" onClick={onCreateContent}><Sparkles size={22} /><strong>创作新内容</strong><span>输入标题、小说名、风格或参考作品名，系统先识别方向并拆解同类爆款</span><ChevronRight size={18} /></button><button type="button" onClick={() => { setForm((current) => ({ ...current, sourceType: "novel", content: "" })); setEntrySelected(true); }}><BookOpenCheck size={22} /><strong>导入小说 / 剧本</strong><span>进入原稿类型选择：小说自动转剧本，已有剧本直接拆解场次和资产</span><ChevronRight size={18} /></button></div></div>;
+    return <div className="page-stack creation-entry-page creator-page" data-tour-id="creation-entry"><PageHeader title="新建漫剧" description="选择故事的起点。已有文本可以直接导入，还没有故事可以先创作。" /><div className="creation-entry-grid"><button type="button" onClick={onCreateContent}><Sparkles size={22} /><strong>先写一个故事</strong><span>从标题、题材或参考作品出发，完成大纲、章节和剧本。</span><ChevronRight size={18} /></button><button type="button" onClick={() => { setForm((current) => ({ ...current, sourceType: "novel", content: "" })); setEntrySelected(true); }}><BookOpenCheck size={22} /><strong>导入小说或剧本</strong><span>准备好原稿后，确认风格和范围，查看报价再开始制作。</span><ChevronRight size={18} /></button></div><p className="creator-page-footnote">生成内容后仍可逐步编辑。图片、视频与配音在各自的制作阶段单独确认费用。</p></div>;
   }
 
   return (
-    <div className="page-stack creation-workbench u-wizard" data-tour-id="creation-entry">
-      <div className="u-wizard-heading">
-        <div>
-          <h1>新建漫剧</h1>
-          <p>导入内容，确认创作设定，系统自动规划镜头并建立可继续编辑的项目。</p>
-        </div>
-        <button className="ghost-button" onClick={saveDraft}>
+    <div className="page-stack creation-workbench u-wizard creator-page" data-tour-id="creation-entry">
+      <PageHeader title="新建漫剧" description="导入原稿，确认制作设置，查看费用后创建项目。" actions={<button className="ghost-button" disabled={isGenerating} onClick={saveDraft}>
           <Save size={18} />保存草稿
-        </button>
-      </div>
+        </button>} />
 
       <nav className="u-step-tabs" aria-label="创作步骤">
         {stepOrder.map((item, index) => (
           <button
             className={item === step ? "active" : index < activeStepIndex ? "done" : ""}
             key={item}
+            aria-current={item === step ? "step" : undefined}
+            disabled={isGenerating}
             onClick={() => goTo(item)}
             type="button"
           >
@@ -367,7 +366,9 @@ export function WizardPage({ providers, canManageModels = false, onCreated, onCr
           </button>
         ))}
       </nav>
-
+      {error ? <InlineNotice tone="error">{error}</InlineNotice> : null}
+      {message && !isGenerating ? <InlineNotice tone="info" onDismiss={() => setMessage("")}>{message}</InlineNotice> : null}
+      <fieldset className="creator-wizard-fields" disabled={isGenerating}><legend className="creator-sr-only">当前创作步骤</legend>
       {step === "story" ? (
         <StoryStep
           fileInputRef={fileInputRef}
@@ -429,6 +430,7 @@ export function WizardPage({ providers, canManageModels = false, onCreated, onCr
           onStart={start}
         />
       ) : null}
+      </fieldset>
     </div>
   );
 }
@@ -544,7 +546,7 @@ function StoryStep({
               <strong>{item}</strong>
             </div>
           ))}
-          <button className="primary-button full-button" onClick={onNext} type="button">
+          <button className="primary-button full-button" onClick={onNext} disabled={!form.content.trim()} type="button">
             下一步：全局设定 <ChevronRight size={18} />
           </button>
         </section>
@@ -719,8 +721,6 @@ function ScriptStep({
           </button>
         </div>
         {isGenerating ? <OperationProgress title={form.sourceType === "script" ? "剧本拆解中" : "小说改编中"} elapsed={generationElapsed} detail="系统正在建立剧本、场次、角色、场景和镜头计划，请不要重复提交。" /> : null}
-        {message ? <p className="success-text">{message}</p> : null}
-        {error ? <p className="danger-text">{error}</p> : null}
       </section>
 
       <aside className="u-side-stack">
@@ -796,21 +796,16 @@ function EstimatePanel({ estimate, form, onEstimate, isEstimating }: { estimate:
   );
 }
 function OperationProgress({ title, elapsed, detail }: { title: string; elapsed: number; detail: string }) {
-  const percent = Math.min(92, 16 + elapsed * 3);
   return (
-    <div className="operation-progress">
+    <div className="operation-progress" role="status" aria-live="polite" aria-busy="true">
       <div>
         <Loader2 size={17} className="spin-icon" />
         <strong>{title}</strong>
         <span>{elapsed}s</span>
       </div>
-      <div className="operation-progress-track"><span style={{ width: `${percent}%` }} /></div>
+      <div className="operation-progress-track creator-progress-indeterminate" aria-hidden="true"><span /></div>
       <p>{detail}</p>
-      <div className="operation-queue" aria-label="生成任务队列">
-        <span className="active"><i />文本模型处理中<strong>{elapsed}s</strong></span>
-        <span><i />保存剧本与场次<strong>等待中</strong></span>
-        <span><i />提取角色、场景和道具<strong>等待中</strong></span>
-      </div>
+      <small>正在等待处理结果；耗时取决于原稿长度和模型。尚未收到结果前请勿重复创建。</small>
     </div>
   );
 }

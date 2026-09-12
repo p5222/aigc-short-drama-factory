@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Menu, SunMoon, X } from "lucide-react";
+import { dialogStackForDocument } from "../design-system/dialogStack";
 
-export interface AdminNavItem { id: string; label: string; icon?: ReactNode; badge?: string | number; }
-export function AdminShell({ title, description, items, activeId, onNavigate, onThemeToggle, mobileOpen, onMobileOpenChange, children, actions }: { title: string; description?: string; items: AdminNavItem[]; activeId: string; onNavigate: (id: string) => void; onThemeToggle?: () => void; mobileOpen?: boolean; onMobileOpenChange?: (open: boolean) => void; children: ReactNode; actions?: ReactNode; }) {
+export interface AdminNavItem { id: string; label: string; group?: string; icon?: ReactNode; badge?: string | number; }
+export function AdminShell({ title, description, items, activeId, onNavigate, onThemeToggle, mobileOpen, onMobileOpenChange, children, actions }: { title: string; description?: string; items: AdminNavItem[]; activeId: string; onNavigate: (id: string) => boolean | void; onThemeToggle?: () => void; mobileOpen?: boolean; onMobileOpenChange?: (open: boolean) => void; children: ReactNode; actions?: ReactNode; }) {
   const [compact, setCompact] = useState(() => window.matchMedia("(max-width: 820px)").matches);
   const sidebar = useRef<HTMLElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
@@ -10,29 +11,34 @@ export function AdminShell({ title, description, items, activeId, onNavigate, on
   closeMenu.current = onMobileOpenChange;
   useEffect(() => {
     const media = window.matchMedia("(max-width: 820px)");
-    const update = () => setCompact(media.matches);
+    const update = () => { setCompact(media.matches); if (!media.matches) closeMenu.current?.(false); };
     media.addEventListener("change", update);
     return () => media.removeEventListener("change", update);
   }, []);
   useEffect(() => {
-    if (!compact || !mobileOpen) return;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    sidebar.current?.querySelector<HTMLButtonElement>("button")?.focus();
+    if (!compact || !mobileOpen || !sidebar.current) return;
+    const controls = () => [...(sidebar.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)") ?? [])].filter(button => button.getClientRects().length > 0);
+    const lock = dialogStackForDocument(document).register({ element: sidebar.current, focusInitial: () => controls()[0]?.focus(), onEscape: () => closeMenu.current?.(false) });
     const trapFocus = (event: KeyboardEvent) => {
-      if (event.key === "Escape") { event.preventDefault(); closeMenu.current?.(false); }
+      if (!lock.isTop()) return;
+      if (event.key === "Escape") { event.preventDefault(); event.stopImmediatePropagation(); lock.escape(); return; }
       if (event.key !== "Tab") return;
-      const buttons = [...(sidebar.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)") ?? [])];
+      const buttons = controls();
       const first = buttons[0], last = buttons.at(-1);
-      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
-      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+      if (event.shiftKey && (document.activeElement === first || !sidebar.current?.contains(document.activeElement))) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && (document.activeElement === last || !sidebar.current?.contains(document.activeElement))) { event.preventDefault(); first?.focus(); }
     };
     document.addEventListener("keydown", trapFocus);
-    return () => { document.body.style.overflow = previousOverflow; document.removeEventListener("keydown", trapFocus); trigger.current?.focus(); };
+    return () => { document.removeEventListener("keydown", trapFocus); lock.release(); };
   }, [compact, mobileOpen]);
-  return <div className="adm-shell">
-    <aside ref={sidebar} className={`adm-sidebar${mobileOpen ? " is-open" : ""}`} inert={compact && !mobileOpen} aria-hidden={compact && !mobileOpen ? true : undefined} role={compact && mobileOpen ? "dialog" : undefined} aria-modal={compact && mobileOpen ? true : undefined} aria-label={compact ? "后台导航" : undefined}><div className="adm-brand"><span>漫角</span><small>运营控制台</small><button type="button" aria-label="关闭导航" onClick={() => onMobileOpenChange?.(false)}><X /></button></div><nav aria-label="后台模块">{items.map((item) => <button type="button" key={item.id} className={item.id === activeId ? "is-active" : ""} aria-current={item.id === activeId ? "page" : undefined} onClick={() => { onNavigate(item.id); onMobileOpenChange?.(false); }}>{item.icon}<span>{item.label}</span>{item.badge != null ? <em>{item.badge}</em> : null}</button>)}</nav></aside>
-    {mobileOpen ? <button className="adm-scrim" aria-label="关闭导航" onClick={() => onMobileOpenChange?.(false)} /> : null}
-    <section className="adm-main" inert={compact && Boolean(mobileOpen)}><header className="adm-topbar"><button ref={trigger} className="adm-icon-btn adm-menu-trigger" type="button" aria-label="打开导航" aria-expanded={Boolean(mobileOpen)} onClick={() => onMobileOpenChange?.(true)}><Menu /></button><div><h1>{title}</h1>{description ? <p>{description}</p> : null}</div><div className="adm-topbar-actions">{actions}{onThemeToggle ? <button className="adm-icon-btn" type="button" aria-label="切换主题" onClick={onThemeToggle}><SunMoon /></button> : null}</div></header><main className="adm-content">{children}</main></section>
+  const groups = [...new Set(items.map(item => item.group || "工作区"))];
+  return <div className="adm-shell admin-product">
+    <aside ref={sidebar} className={`adm-sidebar${mobileOpen ? " is-open" : ""}`} inert={compact && !mobileOpen} aria-hidden={compact && !mobileOpen ? true : undefined} role={compact && mobileOpen ? "dialog" : undefined} aria-modal={compact && mobileOpen ? true : undefined} aria-label={compact ? "后台导航" : undefined}>
+      <div className="adm-brand"><span className="adm-brand-mark">漫</span><div><strong>漫角</strong><small>运营控制台</small></div><button type="button" aria-label="关闭导航" onClick={() => onMobileOpenChange?.(false)}><X /></button></div>
+      <nav aria-label="后台模块">{groups.map(group => <section className="adm-nav-group" key={group}><h2>{group}</h2>{items.filter(item => (item.group || "工作区") === group).map(item => <button type="button" key={item.id} className={item.id === activeId ? "is-active" : ""} aria-current={item.id === activeId ? "page" : undefined} onClick={() => { if (onNavigate(item.id) !== false) onMobileOpenChange?.(false); }}>{item.icon}<span>{item.id === "套餐会员" ? "充值套餐" : item.id === "订阅会员" ? "订阅方案 · 未开放" : item.label}</span>{item.badge != null ? <em>{item.badge}</em> : null}</button>)}</section>)}</nav>
+      <div className="adm-sidebar-foot"><span className="adm-online-dot" />管理工作区</div>
+    </aside>
+    {compact && mobileOpen ? <button className="adm-scrim" tabIndex={-1} aria-label="关闭导航" onClick={() => onMobileOpenChange?.(false)} /> : null}
+    <section className="adm-main" inert={compact && Boolean(mobileOpen)}><header className="adm-topbar"><button ref={trigger} className="adm-icon-btn adm-menu-trigger" type="button" aria-label="打开导航" aria-expanded={Boolean(mobileOpen)} onClick={() => onMobileOpenChange?.(true)}><Menu /></button><div className="adm-location" aria-label={description || title}><span>工作空间</span><span aria-hidden="true">/</span><strong>管理后台</strong></div><div className="adm-topbar-actions">{actions}{onThemeToggle ? <button className="adm-icon-btn" type="button" aria-label="切换主题" onClick={onThemeToggle}><SunMoon /></button> : null}</div></header><main className="adm-content">{children}</main></section>
   </div>;
 }

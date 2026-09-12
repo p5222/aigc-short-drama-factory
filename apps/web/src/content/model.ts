@@ -58,6 +58,19 @@ export function isCurrentRequest(current: RequestToken | null, completed: Reques
   return current?.projectId === completed.projectId && current.sequence === completed.sequence;
 }
 
+export interface ContentEditorDraft<T> { key: string; base: T; value: T }
+export function contentEditorDirty<T>(draft: ContentEditorDraft<T> | null | undefined): boolean {
+  return Boolean(draft && JSON.stringify(draft.base) !== JSON.stringify(draft.value));
+}
+export function reconcileContentEditor<T>(draft: ContentEditorDraft<T> | null | undefined, key: string, serverValue: T): ContentEditorDraft<T> {
+  return draft?.key === key && contentEditorDirty(draft) ? draft : { key, base: serverValue, value: serverValue };
+}
+export function contentNavigationDecision(pending: boolean, dirty: boolean, confirmDiscard: () => boolean): "continue" | "discard" | "blocked" {
+  if (pending) return "blocked";
+  if (!dirty) return "continue";
+  return confirmDiscard() ? "discard" : "blocked";
+}
+
 export function chapterGenerationPlan(
   outline: Array<{ chapterNo: number }>,
   generated: Array<{ chapterNo: number }>,
@@ -117,4 +130,10 @@ export function cleanModelText(value: unknown): string {
   };
   visit(parsed, 0);
   return parts.join("；").slice(0, 600);
+}
+
+
+export function contentSourceForProject(sources: Record<string, { title: string; content: string }>, projectId: string) {
+  const source = sources[projectId];
+  return source ? { title: source.title, content: source.content } : { title: "", content: "" };
 }

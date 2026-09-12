@@ -30,7 +30,7 @@ export const cineScenes: CineScene[] = [
     posterUrl: `${baseUrl}/media/cineart-home/desert_poster.jpg`,
     eyebrow: "CINE·CAM 01",
     meta: "SHOT-LEVEL PRECISION",
-    title: { cn: "分镜级精准控制", en: "Shot-level precision" },
+    title: { cn: "分镜规划", en: "Storyboarding" },
     scanLabel: { cn: "[ 分镜级精准控制 ]", en: "[ SHOT LOCKED ]" },
     activeLabel: "REC"
   }),
@@ -40,7 +40,7 @@ export const cineScenes: CineScene[] = [
     posterUrl: `${baseUrl}/media/cineart-home/photo-w_poster.jpg`,
     eyebrow: "CINE·CAM 02",
     meta: "CHARACTER CONSISTENCY",
-    title: { cn: "角色跨镜头一致", en: "Character consistency" },
+    title: { cn: "角色设定", en: "Character design" },
     scanLabel: { cn: "[ 角色一致设定 ]", en: "[ CHARACTER LOCK ]" }
   }),
   createScene({
@@ -49,7 +49,7 @@ export const cineScenes: CineScene[] = [
     posterUrl: `${baseUrl}/media/cineart-home/punk-future_poster.jpg`,
     eyebrow: "CINE·CAM 03",
     meta: "STYLE, LOCKED",
-    title: { cn: "风格一键锁定", en: "Style, locked" },
+    title: { cn: "视觉风格", en: "Visual direction" },
     scanLabel: { cn: "[ 风格一致设定 ]", en: "[ STYLE LOCKED ]" }
   }),
   createScene({
@@ -58,7 +58,7 @@ export const cineScenes: CineScene[] = [
     posterUrl: `${baseUrl}/media/cineart-home/girl-booth_poster.jpg`,
     eyebrow: "CINE·CAM 04",
     meta: "ASSETS THAT COMPOUND",
-    title: { cn: "资产沉淀复用", en: "Reusable assets" },
+    title: { cn: "资产管理", en: "Asset library" },
     scanLabel: { cn: "[ 资产沉淀复用 ]", en: "[ ASSET MEMORY ]" }
   }),
   createScene({
@@ -67,7 +67,7 @@ export const cineScenes: CineScene[] = [
     posterUrl: `${baseUrl}/media/cineart-home/bicycle-smile_poster.jpg`,
     eyebrow: "CINE·CAM 05",
     meta: "QUEUE IT, SHIP IT",
-    title: { cn: "极速出片", en: "Queue it, ship it" },
+    title: { cn: "视频合成", en: "Film export" },
     scanLabel: { cn: "[ 极速生产闭环 ]", en: "[ FAST PIPELINE ]" }
   })
 ];

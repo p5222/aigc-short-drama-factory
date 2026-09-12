@@ -1,24 +1,34 @@
 import { useEffect, useId, useRef } from "react";
-import { lockAdminDocumentScroll } from "./adminDialogScroll";
+import { canLeaveAdminEditor } from "./adminDirtyState";
+import { dialogStackForDocument } from "../design-system/dialogStack";
 
 export function useAdminDialog(open: boolean, onClose: () => void, busy = false) {
   const dialogRef = useRef<HTMLElement>(null);
   const titleId = useId();
   const options = useRef({ onClose, busy });
   options.current = { onClose, busy };
+  const requestClose = () => {
+    if (!options.current.busy && (!dialogRef.current || canLeaveAdminEditor(dialogRef.current))) options.current.onClose();
+  };
   useEffect(() => {
-    if (!open) return;
-    const priorFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const releaseScroll = lockAdminDocumentScroll(document);
     const dialog = dialogRef.current;
+    if (!open || !dialog) return;
     const controls = () => Array.from(dialog?.querySelectorAll<HTMLElement>('button, input, select, textarea, a[href], [tabindex]:not([tabindex="-1"])') ?? [])
-      .filter((item) => !item.matches(":disabled") && item.getClientRects().length > 0);
-    (controls()[0] ?? dialog)?.focus();
+      .filter((item) => !item.matches(":disabled") && !item.closest("[inert]") && item.getClientRects().length > 0);
+    // Admin surfaces are nested inside the app root; the stack preserves that ancestor
+    // and the React-owned inert state, while sharing scroll/focus ownership with portals.
+    const lock = dialogStackForDocument(document).register({
+      element: dialog,
+      focusInitial: () => (controls()[0] ?? dialog).focus({ preventScroll: true }),
+      onEscape: requestClose
+    });
     function handleKey(event: KeyboardEvent) {
+      if (!lock.isTop()) return;
       if (event.key === "Escape") {
         event.preventDefault();
-        event.stopPropagation();
-        if (!options.current.busy) options.current.onClose();
+        event.stopImmediatePropagation();
+        lock.escape();
+        return;
       }
       if (event.key !== "Tab") return;
       const available = controls();
@@ -34,9 +44,8 @@ export function useAdminDialog(open: boolean, onClose: () => void, busy = false)
     document.addEventListener("keydown", handleKey, true);
     return () => {
       document.removeEventListener("keydown", handleKey, true);
-      releaseScroll();
-      if (priorFocus?.isConnected) priorFocus.focus({ preventScroll: true });
+      lock.release();
     };
   }, [open]);
-  return { dialogRef, titleId };
+  return { dialogRef, titleId, requestClose };
 }

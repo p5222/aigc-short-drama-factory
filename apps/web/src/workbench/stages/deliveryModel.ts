@@ -284,3 +284,13 @@ export function waveformPoints(seed: string, width: number, height: number, segm
   }
   return points.join(" ");
 }
+
+
+/** Keep labels and empty-track copy independent of the duration-scaled clip width. */
+export function deliveryTimelineCanvas(viewportWidth: number, clipsWidth: number) {
+  const labelWidth = 64, padding = 24, trailing = 48;
+  const viewport = Number.isFinite(viewportWidth) ? Math.max(0, viewportWidth) : 0;
+  const clips = Number.isFinite(clipsWidth) ? Math.max(0, clipsWidth) : 0;
+  const laneWidth = Math.max(240, viewport - labelWidth - padding, clips + trailing);
+  return { labelWidth, laneWidth, contentWidth: laneWidth + labelWidth + padding };
+}

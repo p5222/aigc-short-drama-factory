@@ -25,7 +25,7 @@ export function WorkbenchPage({ summary, onStart, onOpen, onOpenTasks, onRecharg
         <div>
           <span className="section-kicker">创作工作台</span>
           <h1>{summary?.userName ?? "创作者"}，今天继续哪里？</h1>
-          <p>只展示需要关注的项目、生成任务和下一步操作。</p>
+          <p>继续最近项目，查看生成进度与待处理事项。</p>
         </div>
         <button className="primary-button large" onClick={onStart}><Plus size={18} />新建漫剧</button>
       </header>
@@ -50,33 +50,6 @@ export function WorkbenchPage({ summary, onStart, onOpen, onOpenTasks, onRecharg
           {actions.failed.length ? <button type="button" onClick={onOpenTasks}>查看原因<ArrowRight size={15} /></button> : null}
         </article>
       </section>
-
-      <section className="panel workbench-notices" aria-labelledby="workbench-notices-heading">
-        <div className="panel-head">
-          <div><h2 id="workbench-notices-heading"><Megaphone size={18} aria-hidden="true" />平台公告</h2><small>平台更新与使用提醒</small></div>
-          <span className="workbench-notices-count">{announcements.length} 条</span>
-        </div>
-        <div className="workbench-notices-list">
-          {announcements.map((announcement) => (
-            <details className="workbench-notice" key={announcement.id}>
-              <summary>
-                <span className="workbench-notice-copy">
-                  <span className="workbench-notice-meta">
-                    {announcement.pinned === true ? <span className="workbench-notice-pin"><Pin size={12} aria-hidden="true" />置顶</span> : null}
-                    <span className="workbench-notice-type" data-type={announcement.type}>{({ info: "通知", guide: "使用指南", update: "功能更新", warning: "重要提醒" })[announcement.type] ?? "公告"}</span>
-                  </span>
-                  <strong>{announcement.title}</strong>
-                  <span className="workbench-notice-preview" aria-hidden="true">{announcement.body}</span>
-                </span>
-                <span className="workbench-notice-toggle" aria-hidden="true"><span className="workbench-notice-expand">展开全文</span><span className="workbench-notice-collapse">收起全文</span><ChevronDown size={16} /></span>
-              </summary>
-              <div className="workbench-notice-body">{announcement.body}</div>
-            </details>
-          ))}
-          {!announcements.length ? <p className="workbench-notices-empty">暂无公告</p> : null}
-        </div>
-      </section>
-
       <div className="dashboard-work-grid">
         <section className="panel dashboard-project-panel">
           <div className="panel-head">
@@ -112,6 +85,31 @@ export function WorkbenchPage({ summary, onStart, onOpen, onOpenTasks, onRecharg
               {!tasks.length ? <p className="empty-state compact"><CheckCircle2 size={20} />暂无生成任务</p> : null}
             </div>
           </section>
+      <section className="panel workbench-notices" aria-labelledby="workbench-notices-heading">
+        <div className="panel-head">
+          <div><h2 id="workbench-notices-heading"><Megaphone size={18} aria-hidden="true" />平台公告</h2><small>平台更新与使用提醒</small></div>
+          <span className="workbench-notices-count">{announcements.length} 条</span>
+        </div>
+        <div className="workbench-notices-list">
+          {announcements.map((announcement) => (
+            <details className="workbench-notice" key={announcement.id}>
+              <summary>
+                <span className="workbench-notice-copy">
+                  <span className="workbench-notice-meta">
+                    {announcement.pinned === true ? <span className="workbench-notice-pin"><Pin size={12} aria-hidden="true" />置顶</span> : null}
+                    <span className="workbench-notice-type" data-type={announcement.type}>{({ info: "通知", guide: "使用指南", update: "功能更新", warning: "重要提醒" })[announcement.type] ?? "公告"}</span>
+                  </span>
+                  <strong>{announcement.title}</strong>
+                  <span className="workbench-notice-preview" aria-hidden="true">{announcement.body}</span>
+                </span>
+                <span className="workbench-notice-toggle" aria-hidden="true"><span className="workbench-notice-expand">展开全文</span><span className="workbench-notice-collapse">收起全文</span><ChevronDown size={16} /></span>
+              </summary>
+              <div className="workbench-notice-body">{announcement.body}</div>
+            </details>
+          ))}
+          {!announcements.length ? <p className="workbench-notices-empty">暂无公告</p> : null}
+        </div>
+      </section>
         </aside>
       </div>
     </div>

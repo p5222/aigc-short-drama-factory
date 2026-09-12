@@ -1,5 +1,5 @@
 ﻿import { useCallback, useEffect, useMemo, useState } from "react";
-import { Bell, ChartNoAxesCombined, ChevronDown, CircleDollarSign, FilePenLine, Gift, LayoutDashboard, Layers3, Megaphone, Moon, ReceiptText, SlidersHorizontal, UserRound, Video } from "lucide-react";
+import { Bell, ChartNoAxesCombined, ChevronDown, CircleDollarSign, FilePenLine, Gift, LayoutDashboard, Layers3, LogOut, Megaphone, Moon, ReceiptText, SlidersHorizontal, UserRound, Video } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { firstAdminRefreshFailure } from "./admin/adminRefreshModel";
 import { useLayoutEffect } from "react";
@@ -33,7 +33,7 @@ import { contentApi } from "./lib/contentApi";
 import { RoutePageBoundary } from "./components/RoutePageBoundary";
 import { routePageLoader } from "./lib/routePageLoader";
 import { AdminShell } from "./admin";
-import { readAdminHash } from "./admin/adminActionModel";
+import { navigateAdminHash, readAcceptedAdminHash, subscribeAdminNavigation } from "./admin/adminNavigation";
 import { LedgerPage, RechargePage } from "./pages/CreditsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { ScriptsPage } from "./pages/ScriptsPage";
@@ -48,6 +48,7 @@ import { clearAuthToken, readAuthToken } from "./lib/authStorage";
 import { clearWizardDraft } from "./pages/wizardDraftStorage";
 import { BEFORE_CREATOR_NAVIGATION, createRequestEpoch, refreshResources } from "./lib/creatorNavigation";
 import { useCreatorNavigation } from "./lib/useCreatorNavigation";
+import { InlineNotice, StatePanel } from "./design-system/ui";
 
 const AdminPage = lazy(routePageLoader(() => import("./pages/AdminPage").then(module => ({ default: module.AdminPage }))));
 const ProjectWorkbenchPage = lazy(routePageLoader(() => import("./pages/ProjectWorkbenchPage").then(module => ({ default: module.ProjectWorkbenchPage }))));
@@ -58,6 +59,20 @@ const THEME_STORAGE_KEY = "manjiao-theme";
 const AUTH_RESUME_PAGE_KEY = "manjiao-auth-resume-page";
 const AUTH_RESUME_PROJECT_KEY = "manjiao-auth-resume-project";
 const AUTH_RESUME_USER_KEY = "manjiao-auth-resume-user";
+
+const creatorPageResources: Partial<Record<PageKey, string[]>> = {
+  workbench: ["工作台"], scripts: ["漫剧作品", "内容作品"], studio: ["漫剧作品", "生成队列"],
+  tasks: ["生成队列"], profile: ["账户积分", "工作台", "积分明细", "充值记录"],
+  recharge: ["充值套餐", "会员配置", "模型价格"], ledger: ["账户积分", "积分明细"],
+  help: ["帮助文章"], wizard: ["模型渠道"], content: ["模型渠道"]
+};
+const adminResourceLabels = ["充值套餐", "会员配置", "兑换码", "平台公告", "帮助文章", "用户列表", "模型渠道", "模型价格", "提示词模板", "运营概况", "质量概况", "质量项目"];
+const adminPageResources: Record<string, string[]> = {
+  "运营总览": ["运营概况"], "用户管理": ["用户列表"], "平台公告": ["平台公告", "帮助文章"],
+  "创作质量中心": ["质量概况", "质量项目", "模型渠道"], "兑换码": ["兑换码"],
+  "套餐会员": ["充值套餐"], "订阅会员": ["会员配置"], "模型路由": ["模型渠道"],
+  "价格策略": ["模型价格", "模型渠道"], "提示词评分": ["提示词模板"]
+};
 
 function getInitialTheme(): WorkbenchTheme {
   let storedTheme: string | null = null;
@@ -116,7 +131,7 @@ export function App() {
   const { route, routeRef, navigate } = useCreatorNavigation(!isAdminRoute);
   const activePage = route.page;
   const setActivePage = useCallback((page: PageKey) => navigate({ page }), [navigate]);
-  const [adminHash, setAdminHash] = useState(() => normalizeAdminHash(readAdminHash(window.location.hash)));
+  const [adminHash, setAdminHash] = useState(() => isAdminRoute ? normalizeAdminHash(readAcceptedAdminHash()) : "运营总览");
   const [adminMobileOpen, setAdminMobileOpen] = useState(false);
   const [tourOpen, setTourOpen] = useState(false);
   const [tourIndex, setTourIndex] = useState(0);
@@ -151,6 +166,11 @@ export function App() {
   const [error, setError] = useState("");
   const [sessionExpired, setSessionExpired] = useState(false);
   const [dataReady, setDataReady] = useState(false);
+  const [dataRefreshing, setDataRefreshing] = useState(false);
+  const [readResources, setReadResources] = useState<Set<string>>(() => new Set());
+  const markResourcesRead = useCallback((labels: string[]) => {
+    setReadResources((current) => new Set([...current, ...labels]));
+  }, []);
   const [projectError, setProjectError] = useState("");
   const [projectRetry, setProjectRetry] = useState(0);
   const refreshEpoch = useRef(createRequestEpoch()).current;
@@ -188,10 +208,10 @@ export function App() {
 
   useEffect(() => {
     if (!isAdminRoute) return;
-    const syncAdminHash = () => setAdminHash(normalizeAdminHash(readAdminHash(window.location.hash)));
-    window.addEventListener("hashchange", syncAdminHash);
+    const syncAdminHash = () => setAdminHash(normalizeAdminHash(readAcceptedAdminHash()));
+    const unsubscribe = subscribeAdminNavigation(syncAdminHash);
     syncAdminHash();
-    return () => window.removeEventListener("hashchange", syncAdminHash);
+    return unsubscribe;
   }, [isAdminRoute]);
 
   useEffect(() => {
@@ -233,6 +253,8 @@ export function App() {
 
   const loadAdmin = useCallback(async () => {
     if (!user || !adminRoles.has(user.role)) return;
+    const token = refreshEpoch.begin();
+    setDataRefreshing(true);
     try {
       const [
         adminPlansRes,
@@ -263,7 +285,7 @@ export function App() {
           api.adminQualityProjects()
         ]);
 
-      if (userRef.current?.id !== user.id) return;
+      if (!refreshEpoch.current(token) || userRef.current?.id !== user.id) return;
       setPlans([]);
       if (adminPlansRes.status === "fulfilled") setAdminPlans(adminPlansRes.value);
       if (adminMembershipPlansRes.status === "fulfilled") setMembershipPlans(adminMembershipPlansRes.value);
@@ -279,13 +301,16 @@ export function App() {
       if (qualityProjectsRes.status === "fulfilled") setQualityProjects(qualityProjectsRes.value);
 
       const failure = firstAdminRefreshFailure([adminPlansRes, adminMembershipPlansRes, redeemCodesRes, announcementsRes, helpArticlesRes, adminUsersRes, providersRes, modelPricesRes, templatesRes, adminRes, evaluationRes, qualityProjectsRes]);
+      markResourcesRead([adminPlansRes, adminMembershipPlansRes, redeemCodesRes, announcementsRes, helpArticlesRes, adminUsersRes, providersRes, modelPricesRes, templatesRes, adminRes, evaluationRes, qualityProjectsRes].flatMap((result, index) => result.status === "fulfilled" ? [adminResourceLabels[index]] : []));
       if (failure) throw failure;
       setError("");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "API 连接异常");
+      if (refreshEpoch.current(token)) setError(err instanceof Error ? err.message : "API 连接异常");
       throw err;
+    } finally {
+      if (refreshEpoch.current(token)) { setDataReady(true); setDataRefreshing(false); }
     }
-  }, [adminRoles, user]);
+  }, [adminRoles, user, refreshEpoch, markResourcesRead]);
 
   const load = useCallback(async () => {
     if (!user) return;
@@ -295,6 +320,7 @@ export function App() {
     }
 
     const token = refreshEpoch.begin();
+    setDataRefreshing(true);
     try {
       await refreshResources([
         { label: "工作台", read: () => api.workbench(), apply: setSummary },
@@ -309,15 +335,15 @@ export function App() {
         { label: "模型价格", read: () => api.modelPrices(), apply: setModelPrices },
         { label: "帮助文章", read: () => api.helpArticles(), apply: setHelpArticles },
         { label: "内容作品", read: () => contentApi.projects(), apply: setContentProjects }
-      ], () => refreshEpoch.current(token) && userRef.current?.id === user.id);
+      ], () => refreshEpoch.current(token) && userRef.current?.id === user.id, markResourcesRead);
       if (refreshEpoch.current(token)) setError("");
     } catch (err) {
       if (refreshEpoch.current(token)) setError(err instanceof Error ? err.message : "数据刷新失败，请稍后重试。");
       throw err;
     } finally {
-      if (refreshEpoch.current(token)) setDataReady(true);
+      if (refreshEpoch.current(token)) { setDataReady(true); setDataRefreshing(false); }
     }
-  }, [isAdminRoute, loadAdmin, user, refreshEpoch]);
+  }, [isAdminRoute, loadAdmin, user, refreshEpoch, markResourcesRead]);
 
   const openProject = useCallback(async (projectId: string) => {
     navigate({ page: "project", projectId });
@@ -365,6 +391,8 @@ export function App() {
     setUser(null);
     setAuthRecoveryFailed(false);
     setDataReady(false);
+    setDataRefreshing(false);
+    setReadResources(new Set());
     setSummary(undefined);
     setProjects([]);
     setContentProjects([]);
@@ -434,7 +462,7 @@ export function App() {
       case "workbench":
         return <WorkbenchPage summary={summary} onStart={openFreshWizard} onOpen={(projectId) => void openProject(projectId)} onOpenTasks={() => setActivePage("tasks")} onRecharge={() => setActivePage("recharge")} />;
       case "content":
-        return <ContentCreatorPage providers={providers} initialSelectedId={contentFocusId} onBack={() => setActivePage("scripts")} onEnterProduction={async (projectId) => {
+        return <ContentCreatorPage key={`${user?.id ?? "anonymous"}:${contentFocusId || "default"}`} providers={providers} initialSelectedId={contentFocusId} onBack={() => setActivePage("scripts")} onEnterProduction={async (projectId) => {
                 await openProject(projectId);
           void load().catch(() => undefined);
         }} />;
@@ -518,15 +546,20 @@ export function App() {
     }
   }, [navigate, openProject, projectError, route.projectId, account, activePage, adminPlans, adminSummary, adminUsers, announcements, contentFocusId, contentProjects, handleThemeChange, helpArticles, membershipPlans, modelPrices, openingProjectId, orders, plans, projects, providers, redeemCodes, summary, tasks, templates, theme, transactions, workflow, load, user]);
 
+  const unreadResources = (isAdminRoute ? adminPageResources[adminHash] ?? [] : creatorPageResources[activePage] ?? []).filter((label) => !readResources.has(label));
+  const initialReadState = !dataReady || unreadResources.length ? <div className="page-stack"><StatePanel
+    kind={!dataReady || dataRefreshing ? "loading" : "error"}
+    title={!dataReady || dataRefreshing ? "正在读取页面数据" : "页面数据尚未读取成功"}
+    description={!dataReady || dataRefreshing ? "请稍候，读取完成后会展示内容。" : `${unreadResources.join("、")}暂时无法读取，当前无法判断是否有内容。请重试。`}
+    action={dataReady && !dataRefreshing ? <button type="button" className="primary-button" onClick={() => void load().catch(() => undefined)}>重试读取</button> : undefined}
+  /></div> : null;
+
   if (!authReady) {
-    return <div className="app-loading">正在连接 AI 漫剧工作台...</div>;
+    return <main className="ui-connection-page"><StatePanel kind="loading" title="正在连接工作空间" description="正在确认登录状态，请稍候。" /></main>;
   }
 
   if (!user) {
-    if (authRecoveryFailed) return <main className="page-stack"><section className="panel centered-panel">
-      <h1>暂时无法连接工作台</h1><p role="alert">{error}</p>
-      <div className="inline-actions"><button type="button" className="primary-button" onClick={() => setAuthAttempt((value) => value + 1)}>重试连接</button><button type="button" className="ghost-button" onClick={() => clearAuthState()}>返回登录</button></div>
-    </section></main>;
+    if (authRecoveryFailed) return <main className="ui-connection-page"><StatePanel kind="error" title="暂时无法连接工作台" description={error || "网络连接未能完成，登录信息暂未更改。"} action={<><button type="button" className="primary-button" onClick={() => setAuthAttempt((value) => value + 1)}>重试连接</button><button type="button" className="ghost-button" onClick={() => clearAuthState()}>返回登录</button></>} /></main>;
     return <LoginPage
       variant={isAdminRoute ? "admin" : "creator"}
       initialAuthOpen={sessionExpired || Boolean(error)}
@@ -569,17 +602,17 @@ export function App() {
       <AdminShell
         title="后台管理系统"
         description="创作、质量、模型与商业化统一运营"
-        items={adminNavGroups.flatMap((group) => group.items.map(({ name, icon: Icon }) => ({ id: name, label: name, icon: <Icon size={17} /> })))}
+        items={adminNavGroups.flatMap((group) => group.items.map(({ name, icon: Icon }) => ({ id: name, label: name, group: group.label, icon: <Icon size={17} /> })))}
         activeId={adminHash}
-        onNavigate={(id) => { window.location.hash = encodeURIComponent(id); }}
+        onNavigate={navigateAdminHash}
         onThemeToggle={handleToggleTheme}
         mobileOpen={adminMobileOpen}
         onMobileOpenChange={setAdminMobileOpen}
-        actions={<><button className="adm-primary-btn" type="button" onClick={() => { window.location.href = "/"; }}>返回前台</button><button className="adm-icon-btn" type="button" onClick={logout} aria-label="退出登录">退</button></>}
+        actions={<><button className="adm-primary-btn" type="button" onClick={() => { window.location.href = "/"; }}>返回前台</button><button className="adm-icon-btn" type="button" onClick={logout} aria-label="退出登录" title="退出登录"><LogOut size={18} /></button></>}
       >
-        {error ? <div className="error-banner" role="alert">{error} <button type="button" onClick={() => void load().catch(() => undefined)}>重新加载</button></div> : null}
+        {error ? <InlineNotice tone="error">{error} <button type="button" className="ui-text-button" onClick={() => void load().catch(() => undefined)}>重新加载</button></InlineNotice> : null}
         <RoutePageBoundary routeId="admin" onBack={() => { window.location.href = "/"; }} backLabel="返回前台">
-        <AdminPage
+        {initialReadState ?? <AdminPage
           userId={user.id}
           summary={adminSummary}
           providers={providers}
@@ -594,7 +627,7 @@ export function App() {
           evaluation={evaluationOverview}
           qualityProjects={qualityProjects}
           onRefresh={() => loadAdmin()}
-        />
+        />}
         </RoutePageBoundary>
       </AdminShell>
     );
@@ -603,7 +636,7 @@ export function App() {
   if (activePage === "project") {
     return (
       <>
-        {error ? <div className="error-banner" role="alert">{error} <button type="button" onClick={() => void load().catch(() => undefined)}>重新加载</button></div> : null}
+        {error ? <InlineNotice tone="error">{error} <button type="button" className="ui-text-button" onClick={() => void load().catch(() => undefined)}>重新加载</button></InlineNotice> : null}
         <RoutePageBoundary routeId={route.projectId ?? "project"} onBack={() => setActivePage("scripts")}>{page}</RoutePageBoundary>
         {tourOpen ? (
           <ProductTour
@@ -627,7 +660,7 @@ export function App() {
         setTourIndex(0);
         setTourOpen(true);
       }}
-      credits={account?.balance ?? summary?.credits ?? 0}
+      credits={account?.balance ?? summary?.credits}
       theme={theme}
       onToggleTheme={handleToggleTheme}
       userName={user.name}
@@ -638,8 +671,8 @@ export function App() {
       onOpenContent={(id) => navigate({ page: "content", contentId: id })}
       onLogout={logout}
     >
-      {error ? <div className="error-banner" role="alert">{error} <button type="button" onClick={() => void load().catch(() => undefined)}>重新加载</button></div> : null}
-      {dataReady ? <RoutePageBoundary routeId={activePage} onBack={() => setActivePage("scripts")}>{page}</RoutePageBoundary> : <div className="page-stack" role="status" aria-live="polite"><section className="panel centered-panel">正在同步作品与账户数据…</section></div>}
+      {error ? <div className="ui-page-notice"><InlineNotice tone="error">{error} <button type="button" className="ui-text-button" onClick={() => void load().catch(() => undefined)}>重新加载</button></InlineNotice></div> : null}
+      {initialReadState ?? <RoutePageBoundary routeId={`${activePage}:${route.contentId ?? ""}`} onBack={() => setActivePage("scripts")}>{page}</RoutePageBoundary>}
       {tourOpen ? (
         <ProductTour
           activePage={activePage}

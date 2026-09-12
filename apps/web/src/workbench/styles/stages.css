@@ -147,7 +147,7 @@
   justify-content: center;
   gap: 8px;
   min-height: 38px;
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--ds-border-strong);
   background: var(--surface-1);
   color: var(--text-1);
   font: inherit;
@@ -2124,4 +2124,95 @@
     font-size: 12px;
     line-height: 1.5;
   }
+}
+
+/* Production surfaces share a compact inspector and a calm reading canvas. */
+.wb-region-section, .wb-route-panel, .wb-inspector-section { padding: 20px; }
+.wb-region-heading { font-size: 15px; font-weight: 600; }
+.wb-region-copy { line-height: 1.65; }
+.wb-asset-canvas, .wb-shot-canvas { padding: 24px clamp(20px, 3vw, 40px) 32px; }
+.wb-asset-canvas__heading, .wb-shot-canvas__heading { margin-bottom: 20px; }
+.wb-asset-canvas__heading h1, .wb-asset-canvas__heading h2, .wb-shot-canvas__heading h2 { font-size: 20px; font-weight: 600; letter-spacing: -.3px; }
+.wb-asset-canvas__heading small, .wb-shot-canvas__heading small { font-size: 12px; line-height: 1.6; }
+.wb-asset-media-button { border-radius: 8px; overflow: hidden; border: 1px solid var(--ds-border-media); }
+.wb-asset-details { margin-top: 24px; gap: 0 20px; }
+.wb-asset-details section:nth-child(2n) { padding-left: 20px; }
+.wb-asset-details h2 { margin-bottom: 10px; font-weight: 600; }
+.wb-asset-details p { font-size: 13px; line-height: 1.8; }
+.wb-asset-list__copy strong { font-size: 13px; font-weight: 600; }
+.wb-asset-list__copy small { line-height: 1.6; }
+.wb-shot-editor, .wb-shot-generation { padding: 20px; gap: 14px; }
+.wb-shot-editor :is(input, textarea), .wb-shot-route select { border-color: var(--ds-border-strong); }
+.wb-shot-table { font-size: 13px; line-height: 1.65; }
+.wb-shot-table td button { min-height: 36px; }
+.wb-content-field textarea { font-size: 14px; line-height: 1.85; }
+.wb-asset-canvas > .ui-notice { margin-bottom: 16px; }
+.dlv2-topbar { min-height: 56px; padding-inline: 20px; flex-wrap: wrap; }
+.dlv2-frame { grid-template-rows: auto minmax(0, 1fr) 218px; }
+.dlv2-main { grid-template-columns: 264px minmax(0, 1fr) 316px; }
+.dlv2-panel-head { min-height: 56px; padding-inline: 16px; }
+.dlv2-card { border-radius: 8px; box-shadow: none; }
+.dlv2-btn { min-height: 38px; font-size: 13px; }
+.dlv2-tl-toolbar { min-height: 42px; }
+.dlv2-tl-tools > strong { color: var(--ds-text-secondary); font-size: 12px; font-weight: 500; }
+.dlv2-audio-label { display: flex; align-items: center; gap: 6px; height: 100%; padding: 0 8px; overflow: hidden; white-space: nowrap; font-size: 11px; color: var(--ds-status-info); }
+.dlv2-wave .dlv2-audio-label svg { flex: 0 0 13px; width: 13px; height: 13px; }
+.dlv2-flash { max-width: 380px; white-space: normal; overflow-wrap: anywhere; padding-block: 8px; line-height: 1.6; }
+@media (max-width: 1199px) { .dlv2-main { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 767px) {
+  .wb-asset-canvas, .wb-shot-canvas { padding: 20px 16px 28px; }
+  .wb-asset-details { display: block; }
+  .wb-asset-details section:nth-child(2n) { padding-left: 0; border-left: 0; }
+  .wb-shell .dlv2-topbar { padding: 14px 16px; }
+  .wb-shell .dlv2-frame { grid-template-rows: none; }
+  .wb-shot-table td button { min-height: 44px; }
+}
+
+/* Track names use a fixed column; the time-scaled lane owns clips and playhead. */
+.wb-shell .dlv2-timeline { grid-template-columns: minmax(0, 1fr); }
+.wb-shell .dlv2-tl-scroll { display: block; width: 100%; min-width: 0; }
+.wb-shell .dlv2-tl-content { --tl-video-height: 56px; --tl-audio-height: 32px; --tl-subtitle-height: 28px; display: grid; grid-template-columns: 64px minmax(0, 1fr); padding: 0 12px 12px; }
+.dlv2-track-labels, .dlv2-track-lanes { display: grid; grid-template-rows: 20px var(--tl-video-height) var(--tl-audio-height) var(--tl-subtitle-height); gap: 4px; min-width: 0; }
+.dlv2-track-labels { position: sticky; left: 0; z-index: 4; background: var(--timeline-track); border-right: 1px solid var(--ds-border-divider); }
+.dlv2-track-labels strong { display: flex; align-items: center; padding-left: 8px; color: var(--ds-text-secondary); font-size: 12px; font-weight: 500; }
+.dlv2-track-lanes { position: relative; }
+.wb-shell .dlv2-track-lanes .dlv2-tl-ruler { height: auto; margin: 0; overflow: hidden; }
+.wb-shell .dlv2-track-lanes .dlv2-track { height: auto; width: 100%; min-width: 0; margin: 0; padding: 0; overflow: hidden; }
+.wb-shell .dlv2-track-lanes .dlv2-track::before { display: none; content: none; }
+.wb-shell .dlv2-track-empty { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; justify-content: flex-start; overflow: hidden; padding: 0 12px; white-space: nowrap; font-size: 12px; }
+.wb-shell .dlv2-playhead { margin-left: 0; }
+.wb-shell .dlv2-clip + .dlv2-clip, .wb-shell .dlv2-wave + .dlv2-wave, .wb-shell .dlv2-subtitle-block + .dlv2-subtitle-block { margin-left: 0; }
+.wb-shell .dlv2-shot-row { grid-template-columns: 28px minmax(0, 1fr) auto; gap: 2px; padding: 4px; cursor: default; }
+.dlv2-shot-check { display: grid; place-items: center; min-height: 44px; cursor: pointer; }
+.dlv2-shot-check input { margin: 0; }
+.dlv2-shot-preview { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; align-items: center; gap: 8px; min-height: 44px; min-width: 0; width: 100%; padding: 2px; border: 0; border-radius: 4px; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.dlv2-shot-preview .dlv2-shot-thumb { width: 44px; }
+.dlv2-shot-preview .dlv2-shot-flags { flex-wrap: wrap; justify-content: flex-end; }
+.dlv2-shot-row > .dlv2-expand-error { width: 28px; height: 44px; }
+@media (max-width: 767px) {
+  .wb-shell .dlv2-tl-content { --tl-video-height: 64px; --tl-audio-height: 40px; --tl-subtitle-height: 40px; }
+  .wb-shell .dlv2-shot-row { grid-template-columns: 44px minmax(0, 1fr) auto; }
+  .dlv2-shot-row > .dlv2-expand-error { width: 44px; }
+}
+
+/* Match the header's drawer entry points at tablet and phone widths. */
+.dlv2-panel-scrim { position: fixed; inset: 0; z-index: 39; padding: 0; border: 0; background: var(--ds-overlay); }
+@media (min-width: 980px) and (max-width: 1199px) {
+  .wb-shell .dlv2-main { grid-template-columns: 240px minmax(0, 1fr); }
+  .wb-shell .dlv2-frame .dlv2-queue { position: static; display: grid; width: auto; min-width: 0; box-shadow: none; }
+  .wb-shell .dlv2-queue .dlv2-drawer-close { display: none; }
+}
+@media (max-width: 1199px) {
+  .wb-shell .dlv2-frame .dlv2-side { position: fixed; top: 68px; bottom: 0; right: 0; z-index: 40; width: min(340px, 100vw); display: none; box-shadow: var(--ds-shadow-floating); }
+  .wb-shell .dlv2-frame[data-inspector-open="true"] .dlv2-side { display: block; }
+  .wb-shell .dlv2-side .dlv2-drawer-close { display: inline-grid; min-height: 44px; min-width: 44px; }
+}
+@media (max-width: 979px) {
+  .wb-shell .dlv2-main { grid-template-columns: minmax(0, 1fr); }
+  .wb-shell .dlv2-frame .dlv2-queue { position: fixed; top: 68px; bottom: 0; left: 0; z-index: 40; width: min(340px, 100vw); display: none; }
+  .wb-shell .dlv2-frame[data-rail-open="true"] .dlv2-queue { display: grid; }
+  .wb-shell .dlv2-queue .dlv2-drawer-close { display: inline-grid; min-height: 44px; min-width: 44px; }
+}
+@media (max-width: 767px) {
+  .wb-shell .dlv2-frame .dlv2-queue, .wb-shell .dlv2-frame .dlv2-side { top: var(--wb-mobile-header-height, 105px); }
 }

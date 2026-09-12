@@ -48,6 +48,7 @@ import {
 } from "@aifilm/shared";
 import { api } from "../lib/api";
 import { BEFORE_CREATOR_NAVIGATION } from "../lib/creatorNavigation";
+import { InlineNotice } from "../design-system/ui";
 import { ProductionWorkspace } from "../workbench/components/ProductionWorkspace";
 import { WorkbenchHeader } from "../workbench/components/WorkbenchHeader";
 import { WorkbenchProvider, type WorkbenchSaveState } from "../workbench/WorkbenchContext";
@@ -322,7 +323,7 @@ function LoadedProjectWorkbenchPage({ workflow, providers, modelPrices, theme, o
       theme={theme}
       onThemeChange={onThemeChange}
     >
-    <div className="wb-shell project-workbench" data-theme={theme}>
+    <div className={`wb-shell project-workbench${operation || message || error ? " wb-has-notices" : ""}`} data-theme={theme}>
       <WorkbenchHeader
         projectName={project.name}
         projectMeta={`${project.episodes} 集 · ${project.videoRatio}`}
@@ -342,9 +343,14 @@ function LoadedProjectWorkbenchPage({ workflow, providers, modelPrices, theme, o
           setRailOpen(false);
           setInspectorOpen(true);
         }}
-        onOpenTasks={() => setTaskDrawerOpen(true)}
-        onOpenEvaluation={() => setEvaluationDrawerOpen(true)}
+        onOpenTasks={() => { setRailOpen(false); setInspectorOpen(false); setEvaluationDrawerOpen(false); setTaskDrawerOpen(true); }}
+        onOpenEvaluation={() => { setRailOpen(false); setInspectorOpen(false); setTaskDrawerOpen(false); setEvaluationDrawerOpen(true); }}
       />
+      {operation || message || error ? <div className="wb-project-notices">
+        {operation ? <InlineNotice tone="info"><strong>{operation.title}</strong><span> · 已等待 {operationElapsed} 秒</span><p>{operation.detail}</p></InlineNotice> : null}
+        {message ? <InlineNotice tone="success" onDismiss={() => setMessage("")}>{message}</InlineNotice> : null}
+        {error ? <InlineNotice tone="error" onDismiss={() => setError("")}>{error}<button className="wb-text-button" type="button" disabled={isBusy} onClick={() => void refreshProject().catch(() => undefined)}>重新核对项目数据</button></InlineNotice> : null}
+      </div> : null}
       <TaskDrawer open={taskDrawerOpen} tasks={workflow.tasks} onClose={() => setTaskDrawerOpen(false)} />
       <EvaluationDrawer open={evaluationDrawerOpen} reports={qualityReports} feedbacks={feedbacks} onClose={() => setEvaluationDrawerOpen(false)} onRefresh={() => void refreshProject().catch(() => undefined)} />
       {activeTab === "content" ? (

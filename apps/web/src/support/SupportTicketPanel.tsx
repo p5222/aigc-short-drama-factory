@@ -5,6 +5,7 @@ import { api } from "../lib/api";
 import { HttpError } from "../lib/httpClient";
 import { captureSupportAttempt, claimSupportDraft, completeSupportAttempt, createSupportReadGate, emptySupportDraft, mergeSupportSummary, readSupportDraft, supportCategories, supportRequestId, supportStatuses, supportStorageKey, validateSupportCreate, validateSupportMessage, writeSupportDraft } from "./supportTicketModel";
 import "./supportTickets.css";
+import { InlineNotice } from "../design-system/ui";
 
 export interface SupportTicketIntent { view: "list" | "new"; key: number }
 interface SupportTicketPanelProps { userId: string; intent?: SupportTicketIntent }
@@ -185,8 +186,8 @@ function TicketPanel({ userId, intent, mode }: SupportTicketPanelProps & { mode:
 
   const disabled = Boolean(pending);
   return <section className="support-panel" id={staff ? "support-admin-tickets" : "support-tickets"} aria-labelledby={titleId}>
-    <header className="support-heading"><div><span className="support-eyebrow">{staff ? "SUPPORT QUEUE" : "HELP & SUPPORT"}</span><h2 ref={heading} id={titleId} tabIndex={-1}>{staff ? "支持工单" : "我的工单"}</h2><p>{staff ? "查看用户问题并留下可追溯的站内回复。" : "提交问题、查看回复，在问题解决后关闭工单。"}</p></div><div className="support-actions">{!staff ? <button className="support-primary" type="button" disabled={disabled} onClick={() => changeView("new")}><Plus size={16} />提交问题</button> : null}<button type="button" disabled={disabled || listLoading} onClick={() => setListReload(value => value + 1)}><RefreshCw size={16} />刷新列表</button></div></header>
-    {notice ? <p className="support-notice" role="status">{notice}</p> : null}
+    <header className="support-heading"><div><h2 ref={heading} id={titleId} tabIndex={-1}>{staff ? "支持工单" : "工单记录"}</h2><p>{staff ? "查看用户问题并留下可追溯的站内回复。" : "选择工单查看对话，未解决的问题可以继续补充。"}</p></div><div className="support-actions">{!staff ? <button className="support-primary" type="button" disabled={disabled} onClick={() => changeView("new")}><Plus size={16} />新建工单</button> : null}<button type="button" disabled={disabled || listLoading} onClick={() => setListReload(value => value + 1)}><RefreshCw size={16} />刷新列表</button></div></header>
+    {notice ? <InlineNotice tone="success" onDismiss={() => setNotice("")}>{notice}</InlineNotice> : null}
     <div className="support-layout">
       <aside className="support-list" aria-label="工单列表"><div className="support-list-filter"><label>状态<select value={status} disabled={disabled} onChange={event => { setStatus(event.target.value as SupportTicketStatus | "all"); setPage(1); }}><option value="all">全部工单</option>{Object.entries(supportStatuses).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><span>{listError ? "统计待刷新" : listLoading ? "同步中" : `共 ${total} 条`}</span></div>
         {listError ? <p className="support-error" role="alert">列表未能刷新：{listError}<button type="button" disabled={disabled || listLoading} onClick={() => setListReload(value => value + 1)}>重试读取列表</button></p> : null}

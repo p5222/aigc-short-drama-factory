@@ -3,7 +3,9 @@ import { useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import { analyzeProductionEpisodes, episodeGenerationOptions, type ContentProductionPackage, type ContentProjectSummary, type ModelProvider, type StyleProfile } from "@aifilm/shared";
 import { contentApi, type ContentVersionHistory, type SourceDocumentInput } from "../lib/contentApi";
 import { ModelRoutePicker } from "../components/ModelRoutePicker";
-import { chapterGenerationPlan, chapterNavigationStage, cleanModelText, isCurrentRequest, modeLabel, reconcileProjectId, sourceKindForMode, statusLabel, type RequestToken } from "./model";
+import { chapterGenerationPlan, chapterNavigationStage, cleanModelText, contentEditorDirty, contentNavigationDecision, contentSourceForProject, reconcileContentEditor, isCurrentRequest, modeLabel, reconcileProjectId, sourceKindForMode, statusLabel, type ContentEditorDraft, type RequestToken } from "./model";
+import { BEFORE_CREATOR_NAVIGATION } from "../lib/creatorNavigation";
+import { InlineNotice, StatePanel } from "../design-system/ui";
 
 const emptyStyle: StyleProfile = { key: "", name: "", category: "", summary: "", characterRules: [], sceneRules: [], lightingRules: [], cameraRules: [], materialRules: [], negativeRules: [] };
 const styleOptions: Array<Pick<StyleProfile, "key" | "name" | "category" | "summary">> = [
@@ -76,6 +78,10 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
   const handoffPending = useRef(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [detailLoading, setDetailLoading] = useState(Boolean(selectedId));
+  const [detailError, setDetailError] = useState("");
+  const [detailReload, setDetailReload] = useState(0);
+  const [outlineDraft, setOutlineDraft] = useState<ContentEditorDraft<Record<string, unknown>> | null>(null);
   const [failedProjectId, setFailedProjectId] = useState("");
   const [savedSources, setSavedSources] = useState<Record<string, { title: string; content: string }>>({});
   const [packages, setPackages] = useState<Record<string, ContentProductionPackage>>({});
@@ -88,23 +94,29 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
   useEffect(() => {
     activeRequest.current = null;
     setBusy((current) => current === "save" ? "" : current);
-    setMessage(""); setError(""); setSourceTitle(""); setSourceContent(""); setSourceOpen(false); setFocusStage("");
+    if (!creating) { setMessage(""); setError(""); }
+    const source = contentSourceForProject(savedSources, selectedId);
+    setSourceTitle(source.title); setSourceContent(source.content); setSourceOpen(false); setFocusStage("");
   }, [selectedId]);
 
   useEffect(() => {
     if (!selectedId) return;
     let active = true;
+    setDetailLoading(true); setDetailError("");
     void contentApi.productionPackage(selectedId).then((result) => {
       if (!active) return;
       setPackages((current) => ({ ...current, [selectedId]: result }));
       if (result.source) {
         setSavedSources((current) => ({ ...current, [selectedId]: { title: result.source!.title, content: result.source!.content } }));
-        setSourceTitle(result.source.title);
-        setSourceContent(result.source.content);
+        if (!navigation.current.dirty) {
+          setSourceTitle(result.source.title);
+          setSourceContent(result.source.content);
+        }
       }
-    }).catch((reason) => active && setError(reason instanceof Error ? reason.message : "内容详情加载失败"));
+    }).catch((reason) => { if (active) setDetailError(reason instanceof Error ? reason.message : "内容详情加载失败"); })
+      .finally(() => { if (active) setDetailLoading(false); });
     return () => { active = false; };
-  }, [selectedId]);
+  }, [selectedId, detailReload]);
 
   const selectedPackage = selectedId ? packages[selectedId] : undefined;
   useEffect(() => {
@@ -124,7 +136,7 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
   const generationPlan = chapterGenerationPlan(outline.map((item, index) => ({ chapterNo: Number(item.chapterNo ?? index + 1) })), chapters, batchSize);
   const serverBusy = !busy && selected?.status === "running";
   const working = Boolean(busy) || serverBusy;
-  const [editingChapter, setEditingChapter] = useState<{ chapterNo: number; title: string; content: string } | null>(null);
+  const [editingChapter, setEditingChapter] = useState<{ chapterNo: number; title: string; content: string; originalTitle: string; originalContent: string } | null>(null);
   const handoffSource = selected ? savedSources[selected.id] : undefined;
   const handoffContent = productionPackage?.script?.content.trim() || "";
   const handoffEpisode = productionPackage?.episodes?.find((episode) => episode.episodeNo === handoffEpisodeNo) ?? productionPackage?.episodes?.[0];
@@ -135,6 +147,40 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
   const completedEpisodeNos = productionPackage?.episodes?.filter((episode) => episode.activeScriptVersion > 0 && episode.status !== "stale").map((episode) => episode.episodeNo) ?? [];
   const episodeOptions = episodeGenerationOptions(episodeAnalysis.maxEpisodes, completedEpisodeNos);
   const stageIndex = stageFlow.findIndex((item) => item.id === currentStage);
+  const outlineKey = `${selectedId}:${productionPackage?.outline?.id ?? ""}`;
+  const currentOutlineDraft = reconcileContentEditor(outlineDraft, outlineKey, productionPackage?.outline?.result ?? {});
+  const sourceDirty = sourceTitle !== (handoffSource?.title ?? "") || sourceContent !== (handoffSource?.content ?? "");
+  const chapterDirty = Boolean(editingChapter && (editingChapter.title !== editingChapter.originalTitle || editingChapter.content !== editingChapter.originalContent));
+  const hasUnsavedInput = contentEditorDirty(currentOutlineDraft) || chapterDirty || sourceDirty || (creating && Boolean(createTitle.trim()));
+  const navigation = useRef({ pending: false, dirty: false });
+  navigation.current = { pending: Boolean(busy), dirty: hasUnsavedInput };
+
+  function canChangeView() {
+    const decision = contentNavigationDecision(navigation.current.pending, navigation.current.dirty, () => window.confirm("当前有未保存的内容。确认放弃修改并继续？"));
+    if (decision === "blocked") {
+      if (navigation.current.pending) setMessage("正在处理当前请求，请等待结果确认后再切换页面。");
+      return false;
+    }
+    if (decision === "discard") {
+      // A following App navigation dispatches its own guard synchronously.
+      // This explicit discard has already been approved before React rerenders.
+      navigation.current = { pending: false, dirty: false };
+      setOutlineDraft(null); setEditingChapter(null);
+      setSourceTitle(handoffSource?.title ?? ""); setSourceContent(handoffSource?.content ?? "");
+      if (creating) setCreateTitle("");
+    }
+    return true;
+  }
+  const changeView = (change: () => void) => { if (canChangeView()) { setEditingChapter(null); change(); } };
+  useEffect(() => {
+    const beforeNavigation = (event: Event) => {
+      if (contentNavigationDecision(navigation.current.pending, navigation.current.dirty, () => window.confirm("当前有未保存的内容。确认离开并放弃修改？")) === "blocked") event.preventDefault();
+    };
+    const beforeUnload = (event: BeforeUnloadEvent) => { if (navigation.current.pending || navigation.current.dirty) { event.preventDefault(); event.returnValue = ""; } };
+    window.addEventListener(BEFORE_CREATOR_NAVIGATION, beforeNavigation);
+    window.addEventListener("beforeunload", beforeUnload);
+    return () => { window.removeEventListener(BEFORE_CREATOR_NAVIGATION, beforeNavigation); window.removeEventListener("beforeunload", beforeUnload); };
+  }, []);
 
   useEffect(() => {
     if (!episodeOptions.some((option) => option.value === episodeScope)) setEpisodeScope(episodeOptions.at(-1)?.value ?? "all");
@@ -169,6 +215,7 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
   }
 
   async function refresh() {
+    if (busy) return;
     setBusy("refresh"); setError("");
     try { setProjects(await onReload()); }
     catch (reason) { setError(reason instanceof Error ? reason.message : "刷新失败"); }
@@ -176,7 +223,7 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
   }
 
   async function createProject() {
-    if (!createTitle.trim()) return;
+    if (!createTitle.trim() || busy) return;
     setBusy("create"); setError("");
     let createdId = "";
     try {
@@ -219,23 +266,26 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
   }
 
   async function saveSource() {
-    if (!selected || !sourceTitle.trim() || !sourceContent.trim()) return;
+    if (!selected || working || !sourceTitle.trim() || !sourceContent.trim()) return;
     const token = { projectId: selected.id, sequence: ++requestSequence.current };
     activeRequest.current = token; setBusy("save"); setError(""); setMessage("");
     const input: SourceDocumentInput = { kind: sourceKindForMode(selected.mode), title: sourceTitle.trim(), content: sourceContent };
+    let saved = false;
     try {
       await contentApi.addSource(selected.id, input);
       if (!isCurrentRequest(activeRequest.current, token)) return;
+      saved = true;
+      setSavedSources((current) => ({ ...current, [selected.id]: { title: input.title, content: input.content } }));
+      setSourceTitle(input.title); setSourceContent(input.content);
       const next = await onReload();
       if (!isCurrentRequest(activeRequest.current, token)) return;
-      setSavedSources((current) => ({ ...current, [selected.id]: { title: sourceTitle.trim(), content: sourceContent } }));
       setProjects(next); setMessage("素材已保存，可以生成剧本与实体");
-    } catch (reason) { if (isCurrentRequest(activeRequest.current, token)) setError(reason instanceof Error ? reason.message : "保存失败"); }
+    } catch (reason) { if (isCurrentRequest(activeRequest.current, token)) setError(saved ? `素材已保存，列表刷新失败。可点击顶栏刷新，无需再次保存。${reason instanceof Error ? reason.message : ""}` : reason instanceof Error ? reason.message : "保存失败"); }
     finally { if (isCurrentRequest(activeRequest.current, token)) { activeRequest.current = null; setBusy(""); } }
   }
 
   async function generatePackage() {
-    if (!selected || busy) return;
+    if (!selected || working || sourceDirty) return;
     setBusy("generate"); setError(""); setMessage("正在按素材生成剧本并提取人物、场景实体…");
     try {
       const result = await contentApi.generatePackage(selected.id);
@@ -249,12 +299,13 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
 
   // 正文完成后一键把已生成章节转成剧本与实体（打通到制作交接的缺口）。
   async function generateScriptFromChapters(scope: number | "all" = episodeScope) {
-    if (!selected || busy || !chapters.length) return;
+    if (!selected || working || !chapters.length || hasUnsavedInput) return;
     setBusy("generate"); setError(""); setMessage("正在把已生成正文转为可生产剧本…");
     try {
       const content = chapters.map((chapter) => `第${chapter.chapterNo}章 ${chapter.title}\n${chapter.content}`).join("\n\n");
       await contentApi.addSource(selected.id, { kind: "novel", title: selected.title, content });
       setSavedSources((current) => ({ ...current, [selected.id]: { title: selected.title, content } }));
+      setSourceTitle(selected.title); setSourceContent(content);
       const result = await contentApi.generatePackage(selected.id, scope);
       setPackages((current) => ({ ...current, [selected.id]: result }));
       setProjects(await onReload());
@@ -335,7 +386,9 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
     if (!selected || busy) return;
     setBusy("generate"); setError(""); setMessage(`正在确认大纲并生成第 1-${batchSize} 章...`);
     try {
-      await contentApi.confirmOutline(selected.id, result);
+      const confirmed = await contentApi.confirmOutline(selected.id, result);
+      setPackages(current => ({ ...current, [selected.id]: confirmed }));
+      setOutlineDraft(null);
       const generated = await contentApi.generateChapters(selected.id, { startChapter: 1, batchSize });
       setPackages((current) => ({ ...current, [selected.id]: generated }));
       setProjects(await onReload()); setFocusStage(""); setMessage("大纲已确认，首批正文已生成");
@@ -354,12 +407,13 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
   }
 
   async function enterProduction() {
-    if (!selected || !handoffContent || working || handoffPending.current) return;
+    if (!selected || !handoffContent || working || handoffPending.current || !canChangeView()) return;
     handoffPending.current = true;
     setBusy("handoff"); setError(""); setMessage("");
     try {
       const { productionProjectId } = await contentApi.syncProduction(selected.id);
       setMessage("已同步剧本与实体，正在打开关联制作项目。此次交接不会重复生成剧本或扣费。");
+      navigation.current = { pending: false, dirty: false };
       await onEnterProduction(productionProjectId);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "制作交接失败，请重试。");
@@ -369,9 +423,15 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
   const history = selected ? versions[selected.id] : undefined;
   const showRail = Boolean(selected) && !creating && (viewStage === "outline" || viewStage === "chapter" || viewStage === "handoff") && outline.length > 0;
 
+  const selectChapter = (chapterNo: number) => {
+    if (chapterNo === selectedChapterNo) return;
+    if (viewStage === "outline" && !sourceOpen) setSelectedChapterNo(chapterNo);
+    else changeView(() => { setSelectedChapterNo(chapterNo); setSourceOpen(false); if (viewStage === "handoff") setFocusStage(chapterNavigationStage(viewStage)); });
+  };
+
   // ---------- 顶栏 ----------
   const topbar = <header className="cw2-topbar">
-    <button type="button" className="cw2-back" onClick={() => onBack?.()} aria-label="返回我的作品" title="返回我的作品"><ArrowLeft size={17} /></button>
+    <button type="button" className="cw2-back" onClick={() => { if (canChangeView()) onBack?.(); }} aria-label="返回我的作品" title="返回我的作品"><ArrowLeft size={17} /></button>
     <div className="cw2-title">
       <h1>{creating ? "新建内容创作" : selected?.title || "内容创作"}</h1>
       <small>{creating ? "同类创作 · 从一个想法开始" : selected ? `${modeLabel(selected.mode)} · ${statusLabel(selected.status)} · ${new Date(selected.updatedAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })} 更新` : ""}</small>
@@ -382,7 +442,7 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
         const isCurrent = step.id === viewStage;
         const clickable = !creating && (index <= stageIndex);
         return <span key={step.id} className="cw2-step-wrap">
-          <button type="button" disabled={!clickable} className={`cw2-step ${isCurrent ? "is-current" : done ? "is-done" : ""}`} onClick={() => setFocusStage(step.id === currentStage ? "" : step.id)}>
+          <button type="button" disabled={!clickable || working} aria-current={isCurrent ? "step" : undefined} className={`cw2-step ${isCurrent ? "is-current" : done ? "is-done" : ""}`} onClick={() => { if (!isCurrent || sourceOpen) changeView(() => { setSourceOpen(false); setFocusStage(step.id === currentStage ? "" : step.id); }); }}>
             <i>{done && !isCurrent ? <Check size={11} /> : index + 1}</i>{step.label}
           </button>
           {index < stageFlow.length - 1 ? <em /> : null}
@@ -391,28 +451,32 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
     </nav>
     <div className="cw2-top-actions">
       {selected && !creating ? <ModelRoutePicker modality="text" compact providers={providers} value={{ providerId: selected.textProvider, model: selected.textModel }} onChange={(providerId, model) => { void changeModelRoute(providerId, model); }} /> : null}
-      <button type="button" className="cw2-icon-button" onClick={() => setCreating(true)} title="新建内容创作" aria-label="新建内容创作"><Plus size={16} /></button>
-      <button type="button" className="cw2-icon-button" onClick={() => void refresh()} title="刷新" aria-label="刷新"><RefreshCw size={15} /></button>
-      {selected && !creating ? <button type="button" className="cw2-icon-button danger" onClick={() => void removeContentProject(selected.id)} title="删除作品" aria-label="删除作品"><Trash2 size={15} /></button> : null}
+      <button type="button" className="cw2-icon-button" disabled={working} onClick={() => changeView(() => { setCreating(true); setSourceOpen(false); })} title="新建内容创作" aria-label="新建内容创作"><Plus size={16} /></button>
+      <button type="button" className="cw2-icon-button" disabled={working} onClick={() => void refresh()} title="刷新" aria-label="刷新"><RefreshCw size={15} /></button>
+      {selected && !creating ? <button type="button" className="cw2-icon-button danger" disabled={working} onClick={() => { if (canChangeView()) void removeContentProject(selected.id); }} title="删除作品" aria-label="删除作品"><Trash2 size={15} /></button> : null}
     </div>
   </header>;
 
   // ---------- 中央区 ----------
   let stageView: ReactElement;
   if (creating) {
-    stageView = <div className="cw2-stage-scroll"><ContentCreationIntent intent={createTitle} intentType={intentType} targetWords={targetWords} chapterCount={chapterCount} batchSize={batchSize} busy={busy === "create"} canCancel={Boolean(projects.length)} onIntentChange={setCreateTitle} onIntentTypeChange={setIntentType} onTargetWordsChange={setTargetWords} onChapterCountChange={setChapterCount} onBatchSizeChange={setBatchSize} onCancel={() => setCreating(false)} onSubmit={() => void createProject()} styleKey={createStyle.key} onStyleChange={(key) => setCreateStyle(styleOptions.find((item) => item.key === key) ?? styleOptions[0])} />
+    stageView = <div className="cw2-stage-scroll"><ContentCreationIntent intent={createTitle} intentType={intentType} targetWords={targetWords} chapterCount={chapterCount} batchSize={batchSize} busy={busy === "create"} canCancel={Boolean(projects.length)} onIntentChange={setCreateTitle} onIntentTypeChange={setIntentType} onTargetWordsChange={setTargetWords} onChapterCountChange={setChapterCount} onBatchSizeChange={setBatchSize} onCancel={() => changeView(() => setCreating(false))} onSubmit={() => void createProject()} styleKey={createStyle.key} onStyleChange={(key) => setCreateStyle(styleOptions.find((item) => item.key === key) ?? styleOptions[0])} />
       {error ? <div className="content-creation-error" role="alert"><CircleAlert size={17} /><div><strong>创作流程中断，项目已保留</strong><p>{error}</p><div className="content-inline-actions"><button type="button" className="content-secondary-button" onClick={() => void retryDevelop()} disabled={!failedProjectId || Boolean(busy)}><RefreshCw size={15} />重试当前阶段</button><button type="button" className="content-secondary-button" onClick={() => failedProjectId && void removeContentProject(failedProjectId)} disabled={!failedProjectId || Boolean(busy)}><Trash2 size={15} />删除失败项目</button></div></div></div> : null}
     </div>;
   } else if (!selected) {
     stageView = <section className="content-unavailable"><BookOpen size={30} /><h2>创建第一个内容项目</h2><p>从一个标题、题材方向或参考作品开始。</p><button type="button" className="content-primary-button" onClick={() => setCreating(true)}><Plus size={16} />新建内容创作</button></section>;
+  } else if (detailLoading && !productionPackage) {
+    stageView = <StatePanel kind="loading" title="正在读取内容" description="正在同步素材、大纲与章节，稍后即可继续编辑。" />;
+  } else if (detailError && !productionPackage) {
+    stageView = <StatePanel kind="error" title="内容暂时无法读取" description={detailError} action={<button type="button" className="content-primary-button" onClick={() => setDetailReload(value => value + 1)}>重新读取</button>} />;
   } else if (sourceOpen) {
     stageView = <section className="cw2-source-panel">
-      <header><div><span>{modeLabel(selected.mode)}</span><h2>创作素材</h2><small>{selected.mode === "adaptation" ? "导入需要改编的小说正文" : "可选：给生成提供参考素材或世界观设定"}</small></div><button type="button" className="content-secondary-button" onClick={() => setSourceOpen(false)}><ArrowLeft size={14} />返回创作进度</button></header>
-      <label><span>素材标题</span><input value={sourceTitle} onChange={(event) => setSourceTitle(event.target.value)} maxLength={160} placeholder={selected.mode === "adaptation" ? "例如：原著第一卷" : "例如：故事核心设定"} /></label>
-      <label className="content-writing-field"><span>素材正文 <em>{wordCount.toLocaleString()} 字</em></span><textarea value={sourceContent} onChange={(event) => setSourceContent(event.target.value)} maxLength={500000} placeholder={selected.mode === "same_genre" ? "粘贴参考作品或结构素材…" : selected.mode === "adaptation" ? "粘贴需要改编的小说正文…" : "写下人物、冲突、世界观或故事灵感…"} /></label>
-      <div className="content-inline-actions"><span>{message || error}</span>
-        <button type="button" className="content-secondary-button" disabled={!handoffSource?.content || Boolean(busy)} onClick={() => void generatePackage()}>{busy === "generate" ? <LoaderCircle size={16} /> : <Sparkles size={16} />}{productionPackage?.script ? "重新生成剧本" : "生成剧本与实体"}</button>
-        <button type="button" className="content-primary-button" disabled={!sourceTitle.trim() || !sourceContent.trim() || busy === "save"} onClick={() => void saveSource()}>{busy === "save" ? <LoaderCircle size={16} /> : <FileText size={16} />}保存素材</button>
+      <header><div><span>{modeLabel(selected.mode)}</span><h2>创作素材</h2><small>{selected.mode === "adaptation" ? "导入需要改编的小说正文" : "可选：给生成提供参考素材或世界观设定"}</small></div><button type="button" className="content-secondary-button" onClick={() => changeView(() => setSourceOpen(false))}><ArrowLeft size={14} />返回创作进度</button></header>
+      <label><span>素材标题</span><input disabled={working} value={sourceTitle} onChange={(event) => setSourceTitle(event.target.value)} maxLength={160} placeholder={selected.mode === "adaptation" ? "例如：原著第一卷" : "例如：故事核心设定"} /></label>
+      <label className="content-writing-field"><span>素材正文 <em>{wordCount.toLocaleString()} 字</em></span><textarea disabled={working} value={sourceContent} onChange={(event) => setSourceContent(event.target.value)} maxLength={500000} placeholder={selected.mode === "same_genre" ? "粘贴参考作品或结构素材…" : selected.mode === "adaptation" ? "粘贴需要改编的小说正文…" : "写下人物、冲突、世界观或故事灵感…"} /></label>
+      <div className="content-inline-actions"><span>{sourceDirty ? "素材有未保存修改，请先保存再生成。" : "生成使用已保存的素材。"}</span>
+        <button type="button" className="content-secondary-button" disabled={!handoffSource?.content || working || sourceDirty} onClick={() => void generatePackage()}>{busy === "generate" ? <LoaderCircle size={16} /> : <Sparkles size={16} />}{productionPackage?.script ? "重新生成剧本" : "生成剧本与实体"}</button>
+        <button type="button" className="content-primary-button" disabled={!sourceTitle.trim() || !sourceContent.trim() || working} onClick={() => void saveSource()}>{busy === "save" ? <LoaderCircle size={16} /> : <FileText size={16} />}保存素材</button>
       </div>
     </section>;
   } else if (viewStage === "intent") {
@@ -450,7 +514,7 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
       </div>
     </section>;
   } else if (viewStage === "outline" && productionPackage?.outline) {
-    stageView = <OutlineStage pkg={productionPackage} busy={Boolean(busy)} selectedChapterNo={selectedChapterNo} confirmed={productionPackage.outline.status === "confirmed"} onRegenerateOutline={() => void generateOutline()} onConfirm={(result) => void confirmOutlineAndGenerate(result)} />;
+    stageView = <OutlineStage pkg={productionPackage} value={currentOutlineDraft.value} onChange={value => setOutlineDraft({ ...currentOutlineDraft, value })} busy={working} selectedChapterNo={selectedChapterNo} confirmed={productionPackage.outline.status === "confirmed"} onRegenerateOutline={() => { if (canChangeView()) void generateOutline(); }} onConfirm={(result) => void confirmOutlineAndGenerate(result)} />;
   } else if (viewStage === "chapter" || (viewStage === "handoff" && !productionPackage?.script)) {
     const selectedGenerated = chapters.find((chapter) => chapter.chapterNo === selectedChapterNo);
     const selectedOutline = outline.find((item, index) => Number(item.chapterNo ?? index + 1) === selectedChapterNo);
@@ -458,11 +522,11 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
       {selectedGenerated && editingChapter?.chapterNo === selectedGenerated.chapterNo ? <>
         <div className="cw2-stage-head"><h2>编辑第 {editingChapter.chapterNo} 章 <span className="cw2-tag is-wait">编辑中</span></h2><small>{editingChapter.content.replace(/\s/g, "").length.toLocaleString()} 字</small></div>
         <article className="cw2-paper"><div className="cw2-paper-editor">
-          <input aria-label="章节标题" value={editingChapter.title} onChange={(event) => setEditingChapter((current) => current ? { ...current, title: event.target.value } : current)} maxLength={160} />
-          <textarea value={editingChapter.content} onChange={(event) => setEditingChapter((current) => current ? { ...current, content: event.target.value } : current)} />
+          <input aria-label="章节标题" disabled={working} value={editingChapter.title} onChange={(event) => setEditingChapter((current) => current ? { ...current, title: event.target.value } : current)} maxLength={160} />
+          <textarea aria-label={`第 ${editingChapter.chapterNo} 章正文`} disabled={working} value={editingChapter.content} onChange={(event) => setEditingChapter((current) => current ? { ...current, content: event.target.value } : current)} />
         </div></article>
         <div className="cw2-actionbar"><span className="cw2-hint">修改会保存到当前版本并标记为已确认。</span>
-          <button type="button" className="content-secondary-button" disabled={busy === "save"} onClick={() => setEditingChapter(null)}>取消</button>
+          <button type="button" className="content-secondary-button" disabled={busy === "save"} onClick={() => changeView(() => setEditingChapter(null))}>取消编辑</button>
           <button type="button" className="content-primary-button" disabled={busy === "save" || editingChapter.content.trim().length < 20} onClick={() => void saveChapterEdit()}>{busy === "save" ? <LoaderCircle size={15} /> : <Check size={15} />}保存修改</button>
         </div>
       </> : selectedGenerated ? <>
@@ -474,7 +538,7 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
       </>}
       {editingChapter ? null : <div className="cw2-actionbar">
         <span className="cw2-hint">{serverBusy ? "服务器正在生成中，离开此页也会继续，完成后自动刷新…" : generationPlan.remainingCount ? `每批完成后自动保存 · 还剩 ${generationPlan.remainingCount} 章 · 中断可随时续生成` : "全部章节已生成，可在右侧进入制作交接"}</span>
-        {selectedGenerated ? <button type="button" className="content-secondary-button" disabled={working} onClick={() => setEditingChapter({ chapterNo: selectedGenerated.chapterNo, title: selectedGenerated.title, content: selectedGenerated.content })}><FileText size={14} />编辑本章</button> : null}
+        {selectedGenerated ? <button type="button" className="content-secondary-button" disabled={working} onClick={() => setEditingChapter({ chapterNo: selectedGenerated.chapterNo, title: selectedGenerated.title, content: selectedGenerated.content, originalTitle: selectedGenerated.title, originalContent: selectedGenerated.content })}><FileText size={14} />编辑本章</button> : null}
         {selectedGenerated ? <button type="button" className="content-secondary-button" disabled={working} onClick={() => void regenerateChapter(selectedChapterNo)}><RefreshCw size={14} />重新生成本章</button> : null}
         <button type="button" className="content-secondary-button" disabled={working || !generationPlan.remainingCount} onClick={() => void generateNextChapters()}>{working ? <LoaderCircle size={15} /> : <Sparkles size={15} />}继续生成下一批（{Math.max(2, generationPlan.nextBatchSize) || 2} 章）</button>
         <button type="button" className="content-primary-button" disabled={working || !generationPlan.remainingCount} onClick={() => void generateAllChapters()}><ArrowRight size={15} />一键生成全部剩余 {generationPlan.remainingCount} 章</button>
@@ -495,14 +559,14 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
         <div className="cw2-actionbar"><span className="cw2-hint">交接后仍可编辑任意章节；修改完成后重新生成剧本即可同步。</span>
           <button type="button" className="content-secondary-button" disabled={working} onClick={() => setFocusStage("chapter")}><FileText size={14} />返回编辑正文</button>
           {episodeOptions.length ? <select className="cw2-mini-select" aria-label="选择生成集数" value={episodeScope} onChange={(event) => setEpisodeScope(event.target.value === "all" ? "all" : Number(event.target.value))}>{episodeOptions.map((option) => <option key={String(option.value)} value={option.value}>{option.label}</option>)}</select> : null}
-          <button type="button" className="content-secondary-button" disabled={working || !episodeOptions.length} onClick={() => void generateScriptFromChapters()}><RefreshCw size={14} />继续生成分集剧本</button>
-          <button type="button" className="content-primary-button" disabled={!handoffContent || working} onClick={() => void enterProduction()}>{busy === "handoff" ? "正在打开制作项目…" : "进入漫剧创作"}<ArrowRight size={16} /></button>
+          <button type="button" className="content-secondary-button" disabled={working || hasUnsavedInput || !episodeOptions.length} onClick={() => void generateScriptFromChapters()}><RefreshCw size={14} />继续生成分集剧本</button>
+          <button type="button" className="content-primary-button" disabled={!handoffContent || working || hasUnsavedInput} onClick={() => void enterProduction()}>{busy === "handoff" ? "正在打开制作项目…" : "进入漫剧创作"}<ArrowRight size={16} /></button>
         </div>
       </> : <>
         <div className="cw2-stage-head"><h2>制作交接</h2><small>把正文转成可生产剧本，并提取人物 / 场景实体</small></div>
         <div className="cw2-paper cw2-paper-empty"><Clapperboard size={26} /><p>{chapters.length ? `已生成 ${chapters.length} 章正文。生成剧本与实体后即可进入漫剧创作。` : "先在「正文创作」生成章节，再回到这里生成剧本。"}</p>
           <select className="cw2-mini-select" aria-label="选择生成集数" value={episodeScope} onChange={(event) => setEpisodeScope(event.target.value === "all" ? "all" : Number(event.target.value))}>{episodeOptions.map((option) => <option key={String(option.value)} value={option.value}>{option.label}</option>)}</select>
-          <button type="button" className="content-primary-button" disabled={!chapters.length || working || !episodeOptions.length} onClick={() => void generateScriptFromChapters()}>{busy === "generate" ? <LoaderCircle size={16} /> : <Sparkles size={16} />}生成所选分集剧本</button>
+          <button type="button" className="content-primary-button" disabled={!chapters.length || working || hasUnsavedInput || !episodeOptions.length} onClick={() => void generateScriptFromChapters()}>{busy === "generate" ? <LoaderCircle size={16} /> : <Sparkles size={16} />}生成所选分集剧本</button>
         </div>
       </>}
     </section>;
@@ -513,19 +577,19 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
     <div className="cw2-card">
       <h4>当前步骤 · {stageFlow.find((item) => item.id === currentStage)?.label}</h4>
       <div className="cw2-kv"><span>生成进度</span><b>{chapters.length} / {outline.length || "-"} 章</b></div>
-      <div className="cw2-kv"><span>每批章数</span><b><select className="cw2-mini-select" value={batchSize} onChange={(event) => setBatchSize(Number(event.target.value))}><option value={2}>2 章</option><option value={3}>3 章</option></select></b></div>
+      <div className="cw2-kv"><span>每批章数</span><b><select className="cw2-mini-select" aria-label="每批生成章数" disabled={working} value={batchSize} onChange={(event) => setBatchSize(Number(event.target.value))}><option value={2}>2 章</option><option value={3}>3 章</option></select></b></div>
       <div className="cw2-kv"><span>内容风格</span><b>{selected.styleProfile?.name || "AI 自动匹配"}</b></div>
-      <div className="cw2-kv"><span>创作素材</span><b><button type="button" className="cw2-link-button" onClick={() => setSourceOpen(true)}>{handoffSource?.content ? "已保存 · 查看" : selected.mode === "adaptation" ? "去导入小说" : "补充素材（可选）"}</button></b></div>
+      <div className="cw2-kv"><span>创作素材</span><b><button type="button" className="cw2-link-button" disabled={working} onClick={() => changeView(() => setSourceOpen(true))}>{handoffSource?.content ? "已保存 · 查看" : selected.mode === "adaptation" ? "去导入小说" : "补充素材（可选）"}</button></b></div>
     </div>
     <div className="cw2-card cw2-handoff">
-      <h4>下一步 · 制作交接</h4>
+      <h4>下一步 · 制作交接</h4>{hasUnsavedInput ? <p className="cw2-muted">请先保存当前修改，再继续生成或交接。</p> : null}
       <div className="cw2-todo"><span>正文完成</span><em className={outline.length && chapters.length >= outline.length ? "is-ok" : "is-wait"}>{chapters.length}/{outline.length || "-"} 章</em></div>
       <div className="cw2-todo"><span>生成剧本</span><em className={productionPackage?.script ? "is-ok" : "is-wait"}>{productionPackage?.script ? "已就绪" : "待生成"}</em></div>
       <div className="cw2-todo"><span>角色 / 场景实体</span><em className={productionPackage?.entities?.characters.length ? "is-ok" : "is-wait"}>{productionPackage?.entities?.characters.length ? `${productionPackage.entities.characters.length} 角色 · ${productionPackage.entities.scenes.length} 场景` : "待提取"}</em></div>
       <div className="cw2-todo"><span>视觉风格</span><em className="is-ok">{selected.styleProfile?.name || "自动匹配"}</em></div>
       {handoffContent
-        ? <button type="button" className="content-primary-button cw2-full" disabled={working} onClick={() => void enterProduction()}>{busy === "handoff" ? "正在打开制作项目…" : "进入漫剧创作"}<ArrowRight size={15} /></button>
-        : <button type="button" className="content-secondary-button cw2-full" disabled={!chapters.length || working} onClick={() => void generateScriptFromChapters()}>{busy === "generate" ? <LoaderCircle size={15} /> : <Clapperboard size={15} />}生成剧本后交接</button>}
+        ? <button type="button" className="content-primary-button cw2-full" disabled={working || hasUnsavedInput} onClick={() => void enterProduction()}>{busy === "handoff" ? "正在打开制作项目…" : "进入漫剧创作"}<ArrowRight size={15} /></button>
+        : <button type="button" className="content-secondary-button cw2-full" disabled={!chapters.length || working || hasUnsavedInput} onClick={() => void generateScriptFromChapters()}>{busy === "generate" ? <LoaderCircle size={15} /> : <Clapperboard size={15} />}生成剧本后交接</button>}
       {handoffContent ? <small className="cw2-ok-note"><CheckCircle2 size={12} />交接会自动带入剧本、作品名与视觉风格</small> : null}
     </div>
     <div className="cw2-card">
@@ -541,6 +605,7 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
 
   return <div className={`cw2-frame ${showRail ? "" : "no-rail"} ${selected && !creating ? "" : "no-side"}`}>
     {topbar}
+    {showRail ? <label className="cw2-mobile-chapter"><span>章节目录 · {chapters.length}/{outline.length} 已生成</span><select value={selectedChapterNo} disabled={Boolean(busy)} onChange={event => selectChapter(Number(event.target.value))}>{outline.map((item, index) => { const chapterNo = Number(item.chapterNo ?? index + 1); return <option key={chapterNo} value={chapterNo}>第 {chapterNo} 章 · {String(item.title ?? "未命名")}</option>; })}</select></label> : null}
     <div className="cw2-main">
       {showRail ? <aside className="cw2-rail">
         <h3>章节目录 <span>{chapters.length}/{outline.length} 已生成</span></h3>
@@ -549,7 +614,7 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
           {outline.map((item, index) => {
             const chapterNo = Number(item.chapterNo ?? index + 1);
             const generated = chapters.find((chapter) => chapter.chapterNo === chapterNo);
-            return <button type="button" key={chapterNo} className={`cw2-chap ${generated ? "is-gen" : ""} ${chapterNo === selectedChapterNo ? "is-active" : ""}`} onClick={() => { setSelectedChapterNo(chapterNo); if (viewStage === "handoff") setFocusStage(chapterNavigationStage(viewStage)); }}>
+            return <button type="button" key={chapterNo} disabled={Boolean(busy)} aria-current={chapterNo === selectedChapterNo ? "true" : undefined} className={`cw2-chap ${generated ? "is-gen" : ""} ${chapterNo === selectedChapterNo ? "is-active" : ""}`} onClick={() => selectChapter(chapterNo)}>
               <b>{String(chapterNo).padStart(2, "0")}</b>
               <span>{String(item.title ?? `第${chapterNo}章`)}</span>
               <i className="cw2-dot" />
@@ -560,7 +625,8 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
         <p className="cw2-rail-meta">素材 {selected?.sourceCount ?? 0} · 大纲 v{productionPackage?.outline?.version ?? "-"} · 剧本 {selected?.scriptCount ?? 0}</p>
       </aside> : null}
       <main className="cw2-stage">
-         {(message || error || serverBusy) && !creating ? <div className={`cw2-notice ${error ? "is-error" : ""}`} role={error ? "alert" : "status"}>{busy ? <LoaderCircle size={14} className="cw2-spin" /> : error ? <CircleAlert size={14} /> : <Check size={14} />}<span>{error || (serverBusy ? "服务器正在生成中，可自由切换页面，完成后自动刷新。" : message)}</span></div> : null}
+        {(message || error || serverBusy) && !creating ? <div className="cw2-feedback"><InlineNotice tone={error ? "error" : busy || serverBusy ? "info" : "success"}>{error || (serverBusy ? "服务器正在生成，已完成内容会自动同步。" : message)}</InlineNotice></div> : null}
+        {detailError && productionPackage ? <div className="cw2-feedback"><InlineNotice tone="warning">{detailError} 已保留上次读取的内容。<button type="button" className="cw2-link-button" onClick={() => setDetailReload(value => value + 1)}>重新读取</button></InlineNotice></div> : null}
         {stageView}
       </main>
       {sidePanel}
@@ -568,21 +634,18 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
   </div>;
 }
 
-function OutlineStage({ pkg, busy, selectedChapterNo, confirmed, onRegenerateOutline, onConfirm }: { pkg: ContentProductionPackage; busy: boolean; selectedChapterNo: number; confirmed: boolean; onRegenerateOutline: () => void; onConfirm: (result: Record<string, unknown>) => void }) {
-  const rawOutline = pkg.outline?.result;
-  const [outlineDraft, setOutlineDraft] = useState<Record<string, unknown>>(rawOutline ?? {});
-  useEffect(() => setOutlineDraft(rawOutline ?? {}), [pkg.outline?.id, rawOutline]);
+function OutlineStage({ pkg, value: outlineDraft, onChange, busy, selectedChapterNo, confirmed, onRegenerateOutline, onConfirm }: { pkg: ContentProductionPackage; value: Record<string, unknown>; onChange: (value: Record<string, unknown>) => void; busy: boolean; selectedChapterNo: number; confirmed: boolean; onRegenerateOutline: () => void; onConfirm: (result: Record<string, unknown>) => void }) {
   const outline = Array.isArray(outlineDraft.chapters) ? outlineDraft.chapters.map(asRecord) : [];
   const selectedIndex = Math.max(0, outline.findIndex((item, index) => Number(item.chapterNo ?? index + 1) === selectedChapterNo));
   const selectedOutline = outline[selectedIndex];
-  const updateChapter = (index: number, key: string, nextValue: string) => setOutlineDraft((current) => ({ ...current, chapters: outline.map((item, itemIndex) => itemIndex === index ? { ...item, [key]: nextValue } : item) }));
+  const updateChapter = (index: number, key: string, nextValue: string) => onChange({ ...outlineDraft, chapters: outline.map((item, itemIndex) => itemIndex === index ? { ...item, [key]: nextValue } : item) });
   return <section className="cw2-stage-scroll">
     <div className="cw2-stage-head"><h2>{String(outlineDraft.title ?? "章节大纲")} <span className="cw2-tag">大纲 v{pkg.outline?.version}</span></h2><small>{confirmed ? "已确认 · 可回看编辑意图" : "只显示当前章节，左侧目录切换逐章检查"}</small></div>
     {selectedOutline ? <div className="cw2-outline-editor">
-      <header><b>{String(selectedChapterNo).padStart(2, "0")}</b><input aria-label={`第${selectedChapterNo}章标题`} value={String(selectedOutline.title ?? "")} onChange={(event) => updateChapter(selectedIndex, "title", event.target.value)} disabled={confirmed} /></header>
-      <label><span>本章目标</span><textarea value={String(selectedOutline.objective ?? "")} onChange={(event) => updateChapter(selectedIndex, "objective", event.target.value)} disabled={confirmed} /></label>
-      <label><span>核心冲突</span><textarea value={String(selectedOutline.conflict ?? "")} onChange={(event) => updateChapter(selectedIndex, "conflict", event.target.value)} disabled={confirmed} /></label>
-      <label><span>章尾钩子</span><textarea value={String(selectedOutline.cliffhanger ?? "")} onChange={(event) => updateChapter(selectedIndex, "cliffhanger", event.target.value)} disabled={confirmed} /></label>
+      <header><b>{String(selectedChapterNo).padStart(2, "0")}</b><input aria-label={`第${selectedChapterNo}章标题`} value={String(selectedOutline.title ?? "")} onChange={(event) => updateChapter(selectedIndex, "title", event.target.value)} disabled={busy || confirmed} /></header>
+      <label><span>本章目标</span><textarea value={String(selectedOutline.objective ?? "")} onChange={(event) => updateChapter(selectedIndex, "objective", event.target.value)} disabled={busy || confirmed} /></label>
+      <label><span>核心冲突</span><textarea value={String(selectedOutline.conflict ?? "")} onChange={(event) => updateChapter(selectedIndex, "conflict", event.target.value)} disabled={busy || confirmed} /></label>
+      <label><span>章尾钩子</span><textarea value={String(selectedOutline.cliffhanger ?? "")} onChange={(event) => updateChapter(selectedIndex, "cliffhanger", event.target.value)} disabled={busy || confirmed} /></label>
     </div> : null}
     <div className="cw2-actionbar">
       <span className="cw2-hint">{confirmed ? "大纲已确认。要调整结构可重新生成（会开新版本）。" : "确认后开始生成首批正文。"}</span>
@@ -618,13 +681,13 @@ function ContentCreationIntent({ intent, intentType, targetWords, chapterCount, 
   const placeholder = intentType === "title" ? "例如：替嫁后我成了首辅白月光" : intentType === "genre" ? "例如：都市重生、女频复仇、强爽点短篇" : "例如：《作品A》《作品B》《作品C》";
   return <section className="content-intent-workspace">
     <header><span className="content-eyebrow">STEP 1 · 创作意图</span><h2>你想创作什么内容？</h2><p>选择一种输入方式。系统会识别方向、提炼同类爆款结构，再进入四维拆解。</p></header>
-    <div className="content-intent-modes">{options.map((option) => <button type="button" key={option.id} className={intentType === option.id ? "is-active" : ""} onClick={() => onIntentTypeChange(option.id)}><strong>{option.label}</strong><span>{option.hint}</span></button>)}</div>
-    <label className="content-intent-input"><span>{options.find((item) => item.id === intentType)?.label}</span><textarea value={intent} onChange={(event) => onIntentChange(event.target.value)} maxLength={2000} placeholder={placeholder} autoFocus /><small>{intent.length}/2000</small></label>
+    <div className="content-intent-modes">{options.map((option) => <button type="button" key={option.id} disabled={busy} aria-pressed={intentType === option.id} className={intentType === option.id ? "is-active" : ""} onClick={() => onIntentTypeChange(option.id)}><strong>{option.label}</strong><span>{option.hint}</span></button>)}</div>
+    <label className="content-intent-input"><span>{options.find((item) => item.id === intentType)?.label}</span><textarea disabled={busy} value={intent} onChange={(event) => onIntentChange(event.target.value)} maxLength={2000} placeholder={placeholder} autoFocus /><small>{intent.length}/2000</small></label>
     <div className="content-plan-controls">
-      <label><span>目标字数</span><select value={targetWords} onChange={(event) => onTargetWordsChange(Number(event.target.value))}><option value={10000}>10000 字</option><option value={20000}>20000 字</option><option value={30000}>30000 字</option><option value={50000}>50000 字</option></select></label>
-      <label><span>章节数量</span><select value={chapterCount} onChange={(event) => onChapterCountChange(Number(event.target.value))}><option value={5}>5 章</option><option value={10}>10 章</option><option value={15}>15 章</option><option value={20}>20 章</option></select></label>
-      <label><span>每批生成</span><select value={batchSize} onChange={(event) => onBatchSizeChange(Number(event.target.value))}><option value={2}>2 章</option><option value={3}>3 章</option></select></label>
-      <label><span>视觉风格</span><select value={styleKey} onChange={(event) => onStyleChange(event.target.value)}>{styleOptions.map((style) => <option key={style.key} value={style.key}>{style.name}</option>)}</select></label>
+      <label><span>目标字数</span><select disabled={busy} value={targetWords} onChange={(event) => onTargetWordsChange(Number(event.target.value))}><option value={10000}>10000 字</option><option value={20000}>20000 字</option><option value={30000}>30000 字</option><option value={50000}>50000 字</option></select></label>
+      <label><span>章节数量</span><select disabled={busy} value={chapterCount} onChange={(event) => onChapterCountChange(Number(event.target.value))}><option value={5}>5 章</option><option value={10}>10 章</option><option value={15}>15 章</option><option value={20}>20 章</option></select></label>
+      <label><span>每批生成</span><select disabled={busy} value={batchSize} onChange={(event) => onBatchSizeChange(Number(event.target.value))}><option value={2}>2 章</option><option value={3}>3 章</option></select></label>
+      <label><span>视觉风格</span><select disabled={busy} value={styleKey} onChange={(event) => onStyleChange(event.target.value)}>{styleOptions.map((style) => <option key={style.key} value={style.key}>{style.name}</option>)}</select></label>
     </div>
     <div className="content-flow-preview"><b>接下来</b><span>爆款结构拆解</span><ChevronRight14 /><span>{chapterCount} 章大纲</span><ChevronRight14 /><span>每批 {batchSize} 章正文</span><ChevronRight14 /><span>制作交接</span></div>
     <div className="content-inline-actions"><button type="button" className="content-secondary-button" onClick={onCancel} disabled={!canCancel || busy}>取消</button><button type="button" className="content-primary-button" disabled={intent.trim().length < 2 || busy} onClick={onSubmit}>{busy ? <LoaderCircle size={16} /> : <Sparkles size={16} />}{busy ? "正在进行结构拆解" : "开始结构拆解"}</button></div>

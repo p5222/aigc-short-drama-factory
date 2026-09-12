@@ -344,7 +344,7 @@ function LoadedShotStage({
         <button className="wb-primary-button" type="button" disabled={!activeShot || Boolean(pending) || hasUnsavedDraft || !validImageRoute || selectedImageCount === 0} onClick={() => void generateImages(selectedIds.length ? "selected" : "current")}>{pending.startsWith("image:") ? <Loader2 className="wb-spin" /> : <WandSparkles />}{selectedIds.length ? `生成已选 ${selectedIds.length} 个首帧` : activeImage?.referenceUrl ? "当前首帧已生成" : "生成当前首帧"}</button>
         <button className="wb-secondary-button" type="button" disabled={!pendingShotIds.length || Boolean(pending) || hasUnsavedDraft || !validImageRoute} onClick={() => void generateImages("pending")}>生成全部待生成（{pendingShotIds.length}）</button>
       </section> : null}
-      {state.shotMode === "video" ? <section className="wb-shot-generation"><h3>项目视频生成</h3><p>Release A 仅支持项目级全部待完成片段，不提供单镜头生成或重生成。</p>
+      {state.shotMode === "video" ? <section className="wb-shot-generation"><h3>批量生成视频</h3><p>按已就绪首帧补齐待完成片段。需要重新生成单个镜头时，可在成片阶段选择对应镜头。</p>
         <div className="wb-video-input-preview"><div><span>本镜头首帧参考</span>{activeImage?.referenceUrl ? <img src={activeImage.referenceUrl} alt="本镜头首帧参考" /> : <strong>请先生成首帧图</strong>}</div><div><span>视频提示词</span><pre>{activeShot.videoPrompt || "暂无视频提示词"}</pre></div></div>
         <div className="wb-shot-route"><span>渠道 / 模型</span><ModelRoutePicker modality="video" providers={videoProviders} modelPrices={modelPrices} value={{ providerId: videoRoute.videoProvider, model: videoRoute.videoModel }} onChange={(providerId, model) => setVideoRoute({ videoProvider: providerId, videoModel: model })} /></div>
         <small>{eligibleVideoShotIds.length} 个符合条件片段 · 共 {videoSeconds}s · {videoUnit} 积分/秒，实际扣费以后端本批次结果为准</small>
