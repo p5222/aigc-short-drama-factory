@@ -67,15 +67,21 @@ import type {
 import { api, type AdminContentProject } from "../lib/api";
 import { HttpError } from "../lib/httpClient";
 import { AdminEvaluationPage, AdminMasterDetail, AdminTablePage } from "../admin";
-import { closeAfterAdminSuccess, createAdminActionRunner, createCreditAdjustmentAttempt, isValidCreditAdjustment, readAdminHash, runAdminBatch, type AdminActionResult } from "../admin/adminActionModel";
+import { closeAfterAdminSuccess, createAdminActionRunner, createCreditAdjustmentAttempt, isValidCreditAdjustment, runAdminBatch, type AdminActionResult } from "../admin/adminActionModel";
 import { useAdminDialog } from "../admin/useAdminDialog";
 import { fetchAdminUserPage } from "../admin/adminApi";
 import { AdminAuditLogPage } from "../admin/AdminAuditLogPage";
-import { formatAdminMoney, formatAdminTaskSuccess } from "../admin/adminMetricsModel";
+import { formatAdminMoney, formatAdminTaskSuccess, qualityMetricAvailability } from "../admin/adminMetricsModel";
 import { providerTestAvailability, testSavedProvider } from "../admin/adminProviderTestModel";
 import { scopedAdminNotice } from "../admin/adminNoticeModel";
 import { announcementDateInput, announcementScheduleStatus, announcementStatusLabels, buildAnnouncementSchedule, selectAnnouncementRows } from "../admin/announcementScheduleModel";
 import { SupportAdminPanel } from "../support/SupportTicketPanel";
+import { PageHeader, StatePanel, InlineNotice } from "../design-system/ui";
+import { AdminPagination, useAdminPagination } from "../admin/AdminPagination";
+import { BEFORE_CREATOR_NAVIGATION } from "../lib/creatorNavigation";
+import { canLeaveAdminEditor } from "../admin/adminDirtyState";
+import { navigateAdminHash, readAcceptedAdminHash, subscribeAdminNavigation } from "../admin/adminNavigation";
+import { hasFeedbackDraftChanges, hasShowcaseDraftChanges } from "../admin/adminEditorDraftModel";
 
 const AdminActionContext = createContext({ pending: false, message: "", error: "", version: 0 });
 type ProviderTestResult = ModelTestResult | ImageModelTestResult | VideoModelTestResult;
@@ -99,7 +105,7 @@ const moduleCopy: Record<string, { title: string; subtitle: string }> = {
   创作现场管理: { title: "创作现场管理", subtitle: "审核创作者提交的真实作品，维护封面、视频、精选和前台展示顺序。" },
   创作质量中心: { title: "创作质量中心", subtitle: "根据真实创作内容定位阶段瓶颈，对比模型与提示词版本，持续验证优化效果。" },
   兑换码: { title: "兑换码", subtitle: "批量生成唯一兑换码，控制额度、次数和启停状态。" },
-  套餐会员: { title: "套餐会员", subtitle: "管理前台充值包，启停后前端自动适配展示。" },
+  套餐会员: { title: "充值套餐", subtitle: "管理一次性积分充值包、售价与购买链接。" },
   订阅会员: { title: "订阅会员", subtitle: "预留方案配置。订阅购买、自动月度发放、折扣与优先队列尚未开放。" },
   模型路由: { title: "模型路由", subtitle: "管理文本、生图、视频供应商，测试模型连接。" },
   提示词评分: { title: "提示词评分", subtitle: "维护各阶段 LLM 评测提示词、评分标准和输出 JSON 约束。" },
@@ -158,12 +164,33 @@ export function AdminPage({
   const [pipelineTests, setPipelineTests] = useState<Record<string, PipelineTestState>>({});
   const [relayPolicy, setRelayPolicy] = useState<RelayGatewayPolicy | null>(null);
   const [activeModule, setActiveModule] = useState(() => {
-    const hash = readAdminHash(window.location.hash);
+    const hash = readAcceptedAdminHash();
     if (hash === "用户积分") return "用户管理";
     if (hash === "智能体接入") return "提示词评分";
     if (qualityPanelFromHash(hash)) return "创作质量中心";
     return adminModules.includes(hash) ? hash : "运营总览";
   });
+
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: "instant" });
+    document.querySelector(".adm-main")?.scrollTo({ top: 0, behavior: "instant" });
+    document.querySelector(".adm-content")?.scrollTo({ top: 0, behavior: "instant" });
+  }, [activeModule]);
+
+  useEffect(() => {
+    const protectDraft = (event: BeforeUnloadEvent) => {
+      if (document.querySelector('[data-admin-dirty="true"]')) { event.preventDefault(); event.returnValue = ""; }
+    };
+    const protectNavigation = (event: Event) => {
+      if (!canLeaveAdminEditor()) event.preventDefault();
+    };
+    window.addEventListener("beforeunload", protectDraft);
+    window.addEventListener(BEFORE_CREATOR_NAVIGATION, protectNavigation);
+    return () => {
+      window.removeEventListener("beforeunload", protectDraft);
+      window.removeEventListener(BEFORE_CREATOR_NAVIGATION, protectNavigation);
+    };
+  }, []);
 
   const groupedPrices = useMemo(() => {
     const order = ["text", "image", "video", "tts", "embedding"];
@@ -177,7 +204,7 @@ export function AdminPage({
 
   useEffect(() => {
     function syncHashModule() {
-      const hash = readAdminHash(window.location.hash);
+      const hash = readAcceptedAdminHash();
       if (hash === "用户积分") {
         setActiveModule("用户管理");
         return;
@@ -190,11 +217,11 @@ export function AdminPage({
         setActiveModule("创作质量中心");
         return;
       }
-      if (adminModules.includes(hash)) setActiveModule(hash);
+      setActiveModule(adminModules.includes(hash) ? hash : "运营总览");
     }
-    window.addEventListener("hashchange", syncHashModule);
+    const unsubscribe = subscribeAdminNavigation(syncHashModule);
     syncHashModule();
-    return () => window.removeEventListener("hashchange", syncHashModule);
+    return unsubscribe;
   }, []);
 
   useEffect(() => {
@@ -304,26 +331,22 @@ export function AdminPage({
   return (
     <AdminActionContext.Provider value={{ pending: actionPending, message, error, version: noticeVersion }}>
     <div className="admin-v2-page" aria-busy={actionPending}>
-      <header className="admin-v2-titlebar">
-        <div>
-          <h1>{current.title}</h1>
-          <p>{current.subtitle}</p>
-        </div>
+      <PageHeader eyebrow="运营控制台" title={current.title} description={current.subtitle} actions={
         <div className="admin-v2-title-actions">
           {activeModule !== "支持工单" ? <button className="admin-icon-btn" disabled={actionPending} onClick={() => void actionRunner.current(async () => { await onRefresh(); }, "后台数据已刷新。") } title="刷新" aria-label="刷新后台数据">
             <RefreshCw size={18} />
           </button> : null}
         </div>
-      </header>
+      } />
 
-      {message ? <p className="admin-toast success" role="status">{message}</p> : null}
-      {error ? <p className="admin-toast danger" role="alert">{error}</p> : null}
+      {message ? <InlineNotice tone="success">{message}</InlineNotice> : null}
+      {error ? <InlineNotice tone="error">{error}</InlineNotice> : null}
 
       <fieldset className="admin-action-scope" disabled={actionPending}>
       {activeModule === "操作记录" ? <AdminAuditLogPage /> : null}
       {activeModule === "支持工单" ? <SupportAdminPanel userId={userId} /> : null}
       {activeModule === "运营总览" ? <DashboardSection summary={summary} providers={providers} modelPrices={modelPrices} /> : null}
-      {activeModule === "创作现场管理" ? <><ContentProjectsAdminSection /><ShowcaseWorksSection /></> : null}
+      {activeModule === "创作现场管理" ? <ContentOperationsSection /> : null}
       {activeModule === "创作质量中心" ? <QualityCenterSection evaluation={evaluation} projects={qualityProjects} providers={providers} onRefresh={refreshQualitySnapshot} /> : null}
       {activeModule === "提示词评分" ? (
         <PromptScoringSection
@@ -425,14 +448,14 @@ function DashboardSection({ summary, providers, modelPrices }: { summary?: Admin
   const enabledPrices = modelPrices.filter((item) => item.enabled).length;
   return (
     <section className="admin-v2-section">
-      <div className="admin-v2-metrics">
+      <div className="admin-product-metrics">
         <AdminMetric icon={<UserRound size={22} />} label="注册用户" value={summary?.users ?? "未读取"} hint="当前系统用户" tone="blue" />
         <AdminMetric icon={<DatabaseZap size={22} />} label="项目数量" value={summary?.projects ?? "未读取"} hint={`今日 ${summary?.tasksToday ?? "—"} 个生成任务（北京时间）`} tone="amber" />
         <AdminMetric icon={<CheckCircle2 size={22} />} label="任务成功率" value={formatAdminTaskSuccess(summary?.successRate, summary?.completedTasks)} hint={`仅统计 ${summary?.completedTasks ?? "—"} 个成功或失败任务`} tone="green" />
         <AdminMetric icon={<Activity size={22} />} label="启用渠道" value={enabledProviders} hint={`${enabledPrices} 条价格启用`} tone="violet" />
       </div>
 
-      <div className="admin-v2-metrics small">
+      <div className="admin-product-metrics compact">
         <AdminMetric icon={<WalletCards size={20} />} label="实扣积分" value={summary?.creditsConsumed.toLocaleString() ?? "未读取"} hint="以消耗流水为准" tone="blue" />
         <AdminMetric icon={<CircleDollarSign size={20} />} label="充值实收" value={formatAdminMoney(summary?.paidRechargeCny, "未读取")} hint="已支付的真实订单金额" tone="green" />
         <AdminMetric icon={<ChartNoAxesCombined size={20} />} label="供应商成本" value={formatAdminMoney(summary?.providerCost)} hint={summary?.providerCostStatus === "recorded" ? "已记录供应商实际成本" : "尚未接入实际用量账单"} tone="amber" />
@@ -474,20 +497,31 @@ function DashboardSection({ summary, providers, modelPrices }: { summary?: Admin
   );
 }
 
+function ContentOperationsSection() {
+  const [view, setView] = useState("review");
+  return <div className="admin-content-operations"><div className="admin-section-tabs" role="group" aria-label="内容运营视图"><button type="button" aria-pressed={view === "review"} onClick={() => { if (canLeaveAdminEditor()) setView("review"); }}>作品审核</button><button type="button" aria-pressed={view === "projects"} onClick={() => { if (canLeaveAdminEditor()) setView("projects"); }}>内容创作进度</button></div>{view === "review" ? <ShowcaseWorksSection /> : <ContentProjectsAdminSection />}</div>;
+}
+
 function ContentProjectsAdminSection() {
-  const [rows, setRows] = useState<AdminContentProject[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [reload, setReload] = useState(0);
+  const [rows, setRows] = useState<AdminContentProject[]>([]), [loading, setLoading] = useState(true), [error, setError] = useState("");
+  const [reload, setReload] = useState(0), [keyword, setKeyword] = useState("");
   useEffect(() => {
-    let active = true;
-    setLoading(true);
-    setError("");
-    void api.adminContentProjects().then((result) => { if (active) setRows(result); }).catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : "内容项目加载失败"); }).finally(() => { if (active) setLoading(false); });
+    let active = true; setLoading(true); setError("");
+    void api.adminContentProjects().then(result => { if (active) setRows(result); }).catch(reason => { if (active) setError(reason instanceof Error ? reason.message : "内容项目读取失败"); }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [reload]);
-  const stepLabels: Record<string, string> = { source: "创作意图", analysis: "爆款分析", strategy: "创作策略", outline: "章节大纲", chapter: "分批正文", script: "剧本", entity: "人物场景" };
-  return <section className="admin-v2-card admin-content-projects"><header className="admin-v2-card-head"><div><h2>内容创作流转</h2><p>与前台内容工作台共用真实项目、分析、大纲和章节数据。</p></div><span>{rows.length} 个项目</span><button className="admin-icon-btn" disabled={loading} type="button" aria-label="刷新内容项目" onClick={() => setReload((value) => value + 1)}><RefreshCw size={17} /></button></header>{loading ? <p className="admin-empty" role="status">正在读取内容项目...</p> : error ? <p className="admin-toast danger" role="alert">{error}</p> : !rows.length ? <EmptyHint text="暂无内容创作项目。创作者保存内容项目后可在此查看进度。" /> : <div className="admin-content-project-list">{rows.map((row) => <article key={row.id}><div><strong>{row.title}</strong><small>{row.user?.name || row.user?.email || "未知创作者"} · {new Date(row.updatedAt).toLocaleString("zh-CN")}</small></div><span>{stepLabels[row.activeStep] || row.activeStep}</span><span className={`admin-content-status ${row.status}`}>{row.status}</span><dl><div><dt>分析</dt><dd>{row.counts.analyses}</dd></div><div><dt>大纲</dt><dd>{row.counts.outlines}</dd></div><div><dt>章节</dt><dd>{row.counts.chapters}</dd></div><div><dt>剧本</dt><dd>{row.counts.scripts}</dd></div></dl></article>)}</div>}</section>;
+  const filtered = rows.filter(row => `${row.title} ${row.user?.name || ""} ${row.user?.email || ""} ${row.id}`.toLowerCase().includes(keyword.toLowerCase()));
+  const pagination = useAdminPagination(filtered, keyword);
+  const steps: Record<string, string> = { source: "创作意图", analysis: "内容分析", strategy: "创作策略", outline: "章节大纲", chapter: "正文", script: "剧本", entity: "人物与场景" };
+  const statuses: Record<string, string> = { draft: "草稿", active: "进行中", planning: "策划中", generating: "生成中", completed: "已完成", failed: "生成失败", archived: "已归档" };
+  return <><AdminTablePage title="内容创作进度" summary={`在已读取项目中匹配 ${filtered.length} 条。此处只读查看创作进度，作品发布请进入审核队列。`} filters={<SearchField value={keyword} onChange={setKeyword} placeholder="搜索项目、创作者或项目编号" />} actions={<button className="admin-secondary-btn" disabled={loading} type="button" onClick={() => setReload(value => value + 1)}><RefreshCw size={16} />刷新</button>} columns={[
+    { key: "title", label: "项目", render: row => <div><strong>{row.title}</strong><small>{row.id}</small></div> },
+    { key: "owner", label: "创作者", render: row => row.user?.name || row.user?.email || "未记录" },
+    { key: "step", label: "当前阶段", render: row => steps[row.activeStep] || row.activeStep },
+    { key: "status", label: "状态", render: row => <span className="adm-status" data-status={row.status}>{statuses[row.status] || row.status}</span> },
+    { key: "content", label: "内容数量", render: row => `分析 ${row.counts.analyses} / 大纲 ${row.counts.outlines} / 正文 ${row.counts.chapters} / 剧本 ${row.counts.scripts}` },
+    { key: "updated", label: "更新时间", render: row => formatDate(row.updatedAt) }
+  ]} rows={pagination.items} rowKey={row => row.id} loading={loading} error={error} emptyText="没有匹配的内容项目，可调整关键词后重试。" /><TableFooter total={filtered.length} page={pagination.page} pageSize={pagination.pageSize} onPageChange={pagination.setPage} /></>;
 }
 
 function ShowcaseWorksSection() {
@@ -536,6 +570,7 @@ function ShowcaseWorksSection() {
   }, [keyword, page, reloadKey, status]);
 
   function openWork(work: ShowcaseWork) {
+    if (selected?.id !== work.id && !canLeaveAdminEditor()) return;
     setVersionConflict(false);
     setSelected(work);
     setDraft({ ...work });
@@ -642,7 +677,7 @@ function ShowcaseWorksSection() {
       <AdminTablePage
         title="作品审核队列"
         summary={`共 ${total} 条真实记录；仅已通过作品会在前台展示。`}
-        filters={<><label><Search size={16} /><input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="搜索作品或作者" /></label><select value={status} onChange={(event) => setStatus(event.target.value)}><option value="pending">待审核</option><option value="approved">已通过</option><option value="rejected">已驳回</option><option value="all">全部</option></select></>}
+        filters={<><label><Search size={16} /><input value={keyword} onChange={(event) => setKeyword(event.target.value)} aria-label="搜索作品或作者" placeholder="搜索作品或作者" /></label><select aria-label="审核状态" value={status} onChange={(event) => setStatus(event.target.value)}><option value="pending">待审核</option><option value="approved">已通过</option><option value="rejected">已驳回</option><option value="all">全部</option></select></>}
         actions={<button className="admin-icon-btn" type="button" title="刷新审核队列" onClick={() => setReloadKey((current) => current + 1)}><RefreshCw size={17} /></button>}
         columns={[
           { key: "work", label: "作品", render: (work) => <strong>{work.title}</strong> },
@@ -675,7 +710,7 @@ function ShowcaseWorksSection() {
         {working ? <p className="admin-toast" role="status">正在保存或审核，完成后可继续编辑。</p> : null}
         {error ? <p className="admin-toast danger" role="alert">{error}</p> : null}
         {versionConflict ? <p className="admin-toast" role="status">当前草稿和审核意见已保留在此窗口。请先复制需要保留的修改，关闭窗口后从最新队列重新打开作品审阅。<button className="admin-secondary-btn" type="button" onClick={() => setReloadKey(value => value + 1)}>刷新审核队列</button></p> : null}
-        {draft ? <div className="showcase-admin-modal-body adm-showcase-detail">
+        {draft ? <div className="showcase-admin-modal-body adm-showcase-detail" data-admin-dirty={hasShowcaseDraftChanges(selected, draft, reviewNote) || undefined}>
               <div className="showcase-admin-preview">
                 <video src={draft.videoUrl} poster={draft.coverUrl} controls playsInline preload="metadata" />
                 <p>提交项目：{draft.projectId || "官方初始化"}</p>
@@ -776,7 +811,7 @@ function QualityCenterSection({
   providers: ModelProvider[];
   onRefresh: () => void;
 }) {
-  const [activePanel, setActivePanel] = useState<QualityPanelKey>(() => qualityPanelFromHash(readAdminHash(window.location.hash)) ?? "overview");
+  const [activePanel, setActivePanel] = useState<QualityPanelKey>(() => qualityPanelFromHash(readAcceptedAdminHash()) ?? "overview");
   const [snapshot, setSnapshot] = useState<QualityCenterOverview>();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -787,11 +822,10 @@ function QualityCenterSection({
 
   useEffect(() => {
     function syncQualityPanel() {
-      const panel = qualityPanelFromHash(readAdminHash(window.location.hash));
-      if (panel) setActivePanel(panel);
+      const panel = qualityPanelFromHash(readAcceptedAdminHash());
+      setActivePanel(panel ?? "overview");
     }
-    window.addEventListener("hashchange", syncQualityPanel);
-    return () => window.removeEventListener("hashchange", syncQualityPanel);
+    return subscribeAdminNavigation(syncQualityPanel);
   }, []);
 
   async function loadQualityCenter(refreshParent = true) {
@@ -808,8 +842,7 @@ function QualityCenterSection({
   }
 
   function navigatePanel(panel: QualityPanelKey) {
-    setActivePanel(panel);
-    window.location.hash = qualityPanelHashes[panel];
+    navigateAdminHash(qualityPanelHashes[panel]);
   }
 
   function refreshQualityData() {
@@ -817,22 +850,23 @@ function QualityCenterSection({
     void loadQualityCenter(false);
   }
 
+  const available = qualityMetricAvailability(snapshot);
   const panelItems: Array<{ id: QualityPanelKey; label: string; count?: ReactNode; meta?: string; tone?: "default" | "blue" | "green" | "amber" | "violet" | "danger" }> = [
-    { id: "overview", label: "总览", count: `${snapshot?.summary.successRate ?? 0}%`, meta: "全链路健康", tone: "blue" },
-    { id: "signals", label: "事件与 VOC", count: snapshot?.summary.openEvents ?? 0, meta: "处置/归因/回访", tone: (snapshot?.summary.openEvents ?? 0) ? "amber" : "green" },
-    { id: "datasets", label: "数据集", count: snapshot?.samples.length ?? 0, meta: "标杆/问题/回归", tone: "green" },
-    { id: "experiments", label: "实验评测", count: snapshot?.lab.runs.length ?? 0, meta: "规则/LLM/横评", tone: "blue" },
-    { id: "models", label: "模型与成本", count: snapshot?.modelMonitoring.length ?? 0, meta: "可用性/耗时/成本", tone: (snapshot?.modelMonitoring.some((row) => row.healthStatus === "blocked")) ? "danger" : "green" },
+    { id: "overview", label: "总览", meta: "待处理与下一步", tone: "blue" },
+    { id: "signals", label: "事件与 VOC", count: snapshot?.summary.openEvents ?? "—", meta: "处置/归因/回访", tone: (snapshot?.summary.openEvents ?? 0) ? "amber" : "green" },
+    { id: "datasets", label: "数据集", count: snapshot?.samples.length ?? "—", meta: "标杆/问题/回归", tone: "green" },
+    { id: "experiments", label: "实验评测", count: snapshot?.lab.runs.length ?? "—", meta: "规则/LLM/横评", tone: "blue" },
+    { id: "models", label: "模型与成本", count: snapshot?.modelMonitoring.length ?? "—", meta: "可用性/耗时/成本", tone: (snapshot?.modelMonitoring.some((row) => row.healthStatus === "blocked")) ? "danger" : "green" },
     { id: "release", label: "优化回流", count: snapshot?.stageOptimization.bottleneck ? snapshot.stageOptimization.rows.find((row) => row.key === snapshot.stageOptimization.bottleneck)?.label : "-", meta: "瓶颈/实验/复测", tone: "violet" }
   ];
 
   return (
     <section className="admin-v2-section quality-center-section">
-      <div className="admin-v2-metrics">
-        <AdminMetric icon={<CheckCircle2 size={22} />} label="成功率" value={`${snapshot?.summary.successRate ?? 0}%`} hint={`失败率 ${snapshot?.summary.failureRate ?? 0}%`} tone="green" />
-        <AdminMetric icon={<ChartNoAxesCombined size={22} />} label="平均评分" value={snapshot?.summary.averageScore || "-"} hint="剧本/角色/分镜/图片/视频" tone="blue" />
-        <AdminMetric icon={<Activity size={22} />} label="P95 耗时" value={formatDuration(snapshot?.summary.p95LatencyMs ?? 0)} hint={`${snapshot?.summary.openEvents ?? 0} 个未关闭事件`} tone="amber" />
-        <AdminMetric icon={<DatabaseZap size={22} />} label="模型健康" value={`${snapshot?.summary.modelHealth ?? 0}%`} hint={`${snapshot?.summary.costAnomalies ?? 0} 个成本异常`} tone="violet" />
+      <div className="admin-product-metrics">
+        <AdminMetric icon={<CheckCircle2 size={22} />} label="成功率" value={snapshot && available.completedTasks ? `${snapshot.summary.successRate}%` : "—"} hint={!snapshot ? "等待快照" : available.completedTasks ? `失败率 ${snapshot.summary.failureRate}% · 最近任务` : "无已结束任务"} tone="green" />
+        <AdminMetric icon={<ChartNoAxesCombined size={22} />} label="平均评分" value={snapshot && available.reports ? snapshot.summary.averageScore : "—"} hint={available.reports ? "最近质量报告均分" : "无评分样本"} tone="blue" />
+        <AdminMetric icon={<Activity size={22} />} label="P95 耗时" value={snapshot && available.latency ? formatDuration(snapshot.summary.p95LatencyMs) : "—"} hint={available.latency ? "最近任务耗时分位数" : "无耗时样本"} tone="amber" />
+        <AdminMetric icon={<DatabaseZap size={22} />} label="模型健康" value={snapshot && available.models ? `${snapshot.summary.modelHealth}%` : "—"} hint={snapshot && available.models ? `${snapshot.summary.costAnomalies} 个成本异常` : "无模型监控样本"} tone="violet" />
       </div>
 
       <AdminModuleWorkbench
@@ -840,11 +874,12 @@ function QualityCenterSection({
         railDescription="信号、样本、实验和优化复测共用一条质量链路。"
         railItems={panelItems}
         activeRail={activePanel}
+        protectDraft={false}
         onRailChange={(id) => navigatePanel(id as QualityPanelKey)}
         railFooter={<button className="admin-primary-btn compact" onClick={() => void loadQualityCenter()} disabled={loading}>{loading ? <Loader2 size={15} className="spin-icon" /> : <RefreshCw size={15} />}刷新质量快照</button>}
       >
         {error ? <p className="admin-toast danger">{error}</p> : null}
-        {!snapshot && !error ? <EmptyHint text={loading ? "正在读取质量中心快照..." : "暂无质量中心数据。"} /> : null}
+        {!snapshot && !error ? <StatePanel kind={loading ? "loading" : "empty"} title={loading ? "正在读取质量快照" : "暂无质量中心数据"} compact /> : null}
         {snapshot && activePanel === "overview" ? <QualityOverviewPanel snapshot={snapshot} onNavigate={navigatePanel} /> : null}
         {snapshot && activePanel === "signals" ? <QualitySignalsPanel snapshot={snapshot} evaluation={evaluation} projects={projects} onRefresh={refreshQualityData} /> : null}
         {snapshot && activePanel === "datasets" ? <QualityDatasetWorkspace snapshot={snapshot} /> : null}
@@ -862,126 +897,33 @@ function QualityOverviewPanel({ snapshot, onNavigate }: { snapshot: QualityCente
   const bottleneck = snapshot.stageOptimization.rows.find((row) => row.key === snapshot.stageOptimization.bottleneck);
   const readySamples = snapshot.samples.filter((sample) => sample.readiness === "pass").length;
   const activeSamples = snapshot.samples.reduce((sum, sample) => sum + sample.sampleCount, 0);
-  const statusTone = openPriorityEvents || bottleneck?.health === "blocked" ? "danger" : blockedModels || bottleneck?.health === "warning" || !readySamples ? "warning" : "good";
-  const statusLabel = statusTone === "danger" ? "需要介入" : statusTone === "warning" ? "持续关注" : "运行稳定";
-  const flowSteps = [
-    { label: "信号", value: `${snapshot.voc.length} VOC / ${snapshot.events.length} 事件` },
-    { label: "处置", value: `${snapshot.summary.openEvents} 未关闭` },
-    { label: "数据集", value: `${snapshot.samples.length} 集 / ${activeSamples} 条` },
-    { label: "实验评测", value: `${snapshot.lab.runs.length} 次运行` },
-    { label: "模型与成本", value: `${blockedModels} 阻塞 / ${snapshot.summary.costAnomalies} 异常` },
-    { label: "优化回流", value: `${bottleneck?.label ?? "待建立基线"} / ${snapshot.lineage.length} 作品` }
-  ];
-  const summaryMetrics = [
-    { label: "失败率", value: `${snapshot.summary.failureRate}%`, detail: snapshot.summary.failureRate ? "需要核查失败链路" : "本轮无明显失败波动", tone: snapshot.summary.failureRate ? "warning" : "good" },
-    { label: "平均评分", value: snapshot.summary.averageScore || "-", detail: "覆盖剧本 / 角色 / 分镜 / 图片 / 视频", tone: snapshot.summary.averageScore >= 80 ? "good" : "warning" },
-    { label: "P95 耗时", value: formatDuration(snapshot.summary.p95LatencyMs), detail: "高耗时会影响生成体验", tone: snapshot.summary.p95LatencyMs > 180000 ? "warning" : "info" },
-    { label: "成本异常", value: snapshot.summary.costAnomalies, detail: snapshot.summary.costAnomalies ? "请看成本与模型路由" : "未触发成本预警", tone: snapshot.summary.costAnomalies ? "danger" : "good" },
-    { label: "模型健康", value: `${snapshot.summary.modelHealth}%`, detail: `${blockedModels} 个模型阻塞`, tone: blockedModels ? "danger" : "good" }
-  ];
-  const riskRows: Array<{ title: string; body: string; status: string; tone: string; action: string; panel: QualityPanelKey }> = [
-    {
-      title: "事件压力",
-      body: `${snapshot.events.length} 个质量事件，${snapshot.summary.openEvents} 个未关闭，${openPriorityEvents} 个 P0/P1 需要优先复核和用户回访。`,
-      status: openPriorityEvents ? "需处理" : snapshot.summary.openEvents ? "待闭环" : "稳定",
-      tone: openPriorityEvents ? "danger" : snapshot.summary.openEvents ? "warning" : "good",
-      action: "进入事件池",
-      panel: "signals"
-    },
-    {
-      title: "模型健康",
-      body: `${snapshot.modelMonitoring.length} 条模型监控记录，${blockedModels} 条阻塞；按成功率、错误码、P95 耗时和成本共同判断。`,
-      status: blockedModels ? "阻塞" : snapshot.summary.modelHealth < 95 ? "关注" : "健康",
-      tone: blockedModels ? "danger" : snapshot.summary.modelHealth < 95 ? "warning" : "good",
-      action: "看模型监控",
-      panel: "models"
-    },
-    {
-      title: "样本资产",
-      body: `${snapshot.samples.length} 个样本集，${readySamples} 个可直接用于回归；核心样本不足时不建议直接上线。`,
-      status: readySamples ? "可回归" : "需补齐",
-      tone: readySamples ? "good" : "warning",
-      action: "补样本库",
-      panel: "datasets"
-    },
-    {
-      title: "当前优化重点",
-      body: bottleneck ? `${bottleneck.label}是最近 ${snapshot.stageOptimization.windowDays} 天的主要瓶颈：${bottleneck.recommendation}` : "当前样本不足，先完成四阶段基线评测。",
-      status: bottleneck?.health === "blocked" ? "优先优化" : bottleneck ? "继续验证" : "待建基线",
-      tone: bottleneck?.health === "blocked" ? "danger" : "warning",
-      action: "进入优化回流",
-      panel: "release"
-    }
+  const rows: Array<{ title: string; body: string; status: string; action: string; panel: QualityPanelKey }> = [
+    { title: "事件处置", body: `${snapshot.summary.openEvents} 个未关闭事件，${openPriorityEvents} 个 P0/P1 待优先复核。`, status: snapshot.summary.openEvents ? "待处理" : "暂无待处理", action: "查看事件", panel: "signals" },
+    { title: "回归样本", body: `${snapshot.samples.length} 个数据集 / ${activeSamples} 条样本，${readySamples} 个数据集可用于回归。`, status: readySamples ? "可开展回归" : "待建立样本", action: "管理数据集", panel: "datasets" },
+    { title: "实验评测", body: `${snapshot.lab.runs.length} 次最近运行；使用已确认的样本比较模型与提示词。`, status: snapshot.lab.runs.length ? "查看运行结果" : "尚未运行", action: "查看实验", panel: "experiments" },
+    { title: "模型与成本", body: snapshot.modelMonitoring.length ? `${snapshot.modelMonitoring.length} 条监控记录，${blockedModels} 条阻塞，${snapshot.summary.costAnomalies} 个成本异常。` : "暂无监控样本；有实际生成记录后可判断模型状态。", status: blockedModels ? "需排查" : snapshot.modelMonitoring.length ? "已有观测" : "无样本", action: "查看监控", panel: "models" },
+    { title: "阶段优化", body: bottleneck ? `${bottleneck.label}：${bottleneck.recommendation}` : "建立剧本、素材、分镜与成片的质量基线后，再定位优化重点。", status: bottleneck ? "已有优化建议" : "待建基线", action: "查看阶段", panel: "release" }
   ];
   return (
-    <div className="quality-panel-stack">
-      <section className={`quality-command-summary ${statusTone}`}>
-        <div className="quality-command-score">
-          <span>总体质量概况</span>
-          <strong>{snapshot.summary.successRate}%</strong>
-          <small>成功率</small>
-          <em>{statusLabel}</em>
-        </div>
-        <div className="quality-command-body">
-          <div>
-            <h2>质量总览</h2>
-            <p>把成功率、失败、耗时、成本、模型阻塞和发布风险压缩在同一行，先判断系统状态，再进入对应池子处理。</p>
-          </div>
-          <div className="quality-kpi-strip">
-            {summaryMetrics.map((metric) => (
-              <article className={`quality-kpi-cell ${metric.tone}`} key={metric.label}>
-                <span>{metric.label}</span>
-                <strong>{metric.value}</strong>
-                <small>{metric.detail}</small>
-              </article>
-            ))}
-          </div>
-        </div>
+    <div className="admin-quality-overview">
+      <section className="admin-quality-queue">
+        <header><div><h2>待处理与下一步</h2><p>快照更新于 {formatDate(snapshot.generatedAt)}</p></div></header>
+        {rows.map((row) => <article key={row.title}>
+          <div><strong>{row.title}</strong><p>{row.body}</p></div>
+          <span>{row.status}</span>
+          <button className="admin-text-btn primary" type="button" onClick={() => onNavigate(row.panel)}>{row.action}<ChevronRight size={14} /></button>
+        </article>)}
       </section>
-      <div className="quality-flow-strip" aria-label="质量闭环流程">
-        {flowSteps.map((item, index) => (
-          <article key={item.label}>
-            <span>{index + 1}</span>
-            <strong>{item.label}</strong>
-            <small>{item.value}</small>
-          </article>
-        ))}
-      </div>
-      <QualityStageContractMatrix snapshot={snapshot} />
-      <section className="quality-risk-list">
-        <header>
-          <strong>本轮风险队列</strong>
-          <span>横向列表优先展示判断、状态和下一步动作。</span>
-        </header>
-        {riskRows.map((row) => (
-          <article className={`quality-risk-row ${row.tone}`} key={row.title}>
-            <strong>{row.title}</strong>
-            <p>{row.body}</p>
-            <span>{row.status}</span>
-            <button type="button" onClick={() => onNavigate(row.panel)}>{row.action}</button>
-          </article>
-        ))}
+      <section className="admin-quality-queue">
+        <header><div><h2>最近质量信号</h2><p>来自用户反馈、任务和评测记录。</p></div><button className="admin-text-btn primary" type="button" onClick={() => onNavigate("signals")}>查看全部</button></header>
+        {snapshot.events.slice(0, 6).map((event) => <article key={event.id}>
+          <div><strong>{event.title}</strong><p>{event.sourceLabel} · {stageLabelSafe(event.stage)} · {formatDate(event.createdAt)}</p></div>
+          <span>{feedbackPriorityLabel(event.priority)}</span>
+          <button className="admin-text-btn primary" type="button" onClick={() => onNavigate("signals")}>查看信号<ChevronRight size={14} /></button>
+        </article>)}
+        {!snapshot.events.length ? <StatePanel kind="empty" title="暂无质量信号" description="实际生成、反馈或评测产生记录后会在这里显示。" compact /> : null}
       </section>
-      <article className="admin-v2-card quality-events-preview">
-        <div className="admin-v2-card-head">
-          <div>
-            <h2>最近质量信号</h2>
-            <p>用户反馈、任务失败、模型错误、评测失败和人工复核会汇入同一个事件池。</p>
-          </div>
-        </div>
-        <div className="quality-signal-list">
-          {snapshot.events.slice(0, 6).map((event) => (
-            <article className="quality-signal-row" key={event.id}>
-              <span className={`feedback-priority ${event.priority}`}>{feedbackPriorityLabel(event.priority)}</span>
-              <strong>{event.title}</strong>
-              <p>{event.description}</p>
-              <small>{event.sourceLabel} · {stageLabelSafe(event.stage)} · {formatDate(event.createdAt)}</small>
-              <b>{event.actionLabel}</b>
-            </article>
-          ))}
-          {!snapshot.events.length ? <EmptyHint text="暂无质量事件。" /> : null}
-        </div>
-      </article>
+      <details className="admin-advanced-panel"><summary>阶段基线与验收条件<ChevronDown size={16} /></summary><QualityStageContractMatrix snapshot={snapshot} /></details>
     </div>
   );
 }
@@ -1007,14 +949,14 @@ function QualitySignalsPanel({
           <h2>事件与 VOC</h2>
           <p>用户反馈作为可流转工单处理；任务失败、模型错误和评测失败保留为系统信号，避免把只读快照误当成已落库工单。</p>
         </div>
-        <div className="quality-subnav" role="tablist" aria-label="事件与 VOC 视图">
+        <div className="quality-subnav" role="group" aria-label="事件与 VOC 视图">
           {[
             ["workorders", "工单处置", snapshot.voc.length],
             ["signals", "系统信号", systemEvents.length],
             ["voc", "VOC 视图", snapshot.voc.length],
             ["attribution", "归因趋势", snapshot.attribution.length]
           ].map(([key, label, count]) => (
-            <button key={key} type="button" className={view === key ? "active" : ""} onClick={() => setView(key as typeof view)}>
+            <button key={key} type="button" className={view === key ? "active" : ""} aria-pressed={view === key} onClick={() => { if (key === view || canLeaveAdminEditor()) setView(key as typeof view); }}>
               {label}<b>{count}</b>
             </button>
           ))}
@@ -1651,7 +1593,7 @@ function EvaluationSection({
 
   return (
     <section className="admin-v2-section admin-evaluation-section">
-      <div className="admin-v2-metrics">
+      <div className="admin-product-metrics">
         <AdminMetric icon={<ChartNoAxesCombined size={22} />} label="有效作品" value={evaluation?.northStar.effectiveProjects ?? 0} hint={`总项目 ${evaluation?.northStar.totalProjects ?? 0}`} tone="blue" />
         <AdminMetric icon={<CheckCircle2 size={22} />} label="最近评测均分" value={latestRun?.summary.averageScore ? `${latestRun.summary.averageScore}分` : "-"} hint={latestRun ? `${latestRun.summary.reportCount} 条报告` : "暂无评测记录"} tone="green" />
         <AdminMetric icon={<Activity size={22} />} label="评测记录" value={runs.length} hint={`LLM ${llmCallsTotal} 次 · 失败 ${failedRuns}`} tone="amber" />
@@ -2178,15 +2120,16 @@ function FeedbackOpsSection({
 
   return (
     <section className="admin-v2-section feedback-ops-section">
-      <div className="admin-v2-metrics">
+      <div className="admin-product-metrics">
         <AdminMetric icon={<MessageSquareText size={22} />} label="反馈池" value={feedbackTotal} hint={`数据库分页 · 第 ${feedbackPage}/${feedbackPages} 页`} tone="blue" />
         <AdminMetric icon={<Activity size={22} />} label="待归因" value={pending} hint={`${urgent} 条 P0/P1`} tone="amber" />
         <AdminMetric icon={<CheckCircle2 size={22} />} label="平均评分" value={average(feedbacks.map((item) => item.rating)) || "-"} hint={`${unusable} 条不可用`} tone="green" />
         <AdminMetric icon={<DatabaseZap size={22} />} label="已沉淀" value={settledSamples} hint="可用于回归评测" tone="violet" />
       </div>
 
+      <p className="admin-filter-scope">关键词、阶段、状态查询全部反馈；可用性和优先级进一步筛选当前页，切换页可继续查看。</p>
       <AdminToolbar
-        right={<button className="admin-primary-btn" onClick={() => void loadFeedback(true, 1)} disabled={loading}>{loading ? <Loader2 className="spin-icon" size={16} /> : <Search size={16} />}查询反馈</button>}
+        right={<button className="admin-primary-btn" onClick={() => { if (canLeaveAdminEditor()) void loadFeedback(true, 1); }} disabled={loading}>{loading ? <Loader2 className="spin-icon" size={16} /> : <Search size={16} />}查询反馈</button>}
       >
         <SearchField value={keyword} onChange={setKeyword} placeholder="搜索反馈内容、标签、作品或用户..." />
         <SelectFilter value={stage} onChange={(value) => setStage(value as typeof stage)} options={["all", "script", "character", "storyboard", "image", "video"]} labels={{ all: "全部阶段", script: "剧本", character: "角色", storyboard: "分镜", image: "图片", video: "视频" }} />
@@ -2196,7 +2139,7 @@ function FeedbackOpsSection({
       </AdminToolbar>
 
       <div className="feedback-tag-summary">
-        {topTags.length ? topTags.map((item) => <button key={item.tag} type="button" onClick={() => setKeyword(item.tag)}>{item.tag}<span>{item.count}</span></button>) : <span>暂无高频标签</span>}
+        {topTags.length ? topTags.map((item) => <button key={item.tag} type="button" onClick={() => { if (canLeaveAdminEditor()) setKeyword(item.tag); }}>{item.tag}<span>{item.count}</span></button>) : <span>暂无高频标签</span>}
       </div>
       {error ? <p className="admin-toast danger">{error}</p> : null}
 
@@ -2205,7 +2148,7 @@ function FeedbackOpsSection({
           {rows.map((feedback) => {
             const project = feedback.projectId ? projectById.get(feedback.projectId) : undefined;
             return (
-              <button className={feedback.id === selectedFeedback?.id ? "feedback-ops-card active" : "feedback-ops-card"} key={feedback.id} onClick={() => setSelectedId(feedback.id)} type="button">
+              <button className={feedback.id === selectedFeedback?.id ? "feedback-ops-card active" : "feedback-ops-card"} key={feedback.id} onClick={() => { if (feedback.id === selectedFeedback?.id || canLeaveAdminEditor()) setSelectedId(feedback.id); }} type="button">
                 <div className="feedback-ops-head">
                   <span className={`feedback-priority ${feedback.priority}`}>{feedbackPriorityLabel(feedback.priority)}</span>
                   <strong>{project?.project.name ?? "未关联作品"}</strong>
@@ -2228,7 +2171,7 @@ function FeedbackOpsSection({
           {!rows.length ? <EmptyHint text="暂无匹配反馈。刷新后仍为空，说明最近还没有用户提交该类问题。" /> : null}
         </div>
 
-        <aside className="feedback-detail-panel">
+        <aside className="feedback-detail-panel" data-admin-dirty={hasFeedbackDraftChanges(selectedFeedback, draft, selectedFeedback ? inferRootCause(selectedFeedback) : "") || undefined}>
           {selectedFeedback ? (
             <>
               <div className="feedback-detail-head">
@@ -2237,7 +2180,7 @@ function FeedbackOpsSection({
                   <h2>{selectedProject?.project.name ?? "未关联作品"}</h2>
                   <p>{stageLabel(selectedFeedback.stage)} · {feedbackUsabilityLabel(selectedFeedback.usability)} · 来源 {selectedFeedback.source}</p>
                 </div>
-                <button className="admin-secondary-btn compact" type="button" onClick={() => window.location.hash = "评测闭环"}>查看评测闭环</button>
+                <button className="admin-secondary-btn compact" type="button" onClick={() => navigateAdminHash("评测闭环")}>查看评测闭环</button>
               </div>
               <div className="feedback-flow-strip" aria-label="反馈处理流程">
                 <span className="done">收集 badcase</span>
@@ -2305,7 +2248,7 @@ function FeedbackOpsSection({
           ) : <EmptyHint text="请选择一条反馈进行处理。" />}
         </aside>
       </div>
-      <div className="admin-pagination"><button type="button" disabled={feedbackPage <= 1 || loading} onClick={() => void loadFeedback(false, feedbackPage - 1)}>‹</button><button className="active" type="button">{feedbackPage} / {feedbackPages}</button><button type="button" disabled={feedbackPage >= feedbackPages || loading} onClick={() => void loadFeedback(false, feedbackPage + 1)}>›</button></div>
+      <div className="admin-pagination"><button type="button" aria-label="上一页反馈" disabled={feedbackPage <= 1 || loading} onClick={() => { if (canLeaveAdminEditor()) void loadFeedback(false, feedbackPage - 1); }}>‹</button><span>{feedbackPage} / {feedbackPages}</span><button type="button" aria-label="下一页反馈" disabled={feedbackPage >= feedbackPages || loading} onClick={() => { if (canLeaveAdminEditor()) void loadFeedback(false, feedbackPage + 1); }}>›</button></div>
     </section>
   );
 }
@@ -2402,7 +2345,7 @@ function UsersSection({
         onRailChange={(next) => { setSegment(next); setPage(1); setRole(next === "admin" || next === "creator" ? next : "all"); setStatus(next === "active" || next === "disabled" ? next : "all"); setSelectedUserIds([]); }}
         railFooter={<span>共匹配 {total} 条，本页 {rows.length} 条，已选 {selectedVisibleCount} 条。</span>}
       >
-        <div className="admin-v2-metrics small">
+        <div className="admin-product-metrics compact">
           <AdminMetric icon={<UserRound size={20} />} label="匹配用户" value={total} hint={`本页 ${activeUsers} 个正常账号`} tone="blue" />
           <AdminMetric icon={<WalletCards size={20} />} label="本页积分余额" value={totalCredits.toLocaleString()} hint="本页账号可用积分合计" tone="green" />
           <AdminMetric icon={<CircleDollarSign size={20} />} label="本页有入账记录" value={paidUsers} hint="含赠送与运营调整" tone="amber" />
@@ -2427,6 +2370,7 @@ function UsersSection({
           summary="点击一行，在右侧完成身份、状态、积分与密码管理。"
           actions={<label className="admin-row-checkbox"><input type="checkbox" checked={allVisibleSelected} onChange={toggleVisibleUsers} />选择当前结果</label>}
           columns={[
+            { key: "select", label: "选择", render: (user) => <input type="checkbox" aria-label={`选择${user.name}`} checked={selectedUserIds.includes(user.id)} onChange={() => setSelectedUserIds(current => current.includes(user.id) ? current.filter(id => id !== user.id) : [...current, user.id])} /> },
             { key: "user", label: "用户", render: (user) => <div><strong>{user.name}</strong><small>{user.email || user.id}</small></div> },
             { key: "phone", label: "手机号", render: (user) => user.phone || "未绑定" },
             { key: "role", label: "身份", render: (user) => adminRoleLabels[user.role] ?? user.role },
@@ -2444,7 +2388,7 @@ function UsersSection({
           totalPages={Math.max(1, Math.ceil(total / 25))}
           onPageChange={(next) => { setPage(next); setSelectedUserIds([]); setSelectedUserId(null); }}
           emptyText="没有匹配的用户；请调整分层、搜索或筛选条件"
-          onRowClick={(user) => setSelectedUserId(user.id)}
+          onRowClick={(user) => { if (user.id === selectedUserId || canLeaveAdminEditor()) setSelectedUserId(user.id); }}
         />
       </AdminModuleWorkbench>
       <AdminMasterDetail open={Boolean(selectedUser)} title={selectedUser?.name ?? "用户详情"} meta={selectedUser ? <p>{selectedUser.email || selectedUser.phone || selectedUser.id}</p> : null} busy={action.pending} onClose={() => setSelectedUserId(null)}>
@@ -2506,13 +2450,15 @@ function AnnouncementsSection({
     { id: "warning", label: "提醒", count: announcements.filter((item) => item.type === "warning").length, meta: "故障/风险", tone: "amber" }
   ];
 
+  const pagination = useAdminPagination(rows, `${keyword}:${type}:${segment}`);
+
   return (
     <section className="admin-v2-section admin-announcement-section">
-      <div className="admin-submodule-tabs">
-        <button className={submodule === "announcements" ? "active" : undefined} type="button" onClick={() => setSubmodule("announcements")}>
+      <div className="admin-product-tabs">
+        <button className={submodule === "announcements" ? "active" : undefined} type="button" onClick={() => { if (canLeaveAdminEditor()) setSubmodule("announcements"); }}>
           <Megaphone size={18} />公告管理<span>{announcements.length}</span>
         </button>
-        <button className={submodule === "help" ? "active" : undefined} type="button" onClick={() => setSubmodule("help")}>
+        <button className={submodule === "help" ? "active" : undefined} type="button" onClick={() => { if (canLeaveAdminEditor()) setSubmodule("help"); }}>
           <BookOpen size={18} />帮助中心<span>{helpArticles.length}</span>
         </button>
       </div>
@@ -2526,23 +2472,23 @@ function AnnouncementsSection({
             onRailChange={setSegment}
             railFooter={<span>当前命中 {rows.length} 条，前台生效 {liveRows.length} 条。</span>}
           >
-            <div className="admin-v2-metrics small">
+            <div className="admin-product-metrics compact">
               <AdminMetric icon={<Megaphone size={20} />} label="公告总数" value={announcements.length} hint="后台可管理记录" tone="blue" />
               <AdminMetric icon={<CheckCircle2 size={20} />} label="前台生效" value={liveRows.length} hint="工作台正在展示" tone="green" />
               <AdminMetric icon={<ShieldCheck size={20} />} label="置顶公告" value={announcements.filter((item) => item.pinned).length} hint="优先级最高" tone="amber" />
-              <AdminMetric icon={<Activity size={20} />} label="停用/过期" value={announcements.length - liveRows.length} hint="不会进入前台" tone="violet" />
+              <AdminMetric icon={<Activity size={20} />} label="当前未展示" value={announcements.length - liveRows.length} hint="含排期、停用与过期" tone="violet" />
             </div>
             <AdminToolbar right={<button className="admin-primary-btn" type="button" onClick={() => setCreateOpen(true)}><Plus size={18} />新增公告</button>}>
               <SearchField value={keyword} onChange={setKeyword} placeholder="搜索标题或公告内容..." />
               <SelectFilter value={type} onChange={setType} options={["all", "info", "guide", "update", "warning"]} labels={{ all: "全部类型", info: "信息", guide: "指引", update: "更新", warning: "提醒" }} />
             </AdminToolbar>
             <div className="admin-announcement-list">
-              {rows.map((item) => (
+              {pagination.items.map((item) => (
                 <AnnouncementRow key={item.id} announcement={item} now={now} onSave={onSave} onDelete={onDelete} />
               ))}
-              {!rows.length ? <EmptyHint text="没有匹配的公告。可以切换左侧分层，或新增一条前台公告。" /> : null}
+              {!rows.length ? <EmptyHint text="没有匹配的公告。可以切换上方分类，或新增一条前台公告。" /> : null}
             </div>
-            <TableFooter total={rows.length} />
+            <TableFooter total={rows.length} page={pagination.page} pageSize={pagination.pageSize} onPageChange={pagination.setPage} />
           </AdminModuleWorkbench>
           <AdminModal open={createOpen} title="新增平台公告" description="公告启用后会出现在前台工作台，可用置顶和生效时间控制展示顺序。" onClose={() => setCreateOpen(false)} wide>
             <AnnouncementCreator onCreate={(input) => closeAfterAdminSuccess(() => onCreate(input), () => setCreateOpen(false))} />
@@ -2606,6 +2552,8 @@ function HelpArticlesManager({
     }))
   ];
 
+  const pagination = useAdminPagination(rows, `${keyword}:${category}:${segment}`);
+
   return (
     <AdminModuleWorkbench
       railTitle="帮助中心"
@@ -2615,7 +2563,7 @@ function HelpArticlesManager({
       onRailChange={setSegment}
       railFooter={<span>当前命中 {rows.length} 条，前台生效 {activeRows.length} 条。</span>}
     >
-      <div className="admin-v2-metrics small">
+      <div className="admin-product-metrics compact">
         <AdminMetric icon={<BookOpen size={20} />} label="帮助文章" value={articles.length} hint="后台可管理记录" tone="blue" />
         <AdminMetric icon={<CheckCircle2 size={20} />} label="前台生效" value={activeRows.length} hint="帮助中心正在展示" tone="green" />
         <AdminMetric icon={<ShieldCheck size={20} />} label="置顶内容" value={articles.filter((item) => item.pinned).length} hint="优先展示给用户" tone="amber" />
@@ -2626,12 +2574,12 @@ function HelpArticlesManager({
         <SelectFilter value={category} onChange={setCategory} options={["all", ...helpCategoryOptions]} labels={{ all: "全部分类", ...helpCategoryLabels }} />
       </AdminToolbar>
       <div className="admin-announcement-list admin-help-article-list">
-        {rows.map((item) => (
+        {pagination.items.map((item) => (
           <HelpArticleRow key={item.id} article={item} onSave={onSave} onDelete={onDelete} />
         ))}
         {!rows.length ? <EmptyHint text="没有匹配的帮助内容。可以切换左侧分类，或新增一条操作帮助。" /> : null}
       </div>
-      <TableFooter total={rows.length} />
+      <TableFooter total={rows.length} page={pagination.page} pageSize={pagination.pageSize} onPageChange={pagination.setPage} />
       <AdminModal open={createOpen} title="新增帮助文章" description="文章启用后会进入前台帮助中心，可通过分类、排序和置顶控制展示。" onClose={() => setCreateOpen(false)} wide>
         <HelpArticleCreator onCreate={(input) => closeAfterAdminSuccess(() => onCreate(input), () => setCreateOpen(false))} />
       </AdminModal>
@@ -2660,10 +2608,13 @@ function HelpArticleRow({
     draft.pinned !== article.pinned ||
     Number(draft.sortOrder) !== article.sortOrder;
   return (
-    <article className="admin-announcement-card admin-help-article-card">
+    <article className="admin-announcement-card admin-help-article-card" data-admin-dirty={dirty || undefined}>
+      <details className="admin-record-disclosure">
+        <summary><div><strong>{article.title}</strong><p>{article.summary || article.content}</p></div><div className="admin-record-meta"><span>{helpCategoryLabel(article.category)}</span><StatusChip active={article.enabled} /><DraftIndicator dirty={dirty} /><span>编辑文章</span><ChevronDown size={16} /></div></summary>
+        <div className="admin-record-editor"><AdminScopedActionNotice />
       <div className="admin-announcement-card-head">
         <span className={`admin-chip help-${draft.category}`}>{helpCategoryLabel(draft.category)}</span>
-        <StatusChip active={draft.enabled} label={draft.enabled ? "展示中" : "停用"} />
+        <StatusChip active={article.enabled} label={article.enabled ? "已展示" : "已停用"} /><DraftIndicator dirty={dirty} />
         {draft.pinned ? <span className="admin-status enabled">置顶</span> : null}
         <div className="admin-row-actions">
           <button className="admin-icon-btn" title={draft.enabled ? "停用" : "启用"} onClick={() => setDraft({ ...draft, enabled: !draft.enabled })}>{draft.enabled ? <ToggleRight size={18} /> : <ToggleLeft size={18} />}</button>
@@ -2691,6 +2642,7 @@ function HelpArticleRow({
         <label className="wide"><span>正文</span><textarea value={draft.content} onChange={(event) => setDraft({ ...draft, content: event.target.value })} /></label>
         <label className="wide"><span>标签</span><input value={draft.tags} onChange={(event) => setDraft({ ...draft, tags: event.target.value })} placeholder="用逗号分隔，例如：新手必读，积分" /></label>
       </div>
+    </div></details>
     </article>
   );
 }
@@ -2785,7 +2737,10 @@ function AnnouncementRow({
     draft.startsAt !== announcementDateInput(announcement.startsAt) ||
     draft.endsAt !== announcementDateInput(announcement.endsAt);
   return (
-    <article className="admin-announcement-card">
+    <article className="admin-announcement-card" data-admin-dirty={dirty || undefined}>
+      <details className="admin-record-disclosure">
+        <summary><div><strong>{announcement.title}</strong><p>{announcement.body}</p></div><div className="admin-record-meta"><StatusChip active={status === "active"} label={announcementStatusLabels[status]} /><DraftIndicator dirty={dirty} /><span>编辑公告</span><ChevronDown size={16} /></div></summary>
+        <div className="admin-record-editor"><AdminScopedActionNotice />
       <div className="admin-announcement-card-head">
         <span className={`admin-chip announcement-${draft.type}`}>{announcementTypeLabel(draft.type)}</span>
         <StatusChip active={status === "active"} label={announcementStatusLabels[status]} />
@@ -2819,6 +2774,7 @@ function AnnouncementRow({
         {!schedule.ok ? <p className="admin-toast danger wide" id={scheduleErrorId} role="alert">{schedule.error}</p> : null}
         <label className="wide"><span>公告内容</span><textarea value={draft.body} onChange={(event) => setDraft({ ...draft, body: event.target.value })} /></label>
       </div>
+    </div></details>
     </article>
   );
 }
@@ -2918,6 +2874,7 @@ function EvaluationRecordsCard({
   const deletePending = useRef(false);
   const exportPending = useRef(false);
   const allVisibleSelected = visibleRuns.length > 0 && visibleRuns.every((run) => selectedRunIds.includes(run.id));
+  const datasetPagination = useAdminPagination(datasets, "datasets", 6);
 
   useEffect(() => {
     setSelectedRunIds((current) => current.filter((id) => runs.some((run) => run.id === id)));
@@ -3048,7 +3005,7 @@ function EvaluationRecordsCard({
       {exportError ? <p className="admin-toast danger" role="alert">{exportError}</p> : null}
       {recordsLoading ? <p className="admin-toast" role="status">正在加载评测记录…</p> : null}
       <div className="evaluation-dataset-compact-list">
-        {datasets.slice(0, 6).map((dataset) => (
+        {datasetPagination.items.map((dataset) => (
           <div key={dataset.id}>
             <strong>{dataset.name}</strong>
             <span>{dataset.sampleCount} 项 · {dataset.stages.map(stageLabel).join(" / ")}</span>
@@ -3059,6 +3016,7 @@ function EvaluationRecordsCard({
         ))}
         {!datasets.length ? <small>暂无保存的样本集。</small> : null}
       </div>
+      <TableFooter total={datasets.length} page={datasetPagination.page} pageSize={datasetPagination.pageSize} onPageChange={datasetPagination.setPage} />
       <div className="admin-table-wrap">
         <table className="admin-v2-table evaluation-runs-table">
           <thead><tr><th><input type="checkbox" checked={allVisibleSelected} onChange={toggleVisibleRuns} /></th><th>运行</th><th>样本</th><th>模型</th><th>结果</th><th>LLM</th><th>状态</th><th>操作</th></tr></thead>
@@ -3074,7 +3032,7 @@ function EvaluationRecordsCard({
                 <td><EvaluationRunStatusChip status={run.status} /></td>
                 <td>
                   <div className="admin-row-actions">
-                    <button className="admin-icon-btn" disabled={exporting === run.id} onClick={() => void exportRun(run)} title="导出 CSV">
+                    <button className="admin-icon-btn" disabled={exporting === run.id} onClick={() => void exportRun(run)} title="导出 Excel">
                       {exporting === run.id ? <Loader2 className="spin-icon" size={15} /> : <Download size={15} />}
                     </button>
                     <button className="admin-icon-btn danger" disabled={deleting === run.id} onClick={() => void deleteRun(run)} title="删除评测记录">{deleting === run.id ? <Loader2 className="spin-icon" size={15} /> : <Trash2 size={15} />}</button>
@@ -3228,6 +3186,7 @@ function RedeemSection({
   const [createOpen, setCreateOpen] = useState(false);
   const [expandedBatch, setExpandedBatch] = useState<string | null>(null);
   const batchPending = useRef(false);
+  const [batchNotice, setBatchNotice] = useState("");
   const rows = redeemCodes.filter((code) => {
     const matchedKeyword = `${code.code} ${code.name} ${code.batchId ?? ""}`.toLowerCase().includes(keyword.toLowerCase());
     const codeStatus = redeemStatus(code);
@@ -3250,12 +3209,16 @@ function RedeemSection({
     { id: "disabled", label: "已停用", count: redeemCodes.filter((code) => redeemStatus(code) === "disabled").length, meta: "不可兑换", tone: "danger" },
     { id: "used_up", label: "已用完", count: redeemCodes.filter((code) => redeemStatus(code) === "used_up").length, meta: "达到上限", tone: "violet" }
   ];
-  const visibleCodes = rows.slice(0, 50);
+  const pagination = useAdminPagination(rows, `${keyword}:${status}:${viewMode}`);
+  const visibleCodes = pagination.items;
   async function batchToggle(codes: RedeemCode[], enabled: boolean) {
     if (batchPending.current) return;
     const target = codes.filter((code) => code.enabled !== enabled);
+    if (!target.length) { setBatchNotice("当前筛选范围内没有需要变更的兑换码。"); return; }
+    if (!window.confirm(`确认${enabled ? "启用" : "停用"}当前筛选批次中的 ${target.length} 个兑换码？`)) return;
     batchPending.current = true;
-    try { await runAdminBatch(target, (code) => onSave(code.id, { enabled })); }
+    setBatchNotice(`正在处理 ${target.length} 个兑换码…`);
+    try { const completed = await runAdminBatch(target, (code) => onSave(code.id, { enabled })); setBatchNotice(`批量${enabled ? "启用" : "停用"}：已完成 ${completed.length} / ${target.length} 个。${completed.length < target.length ? "其余未完成，已停止；请核对错误后再操作。" : ""}`); }
     finally { batchPending.current = false; }
   }
 
@@ -3265,7 +3228,8 @@ function RedeemSection({
     if (!unused.length) return;
     if (!window.confirm(`确认删除 ${unused.length} 个未使用兑换码？已使用记录不会被删除。`)) return;
     batchPending.current = true;
-    try { await runAdminBatch(unused, (code) => onDelete(code.id)); }
+    setBatchNotice(`正在删除 ${unused.length} 个未使用兑换码…`);
+    try { const completed = await runAdminBatch(unused, (code) => onDelete(code.id)); setBatchNotice(`批量删除：已完成 ${completed.length} / ${unused.length} 个。${completed.length < unused.length ? "其余未完成，已停止；已使用记录保留。" : "已使用记录保留。"}`); }
     finally { batchPending.current = false; }
   }
 
@@ -3279,9 +3243,9 @@ function RedeemSection({
         onRailChange={setStatus}
         railFooter={<span>{batches.length} 个批次，{rows.length} 个明细。</span>}
       >
-        <div className="admin-v2-metrics small">
+        <div className="admin-product-metrics compact">
           <AdminMetric icon={<Gift size={20} />} label="兑换码总数" value={redeemCodes.length} hint="后台记录" tone="blue" />
-          <AdminMetric icon={<ShieldCheck size={20} />} label="启用中" value={redeemCodes.filter((item) => item.enabled).length} hint="前台可用" tone="green" />
+          <AdminMetric icon={<ShieldCheck size={20} />} label="启用中" value={redeemCodes.filter((item) => item.enabled).length} hint="另受期限与次数限制" tone="green" />
           <AdminMetric icon={<WalletCards size={20} />} label="已兑换次数" value={used} hint="累计使用" tone="amber" />
           <AdminMetric icon={<CircleDollarSign size={20} />} label="平均额度" value={averageCredits(redeemCodes)} hint="积分/码" tone="violet" />
         </div>
@@ -3295,6 +3259,7 @@ function RedeemSection({
         >
           <SearchField value={keyword} onChange={setKeyword} placeholder="搜索兑换码、活动名、批次..." />
         </AdminToolbar>
+        {batchNotice ? <InlineNotice tone="info">{batchNotice}</InlineNotice> : null}
         {viewMode === "codes" ? (
           <div className="admin-data-card">
             <div className="admin-v2-card-head">
@@ -3316,7 +3281,7 @@ function RedeemSection({
                 <span>操作</span>
               </div>
               {visibleCodes.map((code) => <RedeemCodeRow key={code.id} code={code} onSave={onSave} onDelete={onDelete} />)}
-              {rows.length > visibleCodes.length ? <p className="admin-list-note">当前筛选命中 {rows.length} 条，先显示前 {visibleCodes.length} 条；请使用搜索框定位具体兑换码。</p> : null}
+
               {!rows.length ? <EmptyHint text="没有匹配的兑换码。可以切换左侧状态，或重新搜索批次/活动名。" /> : null}
             </div>
           </div>
@@ -3338,7 +3303,7 @@ function RedeemSection({
             {!batches.length ? <EmptyHint text="没有匹配的兑换码批次。" /> : null}
           </div>
         )}
-        <TableFooter total={rows.length} />
+        <TableFooter total={rows.length} page={viewMode === "codes" ? pagination.page : undefined} pageSize={pagination.pageSize} onPageChange={pagination.setPage} />
       </AdminModuleWorkbench>
       <AdminModal open={createOpen} title="生成兑换码" description="批量生成唯一 code，默认每个 code 只可兑换一次。" onClose={() => setCreateOpen(false)} wide>
         <RedeemBatchCreator onCreate={(input) => closeAfterAdminSuccess(() => onBatchCreate(input), () => setCreateOpen(false))} />
@@ -3380,6 +3345,8 @@ function PlansSection({
     { id: "entry", label: "低价体验", count: plans.filter((plan) => plan.price <= 20).length, meta: "拉新入口", tone: "amber" },
     { id: "growth", label: "高额套餐", count: plans.filter((plan) => plan.price > 20).length, meta: "进阶付费", tone: "violet" }
   ];
+  const pagination = useAdminPagination(rows, `${keyword}:${segment}`);
+
   return (
     <section className="admin-v2-section">
       <AdminModuleWorkbench
@@ -3390,7 +3357,7 @@ function PlansSection({
         onRailChange={setSegment}
         railFooter={<span>启用套餐会自动出现在前台价格区。</span>}
       >
-        <div className="admin-v2-metrics small">
+        <div className="admin-product-metrics compact">
           <AdminMetric icon={<ReceiptText size={20} />} label="套餐数量" value={plans.length} hint={`${enabledRows.length} 个启用`} tone="blue" />
           <AdminMetric icon={<CircleDollarSign size={20} />} label="平均售价" value={`¥${avgPrice}`} hint="一次性充值包" tone="green" />
           <AdminMetric icon={<WalletCards size={20} />} label="积分总额" value={plans.reduce((sum, plan) => sum + plan.credits + plan.bonusCredits, 0).toLocaleString()} hint="全部套餐到账额度" tone="amber" />
@@ -3415,14 +3382,14 @@ function PlansSection({
               </tr>
             </thead>
             <tbody>
-              {rows.map((plan) => (
+              {pagination.items.map((plan) => (
                 <PlanRow key={plan.id} plan={plan} onSave={onSave} onDelete={onDelete} />
               ))}
             </tbody>
           </table>
           {!rows.length ? <EmptyHint text="没有匹配的充值套餐。可以切换左侧价格带，或新增一个前台套餐。" /> : null}
         </div>
-        <TableFooter total={rows.length} />
+        <TableFooter total={rows.length} page={pagination.page} pageSize={pagination.pageSize} onPageChange={pagination.setPage} />
       </AdminModuleWorkbench>
       <AdminModal open={createOpen} title="新增充值套餐" description="套餐启用后会按价格排序展示在前台购买区。" onClose={() => setCreateOpen(false)} wide>
         <PlanCreator onCreate={(input) => closeAfterAdminSuccess(() => onCreate(input), () => setCreateOpen(false))} />
@@ -3463,6 +3430,8 @@ function MembershipSection({
     { id: "discount", label: "预留折扣", count: plans.filter((plan) => plan.discountPercent > 0).length, meta: "尚未执行", tone: "amber" },
     { id: "priority", label: "预留优先级", count: plans.filter((plan) => plan.priorityLevel > 0).length, meta: "尚未执行", tone: "violet" }
   ];
+  const pagination = useAdminPagination(rows, `${keyword}:${segment}`);
+
   return (
     <section className="admin-v2-section">
       <AdminModuleWorkbench
@@ -3473,13 +3442,13 @@ function MembershipSection({
         onRailChange={setSegment}
         railFooter={<span>以下配置尚未接入购买和权益执行。</span>}
       >
-        <div className="admin-v2-metrics small">
+        <div className="admin-product-metrics compact">
           <AdminMetric icon={<ReceiptText size={20} />} label="预留方案" value={plans.length} hint="当前均不可购买" tone="blue" />
-          <AdminMetric icon={<CircleDollarSign size={20} />} label="月费合计" value={`¥${plans.reduce((sum, plan) => sum + plan.monthlyPrice, 0)}`} hint="所有方案标价" tone="green" />
+          <AdminMetric icon={<CircleDollarSign size={20} />} label="历史启用标记" value={enabledRows.length} hint="当前不提供订阅购买" tone="green" />
           <AdminMetric icon={<WalletCards size={20} />} label="预留月额度" value={plans.reduce((sum, plan) => sum + plan.monthlyCredits, 0).toLocaleString()} hint="尚未自动发放" tone="amber" />
           <AdminMetric icon={<ShieldCheck size={20} />} label="预留优先级" value={Math.max(0, ...plans.map((plan) => plan.priorityLevel))} hint="尚未影响实际队列" tone="violet" />
         </div>
-        <p className="admin-toast" role="status">订阅会员暂未开放。月度发放、模型折扣和优先队列尚未实现，以下方案仅供核对；运营售卖请使用“套餐会员”中的一次性充值。</p>
+        <p className="admin-toast" role="status">订阅会员暂未开放。月度发放、模型折扣和优先队列尚未实现，以下方案仅供核对；运营售卖请使用“充值套餐”中的一次性充值。</p>
         <AdminToolbar>
           <SearchField value={keyword} onChange={setKeyword} placeholder="搜索会员、权益、标签..." />
         </AdminToolbar>
@@ -3499,14 +3468,14 @@ function MembershipSection({
               </tr>
             </thead>
             <tbody>
-              {rows.map((plan) => (
+              {pagination.items.map((plan) => (
                 <tr key={plan.id}><td>{plan.name}</td><td>¥{plan.monthlyPrice}</td><td>{plan.monthlyCredits}</td><td>{plan.discountPercent}%（预留）</td><td>{plan.priorityLevel}（预留）</td><td>{plan.features.join("；")}</td><td>{plan.shopUrl || "未配置"}</td><td>未开放</td><td>只读</td></tr>
               ))}
             </tbody>
           </table>
           {!rows.length ? <EmptyHint text="没有匹配的预留订阅方案。可调整筛选查看历史配置。" /> : null}
         </div>
-        <TableFooter total={rows.length} />
+        <TableFooter total={rows.length} page={pagination.page} pageSize={pagination.pageSize} onPageChange={pagination.setPage} />
       </AdminModuleWorkbench>
       <AdminModal open={createOpen} title="新增订阅会员" description="用于管理月度积分、模型折扣、队列优先级和前台展示权益。" onClose={() => setCreateOpen(false)} wide>
         <MembershipCreator onCreate={(input) => closeAfterAdminSuccess(() => onCreate(input), () => setCreateOpen(false))} />
@@ -3585,6 +3554,8 @@ function ProvidersSection({
     { id: "manual", label: "手动固定", count: providers.filter((provider) => provider.routing?.mode === "manual").length, meta: "固定模型", tone: "amber" }
   ];
 
+  const pagination = useAdminPagination(rows, `${keyword}:${modality}:${status}:${segment}`);
+
   return (
     <section className="admin-v2-section">
       <AdminModuleWorkbench
@@ -3595,19 +3566,19 @@ function ProvidersSection({
         onRailChange={setSegment}
         railFooter={<span>{enabledRows.length} 个渠道可参与线上生产。</span>}
       >
-        <div className="admin-v2-metrics small">
+        <div className="admin-product-metrics compact">
           <AdminMetric icon={<Layers3 size={20} />} label="渠道总数" value={providers.length} hint={`${enabledRows.length} 个启用`} tone="blue" />
           <AdminMetric icon={<Image size={20} />} label="视觉渠道" value={providers.filter((provider) => provider.modality === "image" || provider.modality === "video").length} hint="图片与视频生产" tone="green" />
           <AdminMetric icon={<ShieldCheck size={20} />} label="已配置 Key" value={providers.length - missingKeyRows.length} hint={`${missingKeyRows.length} 个缺 Key`} tone="amber" />
           <AdminMetric icon={<SlidersHorizontal size={20} />} label="自动路由" value={providers.filter((provider) => provider.routing?.mode !== "manual").length} hint="额度池/默认轮换" tone="violet" />
         </div>
-        <OpenSourcePipelinePanel
+        <details className="admin-advanced-panel"><summary>高级接入与插件状态<ChevronDown size={16} /></summary><OpenSourcePipelinePanel
           adapters={openSourceAdapters}
           pipelines={visualPipelines}
           tests={pipelineTests}
           onRefresh={onLoadPluginStatus}
           onTest={onTestPipeline}
-        />
+        /></details>
         <AdminToolbar
           right={
             <AdminActionBar>
@@ -3620,15 +3591,15 @@ function ProvidersSection({
           <SelectFilter value={modality} onChange={setModality} options={["all", "text", "image", "video", "tts", "embedding"]} labels={{ all: "全部类型", text: "文本", image: "生图", video: "视频", tts: "配音", embedding: "向量" }} />
           <SelectFilter value={status} onChange={setStatus} options={["all", "enabled", "disabled"]} labels={{ all: "全部状态", enabled: "启用", disabled: "停用" }} />
         </AdminToolbar>
-        <ModelTestPanel text={testResult} image={imageTestResult} video={videoTestResult} />
+        {testResult || imageTestResult || videoTestResult ? <details className="admin-advanced-panel"><summary>最近一次测试详情<ChevronDown size={16} /></summary><ModelTestPanel text={testResult} image={imageTestResult} video={videoTestResult} /></details> : null}
         {relayPolicy ? <RelayGatewayPreview policy={relayPolicy} /> : null}
         <div className="admin-provider-card-list">
-          {rows.map((provider) => (
+          {pagination.items.map((provider) => (
             <ProviderRow key={provider.id} provider={provider} testStates={providerTests} onSave={onSave} onDelete={onDelete} onTest={onTest} />
           ))}
           {!rows.length ? <EmptyHint text="没有匹配的模型渠道。可以切换左侧能力分类，或新增一个渠道。" /> : null}
         </div>
-        <TableFooter total={rows.length} />
+        <TableFooter total={rows.length} page={pagination.page} pageSize={pagination.pageSize} onPageChange={pagination.setPage} />
       </AdminModuleWorkbench>
       <AdminModal open={createOpen} title="新增模型渠道" description="密钥只写入服务端，后台列表只展示是否已配置和 Key 预览。" onClose={() => setCreateOpen(false)} wide>
         <ProviderCreator onCreate={(input) => closeAfterAdminSuccess(() => onCreate(input), () => setCreateOpen(false))} />
@@ -3653,16 +3624,16 @@ function PromptScoringSection({
   const active = stageTemplates.find((item) => item.stage === activeStage) ?? stageTemplates[0];
   return (
     <section className="admin-v2-section prompt-scoring-section">
-      <div className="admin-v2-metrics small">
+      <div className="admin-product-metrics compact">
         <AdminMetric icon={<FilePenLine size={20} />} label="评分模板" value={stageTemplates.length} hint="按阶段管理" tone="blue" />
         <AdminMetric icon={<CheckCircle2 size={20} />} label="启用模板" value={stageTemplates.filter((item) => item.template.enabled).length} hint="LLM 评测优先使用" tone="green" />
         <AdminMetric icon={<ChartNoAxesCombined size={20} />} label="评分维度" value={stageTemplates.reduce((sum, item) => sum + item.dimensions.length, 0)} hint="规则 + LLM 双通道" tone="amber" />
-        <AdminMetric icon={<ShieldCheck size={20} />} label="输出约束" value="JSON" hint="便于自动入库复盘" tone="violet" />
+        <AdminMetric icon={<ShieldCheck size={20} />} label="待建立模板" value={stageTemplates.filter(item => item.template.id.startsWith("missing_")).length} hint="创建后才保存到服务器" tone="violet" />
       </div>
       <div className="prompt-scoring-layout">
         <aside className="prompt-stage-list">
           {stageTemplates.map((item) => (
-            <button type="button" key={item.stage} className={activeStage === item.stage ? "active" : ""} onClick={() => setActiveStage(item.stage)}>
+            <button type="button" key={item.stage} className={activeStage === item.stage ? "active" : ""} onClick={() => { if (item.stage === activeStage || canLeaveAdminEditor()) setActiveStage(item.stage); }}>
               <strong>{stageLabel(item.stage)}</strong>
               <span>{item.template.enabled ? "启用" : "停用"} · {item.template.version}</span>
               <small>{item.template.summary}</small>
@@ -3766,7 +3737,9 @@ function PromptTemplateEditor({
     return isMissingTemplate ? onCreate(payload) : onSave(item.template.id, payload);
   }
   return (
-    <article className="admin-v2-card prompt-editor-card">
+    <article className="admin-v2-card prompt-editor-card" data-admin-dirty={dirty || undefined}>
+      <AdminScopedActionNotice />
+      <div className="admin-editor-status"><StatusChip active={item.template.enabled} /><DraftIndicator dirty={dirty} /></div>
       <div className="admin-v2-card-head">
         <div>
           <h2>{stageLabel(item.stage)}评测提示词</h2>
@@ -3843,7 +3816,8 @@ function PricesSection({
       price.modality === segment;
     return matchedKeyword && matchedModality && matchedStatus && matchedSegment;
   });
-  const grouped = groupPricesByProvider(rows);
+  const pagination = useAdminPagination(rows, `${keyword}:${modality}:${status}:${segment}`);
+  const grouped = groupPricesByProvider(pagination.items);
   const enabledRows = rows.filter((price) => price.enabled);
   const avgCredits = enabledRows.length ? Math.round(enabledRows.reduce((sum, price) => sum + price.unitCredits, 0) / enabledRows.length) : 0;
   const costTotal = rows.reduce((sum, price) => sum + price.vendorCostCny, 0);
@@ -3873,16 +3847,16 @@ function PricesSection({
         onRailChange={setSegment}
         railFooter={<span>当前命中 {rows.length} 条，覆盖 {modalityCount || 0} 类能力。</span>}
       >
-        <div className="admin-v2-metrics small">
+        <div className="admin-product-metrics compact">
           <AdminMetric icon={<Layers3 size={20} />} label="价格策略" value={rows.length} hint={`全部记录 ${prices.length} 条`} tone="blue" />
           <AdminMetric icon={<CheckCircle2 size={20} />} label="启用策略" value={enabledRows.length} hint="前台计费可见" tone="green" />
-          <AdminMetric icon={<WalletCards size={20} />} label="平均积分" value={avgCredits || "-"} hint="启用策略均价" tone="amber" />
-          <AdminMetric icon={<CircleDollarSign size={20} />} label="成本合计" value={`¥${costTotal.toFixed(3)}`} hint={`${modalityCount} 类模型能力`} tone="violet" />
+          <AdminMetric icon={<WalletCards size={20} />} label="计价能力" value={modalityCount} hint="按图片、秒、字符等分别定价" tone="amber" />
+          <AdminMetric icon={<CircleDollarSign size={20} />} label="待核对关联" value={orphanCount} hint="没有对应模型渠道的价格" tone="violet" />
         </div>
         <AdminToolbar
           right={
             <AdminActionBar>
-              <button className="admin-secondary-btn compact" type="button" onClick={() => setExpandedProvider(null)}>收起全部</button>
+              <button className="admin-secondary-btn compact" type="button" onClick={() => { if (canLeaveAdminEditor()) setExpandedProvider(null); }}>收起全部</button>
               <button className="admin-primary-btn" type="button" onClick={() => setCreateOpen(true)}><Plus size={18} />新增价格</button>
             </AdminActionBar>
           }
@@ -3903,8 +3877,8 @@ function PricesSection({
             />
           ))}
         </div>
-        {!grouped.length ? <EmptyHint text="没有匹配的价格策略。可以调整左侧分层和筛选条件，或先在模型路由里新增渠道。" /> : null}
-        <TableFooter total={rows.length} />
+        {!grouped.length ? <EmptyHint text="没有匹配的价格策略。可以调整上方分类和筛选条件，或先在模型路由里新增渠道。" /> : null}
+        <TableFooter total={rows.length} page={pagination.page} pageSize={pagination.pageSize} onPageChange={pagination.setPage} />
       </AdminModuleWorkbench>
       <AdminModal open={createOpen} title="新增价格策略" description="用于补充特殊模型单价；常规渠道新增后会自动生成基础价格。" onClose={() => setCreateOpen(false)} wide>
         <PriceCreator providers={providers} onCreate={(input) => closeAfterAdminSuccess(() => onCreate(input), () => setCreateOpen(false))} />
@@ -3915,8 +3889,8 @@ function PricesSection({
 
 function AdminMetric({ icon, label, value, hint, tone }: { icon: ReactNode; label: string; value: ReactNode; hint: string; tone: "blue" | "green" | "amber" | "violet" }) {
   return (
-    <article className={`admin-v2-metric ${tone}`}>
-      <div className="admin-v2-metric-icon">{icon}</div>
+    <article className={`admin-product-metric ${tone}`}>
+      <div className="admin-product-metric-icon">{icon}</div>
       <div>
         <span>{label}</span>
         <strong>{value}</strong>
@@ -4112,6 +4086,7 @@ function AdminModuleWorkbench({
   railItems,
   activeRail,
   onRailChange,
+  protectDraft = true,
   railFooter,
   children
 }: {
@@ -4120,33 +4095,31 @@ function AdminModuleWorkbench({
   railItems: AdminRailItem[];
   activeRail: string;
   onRailChange: (id: string) => void;
+  protectDraft?: boolean;
   railFooter?: ReactNode;
   children: ReactNode;
 }) {
   return (
-    <div className="admin-module-workbench">
-      <aside className="admin-module-rail">
-        <div className="admin-module-rail-head">
-          <strong>{railTitle}</strong>
-          {railDescription ? <span>{railDescription}</span> : null}
-        </div>
-        <div className="admin-module-rail-list">
+    <div className="admin-module-layout">
+      <aside className="admin-categorybar" aria-label={railTitle}>
+        <div className="admin-category-controls" aria-label={railTitle} title={railDescription}>
           {railItems.map((item) => (
             <button
               key={item.id}
               className={activeRail === item.id ? `active ${item.tone ?? "default"}` : item.tone ?? "default"}
               type="button"
-              onClick={() => onRailChange(item.id)}
+              aria-pressed={activeRail === item.id}
+              title={item.meta}
+              onClick={() => { if (!protectDraft || item.id === activeRail || canLeaveAdminEditor()) onRailChange(item.id); }}
             >
               <span>{item.label}</span>
               {item.count !== undefined ? <b>{item.count}</b> : null}
-              {item.meta ? <small>{item.meta}</small> : null}
             </button>
           ))}
         </div>
-        {railFooter ? <div className="admin-module-rail-footer">{railFooter}</div> : null}
+        {railFooter ? <div className="admin-category-meta">{railFooter}</div> : null}
       </aside>
-      <div className="admin-module-main">{children}</div>
+      <div className="admin-module-body">{children}</div>
     </div>
   );
 }
@@ -4167,19 +4140,19 @@ function AdminModal({
   wide?: boolean;
 }) {
   const action = useContext(AdminActionContext);
-  const { dialogRef, titleId } = useAdminDialog(open, onClose, action.pending);
+  const { dialogRef, titleId, requestClose } = useAdminDialog(open, onClose, action.pending);
   if (!open) return null;
   return (
     <div className="admin-modal-backdrop" role="presentation" onMouseDown={(event) => {
-      if (!action.pending && event.target === event.currentTarget) onClose();
+      if (!action.pending && event.target === event.currentTarget) requestClose();
     }}>
-      <section ref={dialogRef} tabIndex={-1} className={wide ? "admin-modal wide" : "admin-modal"} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-busy={action.pending}>
+      <section ref={dialogRef} tabIndex={-1} className={wide ? "admin-modal wide" : "admin-modal"} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-busy={action.pending} onChangeCapture={(event) => { if ((event.target as HTMLElement).matches("input,select,textarea")) event.currentTarget.dataset.adminDirty = "true"; }}>
         <header className="admin-modal-head">
           <div>
             <h2 id={titleId}>{title}</h2>
             {description ? <p>{description}</p> : null}
           </div>
-          <button className="admin-icon-btn" type="button" disabled={action.pending} onClick={onClose} title="关闭" aria-label="关闭弹窗">
+          <button className="admin-icon-btn" type="button" disabled={action.pending} onClick={requestClose} title="关闭" aria-label="关闭弹窗">
             <X size={18} />
           </button>
         </header>
@@ -4195,8 +4168,8 @@ function AdminScopedActionNotice() {
   const [openedAt] = useState(action.version);
   const notice = scopedAdminNotice(action, openedAt);
   return <>
-    {action.pending ? <p className="admin-toast" role="status">正在提交，请稍候…</p> : notice.message ? <p className="admin-toast success" role="status">{notice.message}</p> : null}
-    {notice.error ? <p className="admin-toast danger" role="alert">{notice.error}</p> : null}
+    {action.pending ? <InlineNotice tone="info">正在提交，请稍候…</InlineNotice> : notice.message ? <InlineNotice tone="success">{notice.message}</InlineNotice> : null}
+    {notice.error ? <InlineNotice tone="error">{notice.error}</InlineNotice> : null}
   </>;
 }
 
@@ -4206,9 +4179,9 @@ function AdminActionBar({ children }: { children: ReactNode }) {
 
 function AdminToolbar({ children, right }: { children: ReactNode; right?: ReactNode }) {
   return (
-    <div className="admin-v2-toolbar">
-      <div className="admin-v2-filters">{children}</div>
-      {right ? <div className="admin-v2-toolbar-right">{right}</div> : null}
+    <div className="admin-product-toolbar">
+      <div className="admin-product-filters">{children}</div>
+      {right ? <div className="admin-product-toolbar-actions">{right}</div> : null}
     </div>
   );
 }
@@ -4226,16 +4199,16 @@ function downloadBlob(blob: Blob, fileName: string) {
 
 function SearchField({ value, onChange, placeholder }: { value: string; onChange: (value: string) => void; placeholder: string }) {
   return (
-    <label className="admin-search-field">
+    <label className="admin-product-search">
       <Search size={18} />
-      <input value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} />
+      <input aria-label={placeholder.replace(/\.\.\.$/, "")} value={value} onChange={(event) => { if (event.target.value === value || canLeaveAdminEditor()) onChange(event.target.value); }} placeholder={placeholder} />
     </label>
   );
 }
 
 function SelectFilter({ value, onChange, options, labels = {} }: { value: string; onChange: (value: string) => void; options: string[]; labels?: Record<string, string> }) {
   return (
-    <select className="admin-filter-select" value={value} onChange={(event) => onChange(event.target.value)}>
+    <select aria-label={labels.all || "筛选条件"} className="admin-product-filter" value={value} onChange={(event) => { if (event.target.value === value || canLeaveAdminEditor()) onChange(event.target.value); }}>
       {options.map((item) => <option key={item} value={item}>{labels[item] ?? item}</option>)}
     </select>
   );
@@ -4342,8 +4315,8 @@ function UserRow({
   const [name, setName] = useState(user.name);
   const [role, setRole] = useState(user.role);
   const [status, setStatus] = useState(user.status);
-  const [amount, setAmount] = useState("100");
-  const [description, setDescription] = useState("运营补偿");
+  const [amount, setAmount] = useState("");
+  const [description, setDescription] = useState("");
   const [password, setPassword] = useState("");
   const creditAttempt = useRef(createCreditAdjustmentAttempt());
   async function adjustCredits() {
@@ -4351,14 +4324,14 @@ function UserRow({
     const input = { userId: user.id, amount: Number(amount), description: description.trim() };
     await closeAfterAdminSuccess(() => onCreditAdjust({ ...input, requestId: creditAttempt.current.getRequestId(input) }), () => {
       creditAttempt.current.complete();
-      setAmount("");
+      setAmount(""); setDescription("");
     });
   }
   useEffect(() => { setName(user.name); setRole(user.role); setStatus(user.status); }, [user.name, user.role, user.status]);
   const dirty = name !== user.name || role !== user.role || status !== user.status;
   const identity = userIdentityLabel({ ...user, role });
   return (
-    <article className="adm-user-profile">
+    <article className="adm-user-profile" data-admin-dirty={dirty || Boolean(password || amount || description) || undefined}>
       <div className="adm-user-contact">
         <strong>{identity}</strong>
         <span>邮箱：{user.email || "未绑定"}</span>
@@ -4444,12 +4417,13 @@ function RedeemBatchCard({
   const disabled = batch.codes.filter((code) => !code.enabled).length;
   const expired = batch.codes.filter((code) => redeemStatus(code) === "expired").length;
   const unused = batch.codes.filter((code) => code.usedCount === 0).length;
-  const previewCodes = batch.codes.slice(0, 20);
+  const pagination = useAdminPagination(batch.codes, batch.batchId ?? batch.name);
+  const previewCodes = pagination.items;
   const statusText = active ? `${active} 个可用` : disabled + expired ? `${disabled + expired} 个不可用` : "暂无可用";
   return (
     <article className="admin-redeem-batch-card compact">
       <div className="admin-redeem-batch-head">
-        <button className="admin-icon-btn" onClick={onToggleExpand} title={expanded ? "收起批次" : "展开批次"}>
+        <button className="admin-icon-btn" onClick={() => { if (canLeaveAdminEditor()) onToggleExpand(); }} aria-expanded={expanded} aria-label={expanded ? "收起批次" : "展开批次"} title={expanded ? "收起批次" : "展开批次"}>
           {expanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
         </button>
         <div className="admin-redeem-batch-title">
@@ -4471,7 +4445,7 @@ function RedeemBatchCard({
       </div>
       {expanded ? (
         <div className="admin-redeem-code-list">
-          {batch.codes.length > previewCodes.length ? <p className="admin-list-note">当前批次共 {batch.codes.length} 个兑换码，先显示前 {previewCodes.length} 个；可用搜索进一步定位。</p> : null}
+          <p className="admin-list-note">批量操作覆盖此批次当前筛选结果的全部 {batch.codes.length} 个兑换码。</p>
           <div className="admin-redeem-code-head">
             <span />
             <span>兑换码</span>
@@ -4486,77 +4460,38 @@ function RedeemBatchCard({
           {previewCodes.map((code) => (
             <RedeemCodeRow key={code.id} code={code} onSave={onSave} onDelete={onDelete} />
           ))}
+          <TableFooter total={batch.codes.length} page={pagination.page} pageSize={pagination.pageSize} onPageChange={pagination.setPage} />
         </div>
       ) : null}
     </article>
   );
 }
 
-function RedeemCodeRow({
-  code,
-  onSave,
-  onDelete
-}: {
+function RedeemCodeRow({ code, onSave, onDelete }: {
   code: RedeemCode;
   onSave: (id: string, input: Partial<Pick<RedeemCode, "name" | "code" | "credits" | "maxRedemptions" | "enabled">> & { startsAt?: string | null; endsAt?: string | null }) => AdminActionResult;
   onDelete: (id: string) => AdminActionResult;
 }) {
-  const [draft, setDraft] = useState({
-    code: code.code,
-    name: code.name,
-    credits: String(code.credits),
-    maxRedemptions: String(code.maxRedemptions),
-    enabled: code.enabled,
-    startsAt: dateInputValue(code.startsAt),
-    endsAt: dateInputValue(code.endsAt)
-  });
-  const status = redeemStatus(code);
-  const dirty =
-    draft.code !== code.code ||
-    draft.name !== code.name ||
-    Number(draft.credits) !== code.credits ||
-    Number(draft.maxRedemptions) !== code.maxRedemptions ||
-    draft.enabled !== code.enabled ||
-    draft.startsAt !== dateInputValue(code.startsAt) ||
-    draft.endsAt !== dateInputValue(code.endsAt);
-  const [copyState, setCopyState] = useState("");
+  const initial = () => ({ code: code.code, name: code.name, credits: String(code.credits), maxRedemptions: String(code.maxRedemptions), enabled: code.enabled, startsAt: dateInputValue(code.startsAt), endsAt: dateInputValue(code.endsAt) });
+  const [draft, setDraft] = useState(initial), [editing, setEditing] = useState(false), [copyState, setCopyState] = useState("");
+  useEffect(() => { if (!editing) setDraft(initial()); }, [code, editing]);
+  const dirty = editing && JSON.stringify(draft) !== JSON.stringify(initial());
+  const valid = draft.code.trim() && draft.name.trim() && Number.isSafeInteger(Number(draft.credits)) && Number(draft.credits) > 0 && Number.isSafeInteger(Number(draft.maxRedemptions)) && Number(draft.maxRedemptions) >= Math.max(1, code.usedCount);
+  function closeEditor() { if (dirty && !window.confirm("放弃这个兑换码尚未保存的修改？")) return; setDraft(initial()); setEditing(false); }
   async function copyCode() {
-    try {
-      if (!navigator.clipboard) throw new Error("当前浏览器不支持自动复制，请选中兑换码手动复制。");
-      await navigator.clipboard.writeText(code.code);
-      setCopyState("已复制已保存的兑换码");
-    } catch (reason) { setCopyState(reason instanceof Error ? reason.message : "复制失败，请手动复制。"); }
+    try { if (!navigator.clipboard) throw new Error("当前浏览器不支持自动复制，请选中兑换码手动复制。"); await navigator.clipboard.writeText(code.code); setCopyState("已复制已保存的兑换码"); }
+    catch (reason) { setCopyState(reason instanceof Error ? reason.message : "复制失败，请手动复制。"); }
   }
-  return (
-    <div className="admin-redeem-code-row compact">
-      <span className="admin-row-check" aria-hidden="true" />
-      <div className="admin-redeem-code-cell">
-        <input className="code-input" value={draft.code} onChange={(event) => setDraft({ ...draft, code: event.target.value.toUpperCase() })} />
-        <button className="admin-icon-btn subtle" type="button" title="复制已保存的兑换码" aria-label="复制已保存的兑换码" onClick={() => void copyCode()}><Copy size={15} /></button>
-        {copyState ? <small role="status">{copyState}</small> : null}
-      </div>
-      <input className="activity-input" value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
-      <span className="admin-redeem-tag">积分</span>
-      <input className="mini-number" type="number" value={draft.credits} onChange={(event) => setDraft({ ...draft, credits: event.target.value })} />
-      <span className="admin-redeem-use-count">{code.usedCount} / <input className="mini-number" type="number" value={draft.maxRedemptions} onChange={(event) => setDraft({ ...draft, maxRedemptions: event.target.value })} /></span>
-      <RedeemStatusChip status={status} />
-      <span className="muted-cell">{formatDate(code.createdAt)}</span>
-      <div className="admin-row-actions">
-        <button className="admin-icon-btn" title={draft.enabled ? "停用" : "启用"} onClick={() => setDraft({ ...draft, enabled: !draft.enabled })}>
-          {draft.enabled ? <ToggleRight size={18} /> : <ToggleLeft size={18} />}
-        </button>
-        <details className="admin-redeem-expire-editor">
-          <summary>期限</summary>
-          <div className="admin-date-range inline">
-            <input type="date" value={draft.startsAt} onChange={(event) => setDraft({ ...draft, startsAt: event.target.value })} />
-            <input type="date" value={draft.endsAt} onChange={(event) => setDraft({ ...draft, endsAt: event.target.value })} />
-          </div>
-        </details>
-        <button className={dirty ? "admin-text-btn primary" : "admin-text-btn"} disabled={!dirty} title="保存" onClick={() => onSave(code.id, { code: draft.code, name: draft.name, credits: Number(draft.credits), maxRedemptions: Number(draft.maxRedemptions), enabled: draft.enabled, startsAt: dateToIso(draft.startsAt), endsAt: dateToIso(draft.endsAt) })}>保存</button>
-        <button className="admin-icon-btn danger" title={code.usedCount > 0 ? "停用并保留记录" : "删除"} onClick={() => onDelete(code.id)}><Trash2 size={16} /></button>
-      </div>
-    </div>
-  );
+  return <article className="admin-redeem-record" data-admin-dirty={dirty || undefined}>
+    <div className="admin-redeem-summary"><div><strong className="admin-redeem-saved-code">{code.code}</strong><small>{code.name} · {formatDate(code.createdAt)}</small><DraftIndicator dirty={dirty} /></div><div><strong>{code.credits} 积分</strong><small>已用 {code.usedCount} / {code.maxRedemptions} 次</small></div><RedeemStatusChip status={redeemStatus(code)} /><div className="admin-row-actions"><button className="admin-icon-btn subtle" type="button" title="复制已保存的兑换码" aria-label="复制已保存的兑换码" onClick={() => void copyCode()}><Copy size={15} /></button><button className="admin-text-btn primary" type="button" aria-expanded={editing} onClick={() => editing ? closeEditor() : setEditing(true)}>{editing ? "收起" : "编辑"}</button></div></div>
+    {copyState ? <p className="admin-copy-notice" role="status">{copyState}</p> : null}
+    {editing ? <div className="admin-inline-editor"><AdminScopedActionNotice /><p className="admin-editor-note">额度、次数和状态仅在保存后生效。已使用记录会保留。</p><div className="admin-editor-grid">
+      <label><span>兑换码</span><input value={draft.code} onChange={event => setDraft({ ...draft, code: event.target.value.toUpperCase() })} /></label><label><span>活动名称</span><input value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} /></label>
+      <label><span>每次到账积分</span><input type="number" min="1" value={draft.credits} onChange={event => setDraft({ ...draft, credits: event.target.value })} /></label><label><span>可兑换总次数（已用 {code.usedCount} 次）</span><input type="number" min={Math.max(1, code.usedCount)} value={draft.maxRedemptions} onChange={event => setDraft({ ...draft, maxRedemptions: event.target.value })} /></label>
+      <label><span>开始日期</span><input type="date" value={draft.startsAt} onChange={event => setDraft({ ...draft, startsAt: event.target.value })} /></label><label><span>结束日期</span><input type="date" value={draft.endsAt} onChange={event => setDraft({ ...draft, endsAt: event.target.value })} /></label>
+      <label><span>保存后的状态</span><select value={draft.enabled ? "enabled" : "disabled"} onChange={event => setDraft({ ...draft, enabled: event.target.value === "enabled" })}><option value="enabled">启用</option><option value="disabled">停用</option></select></label></div>
+      <footer className="admin-editor-actions"><button className="admin-text-btn danger" type="button" onClick={() => { if (window.confirm(code.usedCount > 0 ? `停用「${code.name}」兑换码并保留已使用记录？` : `删除「${code.name}」这个未使用兑换码？`)) void onDelete(code.id); }}>{code.usedCount > 0 ? "停用并保留记录" : "删除兑换码"}</button><span /><button type="button" className="admin-secondary-btn" onClick={closeEditor}>取消</button><button className="admin-primary-btn" type="button" disabled={!dirty || !valid} onClick={() => void closeAfterAdminSuccess(() => onSave(code.id, { code: draft.code, name: draft.name, credits: Number(draft.credits), maxRedemptions: Number(draft.maxRedemptions), enabled: draft.enabled, startsAt: dateToIso(draft.startsAt), endsAt: dateToIso(draft.endsAt) }), () => setEditing(false))}>保存兑换码</button></footer></div> : null}
+  </article>;
 }
 
 function PlanCreator({ onCreate }: { onCreate: (input: Pick<Plan, "name" | "price" | "credits" | "bonusCredits" | "badge" | "features" | "shopUrl" | "enabled">) => AdminActionResult }) {
@@ -4578,54 +4513,38 @@ function PlanCreator({ onCreate }: { onCreate: (input: Pick<Plan, "name" | "pric
   );
 }
 
-function PlanRow({
-  plan,
-  onSave,
-  onDelete
-}: {
+function PlanRow({ plan, onSave, onDelete }: {
   plan: Plan;
-  onSave: (id: string, input: Partial<Pick<Plan, "name" | "price" | "credits" | "bonusCredits" | "badge" | "features" | "shopUrl" | "enabled">>) => void;
-  onDelete: (id: string) => void;
+  onSave: (id: string, input: Partial<Pick<Plan, "name" | "price" | "credits" | "bonusCredits" | "badge" | "features" | "shopUrl" | "enabled">>) => AdminActionResult;
+  onDelete: (id: string) => AdminActionResult;
 }) {
-  const [draft, setDraft] = useState({
-    name: plan.name,
-    price: String(plan.price),
-    credits: String(plan.credits),
-    bonusCredits: String(plan.bonusCredits),
-    badge: plan.badge ?? "",
-    features: plan.features.join("；"),
-    shopUrl: plan.shopUrl ?? "",
-    enabled: plan.enabled ?? true
-  });
-  const dirty =
-    draft.name !== plan.name ||
-    Number(draft.price) !== plan.price ||
-    Number(draft.credits) !== plan.credits ||
-    Number(draft.bonusCredits) !== plan.bonusCredits ||
-    draft.badge !== (plan.badge ?? "") ||
-    draft.features !== plan.features.join("；") ||
-    draft.shopUrl !== (plan.shopUrl ?? "") ||
-    draft.enabled !== (plan.enabled ?? true);
-  return (
-    <tr>
-      <td><input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} /></td>
-      <td><input className="mini-number" type="number" value={draft.price} onChange={(event) => setDraft({ ...draft, price: event.target.value })} /></td>
-      <td><input className="mini-number" type="number" value={draft.credits} onChange={(event) => setDraft({ ...draft, credits: event.target.value })} /></td>
-      <td><input className="mini-number" type="number" value={draft.bonusCredits} onChange={(event) => setDraft({ ...draft, bonusCredits: event.target.value })} /></td>
-      <td><input value={draft.badge} onChange={(event) => setDraft({ ...draft, badge: event.target.value })} /></td>
-      <td><input value={draft.features} onChange={(event) => setDraft({ ...draft, features: event.target.value })} /></td>
-      <td><input value={draft.shopUrl} onChange={(event) => setDraft({ ...draft, shopUrl: event.target.value })} placeholder="https://..." /></td>
-      <td><StatusChip active={draft.enabled} /></td>
-      <td>
-        <div className="admin-row-actions">
-          <button className="admin-icon-btn" onClick={() => setDraft({ ...draft, enabled: !draft.enabled })}>{draft.enabled ? <ToggleRight size={18} /> : <ToggleLeft size={18} />}</button>
-          <button className={dirty ? "admin-text-btn primary" : "admin-text-btn"} disabled={!dirty} onClick={() => onSave(plan.id, { name: draft.name, price: Number(draft.price), credits: Number(draft.credits), bonusCredits: Number(draft.bonusCredits), badge: draft.badge || undefined, features: splitFeatureText(draft.features), shopUrl: draft.shopUrl || undefined, enabled: draft.enabled })}>保存</button>
-          <button className="admin-text-btn danger" onClick={() => { if (window.confirm("确认停用该充值套餐？")) onDelete(plan.id); }}>停用</button>
-        </div>
-      </td>
+  const initial = () => ({ name: plan.name, price: String(plan.price), credits: String(plan.credits), bonusCredits: String(plan.bonusCredits), badge: plan.badge ?? "", features: plan.features.join("；"), shopUrl: plan.shopUrl ?? "", enabled: plan.enabled ?? true });
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(initial);
+  useEffect(() => { if (!editing) setDraft(initial()); }, [plan, editing]);
+  const dirty = editing && JSON.stringify(draft) !== JSON.stringify(initial());
+  const valid = draft.name.trim() && [draft.price, draft.credits, draft.bonusCredits].every(value => value.trim() && Number.isFinite(Number(value)) && Number(value) >= 0);
+  function closeEditor() {
+    if (dirty && !window.confirm("放弃这个套餐尚未保存的修改？")) return;
+    setDraft(initial()); setEditing(false);
+  }
+  return <>
+    <tr className={editing ? "admin-record-selected" : undefined}>
+      <td><strong>{plan.name}</strong><DraftIndicator dirty={dirty} /></td><td>¥{plan.price}</td><td>{plan.credits.toLocaleString()}</td><td>{plan.bonusCredits.toLocaleString()}</td><td>{plan.badge || "—"}</td><td><span className="admin-cell-summary">{plan.features.join(" · ") || "未填写"}</span></td><td>{plan.shopUrl ? <span className="admin-cell-summary" title={plan.shopUrl}>已配置购买链接</span> : <span className="admin-muted">未配置</span>}</td><td><StatusChip active={plan.enabled ?? true} /></td><td><button className="admin-text-btn primary" type="button" aria-expanded={editing} onClick={() => editing ? closeEditor() : setEditing(true)}>{editing ? "收起" : "编辑"}</button></td>
     </tr>
-  );
+    {editing ? <tr className="admin-expanded-row"><td colSpan={9}><section className="admin-inline-editor" data-admin-dirty={dirty || undefined} aria-label={`编辑${plan.name}`}><header><div><h3>编辑充值套餐</h3><p>保存后更新前台价格、到账积分与购买入口。</p></div><DraftIndicator dirty={dirty} /></header><AdminScopedActionNotice /><div className="admin-editor-grid">
+      <label><span>套餐名称</span><input value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} /></label>
+      <label><span>售价（元）</span><input type="number" min="0" step="0.01" value={draft.price} onChange={event => setDraft({ ...draft, price: event.target.value })} /></label>
+      <label><span>基础积分</span><input type="number" min="0" value={draft.credits} onChange={event => setDraft({ ...draft, credits: event.target.value })} /></label>
+      <label><span>赠送积分</span><input type="number" min="0" value={draft.bonusCredits} onChange={event => setDraft({ ...draft, bonusCredits: event.target.value })} /></label>
+      <label><span>展示标签</span><input value={draft.badge} onChange={event => setDraft({ ...draft, badge: event.target.value })} /></label>
+      <label><span>保存后的状态</span><select value={draft.enabled ? "enabled" : "disabled"} onChange={event => setDraft({ ...draft, enabled: event.target.value === "enabled" })}><option value="enabled">启用</option><option value="disabled">停用</option></select></label>
+      <label className="wide"><span>套餐说明（分号分隔）</span><textarea rows={3} value={draft.features} onChange={event => setDraft({ ...draft, features: event.target.value })} /></label>
+      <label className="wide"><span>购买链接</span><input type="url" value={draft.shopUrl} placeholder="https://" onChange={event => setDraft({ ...draft, shopUrl: event.target.value })} /></label>
+    </div><footer className="admin-editor-actions"><button className="admin-text-btn danger" type="button" disabled={!plan.enabled} onClick={() => { if (window.confirm(`确认停用「${plan.name}」？前台会隐藏此充值套餐。`)) void onDelete(plan.id); }}>停用套餐</button><span /><button className="admin-secondary-btn" type="button" onClick={closeEditor}>取消</button><button className="admin-primary-btn" type="button" disabled={!dirty || !valid} onClick={() => void closeAfterAdminSuccess(() => onSave(plan.id, { name: draft.name, price: Number(draft.price), credits: Number(draft.credits), bonusCredits: Number(draft.bonusCredits), badge: draft.badge || undefined, features: splitFeatureText(draft.features), shopUrl: draft.shopUrl || undefined, enabled: draft.enabled }), () => setEditing(false))}>保存修改</button></footer></section></td></tr> : null}
+  </>;
 }
+
 
 function MembershipCreator({ onCreate }: { onCreate: (input: Pick<MembershipPlan, "name" | "monthlyPrice" | "monthlyCredits" | "discountPercent" | "priorityLevel" | "badge" | "features" | "shopUrl" | "enabled">) => AdminActionResult }) {
   const [draft, setDraft] = useState({ name: "创作者月卡", monthlyPrice: "29", monthlyCredits: "3000", discountPercent: "10", priorityLevel: "1", badge: "推荐", features: "每月固定额度；模型调用折扣；优先队列", shopUrl: "https://pay.ldxp.cn/shop/ZHP28OV1" });
@@ -4781,19 +4700,19 @@ function ProviderRow({
     : (provider.routing?.activeModel || quotaStatus.find((item) => item.available)?.model || models[0] || "");
 
   return (
-    <article className="admin-provider-card">
+    <article data-admin-dirty={dirty || undefined} className="admin-provider-card">
       <fieldset className="admin-provider-fields" disabled={providerTesting} aria-label={`${provider.name}渠道配置`}>
       <div className="admin-provider-card-head">
         <button className="admin-icon-btn" type="button" onClick={() => setExpanded(!expanded)} title={expanded ? "收起渠道" : "展开渠道"} aria-label={`${expanded ? "收起" : "展开"}${provider.name}渠道`} aria-expanded={expanded} aria-controls={expanded ? detailsId : undefined}>
           {expanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
         </button>
-        <AdminProviderIcon provider={{ ...provider, iconUrl: draft.iconUrl }} />
+        <AdminProviderIcon provider={provider} />
         <div className="admin-provider-title">
-          <strong>{draft.name}</strong>
+          <strong>{provider.name}</strong>
           <span>{provider.id} · {provider.apiKeyConfigured ? `Key ${provider.apiKeyPreview}` : "未配置 Key"}</span>
         </div>
         <span className="admin-chip">{modalityLabel(draft.modality)}</span>
-        <StatusChip active={draft.enabled} />
+        <StatusChip active={provider.enabled} /><DraftIndicator dirty={dirty} />
         <div className="admin-provider-model-chips">
           {models.slice(0, 4).map((model) => <span key={model}>{model}</span>)}
           {models.length > 4 ? <span>+{models.length - 4}</span> : null}
@@ -5095,13 +5014,11 @@ function PriceProviderCard({
   onDelete: (id: string) => AdminActionResult;
 }) {
   const modalities = [...new Set(group.prices.map((price) => price.modality))];
-  const avgCredits = group.total ? Math.round(group.prices.reduce((sum, price) => sum + price.unitCredits, 0) / group.total) : 0;
-  const totalCost = group.prices.reduce((sum, price) => sum + price.vendorCostCny, 0);
   const firstPrice = group.prices[0];
   return (
     <article className="admin-price-provider-card">
       <div className="admin-price-provider-head">
-        <button className="admin-icon-btn" onClick={onToggleExpand} title={expanded ? "收起价格" : "展开价格"}>
+        <button className="admin-icon-btn" onClick={() => { if (canLeaveAdminEditor()) onToggleExpand(); }} aria-expanded={expanded} aria-label={expanded ? "收起价格" : "展开价格"} title={expanded ? "收起价格" : "展开价格"}>
           {expanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
         </button>
         <span className={`admin-provider-icon ${firstPrice?.modality ?? "text"}`}>{group.provider.slice(0, 1).toUpperCase()}</span>
@@ -5115,8 +5032,7 @@ function PriceProviderCard({
         <div className="admin-user-metrics compact">
           <MetricPill label="模型" value={group.total} strong />
           <MetricPill label="启用" value={group.enabled} />
-          <MetricPill label="均价" value={avgCredits} />
-          <MetricPill label="成本合计" value={`¥${totalCost.toFixed(3)}`} />
+          <MetricPill label="计价能力" value={modalities.length} />
         </div>
       </div>
       {expanded ? (
@@ -5130,46 +5046,14 @@ function PriceProviderCard({
   );
 }
 
-function PriceRow({
-  price,
-  onSave,
-  onDelete
-}: {
-  price: ModelPrice;
-  onSave: (id: string, input: Partial<Pick<ModelPrice, "unitCredits" | "vendorCostCny" | "enabled">>) => AdminActionResult;
-  onDelete: (id: string) => AdminActionResult;
-}) {
-  const [draft, setDraft] = useState({ unitCredits: String(price.unitCredits), vendorCostCny: String(price.vendorCostCny), enabled: price.enabled });
-  const dirty =
-    Number(draft.unitCredits) !== price.unitCredits ||
-    Number(draft.vendorCostCny) !== price.vendorCostCny ||
-    draft.enabled !== price.enabled;
-  return (
-    <div className="admin-price-row">
-      <div>
-        <strong>{price.model}</strong>
-        <span>{price.providerName}</span>
-      </div>
-      <span className={`admin-chip modality-${price.modality}`}>{modalityLabel(price.modality)}</span>
-      <span className="admin-unit-chip">{unitLabel(price.unit)}</span>
-      <label>
-        <span>积分单价</span>
-        <input className="mini-number" type="number" value={draft.unitCredits} onChange={(event) => setDraft({ ...draft, unitCredits: event.target.value })} />
-      </label>
-      <label>
-        <span>成本</span>
-        <input className="mini-number" type="number" step="0.001" value={draft.vendorCostCny} onChange={(event) => setDraft({ ...draft, vendorCostCny: event.target.value })} />
-      </label>
-      <StatusChip active={draft.enabled} />
-      <div className="admin-row-actions">
-        <button className="admin-icon-btn" onClick={() => setDraft({ ...draft, enabled: !draft.enabled })}>{draft.enabled ? <ToggleRight size={18} /> : <ToggleLeft size={18} />}</button>
-        <button className={dirty ? "admin-text-btn primary" : "admin-text-btn"} disabled={!dirty} onClick={() => onSave(price.id, { unitCredits: Number(draft.unitCredits), vendorCostCny: Number(draft.vendorCostCny), enabled: draft.enabled })}>保存</button>
-        <button className="admin-icon-btn danger" title="删除价格策略" onClick={() => { if (window.confirm("确认删除该模型价格策略？删除后前台不会再按此策略计费。")) onDelete(price.id); }}>
-          <Trash2 size={16} />
-        </button>
-      </div>
-    </div>
-  );
+function PriceRow({ price, onSave, onDelete }: { price: ModelPrice; onSave: (id: string, input: Partial<Pick<ModelPrice, "unitCredits" | "vendorCostCny" | "enabled">>) => AdminActionResult; onDelete: (id: string) => AdminActionResult; }) {
+  const initial = () => ({ unitCredits: String(price.unitCredits), vendorCostCny: String(price.vendorCostCny), enabled: price.enabled });
+  const [editing, setEditing] = useState(false), [draft, setDraft] = useState(initial);
+  useEffect(() => { if (!editing) setDraft(initial()); }, [price, editing]);
+  const dirty = editing && JSON.stringify(draft) !== JSON.stringify(initial());
+  const valid = [draft.unitCredits, draft.vendorCostCny].every(value => value.trim() && Number.isFinite(Number(value)) && Number(value) >= 0);
+  function closeEditor() { if (dirty && !window.confirm("放弃这条价格尚未保存的修改？")) return; setDraft(initial()); setEditing(false); }
+  return <section className="admin-price-record" data-admin-dirty={dirty || undefined}><div className="admin-price-summary"><div><strong>{price.model}</strong><small>{price.providerName} · {modalityLabel(price.modality)}</small></div><div><strong>{price.unitCredits} 积分</strong><small>{unitLabel(price.unit)}</small></div><StatusChip active={price.enabled} /><DraftIndicator dirty={dirty} /><button type="button" className="admin-text-btn primary" aria-expanded={editing} onClick={() => editing ? closeEditor() : setEditing(true)}>{editing ? "收起" : "编辑价格"}</button></div>{editing ? <div className="admin-inline-editor"><AdminScopedActionNotice /><p className="admin-editor-note">保存后新的生成报价会使用此价格。供应商成本是配置值，不代表实际账单。</p><div className="admin-editor-grid"><label><span>积分 / {unitLabel(price.unit)}</span><input type="number" min="0" value={draft.unitCredits} onChange={event => setDraft({ ...draft, unitCredits: event.target.value })} /></label><label><span>配置成本（元 / {unitLabel(price.unit)}）</span><input type="number" min="0" step="0.001" value={draft.vendorCostCny} onChange={event => setDraft({ ...draft, vendorCostCny: event.target.value })} /></label><label><span>保存后的状态</span><select value={draft.enabled ? "enabled" : "disabled"} onChange={event => setDraft({ ...draft, enabled: event.target.value === "enabled" })}><option value="enabled">启用</option><option value="disabled">停用</option></select></label></div><footer className="admin-editor-actions"><button type="button" className="admin-text-btn danger" onClick={() => { if (window.confirm(`确认删除「${price.model}」的价格？新的生成将不能使用这条报价。`)) void onDelete(price.id); }}>删除策略</button><span /><button type="button" className="admin-secondary-btn" onClick={closeEditor}>取消</button><button type="button" className="admin-primary-btn" disabled={!dirty || !valid} onClick={() => void closeAfterAdminSuccess(() => onSave(price.id, { unitCredits: Number(draft.unitCredits), vendorCostCny: Number(draft.vendorCostCny), enabled: draft.enabled }), () => setEditing(false))}>保存价格</button></footer></div> : null}</section>;
 }
 
 function RelayGatewayPreview({ policy }: { policy: RelayGatewayPolicy }) {
@@ -5245,6 +5129,10 @@ function ProviderInlineTestResult({ state }: { state?: ProviderTestState }) {
   );
 }
 
+function DraftIndicator({ dirty }: { dirty: boolean }) {
+  return dirty ? <span className="admin-draft-indicator">未保存</span> : null;
+}
+
 function StatusChip({ active, label }: { active: boolean; label?: string }) {
   return <span className={active ? "admin-status enabled" : "admin-status disabled"}>{label ?? (active ? "启用" : "停用")}</span>;
 }
@@ -5271,17 +5159,12 @@ function EvaluationRunStatusChip({ status }: { status: EvaluationRun["status"] }
   return <span className={active ? "admin-status enabled" : "admin-status disabled"}>{labels[status]}</span>;
 }
 
-function TableFooter({ total }: { total: number }) {
-  return (
-    <div className="admin-table-footer">
-      <span>显示 1 至 {Math.min(total, 20)} 共 {total} 条结果</span>
-      <div className="admin-pagination"><button disabled>‹</button><button className="active">1</button><button disabled>›</button></div>
-    </div>
-  );
+function TableFooter({ total, page, pageSize, onPageChange }: { total: number; page?: number; pageSize?: number; onPageChange?: (page: number) => void }) {
+  return <AdminPagination total={total} page={page} pageSize={pageSize} onPageChange={onPageChange} />;
 }
 
 function EmptyHint({ text }: { text: string }) {
-  return <div className="admin-empty-hint">{text}</div>;
+  return <StatePanel kind="empty" title={text} compact />;
 }
 
 const defaultEvaluationRubrics: Record<EvaluationStage, { dimensions: string[]; actions: string[]; content: string }> = {

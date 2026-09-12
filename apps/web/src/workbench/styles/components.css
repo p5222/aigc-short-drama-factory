@@ -311,3 +311,37 @@
     transition-duration: 0s;
   }
 }
+
+/* Workspace feedback and shared, keyboard-accessible operation drawers. */
+.wb-shell.wb-has-notices { grid-template-rows: 68px auto minmax(0, 1fr); }
+.wb-project-notices { display: grid; gap: 8px; max-height: min(28dvh, 220px); overflow: auto; padding: 12px 20px; border-bottom: 1px solid var(--ds-border-divider); background: var(--ds-bg-shell); }
+.wb-project-notices p { margin: 4px 0 0; }
+.wb-project-notices .wb-text-button { display: inline-flex; margin-left: 12px; }
+.ui-modal-layer:has(.wb-operation-dialog) { place-items: stretch end; padding: 0; }
+.ui-dialog.wb-operation-dialog { width: min(480px, 100vw); height: 100dvh; max-height: 100dvh; border-radius: 0; border-width: 0 0 0 1px; }
+.wb-operation-dialog .ui-dialog-body { padding: 20px; flex: 1; }
+.wb-drawer__section + .wb-drawer__section { margin-top: 28px; }
+.wb-drawer__section h3 { display: flex; justify-content: space-between; gap: 12px; margin: 0 0 12px; color: var(--ds-text-secondary); font-size: 13px; font-weight: 600; }
+.wb-drawer__section h3 span { color: var(--ds-text-muted); font-variant-numeric: tabular-nums; }
+.wb-task-row, .wb-evaluation-row { min-width: 0; padding: 16px; margin-top: 10px; border: 1px solid var(--ds-border-default); border-radius: 8px; background: var(--ds-bg-subtle); color: var(--ds-text-primary); }
+.wb-task-row { display: flex; justify-content: space-between; gap: 12px; }
+.wb-task-row__main, .wb-evaluation-row > div { display: grid; gap: 6px; min-width: 0; }
+.wb-task-row strong, .wb-evaluation-row strong { font-size: 14px; font-weight: 600; line-height: 1.6; }
+.wb-task-row small, .wb-evaluation-row small { color: var(--ds-text-muted); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.wb-inline-error { display: flex; align-items: flex-start; gap: 6px; margin: 6px 0 0; color: var(--ds-status-danger); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.wb-inline-error svg { flex-shrink: 0; margin-top: 3px; }
+.wb-task-hint, .wb-drawer__note { margin: 8px 0 0; color: var(--ds-text-secondary); font-size: 13px; line-height: 1.65; }
+.wb-task-row__actions { display: flex; align-items: flex-start; gap: 6px; }
+.wb-text-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 40px; padding: 4px 6px; border: 0; border-radius: 5px; background: transparent; color: var(--ds-action-primary); font: 500 13px/1.4 var(--ds-font-body); cursor: pointer; }
+.wb-text-button:hover:not(:disabled) { background: var(--ds-action-soft); }
+.wb-text-button:disabled { opacity: .5; cursor: not-allowed; }
+.wb-empty-state { padding: 32px 20px; text-align: center; color: var(--ds-text-muted); font-size: 13px; line-height: 1.7; }
+.wb-shell :is(.wb-primary-button, .wb-secondary-button) { min-height: 40px; font-weight: 600; box-shadow: none; }
+.wb-shell :is(button, input, select, textarea):disabled { cursor: not-allowed; }
+@media (max-width: 767px) {
+  .wb-shell.project-workbench.wb-has-notices { grid-template-rows: var(--wb-mobile-header-height) auto minmax(0, 1fr); }
+  .wb-project-notices { padding: 10px 12px; }
+  .wb-project-notices .wb-text-button { margin-left: 0; display: flex; }
+  .wb-shell :is(.wb-primary-button, .wb-secondary-button), .wb-text-button { min-height: 44px; }
+  .wb-task-row { flex-wrap: wrap; }
+}

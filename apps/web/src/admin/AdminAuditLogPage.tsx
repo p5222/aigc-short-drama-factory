@@ -40,6 +40,8 @@ export function AdminAuditLogPage() {
       const query = new URLSearchParams({ page: String(page), pageSize: "30", keyword: keyword.trim(), status, actorId: actorId.trim() });
       void requestJson<{ items: AdminAuditLog[]; total: number; page: number; pageSize: number }>(`/admin/audit-logs?${query}`, { signal: controller.signal }).then((result) => {
         if (!active) return;
+        const lastPage = Math.max(1, Math.ceil(result.total / result.pageSize));
+        if (page > lastPage) { setPage(lastPage); return; }
         setRows(result.items);
         setTotal(result.total);
       }).catch((reason) => {
@@ -85,7 +87,7 @@ export function AdminAuditLogPage() {
         <dt>执行结果</dt><dd>{statusLabels[selected.status] ?? selected.status}</dd>
         <dt>开始时间</dt><dd>{new Date(selected.createdAt).toLocaleString("zh-CN")}</dd>
         <dt>结束时间</dt><dd>{selected.completedAt ? new Date(selected.completedAt).toLocaleString("zh-CN") : "尚未记录，需核对实际数据"}</dd>
-      </dl><p>以下仅包含服务器允许记录的字段。</p><pre>{JSON.stringify(selected.details ?? {}, null, 2)}</pre></div> : null}
+      </dl><details className="admin-advanced-panel"><summary>查看审计字段</summary><p>以下仅包含服务器允许记录的字段。</p><pre>{JSON.stringify(selected.details ?? {}, null, 2)}</pre></details></div> : null}
     </AdminMasterDetail>
   </>;
 }

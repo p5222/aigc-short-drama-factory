@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
+import { dialogStackForDocument } from "../../design-system/dialogStack";
 
 interface ResponsiveDrawerOptions {
   open: boolean;
@@ -61,16 +62,19 @@ export function useResponsiveDrawer({
   const drawerActive = open && drawerMode;
 
   useEffect(() => {
-    if (!drawerActive) return;
-    const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    initialFocusRef.current?.focus();
+    if (!drawerActive || !panelRef.current) return;
+    const lock = dialogStackForDocument(document).register({
+      element: panelRef.current,
+      focusInitial: () => (initialFocusRef.current ?? getFocusableElements(panelRef.current)[0] ?? panelRef.current)?.focus({ preventScroll: true }),
+      onEscape: () => onCloseRef.current?.()
+    });
 
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (!lock.isTop()) return;
       if (event.key === "Escape") {
         event.preventDefault();
-        onCloseRef.current?.();
+        event.stopImmediatePropagation();
+        lock.escape();
         return;
       }
       if (event.key !== "Tab") return;
@@ -94,8 +98,7 @@ export function useResponsiveDrawer({
     document.addEventListener("keydown", handleKeyDown);
     return () => {
       document.removeEventListener("keydown", handleKeyDown);
-      document.body.style.overflow = previousOverflow;
-      returnFocus?.focus();
+      lock.release();
     };
   }, [drawerActive, initialFocusRef, panelRef]);
 

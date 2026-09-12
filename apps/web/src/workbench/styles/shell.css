@@ -63,7 +63,7 @@
   min-width: 0;
   min-height: 0;
   display: grid;
-  grid-template-columns: 300px minmax(640px, 1fr) 392px;
+  grid-template-columns: 264px minmax(0, 1fr) 336px;
   overflow: hidden;
   background: var(--bg-app);
 }

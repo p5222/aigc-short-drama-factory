@@ -1,4 +1,6 @@
 import type { ReactNode } from "react";
+import { canLeaveAdminEditor } from "./adminDirtyState";
+import { StatePanel, InlineNotice } from "../design-system/ui";
 
 export interface AdminColumn<T> {
   key: string;
@@ -45,10 +47,10 @@ export function AdminTablePage<T>({
         {actions}
       </header>
       {filters ? <div className="adm-filterbar">{filters}</div> : null}
-      {error ? <div className="adm-error" role="alert">{error}</div> : null}
+      {error ? <InlineNotice tone="error">{error}</InlineNotice> : null}
       <div className="adm-table-scroll" aria-busy={loading}>
         <table>
-          <thead><tr>{columns.map((column) => <th key={column.key} style={{ width: column.width }}>{column.label}</th>)}</tr></thead>
+          <thead><tr>{columns.map((column) => <th scope="col" key={column.key} style={{ width: column.width }}>{column.label}</th>)}</tr></thead>
           <tbody>
             {!loading && rows.map((row) => (
               <tr
@@ -70,14 +72,14 @@ export function AdminTablePage<T>({
             ))}
           </tbody>
         </table>
-        {loading ? <div className="adm-table-state" role="status">正在加载数据...</div> : !rows.length && !error ? <div className="adm-table-state">{emptyText}</div> : null}
+        {loading ? <StatePanel kind="loading" title="正在读取数据" description="列表同步后即可继续操作。" compact /> : !rows.length && !error ? <StatePanel title={emptyText} compact /> : null}
       </div>
       {page != null && totalPages != null ? (
         <footer className="adm-pagination">
           <span>第 {page} / {Math.max(1, totalPages)} 页</span>
           <div>
-            <button type="button" disabled={loading || !onPageChange || page <= 1} onClick={() => onPageChange?.(page - 1)}>上一页</button>
-            <button type="button" disabled={loading || !onPageChange || page >= totalPages} onClick={() => onPageChange?.(page + 1)}>下一页</button>
+            <button type="button" disabled={loading || !onPageChange || page <= 1} onClick={() => { if (canLeaveAdminEditor()) onPageChange?.(page - 1); }}>上一页</button>
+            <button type="button" disabled={loading || !onPageChange || page >= totalPages} onClick={() => { if (canLeaveAdminEditor()) onPageChange?.(page + 1); }}>下一页</button>
           </div>
         </footer>
       ) : null}

@@ -27,11 +27,14 @@ import {
   UserRound,
   Settings
 } from "lucide-react";
-import { useEffect, useMemo, useState, type ChangeEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 import type { CreditAccount, CreditTransaction, HelpArticle, RechargeOrder, WorkbenchSummary } from "@aifilm/shared";
 import { api, type AuthUser } from "../lib/api";
 import type { PageKey } from "../components/Shell";
 import { SupportTicketPanel, type SupportTicketIntent } from "../support/SupportTicketPanel";
+import { InlineNotice, PageHeader, StatePanel } from "../design-system/ui";
+import { BEFORE_CREATOR_NAVIGATION, createRequestEpoch } from "../lib/creatorNavigation";
+import "./creator-pages.css";
 
 const maxAvatarBytes = 20 * 1024;
 
@@ -73,6 +76,8 @@ export function ProfilePage({
   const [profileBusy, setProfileBusy] = useState(false);
   const [profileMessage, setProfileMessage] = useState("");
   const [profileError, setProfileError] = useState("");
+  const [avatarReading, setAvatarReading] = useState(false);
+  const avatarReadEpoch = useRef(createRequestEpoch()).current;
   const [emailForm, setEmailForm] = useState({ email: user.email ?? "", currentPassword: "" });
   const [emailBusy, setEmailBusy] = useState(false);
   const [emailMessage, setEmailMessage] = useState("");
@@ -81,30 +86,64 @@ export function ProfilePage({
   const [passwordBusy, setPasswordBusy] = useState(false);
   const [passwordMessage, setPasswordMessage] = useState("");
   const [passwordError, setPasswordError] = useState("");
+  const profileDirty = profileName !== user.name || avatarUrl !== (user.avatarUrl ?? "");
+  const emailDirty = emailForm.email !== (user.email ?? "") || Boolean(emailForm.currentPassword);
+  const passwordDirty = Boolean(passwordForm.currentPassword || passwordForm.newPassword || passwordForm.confirmPassword);
+  const pending = profileBusy || emailBusy || passwordBusy;
+  const dirty = profileDirty || emailDirty || passwordDirty || avatarReading;
 
   useEffect(() => {
+    const guard = (event: Event) => {
+      if (!pending && !dirty) return;
+      if (event.type === "beforeunload") { event.preventDefault(); (event as BeforeUnloadEvent).returnValue = ""; }
+      else if (pending || !window.confirm("账户设置有未保存的修改。确认放弃并离开？")) event.preventDefault();
+    };
+    window.addEventListener(BEFORE_CREATOR_NAVIGATION, guard);
+    window.addEventListener("beforeunload", guard);
+    return () => { window.removeEventListener(BEFORE_CREATOR_NAVIGATION, guard); window.removeEventListener("beforeunload", guard); };
+  }, [pending, dirty]);
+
+  useEffect(() => {
+    avatarReadEpoch.invalidate();
+    setAvatarReading(false);
     setProfileName(user.name);
     setAvatarUrl(user.avatarUrl ?? "");
     setEmailForm({ email: user.email ?? "", currentPassword: "" });
-  }, [user.id, user.name, user.avatarUrl, user.email]);
+    setPasswordForm({ currentPassword: "", newPassword: "", confirmPassword: "" });
+    return () => avatarReadEpoch.invalidate();
+  }, [user.id]);
 
   async function handleAvatarFile(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     event.target.value = "";
-    if (!file) return;
+    if (!file || pending) return;
 
+    const token = avatarReadEpoch.begin();
+    setAvatarReading(true);
     setProfileError("");
     setProfileMessage("");
     try {
       const nextAvatarUrl = await compressAvatarFile(file);
+      if (!avatarReadEpoch.current(token)) return;
       setAvatarUrl(nextAvatarUrl);
       setProfileMessage("头像已处理，点击保存后生效。");
     } catch (err) {
+      if (!avatarReadEpoch.current(token)) return;
       setProfileError(err instanceof Error ? err.message : "头像处理失败");
+    } finally {
+      if (avatarReadEpoch.current(token)) setAvatarReading(false);
     }
   }
 
+  function cancelProfileEdit() {
+    avatarReadEpoch.invalidate();
+    setAvatarReading(false);
+    setProfileName(user.name); setAvatarUrl(user.avatarUrl ?? "");
+    setProfileMessage(""); setProfileError(""); setEditOpen(false);
+  }
+
   async function saveProfile() {
+    if (pending || avatarReading) return;
     const name = profileName.trim();
     if (!name) {
       setProfileError("用户名不能为空。");
@@ -117,6 +156,7 @@ export function ProfilePage({
     try {
       const result = await api.updateProfile({ name, avatarUrl: avatarUrl || null });
       onUserUpdate(result.user);
+      setProfileName(result.user.name); setAvatarUrl(result.user.avatarUrl ?? "");
       setProfileMessage("资料已更新。");
     } catch (err) {
       setProfileError(err instanceof Error ? err.message : "资料更新失败");
@@ -126,6 +166,9 @@ export function ProfilePage({
   }
 
   async function removeAvatar() {
+    if (pending) return;
+    avatarReadEpoch.invalidate();
+    setAvatarReading(false);
     setProfileBusy(true);
     setProfileError("");
     setProfileMessage("");
@@ -142,6 +185,7 @@ export function ProfilePage({
   }
 
   async function changeEmail() {
+    if (pending) return;
     const email = emailForm.email.trim().toLowerCase();
     setEmailError("");
     setEmailMessage("");
@@ -176,6 +220,7 @@ export function ProfilePage({
   }
 
   async function changePassword() {
+    if (pending) return;
     setPasswordError("");
     setPasswordMessage("");
     if (!passwordForm.currentPassword) {
@@ -207,22 +252,15 @@ export function ProfilePage({
   }
 
   const creditBalance = account?.balance ?? summary?.credits ?? 0;
-  const creditTotal = Math.max(account?.totalRecharge ?? 0, creditBalance + (account?.totalConsume ?? 0));
-  const creditPercent = creditTotal ? Math.min(100, Math.round((creditBalance / creditTotal) * 100)) : 0;
   const recentTransactions = transactions.slice(0, 4);
   const recentOrders = orders.slice(0, 3);
 
   return (
-    <div className="page-stack profile-page profile-v2-page">
-      <div className="page-title row-title">
-        <div>
-          <h1>我的</h1>
-          <p>账号资料、积分与安全设置集中在这里管理。</p>
-        </div>
-        <div className="inline-actions">
+    <div className="page-stack profile-page profile-v2-page creator-page">
+      <PageHeader title="我的账户" description="管理资料、安全设置和积分。" actions={
           <button className="ghost-button" type="button" onClick={onLogout}><LogOut size={17} />退出登录</button>
-        </div>
-      </div>
+        } />
+      {pending || dirty ? <InlineNotice tone="info">{pending ? "正在保存，请等待操作完成。" : avatarReading ? "正在处理头像。处理完成后可以保存，也可以取消本次修改。" : "有未保存的修改。请在对应分组保存，或取消修改。"}</InlineNotice> : null}
 
       <div className="profile-v2-grid">
         <div className="profile-v2-column">
@@ -232,7 +270,7 @@ export function ProfilePage({
                 <h2>账号信息</h2>
                 <small>头像、昵称与绑定的登录方式。</small>
               </div>
-              <button className="ghost-button" type="button" onClick={() => setEditOpen((value) => !value)}>
+              <button className="ghost-button" type="button" aria-expanded={editOpen} disabled={pending} onClick={() => setEditOpen((value) => !value)}>
                 <Camera size={16} />{editOpen ? "收起编辑" : "编辑资料"}
               </button>
             </div>
@@ -248,7 +286,7 @@ export function ProfilePage({
               </div>
             </div>
             {editOpen ? (
-              <div className="profile-inline-editor">
+              <form className="profile-inline-editor" onSubmit={event => { event.preventDefault(); void saveProfile(); }}><fieldset className="creator-form-fieldset" disabled={pending}>
                 <div className="profile-avatar-editor">
                   <ProfileAvatar name={profileName || user.name} avatarUrl={avatarUrl} size="medium" />
                   <div>
@@ -260,7 +298,8 @@ export function ProfilePage({
                       <Upload size={16} />上传图片
                       <input type="file" accept="image/*" onChange={handleAvatarFile} disabled={profileBusy} />
                     </label>
-                    <button className="ghost-button" type="button" onClick={saveProfile} disabled={profileBusy}>{profileBusy ? "保存中" : "保存资料"}</button>
+                    <button className="primary-button" type="submit" disabled={pending || avatarReading || !profileDirty}>{profileBusy ? "保存中…" : avatarReading ? "头像处理中…" : "保存资料"}</button>
+                    <button className="ghost-button" type="button" disabled={pending} onClick={cancelProfileEdit}>取消修改</button>
                     <button className="ghost-button danger-ghost" type="button" onClick={removeAvatar} disabled={profileBusy || !avatarUrl}><Trash2 size={16} />删除头像</button>
                   </div>
                 </div>
@@ -268,9 +307,9 @@ export function ProfilePage({
                   <span>昵称</span>
                   <input value={profileName} maxLength={40} onChange={(event) => setProfileName(event.target.value)} placeholder="输入你的创作者昵称" />
                 </label>
-                {profileMessage ? <p className="success-text">{profileMessage}</p> : null}
-                {profileError ? <p className="danger-text">{profileError}</p> : null}
-              </div>
+                </fieldset>{profileMessage ? <InlineNotice tone={profileDirty ? "info" : "success"}>{profileMessage}</InlineNotice> : null}
+                {profileError ? <InlineNotice tone="error">{profileError}</InlineNotice> : null}
+              </form>
             ) : null}
             <div className="profile-v2-bindings">
               <div className="profile-v2-binding-row">
@@ -285,7 +324,7 @@ export function ProfilePage({
                 <span className="profile-v2-binding-icon"><Mail size={17} /></span>
                 <div>
                   <strong>邮箱</strong>
-                  <small>{user.email ? maskContact(user.email) : "未绑定，可用于登录和找回账号"}</small>
+                  <small>{user.email ? maskContact(user.email) : "未绑定，绑定后可使用邮箱登录"}</small>
                 </div>
                 <button className="ghost-button" type="button" onClick={() => setSecurityOpen("email")}>{user.email ? "换绑" : "绑定"}</button>
               </div>
@@ -309,7 +348,7 @@ export function ProfilePage({
             </div>
 
             <div className={securityOpen === "email" ? "profile-v2-collapse open" : "profile-v2-collapse"}>
-              <button type="button" onClick={() => setSecurityOpen((value) => (value === "email" ? "" : "email"))}>
+              <button type="button" disabled={pending} aria-expanded={securityOpen === "email"} onClick={() => setSecurityOpen((value) => (value === "email" ? "" : "email"))}>
                 <Mail size={17} />
                 <span>
                   <strong>修改邮箱账号</strong>
@@ -318,7 +357,7 @@ export function ProfilePage({
                 <ChevronDown size={16} />
               </button>
               {securityOpen === "email" ? (
-                <div className="profile-v2-collapse-body">
+                <form className="profile-v2-collapse-body" onSubmit={event => { event.preventDefault(); void changeEmail(); }}><fieldset className="creator-form-fieldset" disabled={pending}>
                   <label className="field">
                     <span>新邮箱</span>
                     <input
@@ -339,17 +378,18 @@ export function ProfilePage({
                       placeholder="确认本人操作"
                     />
                   </label>
-                  <button className="primary-button profile-security-submit" onClick={changeEmail} disabled={emailBusy} type="button">
+                  <div className="inline-actions"><button className="primary-button profile-security-submit" disabled={pending || !emailDirty} type="submit">
                     <Mail size={17} />{emailBusy ? "保存中" : "保存邮箱"}
                   </button>
-                  {emailMessage ? <p className="success-text">{emailMessage}</p> : null}
-                  {emailError ? <p className="danger-text">{emailError}</p> : null}
-                </div>
+                  <button type="button" className="ghost-button" onClick={() => { setEmailForm({ email: user.email ?? "", currentPassword: "" }); setEmailError(""); setEmailMessage(""); setSecurityOpen(""); }}>取消修改</button></div></fieldset>
+                  {emailMessage ? <InlineNotice tone="success">{emailMessage}</InlineNotice> : null}
+                  {emailError ? <InlineNotice tone="error">{emailError}</InlineNotice> : null}
+                </form>
               ) : null}
             </div>
 
             <div className={securityOpen === "password" ? "profile-v2-collapse open" : "profile-v2-collapse"}>
-              <button type="button" onClick={() => setSecurityOpen((value) => (value === "password" ? "" : "password"))}>
+              <button type="button" disabled={pending} aria-expanded={securityOpen === "password"} onClick={() => setSecurityOpen((value) => (value === "password" ? "" : "password"))}>
                 <KeyRound size={17} />
                 <span>
                   <strong>修改登录密码</strong>
@@ -358,7 +398,7 @@ export function ProfilePage({
                 <ChevronDown size={16} />
               </button>
               {securityOpen === "password" ? (
-                <div className="profile-v2-collapse-body">
+                <form className="profile-v2-collapse-body" onSubmit={event => { event.preventDefault(); void changePassword(); }}><fieldset className="creator-form-fieldset" disabled={pending}>
                   <label className="field">
                     <span>当前密码</span>
                     <input type="password" value={passwordForm.currentPassword} onChange={(event) => setPasswordForm((value) => ({ ...value, currentPassword: event.target.value }))} autoComplete="current-password" />
@@ -371,12 +411,13 @@ export function ProfilePage({
                     <span>确认新密码</span>
                     <input type="password" value={passwordForm.confirmPassword} onChange={(event) => setPasswordForm((value) => ({ ...value, confirmPassword: event.target.value }))} autoComplete="new-password" />
                   </label>
-                  <button className="primary-button profile-security-submit" onClick={changePassword} disabled={passwordBusy} type="button">
+                  <div className="inline-actions"><button className="primary-button profile-security-submit" disabled={pending || !passwordDirty} type="submit">
                     <KeyRound size={17} />{passwordBusy ? "修改中" : "修改密码"}
                   </button>
-                  {passwordMessage ? <p className="success-text">{passwordMessage}</p> : null}
-                  {passwordError ? <p className="danger-text">{passwordError}</p> : null}
-                </div>
+                  <button type="button" className="ghost-button" onClick={() => { setPasswordForm({ currentPassword: "", newPassword: "", confirmPassword: "" }); setPasswordError(""); setPasswordMessage(""); setSecurityOpen(""); }}>取消修改</button></div></fieldset>
+                  {passwordMessage ? <InlineNotice tone="success">{passwordMessage}</InlineNotice> : null}
+                  {passwordError ? <InlineNotice tone="error">{passwordError}</InlineNotice> : null}
+                </form>
               ) : null}
             </div>
           </section>
@@ -393,9 +434,6 @@ export function ProfilePage({
             <div className="profile-v2-balance">
               <strong>{creditBalance.toLocaleString()}</strong>
               <span>可用积分</span>
-            </div>
-            <div className="profile-v2-progress" aria-label={`可用积分占累计获得的 ${creditPercent}%`}>
-              <span style={{ width: `${creditPercent}%` }} />
             </div>
             <div className="profile-v2-credit-metrics">
               <div><b>{(account?.totalRecharge ?? 0).toLocaleString()}</b><span>累计充值</span></div>
@@ -457,11 +495,8 @@ export function SettingsPage({ theme, onThemeChange, onNavigate }: {
   onNavigate: (page: PageKey) => void;
 }) {
   return (
-    <div className="page-stack">
-      <div className="page-title">
-        <h1>设置</h1>
-        <p>调整显示主题，管理自己的账号和创作记录。</p>
-      </div>
+    <div className="page-stack creator-page creator-settings-page">
+      <PageHeader title="设置" description="调整显示偏好，管理账号和使用记录。" />
       <section className="panel creator-settings-panel">
         <div className="panel-head"><div><h2>显示主题</h2><small>切换后立即应用；浏览器允许保存时，下次访问会沿用当前选择。</small></div></div>
         <div className="creator-theme-options" role="group" aria-label="显示主题">
@@ -541,8 +576,9 @@ export function HelpPage({ articles = [], userId }: { articles?: HelpArticle[]; 
   const sourceArticles = articles.length ? articles : fallbackHelpArticles;
   const [openArticleId, setOpenArticleId] = useState(sourceArticles[0]?.id ?? "");
   const [supportIntent, setSupportIntent] = useState<SupportTicketIntent>();
+  const [helpView, setHelpView] = useState<"articles" | "tickets">("articles");
   useEffect(() => {
-    if (!sourceArticles.some((article) => article.id === openArticleId)) {
+    if (openArticleId && !sourceArticles.some((article) => article.id === openArticleId)) {
       setOpenArticleId(sourceArticles[0]?.id ?? "");
     }
   }, [openArticleId, sourceArticles]);
@@ -567,22 +603,12 @@ export function HelpPage({ articles = [], userId }: { articles?: HelpArticle[]; 
   }
 
   return (
-    <div className="page-stack help-center-page">
-      <div className="page-title row-title">
-        <div>
-          <h1>帮助中心</h1>
-          <p>查找操作教程，提交问题并查看站内回复。</p>
-        </div>
-        <div className="inline-actions">
-          <button className="ghost-button" type="button" onClick={() => setSupportIntent(current => ({ view: "list", key: (current?.key ?? 0) + 1 }))}>
-            <Headphones size={18} />
-            我的工单
-          </button>
-          <button className="primary-button" type="button" onClick={() => setSupportIntent(current => ({ view: "new", key: (current?.key ?? 0) + 1 }))}><Send size={18} />提交问题</button>
-        </div>
-      </div>
+    <div className="page-stack help-center-page creator-page">
+      <PageHeader title="帮助中心" description="查操作文档，或把问题提交给支持人员。" actions={<button className="primary-button" type="button" onClick={() => { setHelpView("tickets"); setSupportIntent(current => ({ view: "new", key: (current?.key ?? 0) + 1 })); }}><Send size={18} />提交问题</button>} />
+      <nav className="tabs creator-help-tabs" aria-label="帮助中心视图"><button type="button" aria-pressed={helpView === "articles"} className={helpView === "articles" ? "active" : ""} onClick={() => setHelpView("articles")}><FileText size={16} />操作文档</button><button type="button" aria-pressed={helpView === "tickets"} className={helpView === "tickets" ? "active" : ""} onClick={() => { setHelpView("tickets"); setSupportIntent(current => ({ view: "list", key: (current?.key ?? 0) + 1 })); }}><Headphones size={16} />我的工单</button></nav>
+      <div className="creator-help-docs" hidden={helpView !== "articles"}>
       <div className="help-grid help-action-grid">
-        <HelpCard title="10 分钟入门" desc="从零生成第一集" icon={<MonitorPlay size={30} />} onClick={() => focusCategory("getting_started")} />
+        <HelpCard title="新手入门" desc="了解第一集的制作流程" icon={<MonitorPlay size={30} />} onClick={() => focusCategory("getting_started")} />
         <HelpCard title="详细文档" desc="每个功能讲解" icon={<FileText size={30} />} onClick={() => focusCategory("workflow")} />
         <HelpCard title="积分与工单" desc="账单、退款、失败处理" icon={<LifeBuoy size={30} />} onClick={() => focusCategory("billing")} />
       </div>
@@ -590,11 +616,11 @@ export function HelpPage({ articles = [], userId }: { articles?: HelpArticle[]; 
         <div className="help-toolbar">
           <label className="help-search">
             <Search size={18} />
-            <input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="搜索积分、角色、导出、失败..." />
+            <input type="search" aria-label="搜索帮助文档" value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="搜索积分、角色、导出、失败…" />
           </label>
           <div className="help-category-tabs">
             {helpCategoryOptions.map((item) => (
-              <button className={category === item ? "active" : undefined} key={item} type="button" onClick={() => setCategory(item)}>
+              <button className={category === item ? "active" : undefined} aria-pressed={category === item} key={item} type="button" onClick={() => setCategory(item)}>
                 {item === "all" ? "全部" : helpCategoryLabels[item]}
               </button>
             ))}
@@ -606,7 +632,7 @@ export function HelpPage({ articles = [], userId }: { articles?: HelpArticle[]; 
               const open = openArticleId === article.id;
               return (
                 <article className={open ? "help-article-row open" : "help-article-row"} key={article.id}>
-                  <button type="button" onClick={() => openArticle(article)}>
+                  <button type="button" aria-expanded={open} onClick={() => openArticle(article)}>
                     <span><ChevronDown size={18} /></span>
                     <div>
                       <strong>{article.title}</strong>
@@ -625,7 +651,7 @@ export function HelpPage({ articles = [], userId }: { articles?: HelpArticle[]; 
                 </article>
               );
             })}
-            {!filteredArticles.length ? <div className="empty-state">没有匹配的帮助内容，换个关键词试试。</div> : null}
+            {!filteredArticles.length ? <StatePanel compact title="没有找到相关文档" description="可以换个关键词，或向支持人员提交问题。" action={<button type="button" className="ghost-button" onClick={() => { setKeyword(""); setCategory("all"); }}>清空筛选</button>} /> : null}
           </div>
           <aside className="help-side-panel">
             <strong><Sparkles size={18} />推荐排查顺序</strong>
@@ -635,7 +661,8 @@ export function HelpPage({ articles = [], userId }: { articles?: HelpArticle[]; 
           </aside>
         </div>
       </section>
-      <SupportTicketPanel userId={userId} intent={supportIntent} />
+      </div>
+      <div hidden={helpView !== "tickets"}><SupportTicketPanel userId={userId} intent={supportIntent} /></div>
     </div>
   );
 }

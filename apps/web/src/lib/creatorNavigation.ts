@@ -27,13 +27,18 @@ export function createRequestEpoch() {
 }
 
 export interface RefreshResource<T = unknown> { label: string; read: () => Promise<T>; apply: (value: T) => void }
-export async function refreshResources(resources: RefreshResource<any>[], isCurrent: () => boolean = () => true): Promise<void> {
+export async function refreshResources(resources: RefreshResource<any>[], isCurrent: () => boolean = () => true, onRead?: (labels: string[]) => void): Promise<void> {
   const results = await Promise.allSettled(resources.map((resource) => Promise.resolve().then(resource.read)));
   if (!isCurrent()) return;
   const failed: string[] = [];
+  const read: string[] = [];
   results.forEach((result, index) => {
-    if (result.status === "fulfilled") resources[index].apply(result.value);
+    if (result.status === "fulfilled") {
+      resources[index].apply(result.value);
+      read.push(resources[index].label);
+    }
     else failed.push(resources[index].label);
   });
+  onRead?.(read);
   if (failed.length) throw new Error(`${failed.join("、")}未能刷新，已保留原有数据。请稍后重试。`);
 }

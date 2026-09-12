@@ -17,6 +17,8 @@
   Volume2
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { InlineNotice, PageHeader, StatePanel } from "../design-system/ui";
+import "./creator-pages.css";
 import type { ReactNode } from "react";
 import type { GenerationTask, TaskStatus, TaskType } from "@aifilm/shared";
 import { canCancelTask, canRetryTask, createTaskActionRunner, type PendingTaskActions, type TaskAction } from "./taskActionModel";
@@ -52,6 +54,7 @@ export function TaskCenterPage({
   const [pendingActions, setPendingActions] = useState<PendingTaskActions>({});
   const [actionError, setActionError] = useState("");
   const [actionMessage, setActionMessage] = useState("");
+  const [query, setQuery] = useState("");
   const actionRunner = useRef(createTaskActionRunner()).current;
 
   async function runAction(taskId: string, action: TaskAction) {
@@ -73,6 +76,7 @@ export function TaskCenterPage({
 
   const filteredTasks = useMemo(() => {
     return [...tasks]
+      .filter(task => `${task.title} ${task.projectName ?? ""} ${task.id}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))
       .filter((task) => activeStage === "all" || task.type === activeStage)
       .filter((task) => {
         if (activeFilter === "all") return true;
@@ -80,7 +84,7 @@ export function TaskCenterPage({
         return task.status === activeFilter;
       })
       .sort((a, b) => statusPriority[a.status] - statusPriority[b.status] || new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
-  }, [activeFilter, activeStage, tasks]);
+  }, [activeFilter, activeStage, tasks, query]);
 
   const selectedTask = filteredTasks.find((task) => task.id === selectedTaskId) ?? filteredTasks[0];
 
@@ -95,54 +99,21 @@ export function TaskCenterPage({
   }, [filteredTasks, selectedTask, selectedTaskId]);
 
   return (
-    <div className="page-stack generation-queue-page" data-tour-id="task-center">
-      <div className="queue-hero">
-        <div>
-          <span className="queue-eyebrow"><Sparkles size={16} /> 漫角生产调度</span>
-          <h1>生成队列</h1>
-          <p>剧本、分镜、角色三视图、分镜生图、图生视频和导出任务统一在这里查看进度、定位失败原因，并选择重试或取消。</p>
-        </div>
-        <div className="queue-hero-actions">
+    <div className="page-stack generation-queue-page creator-page" data-tour-id="task-center">
+      <PageHeader title="生成队列" description="查看创作进度，处理失败任务。已提交的任务会在后台继续运行。" actions={
           <button className="ghost-button" onClick={() => void runAction("__refresh__", "refresh")} disabled={Boolean(pendingActions.__refresh__)}>
             <RefreshCw size={18} />
             {pendingActions.__refresh__ ? "刷新中…" : "刷新队列"}
           </button>
-        </div>
+        } />
+      {tasks.length ? <dl className="creator-metrics" aria-label="任务概况"><div><dt>全部任务</dt><dd>{tasks.length}</dd></div><div><dt>生成中</dt><dd>{queueStats.active}</dd></div><div><dt>失败待处理</dt><dd>{queueStats.failed}</dd></div><div><dt>已完成</dt><dd>{queueStats.succeeded}</dd></div></dl> : null}
+      {actionError ? <InlineNotice tone="error" onDismiss={() => setActionError("")}>{actionError}</InlineNotice> : null}
+      {actionMessage ? <InlineNotice tone="success" onDismiss={() => setActionMessage("")}>{actionMessage}</InlineNotice> : null}
+      {tasks.length ? <><div className="creator-list-toolbar queue-search-toolbar">
+        <label className="creator-search-field"><span className="creator-sr-only">搜索任务</span><input type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索任务、作品或编号" /></label>
+        <label className="creator-filter-select"><span>生成类型</span><select value={activeStage} onChange={event => setActiveStage(event.target.value as TaskType | "all")}><option value="all">全部类型</option>{stageGroups.map(stage => <option key={stage.type} value={stage.type}>{taskTypeText(stage.type)} · {stage.tasks.length}</option>)}</select></label>
       </div>
-
-      {actionError ? <p className="danger-text" role="alert">{actionError}</p> : null}
-      {actionMessage ? <p className="success-text" role="status">{actionMessage}</p> : null}
-
-      <div className="queue-stat-grid">
-        <QueueStat icon={<Layers3 size={21} />} label="总任务" value={tasks.length} hint={`已结算 ${queueStats.totalCredits} 积分`} />
-        <QueueStat icon={<Loader2 size={21} className={queueStats.active ? "spin-icon" : ""} />} label="生成中" value={queueStats.active} hint={queueStats.active ? `${queueStats.avgProgress}% 在途任务平均进度` : "当前没有在途任务"} tone="blue" />
-        <QueueStat icon={<CheckCircle2 size={21} />} label="已完成" value={queueStats.succeeded} hint={`共 ${tasks.length} 条任务记录`} tone="green" />
-        <QueueStat icon={<AlertTriangle size={21} />} label="失败待处理" value={queueStats.failed} hint="可在右侧查看原因" tone="red" />
-      </div>
-
-      <section className="queue-policy-strip">
-        <PolicyPill label="当前执行" value={`${queuePolicy.running} 个`} hint="仅显示当前账号的执行任务" />
-        <PolicyPill label="等待任务" value={`${queuePolicy.pending} 个`} hint="系统按模型可用额度与阶段调度" />
-        <PolicyPill label="退费规则" value="失败/取消退冻结" hint="成功后正式扣费，失败任务可重试或切模型继续" />
-      </section>
-
-      <section className="queue-stage-board">
-        {stageGroups.map((stage) => (
-          <button
-            type="button"
-            key={stage.type}
-            className={activeStage === stage.type ? "queue-stage-card active" : "queue-stage-card"}
-            onClick={() => setActiveStage(activeStage === stage.type ? "all" : stage.type)}
-          >
-            <span className="queue-stage-icon">{taskTypeIcon(stage.type)}</span>
-            <strong>{taskTypeText(stage.type)}</strong>
-            <small>{stage.tasks.length} 个任务 · {stage.running} 生成中</small>
-            <em>{stage.failed ? `${stage.failed} 个失败` : "状态正常"}</em>
-          </button>
-        ))}
-      </section>
-
-      <div className="queue-filter-row">
+      <div className="queue-filter-row" role="group" aria-label="按任务状态筛选">
         {[
           ["all", "全部"],
           ["active", "生成中"],
@@ -155,40 +126,33 @@ export function TaskCenterPage({
             type="button"
             key={value}
             className={activeFilter === value ? "active" : ""}
+            aria-pressed={activeFilter === value}
             onClick={() => setActiveFilter(value as QueueFilter)}
           >
             {label}
           </button>
         ))}
       </div>
-
-      <section className="queue-workspace">
+      </> : null}
+      <section className={`queue-workspace${filteredTasks.length ? "" : " is-empty"}`}>
         <div className="queue-list-card">
-          <div className="queue-card-head">
+          {tasks.length ? <div className="queue-card-head">
             <div>
               <h2>生成任务</h2>
               <p>按状态优先展示：生成中、失败、排队中、已完成。</p>
             </div>
             <span>{filteredTasks.length} 条</span>
-          </div>
+          </div> : null}
           <div className="queue-task-list">
             {filteredTasks.map((task) => {
               const failedLike = canRetryTask(task);
               const cancelableRow = canCancelTask(task);
               return (
                 <div
-                  role="button"
-                  tabIndex={0}
                   key={task.id}
                   className={selectedTask?.id === task.id ? "queue-task-row active" : "queue-task-row"}
-                  onClick={() => setSelectedTaskId(task.id)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
-                      setSelectedTaskId(task.id);
-                    }
-                  }}
                 >
+                  <button type="button" className="queue-task-select" aria-pressed={selectedTask?.id === task.id} onClick={() => setSelectedTaskId(task.id)}>
                   <span className="queue-task-type">{taskTypeIcon(task.type)}</span>
                   <span className="queue-task-main">
                     <strong>{taskTitleText(task.title)}</strong>
@@ -197,6 +161,12 @@ export function TaskCenterPage({
                     {task.status === "failed" && task.errorReason ? (
                       <small className="queue-task-error"><AlertTriangle size={13} />{task.errorReason}</small>
                     ) : null}
+                  </span>
+                  <span className="queue-task-side">
+                    <em className={`queue-status ${task.status}`}>{taskStatusText(task.status)}</em>
+                    <small>{normalizeProgress(task.progress)}%</small>
+                  </span>
+                  </button>
                     {failedLike || cancelableRow ? (
                       <span className="queue-task-actions">
                         {failedLike ? (
@@ -211,20 +181,16 @@ export function TaskCenterPage({
                         ) : null}
                       </span>
                     ) : null}
-                  </span>
-                  <span className="queue-task-side">
-                    <em className={`queue-status ${task.status}`}>{taskStatusText(task.status)}</em>
-                    <small>{normalizeProgress(task.progress)}%</small>
-                  </span>
                 </div>
               );
             })}
-            {!filteredTasks.length ? <div className="queue-empty">{emptyListText(activeFilter, activeStage, tasks.length)}</div> : null}
+            {!filteredTasks.length ? <StatePanel compact={Boolean(tasks.length)} title={tasks.length ? "没有匹配的任务" : "暂无生成任务"} description={emptyListText(activeFilter, activeStage, tasks.length)} action={tasks.length ? <button type="button" className="ghost-button" onClick={() => { setQuery(""); setActiveFilter("all"); setActiveStage("all"); }}>清空筛选</button> : <a className="ghost-button" href="#/scripts">查看我的作品</a>} /> : null}
           </div>
         </div>
 
-        <TaskDetailPanel task={selectedTask} onOpenProject={onOpenProject} queuePolicy={queuePolicy} pendingAction={selectedTask ? pendingActions[selectedTask.id] : undefined} onRetry={(id) => void runAction(id, "retry")} onCancel={(id) => void runAction(id, "cancel")} />
+        {selectedTask ? <TaskDetailPanel task={selectedTask} onOpenProject={onOpenProject} queuePolicy={queuePolicy} pendingAction={pendingActions[selectedTask.id]} onRetry={(id) => void runAction(id, "retry")} onCancel={(id) => void runAction(id, "cancel")} /> : null}
       </section>
+      <p className="creator-page-footnote">当前显示你的任务。成功后正式扣费，失败或取消会退回未消耗的冻结积分。</p>
     </div>
   );
 }
@@ -246,11 +212,7 @@ function TaskDetailPanel({
 }) {
   if (!task) {
     return (
-      <aside className="queue-detail-card empty">
-        <Megaphone size={28} />
-        <strong>当前筛选下没有任务</strong>
-        <p>可切回全部查看历史任务，或前往项目工作台开始生成。</p>
-      </aside>
+      <aside className="queue-detail-card empty"><StatePanel compact title="选择任务查看详情" description="任务结果、积分和失败原因会显示在这里。" /></aside>
     );
   }
 
@@ -323,19 +285,19 @@ function TaskDetailPanel({
       <div className="queue-fallback-box">
         <strong>成本与兜底</strong>
         <p>{task.refundPolicy ?? "失败或取消会退回未消耗积分；成功后正式扣费。"}</p>
-        <p>{task.fallbackHint ?? "可切换模型或检查后台渠道配置后重试。"}</p>
+        <p>{task.fallbackHint ?? "如同一模型反复失败，可以到生产台切换模型，或向支持人员提交工单。"}</p>
       </div>
 
       {task.projectId ? <button type="button" className="primary-button" onClick={() => onOpenProject(task.projectId!)}><Film size={16} /> 打开所属作品</button> : <p className="muted">对应作品已不可用，任务记录仍保留。</p>}
       <div className="queue-detail-actions">
-        <button type="button" onClick={() => onRetry(task.id)} disabled={!canRetry || Boolean(pendingAction)}>
+        {canRetry ? <button type="button" onClick={() => onRetry(task.id)} disabled={Boolean(pendingAction)}>
           <RotateCcw size={16} />
           {pendingAction === "retry" ? "提交重试中…" : "重试任务"}
-        </button>
-        <button type="button" className="danger" onClick={() => onCancel(task.id)} disabled={!canCancel || Boolean(pendingAction)}>
+        </button> : null}
+        {canCancel ? <button type="button" className="danger" onClick={() => onCancel(task.id)} disabled={Boolean(pendingAction)}>
           <Square size={15} />
           {pendingAction === "cancel" ? "取消中…" : "取消任务"}
-        </button>
+        </button> : null}
       </div>
     </aside>
   );

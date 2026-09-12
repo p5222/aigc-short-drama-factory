@@ -3,6 +3,8 @@ import { useMemo, useRef, useState } from "react";
 import type { ContentProjectSummary, Project } from "@aifilm/shared";
 import { contentMatchesFilter, contentWorkState, createWorkDeletionRunner, productionMatchesFilter, productionWorkState, worksFilterTabs, type WorksFilter } from "./scriptsPageModel";
 import "./scripts-page.css";
+import { ConfirmDialog, InlineNotice, PageHeader, StatePanel } from "../design-system/ui";
+import "./creator-pages.css";
 
 export function ScriptsPage({
   projects,
@@ -27,6 +29,8 @@ export function ScriptsPage({
   const [deletingIds, setDeletingIds] = useState(new Set<string>());
   const [deleteErrors, setDeleteErrors] = useState<Record<string, string>>({});
   const [deleteNotice, setDeleteNotice] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<Project | null>(null);
+  const [query, setQuery] = useState("");
   const deletionRunner = useRef(createWorkDeletionRunner((state) => {
     setDeletingIds((current) => {
       const next = new Set(current);
@@ -35,33 +39,32 @@ export function ScriptsPage({
     });
     setDeleteErrors((current) => ({ ...current, [state.projectId]: state.error }));
   }));
-  const visibleContent = useMemo(() => contentProjects.filter((item) => contentMatchesFilter(item, filter)), [contentProjects, filter]);
-  const visibleProjects = useMemo(() => projects.filter((item) => productionMatchesFilter(item, filter)), [projects, filter]);
+  const visibleContent = useMemo(() => contentProjects.filter((item) => contentMatchesFilter(item, filter) && item.title.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())), [contentProjects, filter, query]);
+  const visibleProjects = useMemo(() => projects.filter((item) => productionMatchesFilter(item, filter) && `${item.name} ${item.intro ?? ""}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())), [projects, filter, query]);
   const totalCount = contentProjects.length + projects.length;
+  const sectionOrder = !visibleContent.length && visibleProjects.length ? ["production", "content"] : ["content", "production"];
 
   async function deleteWork(project: Project) {
     if (deletionRunner.current.isPending(project.id) || openingId === project.id) return;
-    if (!window.confirm(`确认删除“${project.name}”？作品下的脚本、分镜、资产和生成任务都会删除，此操作不可恢复。`)) return;
     setDeleteNotice("");
-    if (await deletionRunner.current.run(project.id, () => onDelete(project.id))) setDeleteNotice(`已删除作品“${project.name}”。`);
+    if (await deletionRunner.current.run(project.id, () => onDelete(project.id))) {
+      setDeleteNotice(`已删除作品“${project.name}”。`);
+      setDeleteTarget(null);
+    }
   }
 
   return (
-    <div className="page-stack scripts-page">
-      <div className="page-title row-title">
-        <div>
-          <h1>我的作品</h1>
-          <p>共 {totalCount} 部作品：{contentProjects.length} 部内容创作、{projects.length} 部漫剧作品。选择作品继续创作。</p>
-        </div>
-        <div className="inline-actions">
+    <div className="page-stack scripts-page creator-page">
+      <PageHeader title="我的作品" description={`共 ${totalCount} 部作品 · 从故事到成片，继续上次创作。`} actions={<>
           <button className="ghost-button" type="button" onClick={onNewContent}>
-            <BookOpen size={16} /> 新建内容创作
+            <BookOpen size={16} /> 写新故事
           </button>
           <button className="primary-button" type="button" onClick={onNew}>
-            <Plus size={16} /> 新建漫剧作品
+            <Plus size={16} /> 新建漫剧
           </button>
-        </div>
-      </div>
+        </>} />
+      <div className="creator-list-toolbar">
+      <label className="creator-search-field"><span className="creator-sr-only">搜索我的作品</span><input type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索作品名称或简介" /></label>
       <div className="tabs" role="group" aria-label="按作品状态筛选">
         {worksFilterTabs.map((tab) => (
           <button key={tab.id} type="button" className={tab.id === filter ? "active" : ""} aria-pressed={tab.id === filter} onClick={() => setFilter(tab.id)}>
@@ -69,9 +72,11 @@ export function ScriptsPage({
           </button>
         ))}
       </div>
-      {deleteNotice ? <p className="works-feedback" role="status">{deleteNotice}</p> : null}
+      </div>
+      {deleteNotice ? <InlineNotice tone="success" onDismiss={() => setDeleteNotice("")}>{deleteNotice}</InlineNotice> : null}
 
-      <section className="panel works-section" aria-labelledby="works-content-heading">
+      {sectionOrder.map(kind => kind === "content" ? (
+      <section key="content" className={`panel works-section${!visibleContent.length && visibleProjects.length ? " is-compact-empty" : ""}`} aria-labelledby="works-content-heading">
         <header className="works-section-head">
           <BookOpen size={17} />
           <div>
@@ -79,6 +84,7 @@ export function ScriptsPage({
             <small>小说 / 大纲 / 章节，从这里开始，可交接进入漫剧制作</small>
           </div>
           <span className="works-count">{visibleContent.length}</span>
+          {!visibleContent.length && visibleProjects.length ? <button type="button" className="ghost-button" onClick={query || filter !== "all" ? () => { setQuery(""); setFilter("all"); } : onNewContent}>{query || filter !== "all" ? "清空筛选" : "写新故事"}</button> : null}
         </header>
         {visibleContent.length ? (
           <div className="project-grid">
@@ -104,14 +110,12 @@ export function ScriptsPage({
               );
             })}
           </div>
-        ) : (
-          <div className="empty-state">
-            {filter === "all" ? "还没有内容创作项目，点右上角「新建内容创作」开始。" : "该状态下暂无内容创作项目。"}
-          </div>
-        )}
+        ) : !visibleProjects.length ? (
+          <StatePanel compact title={query || filter !== "all" ? "没有匹配的故事" : "从一个故事开始"} description={query || filter !== "all" ? "试试其他关键词或查看全部状态。" : "写下灵感，逐步形成大纲、章节与可制作的剧本。"} action={query || filter !== "all" ? <button type="button" className="ghost-button" onClick={() => { setQuery(""); setFilter("all"); }}>清空筛选</button> : <button type="button" className="ghost-button" onClick={onNewContent}>写新故事</button>} />
+        ) : null}
       </section>
-
-      <section className="panel works-section" data-tour-id="project-list" aria-labelledby="works-production-heading">
+      ) : (
+      <section key="production" className={`panel works-section${!visibleProjects.length && visibleContent.length ? " is-compact-empty" : ""}`} data-tour-id="project-list" aria-labelledby="works-production-heading">
         <header className="works-section-head">
           <Clapperboard size={17} />
           <div>
@@ -119,6 +123,7 @@ export function ScriptsPage({
             <small>分镜、图片、视频与成片都在作品生产台里</small>
           </div>
           <span className="works-count">{visibleProjects.length}</span>
+          {!visibleProjects.length && visibleContent.length ? <button type="button" className="ghost-button" onClick={query || filter !== "all" ? () => { setQuery(""); setFilter("all"); } : onNew}>{query || filter !== "all" ? "清空筛选" : "新建漫剧"}</button> : null}
         </header>
         {visibleProjects.length ? (
           <div className="project-grid">
@@ -143,7 +148,7 @@ export function ScriptsPage({
                 </div>
                 <div className="works-card-footer">
                   <span>{deleting ? "正在删除，请稍候…" : "进入生产台继续制作"}</span>
-                  <button className="works-card-delete" type="button" disabled={opening || deleting} aria-label={`删除作品 ${project.name}`} onClick={() => void deleteWork(project)}>{deleting ? <LoaderCircle size={15} className="spin" /> : <Trash2 size={15} />}<span>{deleting ? "删除中" : "删除"}</span></button>
+                  <button className="works-card-delete" type="button" disabled={opening || deleting} aria-label={`删除作品 ${project.name}`} onClick={() => setDeleteTarget(project)}>{deleting ? <LoaderCircle size={15} className="spin" /> : <Trash2 size={15} />}<span>{deleting ? "删除中" : "删除"}</span></button>
                 </div>
                 {deleteErrors[project.id] ? <p className="works-delete-error" role="alert">删除失败：{deleteErrors[project.id]} 当前作品仍保留在列表中。</p> : null}
                 {opening ? (
@@ -154,12 +159,12 @@ export function ScriptsPage({
               </article>;
             })}
           </div>
-        ) : (
-          <div className="empty-state">
-            {filter === "all" ? "还没有漫剧作品。可以在内容创作完成剧本后交接进入，或直接「新建漫剧作品」。" : "该状态下暂无漫剧作品。"}
-          </div>
-        )}
+        ) : !visibleContent.length ? (
+          <StatePanel compact title={query || filter !== "all" ? "没有匹配的漫剧" : "准备制作第一部漫剧"} description={query || filter !== "all" ? "试试其他关键词或查看全部状态。" : "导入小说或剧本，确认设置后开始制作。"} action={query || filter !== "all" ? <button type="button" className="ghost-button" onClick={() => { setQuery(""); setFilter("all"); }}>清空筛选</button> : <button type="button" className="primary-button" onClick={onNew}>新建漫剧</button>} />
+        ) : null}
       </section>
+      ))}
+      <ConfirmDialog open={Boolean(deleteTarget)} title="删除这部作品？" description={<>{deleteTarget?.name}<br />作品下的脚本、分镜、资产和生成任务都会删除，此操作不可恢复。{deleteTarget && deleteErrors[deleteTarget.id] ? <span className="creator-confirm-error" role="alert">{deleteErrors[deleteTarget.id]} 作品仍保留，可以重试。</span> : null}</>} confirmLabel="删除作品" danger pending={deleteTarget ? deletingIds.has(deleteTarget.id) : false} onConfirm={() => { if (deleteTarget) void deleteWork(deleteTarget); }} onCancel={() => setDeleteTarget(null)} />
     </div>
   );
 }

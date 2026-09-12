@@ -20,6 +20,7 @@ import {
 } from "@aifilm/shared";
 import { api } from "../../lib/api";
 import { ModelRoutePicker } from "../../components/ModelRoutePicker";
+import { InlineNotice } from "../../design-system/ui";
 import { MediaFrame } from "../components/MediaCanvas";
 import { ProductionWorkspace } from "../components/ProductionWorkspace";
 import {
@@ -257,8 +258,10 @@ function LoadedAssetStage({
         <div className="wb-asset-canvas">
           <header className="wb-asset-canvas__heading">
             <div><span>{mode === "character" ? "生成身份板" : activeScene?.type === "prop" ? "关键道具" : "环境场景"}</span><h1>{mediaTitle}</h1></div>
-            <small>{mediaUrl ? "真实生成结果" : "等待生成"}</small>
+            <small>{mediaUrl ? "当前版本 · 点击查看大图" : "等待生成"}</small>
           </header>
+          {message ? <InlineNotice tone="success" onDismiss={() => setMessage("")}>{message}</InlineNotice> : null}
+          {error ? <InlineNotice tone="error" onDismiss={() => setError("")}>{error}</InlineNotice> : null}
           <button className="wb-asset-media-button" type="button" disabled={!mediaUrl} onClick={() => mediaUrl && onPreview({ url: mediaUrl, title: mediaTitle })} aria-label={mediaUrl ? `预览${mediaTitle}` : `${mediaTitle}尚未生成`}>
             <MediaFrame aspectRatio={activeCharacter ? "16:9" : project.videoRatio} label={`${mediaTitle}媒体预览`}>
               {mediaUrl ? <img src={mediaUrl} alt={mediaTitle} loading="eager" decoding="async" /> : <div className="wb-asset-media-empty">{mode === "character" ? <UserRound aria-hidden="true" /> : <MapPin aria-hidden="true" />}<strong>{mode === "character" ? "身份板待生成" : "场景概念图待生成"}</strong></div>}
@@ -316,10 +319,6 @@ function LoadedAssetStage({
             <header><strong>{feedbackTarget.label}</strong><small>反馈仅归属当前选中资产</small></header>
             <FeedbackForm projectId={project.id} target={feedbackTarget} recentCount={recentFeedback} disabled={!feedbackTarget.assetId} onRefresh={onRefresh} />
           </section>
-          <div className="wb-action-feedback" aria-live="polite">
-            {message ? <p className="wb-action-feedback--success">{message}</p> : null}
-            {error ? <p className="wb-action-feedback--error">{error}</p> : null}
-          </div>
         </div>
       )}
     />
