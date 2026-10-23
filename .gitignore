@@ -8,6 +8,8 @@ dist
 .turbo
 .vite
 coverage
+playwright-report/
+test-results/
 __pycache__/
 *.pyc
 *.log

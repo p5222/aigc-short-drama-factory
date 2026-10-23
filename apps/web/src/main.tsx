@@ -28,6 +28,9 @@ import "./creation-workspace.css";
 import "./theme-contract.css";
 import "./components/creator-shell.css";
 import "./design-system/product.css";
+import "./design-system/studio-design.css";
+import "./design-system/public-design.css";
+import "./admin/console-design.css";
 
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

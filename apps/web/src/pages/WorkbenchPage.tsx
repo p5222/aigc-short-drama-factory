@@ -26,13 +26,21 @@ export function WorkbenchPage({ summary, onStart, onOpen, onOpenTasks, onRecharg
     <div className="page-stack dashboard-page dashboard-action-page">
       <header className="dashboard-action-header">
         <div>
-          <span className="section-kicker">创作工作台</span>
-          <h1>{summary?.userName ?? "创作者"}，今天继续哪里？</h1>
-          <p>从故事到成片，让每一步创作都有清晰的下一步。</p>
+          <span className="section-kicker">MANJIAO STUDIO / 创作工作台</span>
+          <h1>{summary?.userName ?? "创作者"}，让故事继续。</h1>
+          <p>把灵感写成故事，把故事带上银幕。</p>
         </div>
         <div className="workbench-header-actions"><button className="ghost-button" onClick={onStartContent}><BookOpen size={17} />内容创作</button><button className="primary-button large" onClick={onStart}><Plus size={18} />新建漫剧</button></div>
       </header>
 
+      {latestProject ? <section className="workbench-resume" aria-labelledby="workbench-resume-title">
+        <div className="workbench-resume-copy">
+          <span className="workbench-resume-label"><span />继续上次创作</span>
+          <h2 id="workbench-resume-title">{latestProject.name}</h2>
+          <p>{latestProject.type} · {latestProject.videoRatio} · {latestProject.storyboards} 个镜头<span>{formatRelativeUpdate(latestProject.updatedAt)}</span></p>
+        </div>
+        <div className="workbench-resume-action"><span>下一步 · {projectNextAction(latestProject)}</span><button type="button" onClick={() => onOpen(latestProject.id)}>进入创作<ArrowRight size={17} /></button></div>
+      </section> : null}
       {!latestProject ? <section className="workbench-journey" aria-labelledby="workbench-journey-title">
         <div className="workbench-journey-heading"><span className="section-kicker">创作流程</span><h2 id="workbench-journey-title">把第一个故事变成作品</h2><p>逐步确认内容，再进入生成。每次生成前核对模型与积分报价。</p></div>
         <ol>
@@ -70,12 +78,12 @@ export function WorkbenchPage({ summary, onStart, onOpen, onOpenTasks, onRecharg
             <button className="ghost-button" type="button" onClick={onOpenWorks}>全部作品<ArrowRight size={15} /></button>
           </div>
           <div className="dashboard-project-list">
-            {projects.map((project) => (
+            {projects.map((project, index) => (
               <button key={project.id} type="button" onClick={() => onOpen(project.id)}>
-                <span className={`dashboard-project-state ${projectTone(project.status)}`}>{projectStatusLabel(project.status)}</span>
+                <span className="dashboard-project-index" aria-hidden="true">{String(index + 1).padStart(2, "0")}</span>
                 <span className="dashboard-project-main">
                   <strong>{project.name}</strong>
-                  <small>{project.type} · {project.videoRatio} · {project.storyboards} 个镜头</small>
+                  <small>{project.type} · {project.videoRatio} · {project.storyboards} 个镜头 <span className={`dashboard-project-state ${projectTone(project.status)}`}>{projectStatusLabel(project.status)}</span></small>
                 </span>
                 <span className="dashboard-project-next"><small>{formatRelativeUpdate(project.updatedAt)}</small><strong>{projectNextAction(project)}<ArrowRight size={14} /></strong></span>
               </button>

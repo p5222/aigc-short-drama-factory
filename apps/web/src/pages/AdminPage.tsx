@@ -3912,7 +3912,7 @@ function AdminMetric({ icon, label, value, hint, tone }: { icon: ReactNode; labe
       <div className="admin-product-metric-icon">{icon}</div>
       <div>
         <span>{label}</span>
-        <strong>{value}</strong>
+        <strong data-text-value={typeof value === "string" && /[\u3400-\u9fff]/.test(value) ? true : undefined}>{value}</strong>
         <small>{hint}</small>
       </div>
     </article>
