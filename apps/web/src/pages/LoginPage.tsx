@@ -942,6 +942,7 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
           <h1>{t.adminTitle}</h1>
           <p>{t.adminIntro}</p>
           {authForm}
+          <a className="cine-admin-back" href="/"><ArrowRight size={14} />返回漫角创作平台</a>
         </section>
       </main>
     );

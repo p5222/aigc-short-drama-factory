@@ -604,6 +604,7 @@ export function App() {
     return (
       <AdminShell
         title="后台管理系统"
+        userName={user.name}
         description="创作、质量、模型与商业化统一运营"
         items={adminNavGroups.flatMap((group) => group.items.map(({ name, icon: Icon }) => ({ id: name, label: name === "套餐会员" ? "充值套餐" : name === "订阅会员" ? "订阅方案 · 未开放" : name, group: group.label, icon: <Icon size={17} /> })))}
         activeId={adminHash}

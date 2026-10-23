@@ -1,7 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 
 // Deliberately local fixtures: verifies UI contracts, never supplier/payment integration.
-async function fixtureApi(page: Page, options: { admin?: boolean; tasks?: number; failedSummary?: boolean } = {}) {
+async function fixtureApi(page: Page, options: { admin?: boolean; tasks?: number; failedSummary?: boolean; populated?: boolean } = {}) {
   await page.addInitScript(() => {
     localStorage.setItem("aifilm_auth_token", "ui-fixture-token");
     localStorage.setItem("manjiao-theme", "light");
@@ -19,7 +19,8 @@ async function fixtureApi(page: Page, options: { admin?: boolean; tasks?: number
     if (path === "/workbench/summary" && failedSummary) return route.fulfill({ status: 503, json: { message: "测试：暂时不可用" } });
     const values: Record<string, unknown> = {
       "/auth/me": { user: { id: "fixture", name: "验收创作者", role: options.admin ? "admin" : "user", status: "active" } },
-      "/workbench/summary": { userName: "验收创作者", projects: 0, storyboards: 0, runningTasks: 0, credits: 100, recentProjects: [], recentTasks: tasks.slice(0, 3), announcements: [] },
+      "/workbench/summary": { userName: "验收创作者", projects: options.populated ? 1 : 0, storyboards: 0, runningTasks: 0, credits: 100, recentProjects: options.populated ? [project] : [], recentTasks: tasks.slice(0, 3), announcements: [] },
+      "/projects": options.populated ? [project] : [],
       "/tasks": tasks,
       "/projects/production/workflow": { project, characters: [], assets: [], storyboards: [], tasks: [] },
       "/credits/account": { userId: "fixture", balance: 100, frozenBalance: 0, totalRecharge: 100, totalConsume: 0 },
@@ -240,4 +241,64 @@ test("offline notice preserves the current workspace and clears on reconnection"
   await expect(page.getByRole("heading", { name: "把第一个故事变成作品" })).toBeVisible();
   await context.setOffline(false);
   await expect(page.getByText(/网络已断开。请保留当前页面/)).toHaveCount(0);
+});
+
+test("admin sidebar collapse persists and remains navigable after resizing", async ({ page }, testInfo) => {
+  await fixtureApi(page, { admin: true });
+  await page.goto("/admin");
+  await expect(page.getByRole("heading", { name: "运营总览", exact: true })).toBeVisible();
+  if (testInfo.project.name === "mobile") await page.setViewportSize({ width: 1440, height: 900 });
+  await page.getByRole("button", { name: "收起侧栏", exact: true }).click();
+  await expect(page.locator(".adm-shell")).toHaveClass(/is-collapsed/);
+  await page.reload();
+  await expect(page.locator(".adm-shell")).toHaveClass(/is-collapsed/);
+  await page.getByRole("navigation", { name: "后台模块" }).getByRole("button", { name: "用户管理", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "用户管理", exact: true })).toBeVisible();
+  await noOverflow(page);
+  await page.setViewportSize({ width: 393, height: 851 });
+  await page.getByRole("button", { name: "打开导航", exact: true }).click();
+  await expect(page.getByRole("searchbox", { name: "查找管理模块" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("button", { name: "打开导航", exact: true })).toBeFocused();
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.getByRole("button", { name: "展开侧栏", exact: true }).click();
+  await expect(page.getByRole("searchbox", { name: "查找管理模块" })).toBeVisible();
+});
+
+test("populated creator workbench resumes the selected project in both themes", async ({ page }, testInfo) => {
+  await fixtureApi(page, { populated: true, tasks: 3 });
+  await page.goto("/#/workbench");
+  await expect(page.getByRole("region", { name: "界面验收项目" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "把第一个故事变成作品" })).toHaveCount(0);
+  await noOverflow(page);
+  await page.screenshot({ path: `${process.env.PLAYWRIGHT_OUTPUT_DIR ?? "test-results"}/creator-populated-light-${testInfo.project.name}.png`, fullPage: true });
+  await page.getByRole("button", { name: "切换主题", exact: true }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await noOverflow(page);
+  await page.screenshot({ path: `${process.env.PLAYWRIGHT_OUTPUT_DIR ?? "test-results"}/creator-populated-dark-${testInfo.project.name}.png`, fullPage: true });
+  await page.getByRole("button", { name: "进入创作", exact: true }).click();
+  await expect(page).toHaveURL(/#\/project\/production$/);
+  await expect(page.getByRole("navigation", { name: "项目生产阶段" })).toBeVisible();
+});
+
+test("public login form supports password reveal and restores keyboard focus", async ({ page }, testInfo) => {
+  await page.addInitScript(() => localStorage.setItem("manjiao-theme", "light"));
+  await page.goto("/");
+  const trigger = page.getByRole("button", { name: "开始制作我的故事", exact: true });
+  await trigger.click();
+  const dialog = page.getByRole("dialog");
+  const password = dialog.getByLabel("密码", { exact: true });
+  await password.fill("Preview-password");
+  await expect(password).toHaveAttribute("type", "password");
+  await dialog.getByRole("button", { name: "显示密码", exact: true }).click();
+  await expect(password).toHaveAttribute("type", "text");
+  await noOverflow(page);
+  await page.screenshot({ path: `${process.env.PLAYWRIGHT_OUTPUT_DIR ?? "test-results"}/public-login-${testInfo.project.name}.png`, fullPage: true });
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+  await page.goto("/admin");
+  await expect(page.getByRole("heading", { name: "后台管理系统", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "返回漫角创作平台" })).toHaveAttribute("href", "/");
+  await noOverflow(page);
 });
