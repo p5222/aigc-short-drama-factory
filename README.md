@@ -2,7 +2,7 @@
 
 专业 AIGC 漫剧/短剧创作 SaaS 原型，目标是打通“故事输入 -> 策划 -> 编剧 -> 分镜 -> 角色资产 -> 图片 -> 图生视频 -> 配音字幕 -> 导出”的闭环。
 
-当前版本是首个可运行工程骨架：
+当前代码已包含用户创作、项目生产和运营后台；早期开发记录中的能力描述可能落后于实现。最新模块流程、迭代内容与商用缺口见 [2026-10-23 迭代说明](./docs/commercial-iteration-20261023.md)。UI 回归通过不代表真实支付、供应商和生产部署已验收。
 
 - `apps/web`：用户端与后台管理 SPA，页面结构参考 U 漫剧工作台，但使用独立命名和自有视觉。
 - `apps/api`：Express TypeScript API，已接 PostgreSQL、Redis + BullMQ、积分流水、模型供应商、模型计费表和真实文本生成。
@@ -17,8 +17,11 @@
 
 ```bash
 pnpm install
+pnpm --filter @aifilm/api db:generate
 pnpm dev
 ```
+
+`pnpm dev` 会先构建共享包，避免全新检出时找不到 `@aifilm/shared`。API 仍需按环境示例配置并启动 PostgreSQL、Redis。检查命令：`pnpm typecheck`、`pnpm test`、`pnpm build`。界面回归：`pnpm --filter @aifilm/web test:e2e`（先安装 Playwright Chromium，或通过 `PLAYWRIGHT_EXECUTABLE_PATH` 指定本机 Chrome）。
 
 Windows 一键启动前端、后台 API 和数据库：
 

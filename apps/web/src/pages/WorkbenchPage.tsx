@@ -3,6 +3,7 @@ import type { WorkbenchSummary } from "@aifilm/shared";
 import { collectWorkbenchActions, formatRelativeUpdate, projectNextAction, projectStatusLabel, projectTone, taskStatusLabel } from "./workbenchPresentation";
 import { ChevronDown, Megaphone, Pin } from "lucide-react";
 import "./workbench-announcements.css";
+import "./workbench-workflow.css";
 
 interface WorkbenchPageProps {
   summary?: WorkbenchSummary;
@@ -10,9 +11,11 @@ interface WorkbenchPageProps {
   onOpen: (projectId: string) => void;
   onOpenTasks: () => void;
   onRecharge: () => void;
+  onOpenWorks: () => void;
+  onStartContent: () => void;
 }
 
-export function WorkbenchPage({ summary, onStart, onOpen, onOpenTasks, onRecharge }: WorkbenchPageProps) {
+export function WorkbenchPage({ summary, onStart, onOpen, onOpenTasks, onRecharge, onOpenWorks, onStartContent }: WorkbenchPageProps) {
   const projects = summary?.recentProjects ?? [];
   const tasks = summary?.recentTasks ?? [];
   const actions = collectWorkbenchActions(projects, tasks);
@@ -25,12 +28,22 @@ export function WorkbenchPage({ summary, onStart, onOpen, onOpenTasks, onRecharg
         <div>
           <span className="section-kicker">创作工作台</span>
           <h1>{summary?.userName ?? "创作者"}，今天继续哪里？</h1>
-          <p>继续最近项目，查看生成进度与待处理事项。</p>
+          <p>从故事到成片，让每一步创作都有清晰的下一步。</p>
         </div>
-        <button className="primary-button large" onClick={onStart}><Plus size={18} />新建漫剧</button>
+        <div className="workbench-header-actions"><button className="ghost-button" onClick={onStartContent}><BookOpen size={17} />内容创作</button><button className="primary-button large" onClick={onStart}><Plus size={18} />新建漫剧</button></div>
       </header>
 
-      <section className="dashboard-focus-grid" aria-label="待处理工作">
+      {!latestProject ? <section className="workbench-journey" aria-labelledby="workbench-journey-title">
+        <div className="workbench-journey-heading"><span className="section-kicker">创作流程</span><h2 id="workbench-journey-title">把第一个故事变成作品</h2><p>逐步确认内容，再进入生成。每次生成前核对模型与积分报价。</p></div>
+        <ol>
+          <li><span>01</span><div><strong>故事与剧本</strong><small>输入灵感，确认剧本与分镜</small></div></li>
+          <li><span>02</span><div><strong>角色与场景</strong><small>建立资产，保持视觉一致</small></div></li>
+          <li><span>03</span><div><strong>镜头制作</strong><small>生成画面、视频与配音</small></div></li>
+          <li><span>04</span><div><strong>成片交付</strong><small>检查时间线，导出并审核发布</small></div></li>
+        </ol>
+        <button type="button" className="ghost-button" onClick={onStart}>开始第一部漫剧<ArrowRight size={16} /></button>
+      </section> : null}
+      {projects.length || tasks.length ? <section className="dashboard-focus-grid" aria-label="待处理工作">
         <article className="dashboard-focus-card warning">
           <span><Clock3 size={18} />等待你确认</span>
           <strong>{actions.waiting.length}</strong>
@@ -49,12 +62,12 @@ export function WorkbenchPage({ summary, onStart, onOpen, onOpenTasks, onRecharg
           <p>{actions.failed[0]?.errorReason || (actions.failed.length ? actions.failed[0].title : "当前没有失败任务")}</p>
           {actions.failed.length ? <button type="button" onClick={onOpenTasks}>查看原因<ArrowRight size={15} /></button> : null}
         </article>
-      </section>
+      </section> : null}
       <div className="dashboard-work-grid">
         <section className="panel dashboard-project-panel">
           <div className="panel-head">
-            <div><h2>最近项目</h2><small>按最近更新时间排列，直接继续下一步</small></div>
-            {latestProject ? <button className="ghost-button" type="button" onClick={() => onOpen(latestProject.id)}>继续上次创作</button> : null}
+            <div><h2>最近项目</h2><small>待处理摘要基于最近项目与任务</small></div>
+            <button className="ghost-button" type="button" onClick={onOpenWorks}>全部作品<ArrowRight size={15} /></button>
           </div>
           <div className="dashboard-project-list">
             {projects.map((project) => (

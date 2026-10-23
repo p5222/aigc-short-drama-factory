@@ -189,7 +189,7 @@ function LoadedProjectWorkbenchPage({ workflow, providers, modelPrices, theme, o
   const completedRoleRefs = countCompletedCharacterSheets(characters, roleAssets);
   const pipelineSteps = [
     { id: "content" as const, label: "内容", detail: "大纲 / 分集 / 剧本", done: Boolean(script) },
-    { id: "assets" as const, label: "资产", detail: "角色 / 场景 / 道具", done: characters.length === 0 || completedRoleRefs >= characters.length },
+    { id: "assets" as const, label: "资产", detail: "角色 / 场景 / 道具", done: Boolean(script) && (characters.length === 0 || completedRoleRefs >= characters.length) },
     { id: "shots" as const, label: "分镜", detail: "脚本 / 首帧 / 视频", done: storyboards.length > 0 && completedImages >= storyboards.length },
     { id: "delivery" as const, label: "成片", detail: "配音 / 字幕 / 导出", done: isWorkbenchDeliveryComplete(project, storyboards, exportJobs) }
   ];
@@ -387,6 +387,7 @@ function LoadedProjectWorkbenchPage({ workflow, providers, modelPrices, theme, o
         />
       ) : <DeliveryStage
         workflow={workflow}
+        onOpenStoryboards={() => setActiveTab("shots")}
         providers={providers}
         modelPrices={modelPrices}
         railOpen={railOpen}

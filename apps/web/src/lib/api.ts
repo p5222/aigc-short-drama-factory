@@ -313,7 +313,8 @@ export const api = {
       method: "POST",
       body: JSON.stringify(input)
     }),
-  updateAdminUser: (id: string, input: Partial<Pick<AdminUserRow, "name" | "role" | "status">>) =>
+  deleteAdminUser: (id: string) => request<AuthUser>(`/admin/users/${id}`, { method: "DELETE" }),
+  updateAdminUser: (id: string, input: Partial<Pick<AdminUserRow, "name" | "email" | "phone" | "role" | "status">>) =>
     request<AuthUser>(`/admin/users/${id}`, {
       method: "PATCH",
       body: JSON.stringify(input)

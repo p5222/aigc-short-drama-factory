@@ -97,6 +97,7 @@ export interface DeliveryStageProps {
   activeEpisodeNo?: number | null;
   onEpisodeChange?: (episodeNo: number) => void;
   onSelectShot: (shotId: string) => void;
+  onOpenStoryboards?: () => void;
   selectedShotIds: string[];
   onSelectShots: (shotIds: string[]) => void;
   onSaveModelRoutes: (routes: { videoProvider?: string; videoModel?: string }) => void | Promise<void>;
@@ -119,6 +120,7 @@ export function DeliveryStage({
   activeEpisodeNo,
   onEpisodeChange,
   onSelectShot,
+  onOpenStoryboards,
   selectedShotIds,
   onSelectShots,
   onSaveModelRoutes
@@ -633,12 +635,13 @@ export function DeliveryStage({
                 <Film size={26} />
                 <strong>{activeShot ? SHOT_STATUS_LABEL[activeStatus] : "暂无镜头"}</strong>
                 <span>
-                  {activeStatus === "running"
+                  {!activeShot ? "本集还没有分镜。请先拆解镜头、准备首帧，再生成视频。" : activeStatus === "running"
                     ? "视频生成中，完成后自动出现在这里。"
                     : activeStatus === "failed"
                       ? getShotFailureMessage(activeVideo, tasks)
                       : "该镜头还没有视频，可在顶部批量生成。"}
                 </span>
+                {!activeShot && onOpenStoryboards ? <button type="button" className="dlv2-btn" onClick={onOpenStoryboards}>前往分镜制作</button> : null}
               </div>
             )}
           </div>

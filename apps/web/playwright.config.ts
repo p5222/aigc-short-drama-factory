@@ -8,13 +8,15 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
-  reporter: [["list"], ["html", { open: "never" }]],
+  outputDir: process.env.PLAYWRIGHT_OUTPUT_DIR ?? "./test-results",
+  reporter: [["list"], ["html", { open: "never", outputFolder: process.env.PLAYWRIGHT_REPORT_DIR ?? "./playwright-report" }]],
   use: {
     baseURL,
     trace: "retain-on-failure",
     video: "on-first-retry",
     screenshot: "only-on-failure",
     reducedMotion: "reduce",
+    launchOptions: process.env.PLAYWRIGHT_EXECUTABLE_PATH ? { executablePath: process.env.PLAYWRIGHT_EXECUTABLE_PATH } : undefined,
   },
   projects: [
     { name: "desktop", use: { ...devices["Desktop Chrome"], viewport: { width: 1440, height: 900 } } },

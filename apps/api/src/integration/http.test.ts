@@ -350,6 +350,22 @@ test("HTTP business boundaries: sessions, administrator writes, private media an
       assert.equal((await request("/api/auth/me", owner.token)).status, 401);
       assert.equal((await request(mediaPath, undefined, "GET", undefined, { Cookie: owner.cookie })).status, 404);
     });
+    await t.test("user deletion requires management permission and a disabled account, preserves records and supports restore", async () => {
+      const path = `/api/admin/users/${ids[0]}`;
+      assert.equal((await request(path, other.token, "DELETE")).status, 403);
+      assert.ok((await request(`/api/admin/users/${ids[2]}`, admin.token, "DELETE")).status >= 400);
+      const before = await db.project.count({ where: { userId: ids[0] } });
+      assert.equal((await request(path, admin.token, "DELETE")).status, 200);
+      assert.equal((await db.user.findUniqueOrThrow({ where: { id: ids[0]! } })).status, "deleted");
+      assert.equal(await db.project.count({ where: { userId: ids[0] } }), before);
+      assert.ok((await request(path, admin.token, "PATCH", { status: "active" })).status >= 400);
+      const hidden = await (await request(`/api/admin/users/page?keyword=${ids[0]}`, admin.token)).json() as { total: number };
+      assert.equal(hidden.total, 0);
+      const recycled = await (await request(`/api/admin/users/page?keyword=${ids[0]}&status=deleted`, admin.token)).json() as { total: number };
+      assert.equal(recycled.total, 1);
+      assert.equal((await request(path, admin.token, "PATCH", { status: "disabled" })).status, 200);
+      assert.equal((await db.user.findUniqueOrThrow({ where: { id: ids[0]! } })).status, "disabled");
+    });
   } finally {
     child.kill();
     if (child.exitCode === null) await Promise.race([once(child, "exit"), new Promise(resolve => setTimeout(resolve, 5000))]);

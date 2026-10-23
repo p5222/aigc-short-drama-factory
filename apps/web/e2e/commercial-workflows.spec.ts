@@ -1,0 +1,243 @@
+import { test, expect, type Page } from "@playwright/test";
+
+// Deliberately local fixtures: verifies UI contracts, never supplier/payment integration.
+async function fixtureApi(page: Page, options: { admin?: boolean; tasks?: number; failedSummary?: boolean } = {}) {
+  await page.addInitScript(() => {
+    localStorage.setItem("aifilm_auth_token", "ui-fixture-token");
+    localStorage.setItem("manjiao-theme", "light");
+  });
+  const tasks = Array.from({ length: options.tasks ?? 0 }, (_, i) => ({
+    id: `task-${i}`, type: "text", title: `测试任务 ${String(i).padStart(2, "0")}`, provider: "fixture",
+    model: "test", status: "succeeded", progress: 100, estimatedCredits: 1, finalCredits: 1,
+    createdAt: "2026-10-23T00:00:00Z", updatedAt: "2026-10-23T00:00:00Z"
+  }));
+  let failedSummary = options.failedSummary;
+  const project = { id: "production", name: "界面验收项目", type: "漫剧", intro: "仅用于界面验证", sourceType: "script", artStyle: "国漫", videoRatio: "9:16", status: "draft", episodes: 1, storyboards: 0, characters: 0, imageAssets: 0, videoClips: 0, creditsSpent: 0, updatedAt: "2026-10-23T00:00:00Z" };
+  await page.route("**/api/**", async route => {
+    const path = new URL(route.request().url()).pathname.replace(/^\/api/, "");
+    if (path === "/admin/quality-center") return route.fulfill({ status: 503, json: { message: "测试：质量快照暂不可用，请刷新重试。" } });
+    if (path === "/workbench/summary" && failedSummary) return route.fulfill({ status: 503, json: { message: "测试：暂时不可用" } });
+    const values: Record<string, unknown> = {
+      "/auth/me": { user: { id: "fixture", name: "验收创作者", role: options.admin ? "admin" : "user", status: "active" } },
+      "/workbench/summary": { userName: "验收创作者", projects: 0, storyboards: 0, runningTasks: 0, credits: 100, recentProjects: [], recentTasks: tasks.slice(0, 3), announcements: [] },
+      "/tasks": tasks,
+      "/projects/production/workflow": { project, characters: [], assets: [], storyboards: [], tasks: [] },
+      "/credits/account": { userId: "fixture", balance: 100, frozenBalance: 0, totalRecharge: 100, totalConsume: 0 },
+      "/admin/summary": { users: 0, projects: 0, tasksToday: 0, totalTasks: 0, completedTasks: 0, successRate: 0, creditsConsumed: 0, providerCost: null, paidRechargeCny: 0 },
+      "/admin/evaluation/overview": { datasets: [], runs: [], promptVersions: [], experiments: [] },
+      "/admin/users/page": { items: [], total: 0, page: 1, pageSize: 25 },
+      "/admin/audit-logs": { items: [], total: 0, page: 1, pageSize: 30 },
+      "/admin/showcase/works": { items: [], total: 0, page: 1, pageSize: 20, totalPages: 1 },
+      "/showcase/works": { items: [], total: 0, page: 1, pageSize: 20, totalPages: 1 },
+      "/support/tickets": { items: [], total: 0, page: 1, pageSize: 20, counts: {} },
+      "/admin/support/tickets": { items: [], total: 0, page: 1, pageSize: 20, counts: {} }
+    };
+    await route.fulfill({ json: values[path] ?? [] });
+  });
+  return { recover: () => { failedSummary = false; } };
+}
+
+async function noOverflow(page: Page) {
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBeTruthy();
+}
+
+test("admin users create, validate, edit, delete and restore with recoverable failures", async ({ page }) => {
+  await fixtureApi(page, { admin: true });
+  const users: Array<Record<string, any>> = [];
+  let rejectSave = true;
+  await page.route("**/api/admin/users**", async route => {
+    const url = new URL(route.request().url());
+    const method = route.request().method();
+    const id = url.pathname.split("/").at(-1);
+    if (method === "POST") {
+      const input = route.request().postDataJSON();
+      users.push({ ...input, id: "created-user", credits: input.initialCredits, frozenCredits: 0, totalRecharge: input.initialCredits, totalConsume: 0, projects: 0, hasPassword: true });
+      return route.fulfill({ json: users[0] });
+    }
+    if (method === "PATCH") {
+      if (rejectSave) { rejectSave = false; return route.fulfill({ status: 409, json: { message: "测试：邮箱已占用，请修改后重试" } }); }
+      Object.assign(users.find(user => user.id === id)!, route.request().postDataJSON());
+      return route.fulfill({ json: users[0] });
+    }
+    if (method === "DELETE") { users.find(user => user.id === id)!.status = "deleted"; return route.fulfill({ json: users[0] }); }
+    if (url.pathname.endsWith("/page")) {
+      const status = url.searchParams.get("status");
+      const items = users.filter(user => status === "deleted" ? user.status === "deleted" : user.status !== "deleted");
+      return route.fulfill({ json: { items, total: items.length, page: 1, pageSize: 25 } });
+    }
+    return route.fulfill({ json: users.filter(user => user.status !== "deleted") });
+  });
+  await page.goto("/admin#用户管理");
+  await page.getByRole("button", { name: "创建用户", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByLabel("用户名", { exact: true }).fill("回归用户");
+  await dialog.getByLabel("邮箱", { exact: true }).fill("test@example.test");
+  await dialog.getByLabel("初始密码", { exact: true }).fill("Test-password-2026");
+  await dialog.getByLabel("初始积分", { exact: true }).fill("-10");
+  await dialog.getByRole("button", { name: "创建", exact: true }).click();
+  expect(users).toHaveLength(0);
+  await dialog.getByLabel("初始积分", { exact: true }).fill("100");
+  await dialog.getByRole("button", { name: "创建", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await page.getByRole("cell").filter({ hasText: "回归用户" }).click();
+  await dialog.getByLabel("用户名", { exact: true }).fill("修改后用户");
+  await dialog.getByLabel("邮箱", { exact: true }).fill("changed@example.test");
+  await dialog.getByRole("button", { name: "保存账号资料" }).click();
+  await expect(dialog).toContainText("邮箱已占用");
+  await expect(dialog.getByLabel("用户名", { exact: true })).toHaveValue("修改后用户");
+  await dialog.getByRole("button", { name: "保存账号资料" }).click();
+  await expect(dialog.getByRole("button", { name: "保存账号资料" })).toBeDisabled();
+  await expect(dialog.getByRole("button", { name: "删除用户", exact: true })).toBeDisabled();
+  await dialog.getByRole("combobox", { name: "账号状态", exact: true }).selectOption("disabled");
+  await dialog.getByRole("button", { name: "保存账号资料" }).click();
+  await expect(dialog.getByRole("button", { name: "删除用户", exact: true })).toBeEnabled();
+  await noOverflow(page);
+  page.once("dialog", prompt => prompt.accept());
+  await dialog.getByRole("button", { name: "删除用户", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByRole("cell").filter({ hasText: "修改后用户" })).toHaveCount(0);
+  await page.getByRole("button", { name: /回收站/ }).click();
+  await page.getByRole("cell").filter({ hasText: "修改后用户" }).click();
+  await expect(dialog).toContainText("恢复后为停用状态");
+  await dialog.getByRole("button", { name: "恢复用户", exact: true }).click();
+  await expect(dialog.getByRole("combobox", { name: "账号状态", exact: true })).toHaveValue("disabled");
+  expect(users[0].status).toBe("disabled");
+  expect(users[0].credits).toBe(100);
+});
+
+test("creator workflow, content entry and both themes fit viewport", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message));
+  await fixtureApi(page);
+  await page.goto("/#/workbench");
+  await expect(page.getByRole("heading", { name: "把第一个故事变成作品" })).toBeVisible();
+  await noOverflow(page);
+  await page.getByRole("button", { name: "切换主题", exact: true }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await noOverflow(page);
+  await page.screenshot({ path: `${process.env.PLAYWRIGHT_OUTPUT_DIR ?? "test-results"}/creator-${test.info().project.name}.png`, fullPage: true });
+  await page.getByRole("button", { name: "全部作品", exact: true }).click();
+  await expect(page).toHaveURL(/#\/scripts$/);
+  await expect(page.getByRole("heading", { name: "我的作品", exact: true })).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test("first read failure offers recovery without presenting empty data", async ({ page }) => {
+  const fixture = await fixtureApi(page, { failedSummary: true });
+  await page.goto("/#/workbench");
+  await expect(page.getByText("页面数据尚未读取成功", { exact: true })).toBeVisible();
+  await expect(page.getByText("还没有项目", { exact: true })).toHaveCount(0);
+  fixture.recover();
+  await page.getByRole("button", { name: "重试读取", exact: true }).click();
+  await expect(page.getByText("还没有项目", { exact: true })).toBeVisible();
+});
+
+test("task pagination and filtering reset selection to a visible row", async ({ page }) => {
+  await fixtureApi(page, { tasks: 41 });
+  await page.goto("/#/tasks");
+  await expect(page.locator(".queue-task-row")).toHaveCount(20);
+  await page.getByRole("button", { name: "下一页任务" }).click();
+  await expect(page.locator(".queue-task-row")).toHaveCount(20);
+  await page.getByRole("button", { name: "下一页任务" }).click();
+  await expect(page.locator(".queue-task-row")).toHaveCount(1);
+  await page.getByRole("searchbox", { name: "搜索任务", exact: true }).fill("测试任务 00");
+  await expect(page.locator(".queue-task-row")).toHaveCount(1);
+  await expect(page.locator(".queue-task-row").first()).toContainText("测试任务 00");
+  await noOverflow(page);
+});
+
+test("admin module search, location, navigation and themes", async ({ page }, testInfo) => {
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message));
+  await fixtureApi(page, { admin: true });
+  await page.goto("/admin");
+  await expect(page.getByRole("heading", { name: "运营总览", exact: true })).toBeVisible();
+  await noOverflow(page);
+  await page.getByRole("button", { name: "切换主题", exact: true }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await page.screenshot({ path: `${process.env.PLAYWRIGHT_OUTPUT_DIR ?? "test-results"}/admin-${testInfo.project.name}.png`, fullPage: true });
+  if (testInfo.project.name === "mobile") await page.getByRole("button", { name: "打开导航", exact: true }).click();
+  await page.getByRole("searchbox", { name: "查找管理模块" }).fill("价格");
+  await expect(page.getByRole("navigation", { name: "后台模块" }).getByRole("button")).toHaveCount(1);
+  await page.getByRole("navigation", { name: "后台模块" }).getByRole("button", { name: "价格策略" }).click();
+  await expect(page.locator(".adm-location strong")).toHaveText("价格策略");
+  await expect(page.getByRole("heading", { name: "价格策略", exact: true })).toBeVisible();
+  await noOverflow(page);
+  expect(errors).toEqual([]);
+});
+
+test("creator route inventory renders without crashes or document overflow", async ({ page }, testInfo) => {
+  test.setTimeout(120_000);
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message));
+  await fixtureApi(page);
+  for (const [route, title] of [["scripts", "我的作品"], ["tasks", "生成队列"], ["profile", "我的账户"], ["recharge", "积分充值"], ["ledger", "积分明细"], ["settings", "设置"], ["help", "帮助中心"], ["studio", "剪辑中心"], ["wizard", "新建漫剧"], ["content/__new__", "新建内容创作"]]) {
+    await page.goto(`/#/${route}`);
+    await expect(page.getByRole("heading", { name: title, exact: true }).first()).toBeVisible();
+    await expect(page.locator('[aria-busy="true"]')).toHaveCount(0);
+    await expect(page.getByText("页面暂时无法显示", { exact: true })).toHaveCount(0);
+    await noOverflow(page);
+    await page.screenshot({ path: `${process.env.PLAYWRIGHT_OUTPUT_DIR ?? "test-results"}/${route.replaceAll("/", "-")}-${testInfo.project.name}.png`, fullPage: true });
+    const themeButton = page.getByRole("button", { name: "切换主题", exact: true });
+    if (await themeButton.isVisible()) {
+      await themeButton.click();
+      await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+      await noOverflow(page);
+      await themeButton.click();
+      await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+    }
+  }
+  expect(errors).toEqual([]);
+});
+
+test("production stages stay usable without generated assets", async ({ page }, testInfo) => {
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message));
+  await fixtureApi(page);
+  await page.goto("/#/project/production");
+  await expect(page.getByText("界面验收项目", { exact: true }).first()).toBeVisible();
+  const navigation = page.getByRole("navigation", { name: "项目生产阶段" });
+  for (const [index, name] of ["内容", "资产", "分镜", "成片"].entries()) {
+    await navigation.getByRole("button", { name: new RegExp(name) }).click();
+    await expect(page.getByText("页面暂时无法显示", { exact: true })).toHaveCount(0);
+    await noOverflow(page);
+    await page.screenshot({ path: `${process.env.PLAYWRIGHT_OUTPUT_DIR ?? "test-results"}/production-${index}-${testInfo.project.name}.png`, fullPage: true });
+  }
+  await page.getByRole("button", { name: "前往分镜制作", exact: true }).click();
+  await expect(navigation.getByRole("button", { name: /分镜/ })).toHaveAttribute("aria-current", "step");
+  expect(errors).toEqual([]);
+});
+
+test("all admin modules render with empty or recoverable unavailable data", async ({ page }, testInfo) => {
+  test.setTimeout(120_000);
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message));
+  await fixtureApi(page, { admin: true });
+  const modules = ["用户管理", "操作记录", "平台公告", "支持工单", "创作现场管理", "创作质量中心", "兑换码", "套餐会员", "订阅会员", "模型路由", "价格策略", "提示词评分"];
+  for (const [index, module] of modules.entries()) {
+    await page.goto(`/admin#${encodeURIComponent(module)}`);
+    const title = module === "套餐会员" ? "充值套餐" : module;
+    await expect(page.getByRole("heading", { name: title, exact: true }).first()).toBeVisible();
+    await expect(page.locator('[aria-busy="true"]')).toHaveCount(0);
+    await expect(page.getByText("页面暂时无法显示", { exact: true })).toHaveCount(0);
+    await noOverflow(page);
+    await page.screenshot({ path: `${process.env.PLAYWRIGHT_OUTPUT_DIR ?? "test-results"}/admin-${index + 1}-${testInfo.project.name}.png`, fullPage: true });
+    await page.getByRole("button", { name: "切换主题", exact: true }).click();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+    await noOverflow(page);
+    await page.getByRole("button", { name: "切换主题", exact: true }).click();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  }
+  expect(errors).toEqual([]);
+});
+
+test("offline notice preserves the current workspace and clears on reconnection", async ({ page, context }) => {
+  await fixtureApi(page);
+  await page.goto("/#/workbench");
+  await expect(page.getByRole("heading", { name: "把第一个故事变成作品" })).toBeVisible();
+  await context.setOffline(true);
+  await expect(page.getByText(/网络已断开。请保留当前页面/)).toBeVisible();
+  await expect(page.getByRole("heading", { name: "把第一个故事变成作品" })).toBeVisible();
+  await context.setOffline(false);
+  await expect(page.getByText(/网络已断开。请保留当前页面/)).toHaveCount(0);
+});

@@ -112,6 +112,29 @@ test("PostgreSQL commerce and startup configuration are idempotent", { skip: !da
       assert.equal((await db.modelPrice.findUniqueOrThrow({ where: { id: price.id } })).enabled, false);
       assert.equal((await db.modelProvider.findUniqueOrThrow({ where: { id } })).enabled, false);
     });
+    await t.test("user recycle bin preserves assets and balances, requires restore before edits, and revokes contact sessions", async () => {
+      const id = await user(123); const owned = await project(id);
+      const email = `${id}@example.test`;
+      await db.user.update({ where: { id }, data: { email } });
+      await db.authSession.create({ data: { id: `session_${crypto.randomUUID()}`, userId: id, tokenHash: crypto.randomUUID(), expiresAt: new Date(Date.now() + 60_000) } });
+      await assert.rejects(repository.updateAdminUser(id, { email: "", phone: "" }), /至少保留/);
+      await repository.updateAdminUser(id, { email: `updated-${email}` });
+      assert.equal(await db.authSession.count({ where: { userId: id, revokedAt: null } }), 0);
+      await assert.rejects(repository.updateAdminUser(id, { status: "deleted" }), /先停用/);
+      await repository.updateAdminUser(id, { status: "disabled" });
+      await assert.rejects(repository.updateAdminUser(id, { status: "deleted" }, id), /当前操作账号/);
+      await repository.updateAdminUser(id, { status: "deleted" });
+      assert.equal((await repository.listAdminUsersPage({ keyword: id })).total, 0);
+      assert.equal((await repository.listAdminUsersPage({ keyword: id, status: "deleted" })).total, 1);
+      assert.equal((await account(id)).balance, 123);
+      assert.ok(await db.project.findUnique({ where: { id: owned.id } }));
+      await assert.rejects(repository.updateAdminUser(id, { status: "active" }), /先恢复/);
+      await assert.rejects(repository.updateAdminUser(id, { name: "Hidden edit" }), /先恢复/);
+      await assert.rejects(repository.resetAdminUserPassword(id, "Test-reset-password-2026"), /先恢复/);
+      await repository.updateAdminUser(id, { status: "disabled" });
+      assert.equal((await repository.listAdminUsersPage({ keyword: id })).items[0]?.status, "disabled");
+      await repository.updateAdminUser(id, { status: "active" });
+    });
     await t.test("redeem edits preserve usage capacity and deleting preserves redemption history", async () => {
       const userId = await user(); const code = `AUDIT_${crypto.randomUUID().toUpperCase()}`; codes.push(code);
       const row = await db.redeemCode.create({ data: { id: `code_${crypto.randomUUID()}`, code, name: "Test", credits: 5, maxRedemptions: 2 } });

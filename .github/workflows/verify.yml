@@ -63,6 +63,7 @@ jobs:
           docker exec "${{ job.services.postgres.id }}" createdb -U postgres audit_api_ci
           DATABASE_URL="$AIFILM_TEST_API_DATABASE_URL" pnpm --filter @aifilm/api db:push:deploy
       - run: pnpm --filter @aifilm/shared --filter @aifilm/web --if-present test:unit
+      - run: pnpm --filter @aifilm/web test:transport
       - name: Run API unit and real PostgreSQL/Redis integration tests
         run: pnpm --filter @aifilm/api exec tsx --test --test-concurrency=1 src/**/*.test.ts
       - run: pnpm typecheck

@@ -1,0 +1,2 @@
+.connection-notice { display: flex; align-items: center; gap: 10px; padding: 12px 20px; border-bottom: 1px solid var(--ds-status-warning); background: var(--ds-bg-surface); color: var(--ds-text-primary); font-size: 13px; line-height: 1.6; }
+.connection-notice svg { color: var(--ds-status-warning); flex-shrink: 0; }

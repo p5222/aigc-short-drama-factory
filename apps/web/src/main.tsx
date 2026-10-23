@@ -6,10 +6,14 @@ import "./admin/admin-enhancements.css";
 import "./pages/CineHome.css";
 import "./pages/PublicShowcase.css";
 import "./pages/scripts-page.css";
+import "./pages/creator-pages.css";
+import "./support/supportTickets.css";
 import "./workbench/stages/deliveryExportQuote.css";
 import "./pages/ProjectStudioV4.css";
 import "./content/content.css";
 import { App } from "./App";
+import { RoutePageBoundary } from "./components/RoutePageBoundary";
+import { ConnectionNotice } from "./components/ConnectionNotice";
 import "./styles.css";
 import "./light-theme.css";
 import "./project-workbench-overrides.css";
@@ -27,6 +31,9 @@ import "./design-system/product.css";
 
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <App />
+    <ConnectionNotice />
+    <RoutePageBoundary routeId="application" onBack={() => window.location.reload()} backLabel="重新连接">
+      <App />
+    </RoutePageBoundary>
   </React.StrictMode>
 );

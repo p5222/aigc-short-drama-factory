@@ -22,6 +22,7 @@ import "./creator-pages.css";
 import type { ReactNode } from "react";
 import type { GenerationTask, TaskStatus, TaskType } from "@aifilm/shared";
 import { canCancelTask, canRetryTask, createTaskActionRunner, type PendingTaskActions, type TaskAction } from "./taskActionModel";
+import { ListPagination } from "../components/ListPagination";
 
 type QueueFilter = "all" | "active" | "failed" | "succeeded" | "pending" | "canceled";
 
@@ -55,6 +56,9 @@ export function TaskCenterPage({
   const [actionError, setActionError] = useState("");
   const [actionMessage, setActionMessage] = useState("");
   const [query, setQuery] = useState("");
+  const [requestedPage, setRequestedPage] = useState(1);
+  const pageSize = 20;
+  useEffect(() => setRequestedPage(1), [query, activeFilter, activeStage]);
   const actionRunner = useRef(createTaskActionRunner()).current;
 
   async function runAction(taskId: string, action: TaskAction) {
@@ -86,17 +90,19 @@ export function TaskCenterPage({
       .sort((a, b) => statusPriority[a.status] - statusPriority[b.status] || new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
   }, [activeFilter, activeStage, tasks, query]);
 
-  const selectedTask = filteredTasks.find((task) => task.id === selectedTaskId) ?? filteredTasks[0];
+  const currentPage = Math.min(requestedPage, Math.max(1, Math.ceil(filteredTasks.length / pageSize)));
+  const pageTasks = filteredTasks.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  const selectedTask = pageTasks.find((task) => task.id === selectedTaskId) ?? pageTasks[0];
 
   useEffect(() => {
     if (!selectedTask) {
       setSelectedTaskId("");
       return;
     }
-    if (!filteredTasks.some((task) => task.id === selectedTaskId)) {
+    if (!pageTasks.some((task) => task.id === selectedTaskId)) {
       setSelectedTaskId(selectedTask.id);
     }
-  }, [filteredTasks, selectedTask, selectedTaskId]);
+  }, [currentPage, filteredTasks, selectedTask, selectedTaskId]);
 
   return (
     <div className="page-stack generation-queue-page creator-page" data-tour-id="task-center">
@@ -144,7 +150,7 @@ export function TaskCenterPage({
             <span>{filteredTasks.length} 条</span>
           </div> : null}
           <div className="queue-task-list">
-            {filteredTasks.map((task) => {
+            {pageTasks.map((task) => {
               const failedLike = canRetryTask(task);
               const cancelableRow = canCancelTask(task);
               return (
@@ -186,6 +192,7 @@ export function TaskCenterPage({
             })}
             {!filteredTasks.length ? <StatePanel compact={Boolean(tasks.length)} title={tasks.length ? "没有匹配的任务" : "暂无生成任务"} description={emptyListText(activeFilter, activeStage, tasks.length)} action={tasks.length ? <button type="button" className="ghost-button" onClick={() => { setQuery(""); setActiveFilter("all"); setActiveStage("all"); }}>清空筛选</button> : <a className="ghost-button" href="#/scripts">查看我的作品</a>} /> : null}
           </div>
+          <ListPagination total={filteredTasks.length} page={currentPage} pageSize={pageSize} onChange={page => { setRequestedPage(page); setSelectedTaskId(""); }} />
         </div>
 
         {selectedTask ? <TaskDetailPanel task={selectedTask} onOpenProject={onOpenProject} queuePolicy={queuePolicy} pendingAction={pendingActions[selectedTask.id]} onRetry={(id) => void runAction(id, "retry")} onCancel={(id) => void runAction(id, "cancel")} /> : null}

@@ -34,12 +34,6 @@ import { RoutePageBoundary } from "./components/RoutePageBoundary";
 import { routePageLoader } from "./lib/routePageLoader";
 import { AdminShell } from "./admin";
 import { navigateAdminHash, readAcceptedAdminHash, subscribeAdminNavigation } from "./admin/adminNavigation";
-import { LedgerPage, RechargePage } from "./pages/CreditsPage";
-import { LoginPage } from "./pages/LoginPage";
-import { ScriptsPage } from "./pages/ScriptsPage";
-import { HelpPage, ProfilePage, SettingsPage } from "./pages/StaticPages";
-import { StudioPage } from "./pages/StudioPage";
-import { TaskCenterPage } from "./pages/TaskCenterPage";
 import { canManageModelTests } from "./pages/wizardRequestModel";
 import { WorkbenchPage } from "./pages/WorkbenchPage";
 import { resolveThemePreference, type WorkbenchTheme } from "./workbench/model";
@@ -54,6 +48,15 @@ const AdminPage = lazy(routePageLoader(() => import("./pages/AdminPage").then(mo
 const ProjectWorkbenchPage = lazy(routePageLoader(() => import("./pages/ProjectWorkbenchPage").then(module => ({ default: module.ProjectWorkbenchPage }))));
 const ContentCreatorPage = lazy(routePageLoader(() => import("./pages/ContentCreatorPage").then(module => ({ default: module.ContentCreatorPage }))));
 const WizardPage = lazy(routePageLoader(() => import("./pages/WizardPage").then(module => ({ default: module.WizardPage }))));
+const LoginPage = lazy(routePageLoader(() => import("./pages/LoginPage").then(module => ({ default: module.LoginPage }))));
+const ScriptsPage = lazy(routePageLoader(() => import("./pages/ScriptsPage").then(module => ({ default: module.ScriptsPage }))));
+const StudioPage = lazy(routePageLoader(() => import("./pages/StudioPage").then(module => ({ default: module.StudioPage }))));
+const TaskCenterPage = lazy(routePageLoader(() => import("./pages/TaskCenterPage").then(module => ({ default: module.TaskCenterPage }))));
+const LedgerPage = lazy(routePageLoader(() => import("./pages/CreditsPage").then(module => ({ default: module.LedgerPage }))));
+const RechargePage = lazy(routePageLoader(() => import("./pages/CreditsPage").then(module => ({ default: module.RechargePage }))));
+const HelpPage = lazy(routePageLoader(() => import("./pages/StaticPages").then(module => ({ default: module.HelpPage }))));
+const ProfilePage = lazy(routePageLoader(() => import("./pages/StaticPages").then(module => ({ default: module.ProfilePage }))));
+const SettingsPage = lazy(routePageLoader(() => import("./pages/StaticPages").then(module => ({ default: module.SettingsPage }))));
 
 const THEME_STORAGE_KEY = "manjiao-theme";
 const AUTH_RESUME_PAGE_KEY = "manjiao-auth-resume-page";
@@ -68,7 +71,7 @@ const creatorPageResources: Partial<Record<PageKey, string[]>> = {
 };
 const adminResourceLabels = ["充值套餐", "会员配置", "兑换码", "平台公告", "帮助文章", "用户列表", "模型渠道", "模型价格", "提示词模板", "运营概况", "质量概况", "质量项目"];
 const adminPageResources: Record<string, string[]> = {
-  "运营总览": ["运营概况"], "用户管理": ["用户列表"], "平台公告": ["平台公告", "帮助文章"],
+  "运营总览": ["运营概况", "模型渠道", "模型价格"], "用户管理": ["用户列表"], "平台公告": ["平台公告", "帮助文章"],
   "创作质量中心": ["质量概况", "质量项目", "模型渠道"], "兑换码": ["兑换码"],
   "套餐会员": ["充值套餐"], "订阅会员": ["会员配置"], "模型路由": ["模型渠道"],
   "价格策略": ["模型价格", "模型渠道"], "提示词评分": ["提示词模板"]
@@ -460,7 +463,7 @@ export function App() {
     };
     switch (activePage) {
       case "workbench":
-        return <WorkbenchPage summary={summary} onStart={openFreshWizard} onOpen={(projectId) => void openProject(projectId)} onOpenTasks={() => setActivePage("tasks")} onRecharge={() => setActivePage("recharge")} />;
+        return <WorkbenchPage summary={summary} onStart={openFreshWizard} onStartContent={openFreshContent} onOpenWorks={() => setActivePage("scripts")} onOpen={(projectId) => void openProject(projectId)} onOpenTasks={() => setActivePage("tasks")} onRecharge={() => setActivePage("recharge")} />;
       case "content":
         return <ContentCreatorPage key={`${user?.id ?? "anonymous"}:${contentFocusId || "default"}`} providers={providers} initialSelectedId={contentFocusId} onBack={() => setActivePage("scripts")} onEnterProduction={async (projectId) => {
                 await openProject(projectId);
@@ -602,7 +605,7 @@ export function App() {
       <AdminShell
         title="后台管理系统"
         description="创作、质量、模型与商业化统一运营"
-        items={adminNavGroups.flatMap((group) => group.items.map(({ name, icon: Icon }) => ({ id: name, label: name, group: group.label, icon: <Icon size={17} /> })))}
+        items={adminNavGroups.flatMap((group) => group.items.map(({ name, icon: Icon }) => ({ id: name, label: name === "套餐会员" ? "充值套餐" : name === "订阅会员" ? "订阅方案 · 未开放" : name, group: group.label, icon: <Icon size={17} /> })))}
         activeId={adminHash}
         onNavigate={navigateAdminHash}
         onThemeToggle={handleToggleTheme}
@@ -611,7 +614,7 @@ export function App() {
         actions={<><button className="adm-primary-btn" type="button" onClick={() => { window.location.href = "/"; }}>返回前台</button><button className="adm-icon-btn" type="button" onClick={logout} aria-label="退出登录" title="退出登录"><LogOut size={18} /></button></>}
       >
         {error ? <InlineNotice tone="error">{error} <button type="button" className="ui-text-button" onClick={() => void load().catch(() => undefined)}>重新加载</button></InlineNotice> : null}
-        <RoutePageBoundary routeId="admin" onBack={() => { window.location.href = "/"; }} backLabel="返回前台">
+        <RoutePageBoundary routeId={`admin:${adminHash}`} onBack={() => { window.location.href = "/"; }} backLabel="返回前台">
         {initialReadState ?? <AdminPage
           userId={user.id}
           summary={adminSummary}
