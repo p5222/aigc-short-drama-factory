@@ -48,8 +48,9 @@ export function AdminTablePage<T>({
       </header>
       {filters ? <div className="adm-filterbar">{filters}</div> : null}
       {error ? <InlineNotice tone="error">{error}</InlineNotice> : null}
-      <div className="adm-table-scroll" aria-busy={loading}>
+      <div className="adm-table-scroll" aria-busy={loading} role="region" aria-label={`${title}，表格可横向滚动`} tabIndex={0}>
         <table>
+          <caption>{title}</caption>
           <thead><tr>{columns.map((column) => <th scope="col" key={column.key} style={{ width: column.width }}>{column.label}</th>)}</tr></thead>
           <tbody>
             {!loading && rows.map((row) => (

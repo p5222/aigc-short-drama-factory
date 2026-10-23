@@ -433,7 +433,9 @@ const exportJobCreateSchema = z.object({
 });
 
 const adminUserUpdateSchema = z.object({
-  name: z.string().min(1).optional(),
+  name: z.string().trim().min(1).max(80).optional(),
+  email: z.union([z.string().trim().email(), z.literal("")]).optional(),
+  phone: z.union([z.string().trim().regex(/^1[3-9]\d{9}$/), z.literal("")]).optional(),
   role: z.enum(["creator", "admin"]).optional(),
   status: z.enum(["active", "disabled"]).optional()
 });
@@ -2680,6 +2682,14 @@ app.post(
     const parsed = resetPasswordSchema.safeParse(req.body ?? {});
     if (!parsed.success) return res.status(400).json(parsed.error.flatten());
     res.json(await resetAdminUserPassword(paramId(req.params.id), parsed.data.password));
+  })
+);
+
+app.delete(
+  "/api/admin/users/:id",
+  requireAdminPermission("users:manage"),
+  asyncRoute(async (req, res) => {
+    res.json(await updateAdminUser(paramId(req.params.id), { status: "deleted" }, requestUserId(req)));
   })
 );
 

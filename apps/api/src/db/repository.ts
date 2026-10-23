@@ -520,7 +520,7 @@ export async function listAdminUsersPage(options: { page?: number; pageSize?: nu
   const keyword = options.keyword?.trim().slice(0, 200);
   const where: Prisma.UserWhereInput = {
     ...(options.role && ["admin", "creator"].includes(options.role) ? { role: options.role } : {}),
-    ...(options.status && ["active", "disabled"].includes(options.status) ? { status: options.status } : {}),
+    status: options.status && ["active", "disabled", "deleted"].includes(options.status) ? options.status : { not: "deleted" },
     ...(keyword ? { OR: [{ name: { contains: keyword, mode: "insensitive" } }, { email: { contains: keyword, mode: "insensitive" } }, { phone: { contains: keyword } }, { id: keyword }] } : {})
   };
   const [users, total] = await Promise.all([
@@ -624,17 +624,25 @@ export async function createAdminUser(input: {
 
 export async function updateAdminUser(
   id: string,
-  data: Partial<{ name: string; role: string; status: string }>,
+  data: Partial<{ name: string; email: string; phone: string; role: string; status: string }>,
   actorId?: string
 ) {
-  const cleanData: Partial<{ name: string; role: string; status: string }> = {};
+  const cleanData: Partial<{ name: string; email: string | null; phone: string | null; role: string; status: string }> = {};
   if (data.name !== undefined) cleanData.name = data.name.trim();
+  if (data.email !== undefined) {
+    cleanData.email = data.email.trim().toLowerCase() || null;
+    if (cleanData.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanData.email)) throw new Error("邮箱格式不正确");
+  }
+  if (data.phone !== undefined) {
+    cleanData.phone = data.phone.trim() || null;
+    if (cleanData.phone && !/^1[3-9]\d{9}$/.test(cleanData.phone)) throw new Error("手机号格式不正确");
+  }
   if (data.role !== undefined) {
     if (!["creator", "admin"].includes(data.role)) throw new Error("用户角色不在允许范围内");
     cleanData.role = data.role;
   }
   if (data.status !== undefined) {
-    if (!["active", "disabled"].includes(data.status)) throw new Error("用户状态只能是 active 或 disabled");
+    if (!["active", "disabled", "deleted"].includes(data.status)) throw new Error("用户状态不在允许范围内");
     cleanData.status = data.status;
   }
   if (cleanData.name === "") throw new Error("用户昵称不能为空");
@@ -643,12 +651,16 @@ export async function updateAdminUser(
     await tx.$queryRaw`SELECT true AS locked FROM pg_advisory_xact_lock(hashtext('active-admin-membership'))`;
     const current = await tx.user.findUnique({ where: { id } });
     if (!current) throw new Error("用户不存在");
-    if (actorId === id && ((cleanData.role !== undefined && cleanData.role !== current.role) || cleanData.status === "disabled")) throw new Error("不能修改自己的管理员角色或停用当前操作账号，请由其他管理员处理。");
+    if ((data.email !== undefined || data.phone !== undefined) && !(data.email === undefined ? current.email : cleanData.email) && !(data.phone === undefined ? current.phone : cleanData.phone)) throw new Error("邮箱和手机号至少保留一个");
+    if (current.status === "deleted" && cleanData.status !== "disabled") throw new Error("请先恢复已删除用户，再编辑资料");
+    if (current.status === "deleted" && Object.keys(cleanData).some(key => key !== "status")) throw new Error("恢复账号时不能同时修改其他资料");
+    if (cleanData.status === "deleted" && current.status !== "disabled") throw new Error("请先停用账号，再删除用户");
+    if (actorId === id && ((cleanData.role !== undefined && cleanData.role !== current.role) || (cleanData.status !== undefined && cleanData.status !== "active"))) throw new Error("不能修改自己的管理员角色或停用、删除当前操作账号，请由其他管理员处理。");
     const losesAccess = current.role === "admin" && current.status === "active"
       && ((cleanData.role !== undefined && cleanData.role !== "admin") || (cleanData.status !== undefined && cleanData.status !== "active"));
     if (losesAccess && await tx.user.count({ where: { role: "admin", status: "active" } }) <= 1) throw new Error("至少保留一位启用的管理员，不能停用或降级最后一位管理员。");
     const updated = await tx.user.update({ where: { id }, data: cleanData });
-    if ((cleanData.role !== undefined && cleanData.role !== current.role) || (cleanData.status !== undefined && cleanData.status !== current.status)) {
+    if ((cleanData.role !== undefined && cleanData.role !== current.role) || (cleanData.status !== undefined && cleanData.status !== current.status) || (cleanData.email !== undefined && cleanData.email !== current.email) || (cleanData.phone !== undefined && cleanData.phone !== current.phone)) {
       await tx.authSession.updateMany({ where: { userId: id, revokedAt: null }, data: { revokedAt: new Date() } });
     }
     return updated;
@@ -668,6 +680,8 @@ export async function resetAdminUserPassword(id: string, password: string) {
   const passwordHash = await hashPassword(password);
   const user = await prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${id} FOR UPDATE`;
+    const current = await tx.user.findUniqueOrThrow({ where: { id } });
+    if (current.status === "deleted") throw new Error("请先恢复已删除用户，再重置密码");
     const updated = await tx.user.update({ where: { id }, data: { passwordHash } });
     await tx.authSession.updateMany({ where: { userId: id, revokedAt: null }, data: { revokedAt: new Date() } });
     return updated;

@@ -1,0 +1,6 @@
+.list-pagination { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; border-top: 1px solid var(--ds-border-default); padding: 12px 16px; color: var(--ds-text-secondary); font-size: 12px; }
+.list-pagination > div { display: flex; gap: 12px; align-items: center; }
+.list-pagination button { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; background: var(--ds-bg-surface); color: var(--ds-text-primary); border: 1px solid var(--ds-border-default); border-radius: 6px; }
+.list-pagination button:not(:disabled):hover { background: var(--ds-action-soft); }
+.list-pagination button:disabled { opacity: .45; cursor: not-allowed; }
+@media (max-width: 600px) { .list-pagination button { width: 44px; height: 44px; } }

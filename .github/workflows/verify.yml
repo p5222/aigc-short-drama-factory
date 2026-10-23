@@ -48,7 +48,17 @@ jobs:
           node-version: 24
           cache: pnpm
       - name: Install host dependencies for deployment and real media integration tests
-        run: sudo apt-get update && sudo apt-get install -y rsync ffmpeg fonts-noto-cjk
+        timeout-minutes: 6
+        run: |
+          # The runner's Azure mirror can throttle large media packages.
+          # Keep Ubuntu signature verification and use the official HTTPS archive.
+          for mirror in /etc/apt/apt-mirrors.txt /etc/apt/apt-mirrors-security.txt; do
+            if [ -f "$mirror" ]; then
+              sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g; s|http://archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g; s|http://security.ubuntu.com/ubuntu|https://security.ubuntu.com/ubuntu|g' "$mirror"
+            fi
+          done
+          sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends rsync ffmpeg fonts-noto-cjk
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @aifilm/api db:generate
       - run: pnpm --filter @aifilm/shared build
@@ -63,6 +73,7 @@ jobs:
           docker exec "${{ job.services.postgres.id }}" createdb -U postgres audit_api_ci
           DATABASE_URL="$AIFILM_TEST_API_DATABASE_URL" pnpm --filter @aifilm/api db:push:deploy
       - run: pnpm --filter @aifilm/shared --filter @aifilm/web --if-present test:unit
+      - run: pnpm --filter @aifilm/web test:transport
       - name: Run API unit and real PostgreSQL/Redis integration tests
         run: pnpm --filter @aifilm/api exec tsx --test --test-concurrency=1 src/**/*.test.ts
       - run: pnpm typecheck
