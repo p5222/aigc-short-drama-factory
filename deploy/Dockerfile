@@ -1,6 +1,12 @@
 # Build once per Git commit. Restarts run the image without downloads or schema changes.
 FROM node:24-alpine@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd AS runtime
-RUN apk add --no-cache openssl ffmpeg font-noto-cjk \
+ARG ALPINE_MIRROR=https://dl-cdn.alpinelinux.org/alpine
+RUN case "$ALPINE_MIRROR" in \
+      https://dl-cdn.alpinelinux.org/alpine|https://mirrors.cloud.tencent.com/alpine) ;; \
+      *) echo "Unsupported Alpine mirror" >&2; exit 1 ;; \
+    esac \
+    && sed -i "s|https://dl-cdn.alpinelinux.org/alpine|${ALPINE_MIRROR}|g" /etc/apk/repositories \
+    && apk add --no-cache openssl ffmpeg font-noto-cjk \
     && corepack enable \
     && corepack prepare pnpm@11.7.0 --activate
 FROM runtime AS application
