@@ -1,6 +1,12 @@
 packages:
   - "apps/*"
   - "packages/*"
+overrides:
+  # Security fixes retained until upstream dependency ranges include them.
+  "@prisma/config>deepmerge-ts": "8.0.0"
+  body-parser: "^2.4.0"
+  browserslist: "^4.28.7"
+  postcss-selector-parser: "^7.1.6"
 onlyBuiltDependencies:
   - "@prisma/client"
   - "@prisma/engines"
