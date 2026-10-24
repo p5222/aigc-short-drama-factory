@@ -6,6 +6,9 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
+from types import SimpleNamespace
+from release_preflight import check_space, latest_backup_size, MIB
 
 ROOT = Path(__file__).resolve().parent.parent
 HELPER = ROOT / "deploy/manjiao_remote.sh"
@@ -30,13 +33,15 @@ class DeploymentTests(unittest.TestCase):
                         MANJIAO_REPO_DIR=str(self.repo / ".git"), MANJIAO_APP_DIR=str(self.app),
                         MANJIAO_BACKUP_ROOT=str(self.base / "backups"),
                         MANJIAO_LOG_ROOT=str(self.base / "logs"),
+                        MANJIAO_MIN_BUILD_FREE_MB="1", MANJIAO_MIN_RUNTIME_FREE_MB="1",
                         MANJIAO_REDIS_PERSISTENCE_ATTEMPTS="1",
                         MANJIAO_READY_ATTEMPTS="1", MANJIAO_READY_INTERVAL="0")
         self.shim("docker", r'''#!/usr/bin/env bash
 set -eu
 printf '%s\n' "$*" >> "$TEST_EVENTS"
 case "$*" in
-  'image inspect '*) exit 1;;
+  'image inspect '*)
+    if [ "${TEST_PREBUILT:-}" = true ]; then printf '%s' "$MANJIAO_RELEASE"; else exit 1; fi;;
   *pg_dump*)
     [ "${TEST_FAIL:-}" != backup ] || exit 41
     printf 'TEST_CUSTOM_DUMP';;
@@ -46,7 +51,7 @@ case "$*" in
   *'redis-cli --raw INFO persistence'*)
     if [ "${TEST_FAIL:-}" = redis_rewrite ]; then printf 'aof_enabled:1\naof_rewrite_in_progress:1\n';
     else printf 'loading:0\naof_enabled:1\naof_rewrite_in_progress:0\naof_rewrite_scheduled:0\naof_last_bgrewrite_status:ok\naof_last_write_status:ok\n'; fi;;
-  *db:push:deploy*) [ "${TEST_FAIL:-}" != schema ] || exit 44;;
+  *'prisma/build/index.js db push'*) [ "${TEST_FAIL:-}" != schema ] || exit 44;;
   *'tar -czf - storage'*)
     if [ "${TEST_FAIL:-}" = storage ]; then printf 'corrupt'; else tar -czf - -C "$TEST_APP" storage; fi;;
   *'build api'*)
@@ -89,6 +94,7 @@ if [ -n "${TEST_READY_BODY:-}" ]; then printf '%s' "$TEST_READY_BODY"; else prin
     def write_app(self, directory, version):
         (directory / "deploy").mkdir()
         shutil.copyfile(HELPER, directory / "deploy/manjiao_remote.sh")
+        shutil.copyfile(ROOT / "deploy/release_preflight.py", directory / "deploy/release_preflight.py")
         (directory / "deploy/Dockerfile").write_text("# test image marker\n")
         (directory / "package.json").write_text('{"name":"fixture"}')
         (directory / "docker-compose.prod.yml").write_text("services: {}\n")
@@ -194,6 +200,23 @@ if [ -n "${TEST_READY_BODY:-}" ]; then printf '%s' "$TEST_READY_BODY"; else prin
         self.assertFalse(list((self.base / "backups").rglob("COMPLETE")))
         self.assertNotIn("build api", self.events.read_text())
 
+    def test_low_disk_stops_before_backup_build_and_live_source_changes(self):
+        result = self.run_hook(extra_env={"MANJIAO_MIN_BUILD_FREE_MB": "1048576"})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("DISK_PREFLIGHT_STOPPED", result.stderr)
+        self.assertEqual(self.deployed(), self.old)
+        self.assertEqual((self.app / "version.txt").read_text(), "old")
+        events = self.events.read_text() if self.events.exists() else ""
+        self.assertNotIn("pg_dump", events)
+        self.assertNotIn("build api", events)
+
+    def test_verified_prebuilt_image_avoids_host_build_and_large_build_headroom(self):
+        result = self.run_hook(extra_env={"TEST_PREBUILT": "true", "MANJIAO_MIN_BUILD_FREE_MB": "1048576"})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("REUSING_VERIFIED_RELEASE_IMAGE", result.stdout)
+        self.assertNotIn("build api", self.events.read_text())
+        self.assertEqual(self.deployed(), self.new)
+
     def test_corrupt_storage_backup_is_rejected(self):
         result = self.run_helper("backup", extra_env={"TEST_FAIL": "storage"})
         self.assertNotEqual(result.returncode, 0)
@@ -237,7 +260,7 @@ if [ -n "${TEST_READY_BODY:-}" ]; then printf '%s' "$TEST_READY_BODY"; else prin
         self.assertEqual(self.deployed(), self.old)
         self.assertEqual((self.app / "version.txt").read_text(), "old")
         self.assertTrue((self.app / "obsolete.txt").exists())
-        self.assertNotIn("db:push:deploy", self.events.read_text())
+        self.assertNotIn("prisma/build/index.js db push", self.events.read_text())
 
     def test_failed_rollback_is_not_reported_as_recovered(self):
         result = self.run_hook(extra_env={"TEST_FAIL": "recovery"})
@@ -250,7 +273,7 @@ if [ -n "${TEST_READY_BODY:-}" ]; then printf '%s' "$TEST_READY_BODY"; else prin
         result = self.run_hook(extra_env={"TEST_FAIL": "schema"})
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("previous source readiness verified", result.stderr)
-        self.assertEqual(self.events.read_text().count("db:push:deploy"), 1)
+        self.assertEqual(self.events.read_text().count("prisma/build/index.js db push"), 1)
         self.assertEqual((self.app / "version.txt").read_text(), "old")
         self.assertEqual(self.deployed(), self.old)
 
@@ -259,7 +282,7 @@ if [ -n "${TEST_READY_BODY:-}" ]; then printf '%s' "$TEST_READY_BODY"; else prin
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Redis refused persistence setting", result.stdout)
         self.assertNotIn("--no-deps redis", self.events.read_text())
-        self.assertNotIn("db:push:deploy", self.events.read_text())
+        self.assertNotIn("prisma/build/index.js db push", self.events.read_text())
         self.assertEqual(self.deployed(), self.old)
 
     def test_incomplete_redis_aof_rewrite_prevents_container_replacement(self):
@@ -267,14 +290,14 @@ if [ -n "${TEST_READY_BODY:-}" ]; then printf '%s' "$TEST_READY_BODY"; else prin
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Redis AOF did not finish", result.stdout)
         self.assertNotIn("--no-deps redis", self.events.read_text())
-        self.assertNotIn("db:push:deploy", self.events.read_text())
+        self.assertNotIn("prisma/build/index.js db push", self.events.read_text())
         self.assertEqual(self.deployed(), self.old)
 
     def test_redis_is_persisted_before_replacement_and_schema(self):
         result = self.run_hook()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         events = self.events.read_text()
-        positions = [events.index(part) for part in ("pg_dump", "build api", "CONFIG SET appendonly yes", "INFO persistence", "--no-deps redis", "db:push:deploy")]
+        positions = [events.index(part) for part in ("pg_dump", "build api", "CONFIG SET appendonly yes", "INFO persistence", "--no-deps redis", "prisma/build/index.js db push")]
         self.assertEqual(positions, sorted(positions))
         self.assertEqual(events.count("INFO persistence"), 2)
 
@@ -335,9 +358,36 @@ if [ -n "${TEST_READY_BODY:-}" ]; then printf '%s' "$TEST_READY_BODY"; else prin
 
 
 class DeploymentContractTests(unittest.TestCase):
+    def test_disk_guard_uses_unprivileged_available_space_and_deduplicates_mounts(self):
+        with tempfile.TemporaryDirectory() as folder:
+            # Root-reserved space must not be counted as available to deployment.
+            stat = SimpleNamespace(f_bavail=100, f_bfree=200, f_frsize=MIB)
+            with patch("release_preflight.os.statvfs", return_value=stat):
+                checks = check_space([folder, str(Path(folder) / "not-created")], 90 * MIB, 20 * MIB)
+            self.assertEqual(len(checks), 1)
+            self.assertFalse(checks[0]["ok"])
+            self.assertEqual(checks[0]["availableMiB"], 100)
+            self.assertEqual(checks[0]["requiredMiB"], 110)
+
+    def test_backup_capacity_estimate_ignores_partial_archives(self):
+        with tempfile.TemporaryDirectory() as folder:
+            partial = Path(folder) / "partial"
+            partial.mkdir()
+            (partial / "source.tgz.partial").write_bytes(b"x")
+            self.assertEqual(latest_backup_size(folder), 512 * MIB)
+            complete = Path(folder) / "complete"
+            complete.mkdir()
+            for name in ("source.tgz", "storage.tar.gz", "aigc_drama.dump"):
+                (complete / name).write_bytes(b"data")
+            (complete / "COMPLETE").touch()
+            self.assertEqual(latest_backup_size(folder), 128 * MIB)
+
     def test_restarts_do_not_apply_schema_and_schema_sync_rejects_data_loss(self):
         package = json.loads((ROOT / "apps/api/package.json").read_text())
         self.assertNotIn("--accept-data-loss", package["scripts"]["db:push:deploy"])
+        helper = (ROOT / "deploy/manjiao_remote.sh").read_text()
+        self.assertNotIn("--accept-data-loss", helper)
+        self.assertIn("apps/api/node_modules/prisma/build/index.js db push --schema apps/api/prisma/schema.prisma --skip-generate", helper)
         compose = (ROOT / "docker-compose.prod.yml").read_text()
         self.assertNotIn("db:push", compose)
         self.assertIn('command: ["node", "apps/api/dist/server.js"]', compose)
