@@ -84,12 +84,16 @@ jobs:
       - name: Verify the scoped Caddy operations route
         run: python3 -m unittest discover -s deploy/project-hub -p 'test_*.py' -v
       - run: python3 -m unittest discover -s deploy -p test_deployment.py -v
-      - run: bash -n deploy/manjiao_remote.sh deploy/server_git_post_receive.sh deploy/backup_server_state.sh deploy/install_git_hook.sh
+      - run: bash -n deploy/manjiao_remote.sh deploy/server_git_post_receive.sh deploy/backup_server_state.sh deploy/install_git_hook.sh deploy/verify_backup_restore.sh deploy/test_backup_restore.sh deploy/test_runtime_image.sh
+      - name: Restore a real backup into an isolated PostgreSQL instance and reject corruption
+        run: bash deploy/test_backup_restore.sh "${{ job.services.postgres.id }}"
       - name: Verify live Redis AOF migration preserves unsnapshotted queue data
         shell: pwsh
         run: ./deploy/test_redis_persistence.ps1
       - name: Validate clean production image and FFmpeg
-        run: docker build -f deploy/Dockerfile -t manjiao-verify .
+        run: docker build --build-arg APP_REVISION="${{ github.sha }}" -f deploy/Dockerfile -t manjiao-verify .
+      - name: Verify packaged production API and disabled simulated checkout
+        run: bash deploy/test_runtime_image.sh
       - name: Encode a real video with Chinese text and silent AAC audio
         run: docker run --rm --network none -v "$PWD/deploy/ffmpeg_smoke.sh:/smoke.sh:ro" manjiao-verify sh /smoke.sh
       - name: Build the isolated Project Hub image
@@ -100,3 +104,18 @@ jobs:
           --entrypoint sh project-hub-verify -ec
           'test "$(id -u)" = 10001; test -f public/handbook.html;
           node --check server.mjs; node --version; git --version; gh --version; ssh -V'
+      - name: Export verified main image for hosts with limited build space
+        if: github.ref == 'refs/heads/main'
+        run: |
+          docker tag manjiao-verify "manjiao-app:${{ github.sha }}"
+          docker save "manjiao-app:${{ github.sha }}" | gzip -1 > manjiao-image.tar.gz
+          sha256sum manjiao-image.tar.gz > manjiao-image.tar.gz.sha256
+      - uses: actions/upload-artifact@v4
+        if: github.ref == 'refs/heads/main'
+        with:
+          name: manjiao-image-${{ github.sha }}
+          path: |
+            manjiao-image.tar.gz
+            manjiao-image.tar.gz.sha256
+          compression-level: 0
+          retention-days: 7

@@ -27,7 +27,9 @@ while read -r oldrev newrev refname; do
   export MANJIAO_RELEASE_ARCHIVE="$WORK/release.tar.gz"
   helper="$WORK/helper.sh"
   git --git-dir="$REPO_DIR" show "$newrev:deploy/manjiao_remote.sh" | tr -d '\r' > "$helper"
+  git --git-dir="$REPO_DIR" show "$newrev:deploy/release_preflight.py" > "$WORK/release_preflight.py"
   chmod 700 "$helper"
+  bash "$helper" preflight "$APP_DIR"
   git --git-dir="$REPO_DIR" archive --format=tar.gz --output="$MANJIAO_RELEASE_ARCHIVE" "$newrev"
   echo "[deploy] $newrev; backup=$backup; log=$log"
   # Backup failure stops before changing application files or containers.
@@ -35,7 +37,10 @@ while read -r oldrev newrev refname; do
   if bash "$helper" extract "$APP_DIR" 2>&1 | tee -a "$log" &&
      bash "$helper" rebuild "$APP_DIR" 2>&1 | tee -a "$log" &&
      bash "$helper" ready "$APP_DIR" 2>&1 | tee -a "$log"; then
-    git --git-dir="$REPO_DIR" update-ref refs/heads/deployed "$newrev"
+    if ! git --git-dir="$REPO_DIR" update-ref refs/heads/deployed "$newrev" "$previous"; then
+      echo "[deploy] DEPLOY_CONFIRMATION_FAILED: live readiness passed but deployed ref could not be written; inspect disk and verify the live revision before reconciling" >&2
+      exit 1
+    fi
     echo "[deploy] DEPLOY_OK $newrev"
     case "$refname" in refs/heads/deploy-requests/*) git --git-dir="$REPO_DIR" update-ref -d "$refname" "$newrev";; esac
   else

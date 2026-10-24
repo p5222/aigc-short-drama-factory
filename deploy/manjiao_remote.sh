@@ -9,6 +9,7 @@ READY_ATTEMPTS="${MANJIAO_READY_ATTEMPTS:-60}"
 READY_INTERVAL="${MANJIAO_READY_INTERVAL:-5}"
 REDIS_ATTEMPTS="${MANJIAO_REDIS_PERSISTENCE_ATTEMPTS:-60}"
 COMPOSE=(docker compose -f "$COMPOSE_FILE")
+PREFLIGHT_SCRIPT="$(cd "$(dirname "$0")" && pwd)/release_preflight.py"
 WORK=""
 cleanup() { if [ -n "$WORK" ]; then rm -rf -- "$WORK"; fi; }
 trap cleanup EXIT
@@ -19,6 +20,19 @@ check_app_dir() {
   cd "$RD"
 }
 private_workdir() { if [ -z "$WORK" ]; then WORK="$(mktemp -d "${TMPDIR:-/tmp}/manjiao-helper.XXXXXXXX")"; fi; }
+has_release_image() {
+  local revision="${MANJIAO_RELEASE:-}"
+  [[ "$revision" =~ ^[a-f0-9]{40}$ ]] || return 1
+  local label
+  label="$(docker image inspect "manjiao-app:$revision" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' 2>/dev/null)" || return 1
+  [ "$label" = "$revision" ]
+}
+check_space() {
+  local flags=()
+  if has_release_image; then flags+=(--prebuilt); fi
+  python3 "$PREFLIGHT_SCRIPT" --app "$RD" --backups "${MANJIAO_BACKUP_ROOT:-/opt/manjiao-backups}" \
+    --repo "${MANJIAO_REPO_DIR:-/opt/git/aigc-short-drama-factory.git}" --phase "$1" "${flags[@]}"
+}
 ready_once() {
   local body expected_revision="${2:-${MANJIAO_RELEASE:-}}"
   body="$(curl --fail --silent --show-error --connect-timeout 3 --max-time 10 "$1")" || return 1
@@ -79,8 +93,9 @@ sync_source() {
     "$WORK/source/" "$RD/"
 }
 case "$cmd" in
+  preflight) check_app_dir; check_space backup;;
   backup)
-    check_app_dir; test -n "$BD"; mkdir -p -- "$BD"; BD="$(realpath -e -- "$BD")"
+    check_app_dir; test -n "$BD"; check_space backup; mkdir -p -- "$BD"; BD="$(realpath -e -- "$BD")"
     case "$BD/" in "$RD/"*) echo "Backup must be outside the application directory" >&2; exit 2;; esac
     test ! -e "$BD/COMPLETE"; chmod 700 "$BD"
     "${COMPOSE[@]}" exec -T postgres sh -lc 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > "$BD/aigc_drama.dump.partial"
@@ -91,7 +106,8 @@ case "$cmd" in
     tar -tzf "$BD/storage.tar.gz.partial" > /dev/null
     mv "$BD/storage.tar.gz.partial" "$BD/storage.tar.gz"
     # Only the root storage directory is persistent media; src/storage is code.
-    tar --exclude=node_modules --exclude=.git --exclude='./storage' --exclude='./backups' --exclude='./outputs' --exclude='./tmp' -czf "$BD/source.tgz.partial" -C "$RD" .
+    tar --exclude=node_modules --exclude=.git --exclude=.pnpm-store --exclude=dist --exclude=__pycache__ \
+      --exclude='./storage' --exclude='./backups' --exclude='./outputs' --exclude='./tmp' -czf "$BD/source.tgz.partial" -C "$RD" .
     tar -tzf "$BD/source.tgz.partial" > /dev/null
     mv "$BD/source.tgz.partial" "$BD/source.tgz"
     (cd "$BD" && sha256sum aigc_drama.dump storage.tar.gz source.tgz > SHA256SUMS)
@@ -105,7 +121,13 @@ case "$cmd" in
     ;;
   rebuild)
     check_app_dir
-    "${COMPOSE[@]}" build api
+    check_space build
+    if has_release_image; then
+      echo "REUSING_VERIFIED_RELEASE_IMAGE $MANJIAO_RELEASE"
+    else
+      "${COMPOSE[@]}" build api
+    fi
+    check_space activate
     ensure_redis_persistence
     # Existing database has no complete migration baseline. Destructive sync fails.
     # Schema sync is a release step and never runs on ordinary container restart.
@@ -150,5 +172,5 @@ EOF
     fi
     echo "SOURCE_ROLLBACK_READY (database and storage were not reverted)"
     ;;
-  *) echo "Usage: manjiao_remote.sh {backup|extract|rebuild|ready|health|rollback} [app_dir] [backup_dir]" >&2; exit 2;;
+  *) echo "Usage: manjiao_remote.sh {preflight|backup|extract|rebuild|ready|health|rollback} [app_dir] [backup_dir]" >&2; exit 2;;
 esac

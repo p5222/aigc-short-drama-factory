@@ -12,6 +12,8 @@ import { createCharacterConsistencyPlan, createRelayGatewayPolicy, createWebNove
 import { getLingGuoAdapterMetadata } from "./agents/lingguoAdapter.js";
 import { getToonflowAdapterMetadata } from "./agents/toonflowAdapter.js";
 import { hashPassword, verifyPassword } from "./auth/password.js";
+import { mockCheckoutEnabled } from "./billing/checkoutPolicy.js";
+import { createRateLimitMiddleware, positiveInteger, RequestRateLimiter } from "./security/rateLimit.js";
 import { ensureSeedData, DEMO_USER_ID } from "./db/seed.js";
 import {
   cancelTask,
@@ -151,11 +153,12 @@ function parseTrustProxy(raw: string | undefined, productionDefault: boolean): b
   return value;
 }
 const authSessionTtlDays = Number(process.env.AUTH_SESSION_TTL_DAYS ?? 30);
-const rateLimitWindowMs = Number(process.env.API_RATE_LIMIT_WINDOW_MS ?? 60_000);
-const rateLimitMax = Number(process.env.API_RATE_LIMIT_MAX ?? 180);
-const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
+const rateLimitWindowMs = positiveInteger(process.env.API_RATE_LIMIT_WINDOW_MS, 60_000, 3_600_000);
+const rateLimitMax = positiveInteger(process.env.API_RATE_LIMIT_MAX, 180, 100_000);
+const rateLimiter = new RequestRateLimiter(rateLimitWindowMs, positiveInteger(process.env.API_RATE_LIMIT_CAPACITY, 10_000, 100_000));
+setInterval(() => rateLimiter.sweep(), Math.min(rateLimitWindowMs, 60_000)).unref();
 const isProduction = process.env.NODE_ENV === "production";
-const mockPaymentEnabled = process.env.ENABLE_MOCK_PAYMENT === "true" || !isProduction;
+const mockPaymentEnabled = mockCheckoutEnabled(process.env);
 
 app.disable("x-powered-by");
 app.use((req, res, next) => {
@@ -175,6 +178,8 @@ app.use(
     credentials: true
   })
 );
+// Apply limits before parsing large bodies or authorizing private media in PostgreSQL.
+app.use(createRateLimitMiddleware(rateLimiter, rateLimitMax));
 app.use(express.json({ limit: "12mb" }));
 app.use(
   "/storage",
@@ -195,22 +200,6 @@ app.use(
   express.static(storageRoot, { fallthrough: false, index: false, cacheControl: false, dotfiles: "deny" })
 );
 
-app.use((req, res, next) => {
-  if (req.path === "/health" || req.path === "/ready") return next();
-  const key = `${req.ip}:${req.path.startsWith("/api/auth") ? "auth" : "api"}`;
-  const now = Date.now();
-  const bucket = rateLimitMap.get(key);
-  const max = req.path.startsWith("/api/auth") ? Math.min(rateLimitMax, 30) : rateLimitMax;
-  if (!bucket || bucket.resetAt <= now) {
-    rateLimitMap.set(key, { count: 1, resetAt: now + rateLimitWindowMs });
-    return next();
-  }
-  bucket.count += 1;
-  if (bucket.count > max) {
-    return res.status(429).json({ message: "请求过于频繁，请稍后再试。" });
-  }
-  next();
-});
 app.use((req, res, next) => {
   const started = Date.now();
   res.on("finish", () => {
@@ -1784,6 +1773,7 @@ app.get(
 app.post(
   "/api/billing/orders",
   asyncRoute(async (req, res) => {
+    if (!mockPaymentEnabled) return res.status(503).json({ message: "在线支付尚未开放，请通过充值页面购买卡密后兑换积分。" });
     const parsed = rechargeOrderCreateSchema.safeParse(req.body ?? {});
     if (!parsed.success) return res.status(400).json(parsed.error.flatten());
     res.status(201).json(await createRechargeOrder(requestUserId(req), parsed.data));
