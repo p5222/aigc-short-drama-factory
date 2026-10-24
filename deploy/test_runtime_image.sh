@@ -4,10 +4,18 @@ set -euo pipefail
 test "${AIFILM_TEST_API_DATABASE_URL:-}" != ""
 case "$AIFILM_TEST_API_DATABASE_URL" in postgresql://*@127.0.0.1:*/audit_api_*) ;; *) echo "Isolated CI database required" >&2; exit 2;; esac
 name="manjiao-runtime-check-$$"
-cleanup() { docker rm -f "$name" >/dev/null 2>&1 || true; }
+cleanup() {
+  local status=$?
+  if [ "$status" -ne 0 ]; then docker logs --tail 80 "$name" >&2 2>/dev/null || true; fi
+  docker rm -f "$name" >/dev/null 2>&1 || true
+}
 trap cleanup EXIT
 docker run --rm --network none --entrypoint sh manjiao-verify -ec \
-  'test ! -d apps/web/node_modules; test ! -d apps/api/src; test -f apps/api/dist/server.js; test -f apps/web/dist/index.html; pnpm --filter @aifilm/api exec prisma --version'
+  'test ! -d apps/web/node_modules; test ! -d apps/api/src; test -f apps/api/dist/server.js; test -f apps/web/dist/index.html; node apps/api/node_modules/prisma/build/index.js --version'
+# Exercise the exact deployment schema command against the isolated test database.
+docker run --rm --network host -e DATABASE_URL="$AIFILM_TEST_API_DATABASE_URL" \
+  --entrypoint node manjiao-verify apps/api/node_modules/prisma/build/index.js db push \
+  --schema apps/api/prisma/schema.prisma --skip-generate
 docker run -d --name "$name" --network host \
   -e DATABASE_URL="$AIFILM_TEST_API_DATABASE_URL" -e REDIS_URL="${AIFILM_TEST_REDIS_URL:?}" \
   -e API_PORT=4088 -e APP_REVISION=runtime-image-check \

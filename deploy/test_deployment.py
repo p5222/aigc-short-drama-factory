@@ -51,7 +51,7 @@ case "$*" in
   *'redis-cli --raw INFO persistence'*)
     if [ "${TEST_FAIL:-}" = redis_rewrite ]; then printf 'aof_enabled:1\naof_rewrite_in_progress:1\n';
     else printf 'loading:0\naof_enabled:1\naof_rewrite_in_progress:0\naof_rewrite_scheduled:0\naof_last_bgrewrite_status:ok\naof_last_write_status:ok\n'; fi;;
-  *db:push:deploy*) [ "${TEST_FAIL:-}" != schema ] || exit 44;;
+  *'prisma/build/index.js db push'*) [ "${TEST_FAIL:-}" != schema ] || exit 44;;
   *'tar -czf - storage'*)
     if [ "${TEST_FAIL:-}" = storage ]; then printf 'corrupt'; else tar -czf - -C "$TEST_APP" storage; fi;;
   *'build api'*)
@@ -260,7 +260,7 @@ if [ -n "${TEST_READY_BODY:-}" ]; then printf '%s' "$TEST_READY_BODY"; else prin
         self.assertEqual(self.deployed(), self.old)
         self.assertEqual((self.app / "version.txt").read_text(), "old")
         self.assertTrue((self.app / "obsolete.txt").exists())
-        self.assertNotIn("db:push:deploy", self.events.read_text())
+        self.assertNotIn("prisma/build/index.js db push", self.events.read_text())
 
     def test_failed_rollback_is_not_reported_as_recovered(self):
         result = self.run_hook(extra_env={"TEST_FAIL": "recovery"})
@@ -273,7 +273,7 @@ if [ -n "${TEST_READY_BODY:-}" ]; then printf '%s' "$TEST_READY_BODY"; else prin
         result = self.run_hook(extra_env={"TEST_FAIL": "schema"})
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("previous source readiness verified", result.stderr)
-        self.assertEqual(self.events.read_text().count("db:push:deploy"), 1)
+        self.assertEqual(self.events.read_text().count("prisma/build/index.js db push"), 1)
         self.assertEqual((self.app / "version.txt").read_text(), "old")
         self.assertEqual(self.deployed(), self.old)
 
@@ -282,7 +282,7 @@ if [ -n "${TEST_READY_BODY:-}" ]; then printf '%s' "$TEST_READY_BODY"; else prin
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Redis refused persistence setting", result.stdout)
         self.assertNotIn("--no-deps redis", self.events.read_text())
-        self.assertNotIn("db:push:deploy", self.events.read_text())
+        self.assertNotIn("prisma/build/index.js db push", self.events.read_text())
         self.assertEqual(self.deployed(), self.old)
 
     def test_incomplete_redis_aof_rewrite_prevents_container_replacement(self):
@@ -290,14 +290,14 @@ if [ -n "${TEST_READY_BODY:-}" ]; then printf '%s' "$TEST_READY_BODY"; else prin
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Redis AOF did not finish", result.stdout)
         self.assertNotIn("--no-deps redis", self.events.read_text())
-        self.assertNotIn("db:push:deploy", self.events.read_text())
+        self.assertNotIn("prisma/build/index.js db push", self.events.read_text())
         self.assertEqual(self.deployed(), self.old)
 
     def test_redis_is_persisted_before_replacement_and_schema(self):
         result = self.run_hook()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         events = self.events.read_text()
-        positions = [events.index(part) for part in ("pg_dump", "build api", "CONFIG SET appendonly yes", "INFO persistence", "--no-deps redis", "db:push:deploy")]
+        positions = [events.index(part) for part in ("pg_dump", "build api", "CONFIG SET appendonly yes", "INFO persistence", "--no-deps redis", "prisma/build/index.js db push")]
         self.assertEqual(positions, sorted(positions))
         self.assertEqual(events.count("INFO persistence"), 2)
 
@@ -385,6 +385,9 @@ class DeploymentContractTests(unittest.TestCase):
     def test_restarts_do_not_apply_schema_and_schema_sync_rejects_data_loss(self):
         package = json.loads((ROOT / "apps/api/package.json").read_text())
         self.assertNotIn("--accept-data-loss", package["scripts"]["db:push:deploy"])
+        helper = (ROOT / "deploy/manjiao_remote.sh").read_text()
+        self.assertNotIn("--accept-data-loss", helper)
+        self.assertIn("apps/api/node_modules/prisma/build/index.js db push --schema apps/api/prisma/schema.prisma --skip-generate", helper)
         compose = (ROOT / "docker-compose.prod.yml").read_text()
         self.assertNotIn("db:push", compose)
         self.assertIn('command: ["node", "apps/api/dist/server.js"]', compose)

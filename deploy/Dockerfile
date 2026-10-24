@@ -6,10 +6,9 @@ RUN case "$ALPINE_MIRROR" in \
       *) echo "Unsupported Alpine mirror" >&2; exit 1 ;; \
     esac \
     && sed -i "s|https://dl-cdn.alpinelinux.org/alpine|${ALPINE_MIRROR}|g" /etc/apk/repositories \
-    && apk add --no-cache openssl ffmpeg font-noto-cjk \
-    && corepack enable \
-    && corepack prepare pnpm@11.7.0 --activate
+    && apk add --no-cache openssl ffmpeg font-noto-cjk
 FROM runtime AS build
+RUN corepack enable && corepack prepare pnpm@11.7.0 --activate
 WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 COPY packages/shared/package.json ./packages/shared/package.json
@@ -24,7 +23,7 @@ RUN pnpm --filter @aifilm/shared build \
     && pnpm --filter @aifilm/api build \
     && pnpm --filter @aifilm/web build \
     && pnpm --filter @aifilm/api deploy --legacy --prod /release/api \
-    && pnpm --dir /release/api exec prisma generate --schema prisma/schema.prisma \
+    && (cd /release/api && node node_modules/prisma/build/index.js generate --schema prisma/schema.prisma) \
     && ffmpeg -hide_banner -f lavfi -i color=c=black:s=64x64:d=0.1 \
        -c:v libx264 -pix_fmt yuv420p /tmp/ffmpeg-smoke.mp4 \
     && rm /tmp/ffmpeg-smoke.mp4

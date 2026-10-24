@@ -131,7 +131,9 @@ case "$cmd" in
     ensure_redis_persistence
     # Existing database has no complete migration baseline. Destructive sync fails.
     # Schema sync is a release step and never runs on ordinary container restart.
-    "${COMPOSE[@]}" run --rm --no-deps --entrypoint pnpm api --filter @aifilm/api db:push:deploy
+    # Use the packaged CLI directly; pnpm exec can auto-install workspace dependencies.
+    "${COMPOSE[@]}" run --rm --no-deps --entrypoint node api \
+      apps/api/node_modules/prisma/build/index.js db push --schema apps/api/prisma/schema.prisma --skip-generate
     "${COMPOSE[@]}" up -d --no-deps --force-recreate api
     "${COMPOSE[@]}" up -d --no-deps --force-recreate nginx
     wait_ready
