@@ -21,7 +21,13 @@ cleanup() {
   if [ "$status" -ne 0 ]; then docker logs --tail 30 "$prefix-api" >&2 2>/dev/null || true; fi
   for service in nginx api web redis postgres; do docker rm -fv "$prefix-$service" >/dev/null 2>&1 || true; done
   docker network rm "$network" >/dev/null 2>&1 || true
-  rm -rf -- "$work"
+  # Redis and web export create files as container users. Restore ownership of
+  # this one disposable mount so an unprivileged CI runner can remove it too.
+  if ! docker run --rm --network none --user 0:0 --entrypoint sh \
+    -v "$work:/cleanup" -e DR_OWNER="$(id -u):$(id -g)" "$image" \
+    -ec 'chown -R "$DR_OWNER" /cleanup; chmod -R u+rwX /cleanup'; then status=1; fi
+  if ! rm -rf -- "$work"; then status=1; fi
+  exit "$status"
 }
 trap cleanup EXIT
 # Inspect paths before extracting, including symlinks/hardlinks.
