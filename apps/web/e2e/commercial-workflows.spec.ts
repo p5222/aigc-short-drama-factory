@@ -42,6 +42,61 @@ async function noOverflow(page: Page) {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBeTruthy();
 }
 
+test("online cashier reuses pending orders and refreshes the UI after a confirmed-paid fixture", async ({ page }) => {
+  await fixtureApi(page);
+  const plan = { id: "cashier-trial", name: "支付验收套餐", price: 9.9, credits: 1000, bonusCredits: 0, features: [], enabled: true };
+  let creates = 0, paid = false;
+  let order: Record<string, unknown> | undefined;
+  await page.route("**/api/plans", route => route.fulfill({ json: [plan] }));
+  await page.route("**/api/membership-plans", route => route.fulfill({ json: [] }));
+  await page.route("**/api/billing/**", async route => {
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith("/availability")) return route.fulfill({ json: { wechat: true, membership: false, autoRenew: false } });
+    if (path.endsWith("/membership")) return route.fulfill({ json: { active: null, paidThrough: null, autoRenew: false } });
+    if (path === "/api/billing/checkout") {
+      creates++;
+      order = { id: "cashier-order-123", planId: plan.id, planName: plan.name, kind: "recharge", channel: "wechat",
+        amountCny: 9.9, amountFen: 990, credits: 1000, bonusCredits: 0, status: "pending", invoiceStatus: "none",
+        codeUrl: "weixin://wxpay/bizpayurl?pr=ui-fixture", expiresAt: new Date(Date.now()+600_000).toISOString(), createdAt: new Date().toISOString() };
+      return route.fulfill({ status: 201, json: order });
+    }
+    if (path.endsWith("/checkout")) return route.fulfill({ json: order });
+    if (path.endsWith("/orders")) return route.fulfill({ json: order ? [{ ...order, status: paid ? "paid" : "pending" }] : [] });
+    if (path.includes("/orders/")) { paid = true; return route.fulfill({ json: { ...order, status: "paid", codeUrl: undefined } }); }
+    return route.fulfill({ json: [] });
+  });
+  await page.goto("/recharge");
+  const buy = page.getByRole("button", { name: /支付验收套餐 · ¥9.90/ });
+  await buy.click();
+  await expect(page.getByRole("region", { name: "当前支付订单" })).toContainText("待支付");
+  await expect(page.getByText("微信扫一扫", { exact: true })).toBeVisible();
+  await buy.click();
+  expect(creates).toBe(1);
+  await expect(page.getByRole("region", { name: "当前支付订单" })).toContainText("已到账", { timeout: 10_000 });
+  await expect(page.getByText("微信扫一扫", { exact: true })).toHaveCount(0);
+  await noOverflow(page);
+});
+
+test("membership checkout exposes current benefits, same-tier renewal and no automatic charge", async ({ page }) => {
+  await fixtureApi(page);
+  const member = { id: "member-fixture", name: "验收会员", monthlyPrice: 39.9, monthlyCredits: 4000,
+    discountPercent: 10, priorityLevel: 1, features: [], enabled: true };
+  await page.route("**/api/membership-plans", route => route.fulfill({ json: [member, { ...member, id: "higher", name: "另一档会员" }] }));
+  await page.route("**/api/billing/**", route => {
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith("/availability")) return route.fulfill({ json: { wechat: true, membership: true, autoRenew: false } });
+    if (path.endsWith("/membership")) return route.fulfill({ json: { active: { planId: member.id, planName: member.name,
+      startsAt: new Date().toISOString(), endsAt: new Date(Date.now()+86400_000).toISOString(), discountPercent: 10, priorityLevel: 1 },
+      paidThrough: new Date(Date.now()+86400_000).toISOString(), autoRenew: false } });
+    return route.fulfill({ json: [] });
+  });
+  await page.goto("/recharge");
+  await expect(page.getByRole("button", { name: "同档续费一个月" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "购买一个月", exact: true })).toBeDisabled();
+  await expect(page.getByText(/每次购买一个自然月，不自动扣款/)).toBeVisible();
+  await noOverflow(page);
+});
+
 test("admin users create, validate, edit, delete and restore with recoverable failures", async ({ page }) => {
   await fixtureApi(page, { admin: true });
   const users: Array<Record<string, any>> = [];

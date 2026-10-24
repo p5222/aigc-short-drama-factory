@@ -208,3 +208,15 @@
   .app-shell .creator-page .input-toolbar button { min-height: 44px; }
   .app-shell .creator-page .wizard-script-actions { flex-direction: column-reverse; align-items: stretch; }
 }
+
+.app-shell .creator-page .online-plan-list { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 24px; }
+.app-shell .creator-page .online-payment-note { color: var(--ds-text-secondary); font-size: 13px; line-height: 1.9; margin: 18px 0; }
+.app-shell .creator-page .online-cashier { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 24px; padding: 24px; margin: 20px 0; border: 1px solid var(--ds-border-default); border-radius: 16px; background: var(--ds-surface-muted, #f7f8f5); }
+.app-shell .creator-page .online-cashier p { overflow-wrap: anywhere; color: var(--ds-text-secondary); font-size: 13px; line-height: 1.8; }
+.app-shell .creator-page .online-qr { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.app-shell .creator-page .online-qr svg { background: white; border-radius: 10px; max-width: 100%; height: auto; }
+.app-shell .creator-page .online-order-list { display: grid; gap: 8px; padding-top: 12px; }
+.app-shell .creator-page .online-order-list button { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; text-align: left; }
+@media (max-width: 640px) {
+  .app-shell .creator-page .online-cashier { grid-template-columns: minmax(0,1fr); padding: 16px; }
+}

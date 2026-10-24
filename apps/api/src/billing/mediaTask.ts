@@ -13,7 +13,7 @@ export type MediaTaskContext = {
   taskId: string; task: GenerationTask;
   checkpoint(metadata: Record<string, unknown>): Promise<void>;
   defer(metadata: Record<string, unknown>): Promise<GenerationTask>;
-  complete<T extends object>(credits: number, persist: (tx: Prisma.TransactionClient) => Promise<T>, options?: FinalOptions<T>): Promise<T & { task: GenerationTask }>;
+  complete<T extends object>(credits: number, persist: (tx: Prisma.TransactionClient, settledCredits: number) => Promise<T>, options?: FinalOptions<T>): Promise<T & { task: GenerationTask }>;
 };
 
 export function assertProductionMediaProvider(
@@ -126,7 +126,7 @@ export async function runMediaTask<T>(input: MediaTaskInput, run: (context: Medi
           if (!sourceCurrent && !options.onStale) throw new MediaSourceConflict("生成输入已变化，结果暂未覆盖当前素材，请核对任务后恢复。");
           const settlement = await settleTaskCredits(tx, { taskId: task.id, userId: input.userId, finalCredits: sourceCurrent ? credits : 0 });
           if (!settlement.applied) throw new Error("该生成任务已处理，不能重复结算。");
-          const saved = sourceCurrent ? await persist(tx) : await options.onStale!(tx);
+          const saved = sourceCurrent ? await persist(tx, settlement.credits) : await options.onStale!(tx);
           const finalMessage = sourceCurrent ? options.errorReason : "生成期间输入已变化，结果已保留为历史素材，未扣费；请基于当前素材重新确认生成。";
           const completed = await tx.generationTask.update({ where: { id: task.id }, data: {
             status: sourceCurrent ? options.status ?? "succeeded" : "failed", progress: 100,

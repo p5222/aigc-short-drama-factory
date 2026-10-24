@@ -88,12 +88,12 @@ export async function getOrCreatePaidNarration(workflow: ProjectWorkflow, userId
     const audio = await (dependencies.synthesize ?? createTtsAudioAsset)(workflow, plan.runtime);
     if (audio.provider !== plan.quote.providerId) throw new Error("配音结果与已报价渠道不一致，未接受替代模型或占位配音");
     await verifyAudio(audio.audioUrl);
-    return (await context.complete(plan.quote.estimatedCredits, async tx => {
+    return (await context.complete(plan.quote.estimatedCredits, async (tx, settledCredits) => {
       await tx.asset.create({ data: { id: plan.assetId, projectId: workflow.project.id, type: "audio", name: "项目配音音轨",
         description: JSON.stringify({ kind: "tts_cache", audio }), prompt: "已按确认模型生成并与镜头时长对齐", referenceUrl: audio.audioUrl, status: "succeeded" } });
       await tx.asset.create({ data: { id: `${plan.assetId}_manifest`, projectId: workflow.project.id, type: "audio_manifest", name: "配音清单",
         description: "配音来源、时长与角色信息", prompt: "配音清单", referenceUrl: audio.manifestUrl, status: "succeeded" } });
-      await tx.project.update({ where: { id: workflow.project.id }, data: { creditsSpent: { increment: plan.quote.estimatedCredits } } });
+      await tx.project.update({ where: { id: workflow.project.id }, data: { creditsSpent: { increment: settledCredits } } });
       return { audio };
     })).audio;
   }, db);

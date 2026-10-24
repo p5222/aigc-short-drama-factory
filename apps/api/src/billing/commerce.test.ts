@@ -12,12 +12,15 @@ test("PostgreSQL commerce and startup configuration are idempotent", { skip: !da
   process.env.DATABASE_URL = databaseUrl;
   const db = new PrismaClient({ datasourceUrl: databaseUrl });
   const repository = await import("../db/repository.js");
+  const { createPaymentOrder, getMembership } = await import("./payments.js");
+  const { reserveTaskCredits, settleTaskCredits } = await import("./taskCredits.js");
   const evaluation = await import("../db/evaluation.js");
   const seed = await import("../db/seed.js");
   const catalog = await import("../seed/catalogData.js");
   const users: string[] = [];
   const codes: string[] = [];
   const providerIds: string[] = [];
+  const memberPlanIds: string[] = [];
   async function user(balance = 100) {
     const id = `commerce_user_${crypto.randomUUID()}`;
     users.push(id);
@@ -50,6 +53,63 @@ test("PostgreSQL commerce and startup configuration are idempotent", { skip: !da
       const userId = await user(); const invoice = await order(userId);
       await assert.rejects(repository.handleRechargeCallback({ orderId: invoice.id, userId, amountCny: 9.99 }), /amount mismatch/);
       assert.equal((await account(userId)).balance, 100);
+    });
+    await t.test("real checkout identity, payment and membership renewal are atomic under concurrent retries", async () => {
+      const userId = await user();
+      const planId = `member_${crypto.randomUUID()}`; memberPlanIds.push(planId);
+      await db.membershipPlan.create({ data: { id: planId, name: "Integration month", monthlyPrice: 39.9,
+        monthlyCredits: 4000, discountPercent: 10, priorityLevel: 2, features: [] } });
+      const input = { planId, kind: "membership" as const, requestId: crypto.randomUUID() };
+      const orders = await Promise.all(Array.from({ length: 12 }, () => createPaymentOrder(userId, input, db)));
+      assert.equal(new Set(orders.map(row => row.id)).size, 1);
+      assert.equal(orders[0]!.amountFen, 3990);
+      await assert.rejects(createPaymentOrder(userId, { ...input, kind: "recharge" }, db), /关联其他/);
+      // Edits after purchase must not change the payable amount or entitlement snapshot.
+      await db.membershipPlan.update({ where: { id: planId }, data: { monthlyPrice: 49.9, monthlyCredits: 5000, discountPercent: 20 } });
+      const payment = { orderId: orders[0]!.id, channel: "wechat", providerTradeNo: `wechat_${crypto.randomUUID()}`, amountFen: 3990, paidAt: new Date() };
+      await assert.rejects(repository.handleRechargeCallback({ ...payment, amountFen: 3991 }), /amount mismatch/);
+      await assert.rejects(repository.handleRechargeCallback({ ...payment, paidAt: undefined }), /完整/);
+      const paid = await Promise.all(Array.from({ length: 12 }, () => repository.handleRechargeCallback(payment)));
+      assert.equal(new Set(paid.map(row => row.payment.id)).size, 1);
+      assert.equal((await account(userId)).balance, 4100);
+      const firstMember = await getMembership(userId, db);
+      assert.equal(firstMember.active?.discountPercent, 10);
+      const renewal = await createPaymentOrder(userId, { ...input, requestId: crypto.randomUUID() }, db);
+      await repository.handleRechargeCallback({ ...payment, orderId: renewal.id, providerTradeNo: `renew_${crypto.randomUUID()}`, amountFen: 4990 });
+      const updated = await getMembership(userId, db);
+      assert.ok(Date.parse(updated.paidThrough!) > Date.parse(firstMember.paidThrough!));
+      assert.equal(updated.active?.discountPercent, 10, "future renewal must not change current-term benefits");
+      assert.equal((await account(userId)).balance, 9100);
+      assert.equal(await db.creditTransaction.count({ where: { userId, type: "recharge" } }), 2);
+      const terms = await db.rechargeOrder.findMany({ where: { userId, status: "paid" }, orderBy: { membershipStartsAt: "asc" } });
+      assert.equal(terms[0]!.membershipEndsAt!.getTime(), terms[1]!.membershipStartsAt!.getTime());
+      const { activeMembership } = await import("./membership.js");
+      assert.equal((await activeMembership(db, userId, terms[1]!.membershipStartsAt!))?.discountPercent, 20);
+      assert.equal(await activeMembership(db, userId, terms[1]!.membershipEndsAt!), null);
+
+      const owned = await project(userId);
+      const task = await db.generationTask.create({ data: { id: `member_task_${crypto.randomUUID()}`, userId,
+        projectId: owned.id, type: "text", title: "Member settlement", provider: "test", model: "test", status: "running", estimatedCredits: 31 } });
+      await db.$transaction(tx => reserveTaskCredits(tx, { taskId: task.id, userId }));
+      const snapshot = await db.generationTask.findUniqueOrThrow({ where: { id: task.id } });
+      assert.equal(snapshot.billingDiscountPercent, 10); assert.equal(snapshot.queuePriority, 98);
+      // Membership can expire/change while a long-running task is executing.
+      await db.rechargeOrder.updateMany({ where: { userId }, data: { membershipEndsAt: new Date(0) } });
+      const settlement = await db.$transaction(tx => settleTaskCredits(tx, { taskId: task.id, userId }));
+      assert.equal(settlement.credits, 28);
+      assert.equal((await account(userId)).frozenBalance, 0);
+      assert.equal((await account(userId)).balance, 9072);
+    });
+    await t.test("pending membership orders prevent a different tier stranding a late paid notification", async () => {
+      const userId = await user();
+      const ids = [`member_${crypto.randomUUID()}`, `member_${crypto.randomUUID()}`]; memberPlanIds.push(...ids);
+      for (const id of ids) await db.membershipPlan.create({ data: { id, name: "Tier", monthlyPrice: 10, monthlyCredits: 100, features: [] } });
+      const first = await createPaymentOrder(userId, { planId: ids[0]!, kind: "membership", requestId: crypto.randomUUID() }, db);
+      await db.rechargeOrder.update({ where: { id: first.id }, data: { expiresAt: new Date(0) } });
+      await assert.rejects(createPaymentOrder(userId, { planId: ids[1]!, kind: "membership", requestId: crypto.randomUUID() }, db), /同档续费/);
+      await repository.handleRechargeCallback({ orderId: first.id, channel: "wechat", amountFen: 1000, paidAt: new Date(),
+        providerTradeNo: `late_${crypto.randomUUID()}` });
+      assert.equal((await getMembership(userId, db)).active?.planId, ids[0]);
     });
     await t.test("concurrent users cannot exceed a redeem code's total capacity", async () => {
       const people = await Promise.all(Array.from({ length: 8 }, () => user()));
@@ -218,6 +278,7 @@ test("PostgreSQL commerce and startup configuration are idempotent", { skip: !da
     await db.user.deleteMany({ where: { id: { in: users } } });
     await db.redeemCode.deleteMany({ where: { code: { in: codes } } });
     await db.modelProvider.deleteMany({ where: { id: { in: providerIds } } });
+    await db.membershipPlan.deleteMany({ where: { id: { in: memberPlanIds } } });
     await db.$disconnect();
   }
 });

@@ -12,10 +12,16 @@ bash "$(dirname "$0")/manjiao_remote.sh" backup "$APP_DIR" "$TARGET_DIR"
 cat > "$TARGET_DIR/RESTORE.md" <<'EOF'
 # Restore notes
 
-This backup contains a validated PostgreSQL custom dump, a storage archive and
-source archive. SHA256SUMS and COMPLETE must be present. Verify checksums before
+This backup contains a validated PostgreSQL custom dump, media, source and Redis
+RDB snapshots. SHA256SUMS and COMPLETE must be present. Verify checksums before
 recovery. Keep the backup private because the source archive includes server
 environment configuration. This is not proof of a completed restore drill.
+
+Run verify_full_restore.sh BACKUP_DIR manjiao-app:EXACT_REVISION for an isolated
+API/web/database/media/queue recovery drill. That drill blocks external networking,
+pauses recovered production jobs and measures bounded read-only HTTP capacity.
+The online snapshots are sequential, not a single distributed transaction. Reconcile
+DB-backed dispatch and paid provider tasks before resuming workers after real recovery.
 
 Code rollback uses manjiao_remote.sh rollback APP_DIR BACKUP_DIR. It never restores
 or downgrades the database. Application readiness must pass after the rollback.

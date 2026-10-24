@@ -749,6 +749,7 @@ function orderStatusLabel(value: RechargeOrder["status"]) {
     pending: "待支付",
     paid: "已支付",
     closed: "已关闭",
+    expired: "已过期",
     refunded: "已退款"
   };
   return labels[value] ?? value;

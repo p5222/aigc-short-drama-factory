@@ -46,6 +46,9 @@ case "$*" in
     [ "${TEST_FAIL:-}" != backup ] || exit 41
     printf 'TEST_CUSTOM_DUMP';;
   *pg_restore*) cat >/dev/null; [ "${TEST_FAIL:-}" != dump_validation ] || exit 43;;
+  *'redis-cli --rdb'*)
+    [ "${TEST_FAIL:-}" != redis_snapshot ] || exit 45
+    printf 'TEST_RDB';;
   *'redis-cli --raw CONFIG SET'*)
     if [ "${TEST_FAIL:-}" = redis_config ]; then printf 'ERR CONFIG disabled'; else printf 'OK'; fi;;
   *'redis-cli --raw INFO persistence'*)
@@ -219,6 +222,11 @@ if [ -n "${TEST_READY_BODY:-}" ]; then printf '%s' "$TEST_READY_BODY"; else prin
 
     def test_corrupt_storage_backup_is_rejected(self):
         result = self.run_helper("backup", extra_env={"TEST_FAIL": "storage"})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.base / "backup/COMPLETE").exists())
+
+    def test_failed_redis_snapshot_prevents_complete_backup(self):
+        result = self.run_helper("backup", extra_env={"TEST_FAIL": "redis_snapshot"})
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse((self.base / "backup/COMPLETE").exists())
 

@@ -13,6 +13,8 @@ import { getLingGuoAdapterMetadata } from "./agents/lingguoAdapter.js";
 import { getToonflowAdapterMetadata } from "./agents/toonflowAdapter.js";
 import { hashPassword, verifyPassword } from "./auth/password.js";
 import { mockCheckoutEnabled } from "./billing/checkoutPolicy.js";
+import { acceptWechatTransaction, getMembership, paymentAvailability, prepareCheckout, reconcilePayment, recoverPayments, startCheckout } from "./billing/payments.js";
+import { decryptWechatNotification, PaymentError, wechatConfig } from "./billing/wechat.js";
 import { createRateLimitMiddleware, positiveInteger, RequestRateLimiter } from "./security/rateLimit.js";
 import { ensureSeedData, DEMO_USER_ID } from "./db/seed.js";
 import {
@@ -180,6 +182,24 @@ app.use(
 );
 // Apply limits before parsing large bodies or authorizing private media in PostgreSQL.
 app.use(createRateLimitMiddleware(rateLimiter, rateLimitMax));
+// Raw bytes must reach signature verification before JSON parsing or session auth.
+app.post("/api/billing/wechat/notify", express.raw({ type: "application/json", limit: "64kb" }), async (req, res) => {
+  try {
+    const config = wechatConfig();
+    if (!config) return res.status(503).json({ code: "FAIL", message: "Payment unavailable" });
+    if (!Buffer.isBuffer(req.body)) return res.status(400).json({ code: "FAIL", message: "Invalid body" });
+    const headers = new Headers();
+    for (const name of ["wechatpay-timestamp", "wechatpay-nonce", "wechatpay-serial", "wechatpay-signature"]) {
+      const value = req.headers[name];
+      if (typeof value === "string") headers.set(name, value);
+    }
+    await acceptWechatTransaction(decryptWechatNotification(req.body.toString("utf8"), headers, config));
+    return res.status(204).end();
+  } catch (error) {
+    // Acknowledge only after durable commit; failures remain retryable at WeChat.
+    return res.status(error instanceof PaymentError ? error.status : 500).json({ code: "FAIL", message: "Payment not accepted" });
+  }
+});
 app.use(express.json({ limit: "12mb" }));
 app.use(
   "/storage",
@@ -1770,6 +1790,38 @@ app.get(
   })
 );
 
+app.get("/api/billing/availability", (_req, res) => res.json(paymentAvailability()));
+app.get("/api/billing/membership", asyncRoute(async (req, res) => res.json(await getMembership(requestUserId(req)!))));
+app.post("/api/billing/checkout", asyncRoute(async (req, res) => {
+  const parsed = z.object({
+    planId: z.string().min(1).max(128), kind: z.enum(["recharge", "membership"]),
+    requestId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/)
+  }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ message: "购买参数无效。" });
+  try { res.status(201).json(await startCheckout(requestUserId(req)!, parsed.data)); }
+  catch (error) {
+    if (error instanceof PaymentError) return res.status(error.status).json({ message: error.message });
+    throw error;
+  }
+}));
+app.get("/api/billing/orders/:id", asyncRoute(async (req, res) => {
+  const id = paramId(req.params.id);
+  const order = await prisma.rechargeOrder.findFirst({ where: { id, userId: requestUserId(req) } });
+  if (!order) return res.status(404).json({ message: "订单不存在。" });
+  try { res.json(await reconcilePayment(id)); }
+  catch (error) {
+    if (error instanceof PaymentError) return res.status(error.status).json({ message: error.message });
+    throw error;
+  }
+}));
+app.post("/api/billing/orders/:id/checkout", asyncRoute(async (req, res) => {
+  try { res.json(await prepareCheckout(paramId(req.params.id), requestUserId(req)!)); }
+  catch (error) {
+    if (error instanceof PaymentError) return res.status(error.status).json({ message: error.message });
+    throw error;
+  }
+}));
+
 app.post(
   "/api/billing/orders",
   asyncRoute(async (req, res) => {
@@ -3124,6 +3176,10 @@ async function startBackgroundServices() {
         void recoverCreationDispatches().catch(() => console.warn("[api] creation dispatch recovery will retry"));
       }, 15_000);
       recoveryTimer.unref();
+      const paymentTimer = setInterval(() => {
+        void recoverPayments().catch(() => console.warn("[api] payment reconciliation will retry"));
+      }, 15_000);
+      paymentTimer.unref();
       console.log("[api] catalog and generation worker ready");
       return;
     } catch (error) {

@@ -85,7 +85,7 @@ export async function runProjectStoryboardTasks(
   const generated = await generateProjectStoryboards(projectId, runtimeInput, workflow.script!, workflow.characters);
   if (process.env.NODE_ENV === "production" && generated.mode !== "real") throw new Error("真实分镜生成未成功，未使用占位分镜交付。");
 
-  const result = await billing.complete(credits, async (tx) => {
+  const result = await billing.complete(credits, async (tx, credits) => {
     const generatedEpisodes = [...new Set(generated.storyboards.map((shot) => shot.episodeNo))];
     const replacedShots = await tx.storyboard.findMany({ where: { projectId, episodeNo: { in: generatedEpisodes } }, select: { id: true } });
     if (replacedShots.length) {
@@ -270,7 +270,7 @@ export async function regenerateStoryboardShotImage(projectId: string, shotId: s
 
   const referenceUrl = storedImageUrl || imageResult.imageUrl || createSvgDataUrl("Shot " + shot.shotNo, shot.pictureDesc, workflow.project.artStyle);
   const outputs = [{ shot, url: referenceUrl }];
-  const result = await billing.complete(credits, tx => persistCurrentShotImages(tx, projectId, outputs, credits),
+  const result = await billing.complete(credits, (tx, settledCredits) => persistCurrentShotImages(tx, projectId, outputs, settledCredits),
     { onStale: tx => persistStaleShotOutputs(tx, { projectId, taskId: billing.taskId, type: "image", outputs }) });
 
   const project = await prisma.project.findFirstOrThrow({ where: { id: projectId, userId } });
@@ -327,7 +327,7 @@ export async function generateSceneEnvironmentImage(projectId: string, assetId: 
   const storedImageUrl = await persistImageReference(imageResult.imageUrl, `scene-${projectId}-${asset.id}`);
   const referenceUrl = storedImageUrl || imageResult.imageUrl || createSvgDataUrl(asset.name, asset.description || "场景环境资产", workflow.project.artStyle);
 
-  const result = await billing.complete(credits, tx => persistCurrentReferenceImage(tx, { projectId, userId, assetId: asset.id, prompt, url: referenceUrl, credits }),
+  const result = await billing.complete(credits, (tx, settledCredits) => persistCurrentReferenceImage(tx, { projectId, userId, assetId: asset.id, prompt, url: referenceUrl, credits: settledCredits }),
     { onStale: tx => persistStaleReferenceOutputs(tx, projectId, billing.taskId, [{ name: asset.name, type: asset.type, prompt, url: referenceUrl }]) });
 
   const project = await prisma.project.findFirstOrThrow({ where: { id: projectId, userId } });
@@ -419,7 +419,7 @@ export async function generateCharacterReferenceImages(projectId: string, userId
   selectedJobs = successfulJobs;
   credits = successfulJobs.length * creditsPerAsset;
 
-  const result = await billing.complete(credits, async (tx) => {
+  const result = await billing.complete(credits, async (tx, credits) => {
     await invalidateReferenceMedia(tx, projectId, userId, { assetIds: selectedJobs.map(job => job.asset.id), characterIds: selectedJobs.map(job => job.asset.relatedCharacterId!).filter(Boolean) }, "角色身份板已重新生成");
     await Promise.all(selectedJobs.map(async ({ asset, mode }, index) => {
       const referenceUrl = storedImageUrls[index] || imageResults[index]?.imageUrl || createSvgDataUrl(asset.name, `${asset.description} 多视图角色设定表`, workflow.project.artStyle);

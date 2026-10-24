@@ -46,7 +46,7 @@ def latest_backup_size(root):
     if not candidates:
         return 512 * MIB
     last = max(candidates, key=lambda p: p.stat().st_mtime).parent
-    files = [last / name for name in ("source.tgz", "storage.tar.gz", "aigc_drama.dump")]
+    files = [last / name for name in ("source.tgz", "storage.tar.gz", "aigc_drama.dump", "redis.rdb") if (last / name).is_file()]
     # Allow growth beyond the previous complete backup. This is a capacity
     # estimate, not a guarantee against unrelated writers on a shared disk.
     return max(128 * MIB, sum(p.stat().st_size for p in files) * 5 // 4)

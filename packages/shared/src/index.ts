@@ -11,7 +11,7 @@ export type TaskType = "text" | "storyboard" | "character" | "image" | "video" |
 export type ModelModality = "text" | "image" | "video" | "tts" | "embedding";
 
 export type CreditTransactionType = "recharge" | "freeze" | "consume" | "refund" | "adjust";
-export type OrderStatus = "pending" | "paid" | "closed" | "refunded";
+export type OrderStatus = "pending" | "paid" | "closed" | "refunded" | "expired";
 export type PaymentStatus = "pending" | "succeeded" | "failed";
 export type InvoiceStatus = "none" | "requested" | "issued" | "rejected";
 export type ExportJobStatus = "pending" | "running" | "succeeded" | "failed";
@@ -268,6 +268,13 @@ export interface RechargeOrder {
   planName: string;
   channel: "wechat" | "alipay" | "manual" | "mock";
   amountCny: number;
+  amountFen?: number;
+  kind?: "recharge" | "membership";
+  codeUrl?: string;
+  expiresAt?: string;
+  reconcileError?: string;
+  membershipStartsAt?: string;
+  membershipEndsAt?: string;
   credits: number;
   bonusCredits: number;
   status: OrderStatus;
@@ -345,6 +352,12 @@ export interface MembershipPlan {
   features: string[];
   shopUrl?: string;
   enabled: boolean;
+}
+
+export interface MembershipStatus {
+  active: { planId: string; planName: string; startsAt: string; endsAt: string; discountPercent: number; priorityLevel: number } | null;
+  paidThrough: string | null;
+  autoRenew: false;
 }
 
 export interface RedeemCode {

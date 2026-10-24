@@ -105,13 +105,20 @@ case "$cmd" in
     "${COMPOSE[@]}" exec -T api sh -lc 'cd /app && tar -czf - storage' > "$BD/storage.tar.gz.partial"
     tar -tzf "$BD/storage.tar.gz.partial" > /dev/null
     mv "$BD/storage.tar.gz.partial" "$BD/storage.tar.gz"
+    # Snapshot Redis via the replication protocol, including writes not yet in RDB.
+    # Output only the validated binary snapshot; never archive a live, changing AOF.
+    "${COMPOSE[@]}" exec -T redis sh -ec \
+      'snapshot="$(mktemp /tmp/manjiao-rdb.XXXXXX)"; trap '"'"'rm -f "$snapshot"'"'"' EXIT; redis-cli --rdb "$snapshot" >/dev/null 2>&1; redis-check-rdb "$snapshot" >/dev/null; cat "$snapshot"' \
+      > "$BD/redis.rdb.partial"
+    test -s "$BD/redis.rdb.partial"
+    mv "$BD/redis.rdb.partial" "$BD/redis.rdb"
     # Only the root storage directory is persistent media; src/storage is code.
     tar --exclude=node_modules --exclude=.git --exclude=.pnpm-store --exclude=dist --exclude=__pycache__ \
       --exclude='./storage' --exclude='./backups' --exclude='./outputs' --exclude='./tmp' -czf "$BD/source.tgz.partial" -C "$RD" .
     tar -tzf "$BD/source.tgz.partial" > /dev/null
     mv "$BD/source.tgz.partial" "$BD/source.tgz"
-    (cd "$BD" && sha256sum aigc_drama.dump storage.tar.gz source.tgz > SHA256SUMS)
-    printf 'source-and-data-backup-v1\n' > "$BD/COMPLETE"
+    (cd "$BD" && sha256sum aigc_drama.dump storage.tar.gz source.tgz redis.rdb > SHA256SUMS)
+    printf 'source-and-data-backup-v2\n' > "$BD/COMPLETE"
     echo "BACKUP_DONE $BD"
     ;;
   extract)

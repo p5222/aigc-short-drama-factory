@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import type { ExportJob as ExportJobRow, Prisma, PrismaClient } from "@prisma/client";
 import { lockCreditAccount } from "../billing/accountCredits.js";
+import { grantMembership } from "../billing/membership.js";
 import { assertProductionMediaProvider, mediaCheckpoint, runMediaTask } from "../billing/mediaTask.js";
 import sharp from "sharp";
 import type { AdminSummary, AdminUserRow, AssetItem, BatchGenerationResult, CreateProjectInput, CreationEstimate, GenerationTask, HelpArticle, PlatformAnnouncement, ProjectWorkflow, SegmentProfile, StoryboardExportRow, StoryboardShot, WorkbenchSummary } from "@aifilm/shared";
@@ -385,7 +386,7 @@ export async function createRechargeOrder(userId = DEMO_USER_ID, input: { planId
 }
 
 export async function handleRechargeCallback(input: {
-  orderId: string; userId?: string; channel?: string; providerTradeNo?: string; amountCny?: number; payload?: unknown;
+  orderId: string; userId?: string; channel?: string; providerTradeNo?: string; amountCny?: number; amountFen?: number; paidAt?: Date; payload?: unknown;
 }) {
   if (input.amountCny !== undefined && (!Number.isFinite(input.amountCny) || input.amountCny < 0)) throw new Error("支付金额无效");
   const tradeNo = input.providerTradeNo?.trim() || undefined;
@@ -395,6 +396,10 @@ export async function handleRechargeCallback(input: {
     const order = await tx.rechargeOrder.findFirst({ where: { id: input.orderId, ...(input.userId ? { userId: input.userId } : {}) } });
     if (!order) throw new Error("充值订单不存在");
     if (input.channel && input.channel !== order.channel) throw new Error("Payment channel mismatch");
+    if (input.amountFen !== undefined && (!Number.isSafeInteger(input.amountFen) || input.amountFen <= 0 ||
+        input.amountFen !== (order.amountFen ?? Math.round(order.amountCny * 100)))) throw new Error("Payment amount mismatch");
+    if (order.channel === "wechat" && order.amountFen !== null && (!tradeNo || input.amountFen === undefined || !input.paidAt))
+      throw new Error("真实支付必须提供完整的已验证凭证");
     if (input.amountCny !== undefined && Math.round(input.amountCny * 100) !== Math.round(order.amountCny * 100)) throw new Error("Payment amount mismatch");
     if (tradeNo) {
       const reused = await tx.paymentRecord.findFirst({ where: { channel: order.channel, providerTradeNo: tradeNo, orderId: { not: order.id }, status: "succeeded" } });
@@ -406,7 +411,7 @@ export async function handleRechargeCallback(input: {
       if (!payment) throw new Error("已支付订单缺少支付流水，请联系管理员核对");
       return { order: mapRechargeOrder(order), payment: mapPaymentRecord(payment) };
     }
-    if (order.status !== "pending") throw new Error("订单当前状态不允许入账");
+    if (order.status !== "pending" && !(order.status === "expired" && input.amountFen !== undefined)) throw new Error("订单当前状态不允许入账");
     const credits = order.credits + order.bonusCredits;
     if (!Number.isSafeInteger(credits) || credits < 0) throw new Error("订单积分配置无效");
     const account = await lockCreditAccount(tx, order.userId);
@@ -419,7 +424,10 @@ export async function handleRechargeCallback(input: {
       id: `tx_${crypto.randomUUID()}`, userId: order.userId, type: "recharge", amount: credits, balanceAfter: updated.balance,
       description: `充值订单 ${order.id} 入账：${order.planName}，支付前余额 ${account.balance}`
     } });
-    const paid = await tx.rechargeOrder.update({ where: { id: order.id }, data: { status: "paid", paidAt: new Date(), providerTradeNo: tradeNo } });
+    const membershipPeriod = await grantMembership(tx, order);
+    const paid = await tx.rechargeOrder.update({ where: { id: order.id }, data: {
+      status: "paid", paidAt: input.paidAt ?? new Date(), providerTradeNo: tradeNo, reconcileError: null, ...membershipPeriod
+    } });
     return { order: mapRechargeOrder(paid), payment: mapPaymentRecord(payment) };
   });
 }
@@ -1302,7 +1310,7 @@ export async function runProjectImageTasks(
     }
     if (!successes.length) throw new Error(failures.join("；") || "未生成可用图片");
     const billed = (nineGrid ? 1 : successes.length) * unitCredits;
-    const result = await billing.complete(billed, tx => persistCurrentShotImages(tx, projectId, successes, billed), {
+    const result = await billing.complete(billed, (tx, settledCredits) => persistCurrentShotImages(tx, projectId, successes, settledCredits), {
       status: failures.length ? "failed" : "succeeded", errorReason: failures.length ? `成功 ${successes.length} 张，失败 ${failures.length} 张；只对成功项扣费。${failures.join("；")}` : null,
       onStale: tx => persistStaleShotOutputs(tx, { projectId, taskId: billing.taskId, type: "image", outputs: successes })
     });
@@ -1381,7 +1389,7 @@ export async function runProjectVideoTasks(
         const videoUrl = await persistVideoReference(generated.videoUrl, `video-${projectId}-${shot.shotNo}`);
         if (!videoUrl) throw new Error("视频已生成但保存失败，请刷新继续保存。");
         const completed = await billing.complete(billing.task.estimatedCredits,
-          tx => persistCurrentShotVideo(tx, { projectId, shot, url: videoUrl, credits: billing.task.estimatedCredits, description: generated.message }),
+          (tx, settledCredits) => persistCurrentShotVideo(tx, { projectId, shot, url: videoUrl, credits: settledCredits, description: generated.message }),
           { onStale: tx => persistStaleShotOutputs(tx, { projectId, taskId: billing.taskId, type: "video", outputs: [{ shot, url: videoUrl }] }) });
         return { task: mapTask(completed.task), created: completed.created };
       });
