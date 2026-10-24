@@ -17,7 +17,8 @@ try {
       select: { id: true, provider: true, type: true, status: true, finalCredits: true, errorReason: true } });
     const providerRequests = [], untraceableTasks = [];
     for (const task of tasks) {
-      if (/mock|local|embedded|content_operation/i.test(task.provider)) continue;
+      // Operation rows are execution locks; their children represent actual calls.
+      if (task.id.startsWith("content_operation_") || /mock|local|embedded/i.test(task.provider)) continue;
       let metadata = {};
       try { const value = JSON.parse(task.errorReason ?? "{}"); if (value.kind === "media_checkpoint") metadata = value.metadata ?? {}; } catch {}
       const requestId = metadata.remoteTaskId ?? metadata.remoteRequestId;

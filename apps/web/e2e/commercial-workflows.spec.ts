@@ -65,7 +65,7 @@ test("online cashier reuses pending orders and refreshes the UI after a confirme
     if (path.includes("/orders/")) { paid = true; return route.fulfill({ json: { ...order, status: "paid", codeUrl: undefined } }); }
     return route.fulfill({ json: [] });
   });
-  await page.goto("/recharge");
+  await page.goto("/#/recharge");
   const buy = page.getByRole("button", { name: /支付验收套餐 · ¥9.90/ });
   await buy.click();
   await expect(page.getByRole("region", { name: "当前支付订单" })).toContainText("待支付");
@@ -90,7 +90,7 @@ test("membership checkout exposes current benefits, same-tier renewal and no aut
       paidThrough: new Date(Date.now()+86400_000).toISOString(), autoRenew: false } });
     return route.fulfill({ json: [] });
   });
-  await page.goto("/recharge");
+  await page.goto("/#/recharge");
   await expect(page.getByRole("button", { name: "同档续费一个月" })).toBeEnabled();
   await expect(page.getByRole("button", { name: "购买一个月", exact: true })).toBeDisabled();
   await expect(page.getByText(/每次购买一个自然月，不自动扣款/)).toBeVisible();

@@ -58,6 +58,15 @@ test "$ready" = true
 docker exec "$prefix-postgres" createdb -U postgres audit_api_full_dr
 docker exec "$prefix-postgres" pg_restore -U postgres -d audit_api_full_dr --exit-on-error \
   --single-transaction --no-owner --no-privileges /backup.dump
+# Optional release rehearsal upgrades only this disposable database. The packaged
+# CLI refuses destructive changes, exactly as the production release command does.
+if [ "${DR_REHEARSE_SCHEMA:-false}" = true ]; then
+  docker run --rm --network "$network" -e AIFILM_LOAD_ENV_FILES=false \
+    -e DATABASE_URL=postgresql://postgres@postgres:5432/audit_api_full_dr \
+    "$image" node apps/api/node_modules/prisma/build/index.js db push \
+    --schema apps/api/prisma/schema.prisma --skip-generate
+  echo "SCHEMA_REHEARSAL_OK (isolated restored database)"
+fi
 docker run -d --name "$prefix-redis" --network "$network" --network-alias redis \
   --memory=128m --cpus=0.25 -v "$work/redis:/data" redis:7-alpine \
   redis-server --appendonly no --appendfsync everysec --maxmemory-policy noeviction >/dev/null
