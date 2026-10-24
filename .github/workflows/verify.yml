@@ -60,6 +60,8 @@ jobs:
           sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
           sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends rsync ffmpeg fonts-noto-cjk
       - run: pnpm install --frozen-lockfile
+      - name: Reject known dependency vulnerabilities
+        run: pnpm audit --audit-level=low
       - run: pnpm --filter @aifilm/api db:generate
       - run: pnpm --filter @aifilm/shared build
       - name: Create the isolated integration schema without accepting data loss
