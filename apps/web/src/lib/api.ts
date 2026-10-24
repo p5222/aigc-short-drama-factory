@@ -24,6 +24,7 @@
   ImageModelTestResult,
   InvoiceRecord,
   MembershipPlan,
+  MembershipStatus,
   ModelPrice,
   ModelProvider,
   ModelTestResult,
@@ -145,6 +146,12 @@ export const api = {
   creditAccount: () => request<CreditAccount>("/credits/account"),
   transactions: () => request<CreditTransaction[]>("/credits/transactions"),
   orders: () => request<RechargeOrder[]>("/billing/orders"),
+  paymentAvailability: () => request<{ wechat: boolean; membership: boolean; autoRenew: false }>("/billing/availability"),
+  membership: () => request<MembershipStatus>("/billing/membership"),
+  checkout: (input: { planId: string; kind: "recharge" | "membership"; requestId: string }) =>
+    request<RechargeOrder>("/billing/checkout", { method: "POST", body: JSON.stringify(input) }),
+  paymentOrder: (id: string) => request<RechargeOrder>(`/billing/orders/${encodeURIComponent(id)}`),
+  resumeCheckout: (id: string) => request<RechargeOrder>(`/billing/orders/${encodeURIComponent(id)}/checkout`, { method: "POST" }),
   createOrder: (input: { planId: string; channel?: "wechat" | "alipay" | "manual" | "mock" }) =>
     request<RechargeOrder>("/billing/orders", {
       method: "POST",

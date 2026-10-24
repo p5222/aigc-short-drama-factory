@@ -6,10 +6,11 @@ import { modelCreditRange, rechargeCheckoutUrl } from "./creditCheckoutModel";
 import { createTaskActionRunner } from "./taskActionModel";
 import { InlineNotice, PageHeader, StatePanel } from "../design-system/ui";
 import "./creator-pages.css";
+import { OnlineCheckout } from "./OnlineCheckout";
 
 const modalityOrder: Record<string, number> = { text: 0, image: 1, video: 2, tts: 3, embedding: 4 };
 
-export function RechargePage({ plans, modelPrices, onRefresh }: { plans: Plan[]; membershipPlans: MembershipPlan[]; modelPrices: ModelPrice[]; onRefresh: () => void | Promise<void> }) {
+export function RechargePage({ plans, membershipPlans, modelPrices, onRefresh }: { plans: Plan[]; membershipPlans: MembershipPlan[]; modelPrices: ModelPrice[]; onRefresh: () => void | Promise<void> }) {
   const [message, setMessage] = useState("");
   const [redeemCode, setRedeemCode] = useState("");
   const [error, setError] = useState("");
@@ -62,7 +63,8 @@ export function RechargePage({ plans, modelPrices, onRefresh }: { plans: Plan[];
 
   return (
     <div className="page-stack recharge-page creator-page">
-      <PageHeader title="积分充值" description="从店铺购买卡密，回到这里兑换。每次生成前可查看本次费用。" />
+      <PageHeader title="积分充值" description="选择已开放的支付方式充值，或使用店铺卡密兑换。每次生成前可查看本次费用。" />
+      <OnlineCheckout plans={plans} memberships={membershipPlans} onRefresh={onRefresh} />
       <section className="panel creator-redeem-panel" aria-labelledby="creator-redeem-title">
         <div><h2 id="creator-redeem-title">已有卡密？直接兑换</h2><p>兑换成功后，积分立即计入当前账户。</p></div>
         <form className="redeem-row" onSubmit={event => { event.preventDefault(); void redeem(); }}>

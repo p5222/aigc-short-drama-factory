@@ -16,6 +16,7 @@ export async function enqueueCreationTask(taskId: string) {
     input: task.requestPayload as unknown as CreateProjectInput, estimatedCredits: task.estimatedCredits
   }, {
     jobId: task.jobId,
+    priority: task.queuePriority,
     attempts: Number(process.env.GENERATION_JOB_ATTEMPTS ?? 3),
     backoff: { type: "exponential", delay: Number(process.env.GENERATION_JOB_BACKOFF_MS ?? 5000) },
     removeOnComplete: 100, removeOnFail: 100

@@ -53,7 +53,7 @@ test("HTTP business boundaries: sessions, administrator writes, private media an
   const child = spawn(process.execPath, ["--import", pathToFileURL(require.resolve("tsx")).href, "src/server.ts"], {
     cwd: resolve(import.meta.dirname, "../.."), stdio: ["ignore", "pipe", "pipe"], env: {
       ...process.env, AIFILM_LOAD_ENV_FILES: "false", NODE_ENV: "test", DATABASE_URL: databaseUrl!,
-      DEEPSEEK_API_KEY: "",
+      DEEPSEEK_API_KEY: "", WECHAT_PAY_ENABLED: "false",
       REDIS_URL: redisUrl.toString(), API_PORT: String(port), PUBLIC_API_BASE_URL: base,
       OBJECT_STORAGE_LOCAL_DIR: root, MEDIA_SIGNING_KEY: "http-review-test-signing-key-at-least-32-bytes",
       SEED_DEFAULT_USERS: "false", SEED_DEMO_USER: "false", SEED_DEMO_DATA: "false", API_RATE_LIMIT_MAX: "1000"
@@ -83,6 +83,20 @@ test("HTTP business boundaries: sessions, administrator writes, private media an
       sessions.push({ token: body.token, cookie: response.headers.get("set-cookie")!.split(";")[0]! });
     }
     const [owner, other, admin] = sessions as [typeof sessions[number], typeof sessions[number], typeof sessions[number]];
+    await t.test("live checkout fails closed without merchant configuration and membership endpoints require a session", async () => {
+      assert.equal((await request("/api/billing/availability")).status, 401);
+      assert.equal((await request("/api/billing/membership")).status, 401);
+      const availability = await (await request("/api/billing/availability", owner.token)).json();
+      assert.deepEqual(availability, { wechat: false, membership: false, autoRenew: false });
+      const notification = await request("/api/billing/wechat/notify", undefined, "POST", { forged: true });
+      assert.equal(notification.status, 503, "provider callback must bypass sessions but refuse unavailable merchant");
+      const checkout = await request("/api/billing/checkout", owner.token, "POST", { planId: "missing", kind: "recharge", requestId: run });
+      assert.equal(checkout.status, 503);
+      const count = await db.rechargeOrder.count({ where: { userId: ids[0] } });
+      assert.equal(count, 0);
+      const membership = await (await request("/api/billing/membership", owner.token)).json();
+      assert.deepEqual(membership, { active: null, paidThrough: null, autoRenew: false });
+    });
     type AuditPage = { total: number; items: Array<{ actorId: string; action: string; target: string; status: string; statusCode: number | null; details: unknown }> };
     async function waitForAudit(keyword: string, complete: (page: AuditPage) => boolean) {
       for (let attempt = 0; attempt < 40; attempt++) {

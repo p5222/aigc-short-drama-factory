@@ -41,6 +41,7 @@ model User {
   redemptions  RedeemRedemption[]
   sessions     AuthSession[]
   orders       RechargeOrder[]
+  membership   UserMembership?
   invoices     Invoice[]
   exportJobs   ExportJob[]
   analyticsEvents AnalyticsEvent[]
@@ -269,6 +270,8 @@ model GenerationTask {
   progress         Int      @default(0)
   estimatedCredits Int      @default(0)
   finalCredits     Int?
+  billingDiscountPercent Int?
+  queuePriority    Int      @default(100)
   errorReason      String?
   jobId            String?
   requestPayload   Json?
@@ -665,6 +668,20 @@ model RechargeOrder {
   planName        String
   channel         String
   amountCny       Float
+  amountFen       Int?
+  requestId       String?
+  requestHash     String?
+  kind            String          @default("recharge")
+  membershipPlanId String?
+  membershipDiscountPercent Int   @default(0)
+  membershipPriorityLevel Int     @default(0)
+  membershipStartsAt DateTime?
+  membershipEndsAt DateTime?
+  codeUrl         String?
+  expiresAt       DateTime?
+  checkedAt       DateTime?
+  checkoutLeaseUntil DateTime?
+  reconcileError  String?
   credits         Int
   bonusCredits    Int             @default(0)
   status          String          @default("pending")
@@ -678,6 +695,20 @@ model RechargeOrder {
 
   @@index([userId])
   @@index([status])
+  @@unique([userId, requestId])
+  @@index([channel, status, checkedAt])
+}
+
+model UserMembership {
+  userId          String   @id
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  planId          String
+  planName        String
+  startsAt        DateTime
+  endsAt          DateTime
+  discountPercent Int
+  priorityLevel   Int
+  updatedAt       DateTime @updatedAt
 }
 
 model PaymentRecord {

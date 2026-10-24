@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import type { Prisma } from "@prisma/client";
+import { activeMembership, discountedCredits, membershipQueuePriority } from "./membership.js";
 
 type TaskCreditInput = { taskId: string; userId: string; description?: string };
 export type TaskCreditMutation = { applied: boolean; credits: number; reservedCredits: number };
@@ -44,6 +45,14 @@ export async function reserveTaskCredits(tx: Prisma.TransactionClient, input: Ta
   if (task.status === "succeeded" || task.finalCredits !== null || consumedCredits > 0) {
     throw new Error("已结算任务不能再次冻结积分");
   }
+  if (task.billingDiscountPercent === null) {
+    // Preserve existing reservations at their original price across this rollout.
+    const membership = reservedCredits === 0 ? await activeMembership(tx, input.userId) : null;
+    await tx.generationTask.update({ where: { id: task.id }, data: {
+      billingDiscountPercent: membership?.discountPercent ?? 0,
+      queuePriority: membershipQueuePriority(membership?.priorityLevel ?? 0)
+    } });
+  }
   if (ledgerBalance < 0) throw new Error("历史任务退款记录异常，请联系管理员核对后重试");
   const credits = Math.max(0, estimate - reservedCredits);
   if (!credits) return { applied: false, credits: 0, reservedCredits };
@@ -65,8 +74,9 @@ export async function settleTaskCredits(
   if (["succeeded", "canceled", "refunded", "failed"].includes(task.status) || task.finalCredits !== null || consumedCredits > 0) {
     return { applied: false, credits: 0, reservedCredits };
   }
-  const credits = creditAmount(input.finalCredits ?? task.estimatedCredits, "结算积分");
-  if (credits > reservedCredits) throw new Error("任务冻结积分不足，不能结算");
+  const baseCredits = creditAmount(input.finalCredits ?? task.estimatedCredits, "结算积分");
+  if (baseCredits > reservedCredits) throw new Error("任务冻结积分不足，不能结算");
+  const credits = discountedCredits(baseCredits, task.billingDiscountPercent ?? 0);
   if (account.frozenBalance < reservedCredits || account.balance < credits) throw new Error("账户积分账目异常，请联系管理员核对");
   await tx.creditAccount.update({ where: { userId: input.userId }, data: {
     frozenBalance: { decrement: reservedCredits }, balance: { decrement: credits }, totalConsume: { increment: credits }
@@ -74,7 +84,7 @@ export async function settleTaskCredits(
   if (credits > 0) await tx.creditTransaction.create({ data: {
     id: `tx_${crypto.randomUUID()}`, userId: input.userId, projectId: task.projectId, taskId: task.id,
     type: "consume", amount: -credits, balanceAfter: account.balance - credits,
-    description: input.description ?? "生成任务正式扣费"
+    description: `${input.description ?? "生成任务正式扣费"}${task.billingDiscountPercent ? `（会员减免 ${task.billingDiscountPercent}%，原价 ${baseCredits} 积分）` : ""}`
   } });
   if (reservedCredits > credits) await tx.creditTransaction.create({ data: {
     id: `tx_${crypto.randomUUID()}`, userId: input.userId, projectId: task.projectId, taskId: task.id,

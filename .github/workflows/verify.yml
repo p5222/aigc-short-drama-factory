@@ -81,12 +81,14 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm build
       - run: node --test tools/git-workbench/workbench.test.mjs
+      - run: node --test tools/commerce/*.test.mjs
       - name: Verify Project Hub authentication, real Git isolation, retry and persistent audit
         run: node --test tools/project-hub/*.test.mjs
       - name: Verify the scoped Caddy operations route
         run: python3 -m unittest discover -s deploy/project-hub -p 'test_*.py' -v
       - run: python3 -m unittest discover -s deploy -p test_deployment.py -v
-      - run: bash -n deploy/manjiao_remote.sh deploy/server_git_post_receive.sh deploy/backup_server_state.sh deploy/install_git_hook.sh deploy/verify_backup_restore.sh deploy/test_backup_restore.sh deploy/test_runtime_image.sh
+      - run: bash -n deploy/manjiao_remote.sh deploy/server_git_post_receive.sh deploy/backup_server_state.sh deploy/install_git_hook.sh deploy/verify_backup_restore.sh deploy/test_backup_restore.sh deploy/test_runtime_image.sh deploy/verify_full_restore.sh deploy/test_full_restore.sh deploy/scheduled_backup.sh deploy/install_backup_timer.sh
+      - run: node --check deploy/verify_full_restore.mjs
       - name: Restore a real backup into an isolated PostgreSQL instance and reject corruption
         run: bash deploy/test_backup_restore.sh "${{ job.services.postgres.id }}"
       - name: Verify live Redis AOF migration preserves unsnapshotted queue data
@@ -96,6 +98,8 @@ jobs:
         run: docker build --build-arg APP_REVISION="${{ github.sha }}" -f deploy/Dockerfile -t manjiao-verify .
       - name: Verify packaged production API and disabled simulated checkout
         run: bash deploy/test_runtime_image.sh
+      - name: Restore full isolated stack and verify bounded HTTP load, queue priorities and retries
+        run: bash deploy/test_full_restore.sh "${{ job.services.postgres.id }}" "${{ job.services.redis.id }}" "${{ github.sha }}"
       - name: Encode a real video with Chinese text and silent AAC audio
         run: docker run --rm --network none -v "$PWD/deploy/ffmpeg_smoke.sh:/smoke.sh:ro" manjiao-verify sh /smoke.sh
       - name: Build the isolated Project Hub image

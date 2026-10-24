@@ -35,7 +35,8 @@ test("durable creation dispatch restores a lost Redis job once without changing 
     });
     await t.test("duplicate dispatch reuses the deterministic job and keeps the reservation", async () => {
       await Promise.all(Array.from({ length: 8 }, () => enqueueCreationTask(taskId)));
-      assert.equal((await queue.generationQueue.getJobs(["waiting"])).filter(job => job.id === jobId).length, 1);
+      assert.equal((await queue.generationQueue.getJobs(["waiting", "prioritized"])).filter(job => job.id === jobId).length, 1);
+      assert.equal((await queue.generationQueue.getJob(jobId))!.opts.priority, 100);
       const account = await db.creditAccount.findUniqueOrThrow({ where: { userId } });
       assert.equal(account.balance, 100); assert.equal(account.frozenBalance, 20);
       assert.equal(await db.creditTransaction.count({ where: { userId } }), 0);

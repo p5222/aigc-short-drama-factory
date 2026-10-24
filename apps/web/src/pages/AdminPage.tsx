@@ -3444,10 +3444,10 @@ function MembershipSection({
   const enabledRows = plans.filter((plan) => plan.enabled);
   const railItems: AdminRailItem[] = [
     { id: "all", label: "全部会员", count: plans.length, meta: "订阅方案", tone: "blue" },
-    { id: "enabled", label: "历史启用标记", count: enabledRows.length, meta: "当前不售卖", tone: "green" },
+    { id: "enabled", label: "已启用", count: enabledRows.length, meta: "依支付配置开放", tone: "green" },
     { id: "disabled", label: "已停用", count: plans.length - enabledRows.length, meta: "后台保留", tone: "danger" },
-    { id: "discount", label: "预留折扣", count: plans.filter((plan) => plan.discountPercent > 0).length, meta: "尚未执行", tone: "amber" },
-    { id: "priority", label: "预留优先级", count: plans.filter((plan) => plan.priorityLevel > 0).length, meta: "尚未执行", tone: "violet" }
+    { id: "discount", label: "结算折扣", count: plans.filter((plan) => plan.discountPercent > 0).length, meta: "任务开始时锁定", tone: "amber" },
+    { id: "priority", label: "创作优先级", count: plans.filter((plan) => plan.priorityLevel > 0).length, meta: "平台创作队列", tone: "violet" }
   ];
   const pagination = useAdminPagination(rows, `${keyword}:${segment}`);
 
@@ -3455,21 +3455,22 @@ function MembershipSection({
     <section className="admin-v2-section">
       <AdminModuleWorkbench
         railTitle="会员权益"
-        railDescription="查看历史方案；当前只开放一次性积分充值。"
+        railDescription="管理月卡套餐、结算折扣与创作队列优先级。"
         railItems={railItems}
         activeRail={segment}
         onRailChange={setSegment}
-        railFooter={<span>以下配置尚未接入购买和权益执行。</span>}
+        railFooter={<span>价格和权益随订单保存，修改仅影响新订单。</span>}
       >
         <div className="admin-product-metrics compact">
-          <AdminMetric icon={<ReceiptText size={20} />} label="预留方案" value={plans.length} hint="当前均不可购买" tone="blue" />
-          <AdminMetric icon={<CircleDollarSign size={20} />} label="历史启用标记" value={enabledRows.length} hint="当前不提供订阅购买" tone="green" />
-          <AdminMetric icon={<WalletCards size={20} />} label="预留月额度" value={plans.reduce((sum, plan) => sum + plan.monthlyCredits, 0).toLocaleString()} hint="尚未自动发放" tone="amber" />
-          <AdminMetric icon={<ShieldCheck size={20} />} label="预留优先级" value={Math.max(0, ...plans.map((plan) => plan.priorityLevel))} hint="尚未影响实际队列" tone="violet" />
+          <AdminMetric icon={<ReceiptText size={20} />} label="会员方案" value={plans.length} hint="按月购买，同档续期" tone="blue" />
+          <AdminMetric icon={<CircleDollarSign size={20} />} label="启用方案" value={enabledRows.length} hint="支付配置有效时可购买" tone="green" />
+          <AdminMetric icon={<WalletCards size={20} />} label="方案积分合计" value={plans.reduce((sum, plan) => sum + plan.monthlyCredits, 0).toLocaleString()} hint="各套餐单月积分之和" tone="amber" />
+          <AdminMetric icon={<ShieldCheck size={20} />} label="最高创作等级" value={Math.max(0, ...plans.map((plan) => plan.priorityLevel))} hint="平台创作队列优先级" tone="violet" />
         </div>
-        <p className="admin-toast" role="status">订阅会员暂未开放。月度发放、模型折扣和优先队列尚未实现，以下方案仅供核对；运营售卖请使用“充值套餐”中的一次性充值。</p>
+        <p className="admin-toast" role="status">月卡按次付费，不自动扣款；每次付款立即发放当次积分，同档续费延长一个自然月。任务按原价冻结，完成后按开始时的会员折扣结算。微信商户配置通过校验后才显示购买入口。</p>
         <AdminToolbar>
           <SearchField value={keyword} onChange={setKeyword} placeholder="搜索会员、权益、标签..." />
+          <button className="admin-primary-btn" onClick={() => setCreateOpen(true)}>新增会员方案</button>
         </AdminToolbar>
         <div className="admin-table-wrap admin-data-card">
           <table className="admin-v2-table admin-membership-table">
@@ -3488,11 +3489,11 @@ function MembershipSection({
             </thead>
             <tbody>
               {pagination.items.map((plan) => (
-                <tr key={plan.id}><td>{plan.name}</td><td>¥{plan.monthlyPrice}</td><td>{plan.monthlyCredits}</td><td>{plan.discountPercent}%（预留）</td><td>{plan.priorityLevel}（预留）</td><td>{plan.features.join("；")}</td><td>{plan.shopUrl || "未配置"}</td><td>未开放</td><td>只读</td></tr>
+                <MembershipRow key={`${plan.id}:${plan.monthlyPrice}:${plan.monthlyCredits}:${plan.enabled}`} plan={plan} onSave={onSave} onDelete={onDelete} />
               ))}
             </tbody>
           </table>
-          {!rows.length ? <EmptyHint text="没有匹配的预留订阅方案。可调整筛选查看历史配置。" /> : null}
+          {!rows.length ? <EmptyHint text="没有匹配的会员方案，可调整筛选或新增方案。" /> : null}
         </div>
         <TableFooter total={rows.length} page={pagination.page} pageSize={pagination.pageSize} onPageChange={pagination.setPage} />
       </AdminModuleWorkbench>
