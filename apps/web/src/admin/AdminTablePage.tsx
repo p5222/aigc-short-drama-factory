@@ -6,6 +6,8 @@ export interface AdminColumn<T> {
   key: string;
   label: string;
   width?: string;
+  align?: "left" | "right" | "center";
+  sticky?: "right";
   render: (row: T) => ReactNode;
 }
 
@@ -22,6 +24,9 @@ export function AdminTablePage<T>({
   emptyText = "暂无数据",
   page,
   totalPages,
+  total,
+  pageSize,
+  onPageSizeChange,
   onPageChange,
   onRowClick
 }: {
@@ -37,6 +42,9 @@ export function AdminTablePage<T>({
   emptyText?: string;
   page?: number;
   totalPages?: number;
+  total?: number;
+  pageSize?: number;
+  onPageSizeChange?: (size: number) => void;
   onPageChange?: (page: number) => void;
   onRowClick?: (row: T) => void;
 }) {
@@ -48,12 +56,13 @@ export function AdminTablePage<T>({
       </header>
       {filters ? <div className="adm-filterbar">{filters}</div> : null}
       {error ? <InlineNotice tone="error">{error}</InlineNotice> : null}
+      <p className="adm-table-mobile-hint">左右滑动表格，查看完整字段</p>
       <div className="adm-table-scroll" aria-busy={loading} role="region" aria-label={`${title}，表格可横向滚动`} tabIndex={0}>
         <table>
           <caption>{title}</caption>
-          <thead><tr>{columns.map((column) => <th scope="col" key={column.key} style={{ width: column.width }}>{column.label}</th>)}</tr></thead>
+          <thead><tr>{columns.map((column) => <th scope="col" key={column.key} data-sticky={column.sticky} style={{ width: column.width, textAlign: column.align }}>{column.label}</th>)}</tr></thead>
           <tbody>
-            {!loading && rows.map((row) => (
+            {!loading && !error && rows.map((row) => (
               <tr
                 key={rowKey(row)}
                 className={onRowClick ? "adm-clickable-row" : undefined}
@@ -68,7 +77,7 @@ export function AdminTablePage<T>({
                   onRowClick(row);
                 }}
               >
-                {columns.map((column) => <td key={column.key}>{column.render(row)}</td>)}
+                {columns.map((column) => <td key={column.key} data-sticky={column.sticky} style={{ textAlign: column.align }}>{column.render(row)}</td>)}
               </tr>
             ))}
           </tbody>
@@ -77,9 +86,11 @@ export function AdminTablePage<T>({
       </div>
       {page != null && totalPages != null ? (
         <footer className="adm-pagination">
-          <span>第 {page} / {Math.max(1, totalPages)} 页</span>
+          <span>{total != null && pageSize ? total === 0 ? "暂无匹配记录" : `第 ${(page - 1) * pageSize + 1}–${Math.min(page * pageSize, total)} 条，共 ${total.toLocaleString()} 条` : `第 ${page} / ${Math.max(1, totalPages)} 页`}</span>
           <div>
+            {onPageSizeChange && pageSize ? <label className="adm-page-size">每页<select aria-label="每页条数" value={pageSize} disabled={loading} onChange={event => { if (canLeaveAdminEditor()) onPageSizeChange(Number(event.target.value)); }}>{[10, 25, 50, 100].map(size => <option key={size} value={size}>{size} 条</option>)}</select></label> : null}
             <button type="button" disabled={loading || !onPageChange || page <= 1} onClick={() => { if (canLeaveAdminEditor()) onPageChange?.(page - 1); }}>上一页</button>
+            {total != null ? <span aria-live="polite">{page} / {Math.max(1, totalPages)}</span> : null}
             <button type="button" disabled={loading || !onPageChange || page >= totalPages} onClick={() => { if (canLeaveAdminEditor()) onPageChange?.(page + 1); }}>下一页</button>
           </div>
         </footer>

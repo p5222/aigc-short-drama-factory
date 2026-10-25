@@ -169,7 +169,8 @@
 }
 @media (max-width: 900px) {
   :root .app-shell.product-shell { grid-template-columns: minmax(0,1fr); }
-  :root .app-shell.product-shell .sidebar { width: 280px; padding: 24px 16px !important; }
+  :root .app-shell.product-shell .sidebar { top: 0 !important; bottom: 0; width: min(280px,100vw) !important; height: 100dvh !important; max-height: 100dvh !important; gap: 0 !important; padding: 24px 16px !important; overflow: hidden; }
+  :root .app-shell.product-shell .sidebar .brand, :root .app-shell.product-shell .side-create { flex-shrink: 0; }
   :root .app-shell.product-shell .topbar { padding-inline: 16px; min-height: 64px; height: 64px; }
   :root .app-shell.product-shell .dashboard-work-grid { grid-template-columns: minmax(0,1fr) 260px; }
 }

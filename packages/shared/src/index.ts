@@ -388,6 +388,8 @@ export interface AdminUserRow {
   projects: number;
   status: string;
   hasPassword?: boolean;
+  createdAt: string;
+  updatedAt: string;
   lastLoginAt?: string;
 }
 

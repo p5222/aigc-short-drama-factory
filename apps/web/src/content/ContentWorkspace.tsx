@@ -90,7 +90,7 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
   const activeRequest = useRef<RequestToken | null>(null);
   const selected = projects.find((project) => project.id === selectedId);
 
-  useEffect(() => { if (!startBlank) setSelectedId((current) => reconcileProjectId(projects, current || initialSelectedId)); }, [projects, initialSelectedId, startBlank]);
+  useEffect(() => { if (!startBlank && !creating) setSelectedId((current) => reconcileProjectId(projects, current || initialSelectedId)); }, [projects, initialSelectedId, startBlank, creating]);
   useEffect(() => {
     activeRequest.current = null;
     setBusy((current) => current === "save" ? "" : current);
@@ -429,6 +429,15 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
     else changeView(() => { setSelectedChapterNo(chapterNo); setSourceOpen(false); if (viewStage === "handoff") setFocusStage(chapterNavigationStage(viewStage)); });
   };
 
+  function startNewContent() {
+    changeView(() => {
+      setSelectedId(""); setCreating(true); setCreateTitle(""); setCreateStyle(styleOptions[0]);
+      setIntentType("title"); setTargetWords(20000); setChapterCount(10); setBatchSize(2);
+      setSourceTitle(""); setSourceContent(""); setSourceOpen(false); setFocusStage("");
+      setOutlineDraft(null); setSelectedChapterNo(1); setFailedProjectId(""); setError(""); setMessage("");
+    });
+  }
+
   // ---------- 顶栏 ----------
   const topbar = <header className="cw2-topbar">
     <button type="button" className="cw2-back" onClick={() => { if (canChangeView()) onBack?.(); }} aria-label="返回我的作品" title="返回我的作品"><ArrowLeft size={17} /></button>
@@ -451,7 +460,7 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
     </nav>
     <div className="cw2-top-actions">
       {selected && !creating ? <ModelRoutePicker modality="text" compact providers={providers} value={{ providerId: selected.textProvider, model: selected.textModel }} onChange={(providerId, model) => { void changeModelRoute(providerId, model); }} /> : null}
-      <button type="button" className="cw2-icon-button" disabled={working} onClick={() => changeView(() => { setCreating(true); setSourceOpen(false); })} title="新建内容创作" aria-label="新建内容创作"><Plus size={16} /></button>
+      <button type="button" className="cw2-icon-button" disabled={working} onClick={startNewContent} title="新建内容创作" aria-label="新建内容创作"><Plus size={16} /></button>
       <button type="button" className="cw2-icon-button" disabled={working} onClick={() => void refresh()} title="刷新" aria-label="刷新"><RefreshCw size={15} /></button>
       {selected && !creating ? <button type="button" className="cw2-icon-button danger" disabled={working} onClick={() => { if (canChangeView()) void removeContentProject(selected.id); }} title="删除作品" aria-label="删除作品"><Trash2 size={15} /></button> : null}
     </div>
@@ -680,9 +689,12 @@ function ContentCreationIntent({ intent, intentType, targetWords, chapterCount, 
   ];
   const placeholder = intentType === "title" ? "例如：替嫁后我成了首辅白月光" : intentType === "genre" ? "例如：都市重生、女频复仇、强爽点短篇" : "例如：《作品A》《作品B》《作品C》";
   return <section className="content-intent-workspace">
-    <header><span className="content-eyebrow">STEP 1 · 创作意图</span><h2>你想创作什么内容？</h2><p>选择一种输入方式。系统会识别方向、提炼同类爆款结构，再进入四维拆解。</p></header>
+    <header><span className="content-eyebrow">STEP 1 · 创作意图</span><h2>一个想法，就是故事的起点</h2><p>写下标题、题材或参考作品，先梳理故事结构，再逐章完善正文。</p></header>
+    <div className="content-intent-layout"><div className="content-intent-editor">
     <div className="content-intent-modes">{options.map((option) => <button type="button" key={option.id} disabled={busy} aria-pressed={intentType === option.id} className={intentType === option.id ? "is-active" : ""} onClick={() => onIntentTypeChange(option.id)}><strong>{option.label}</strong><span>{option.hint}</span></button>)}</div>
-    <label className="content-intent-input"><span>{options.find((item) => item.id === intentType)?.label}</span><textarea disabled={busy} value={intent} onChange={(event) => onIntentChange(event.target.value)} maxLength={2000} placeholder={placeholder} autoFocus /><small>{intent.length}/2000</small></label>
+    <label className="content-intent-input"><span>{options.find((item) => item.id === intentType)?.label}</span><textarea aria-label={options.find((item) => item.id === intentType)?.label} disabled={busy} value={intent} onChange={(event) => onIntentChange(event.target.value)} maxLength={2000} placeholder={placeholder} autoFocus /><small>{intent.length}/2000</small></label>
+    <p className="content-intent-help">可以补充主角、核心冲突、故事背景和期待的结局，帮助系统理解你的方向。</p>
+    </div><aside className="content-intent-plan"><h3>本次创作计划</h3>
     <div className="content-plan-controls">
       <label><span>目标字数</span><select disabled={busy} value={targetWords} onChange={(event) => onTargetWordsChange(Number(event.target.value))}><option value={10000}>10000 字</option><option value={20000}>20000 字</option><option value={30000}>30000 字</option><option value={50000}>50000 字</option></select></label>
       <label><span>章节数量</span><select disabled={busy} value={chapterCount} onChange={(event) => onChapterCountChange(Number(event.target.value))}><option value={5}>5 章</option><option value={10}>10 章</option><option value={15}>15 章</option><option value={20}>20 章</option></select></label>
@@ -691,6 +703,7 @@ function ContentCreationIntent({ intent, intentType, targetWords, chapterCount, 
     </div>
     <div className="content-flow-preview"><b>接下来</b><span>爆款结构拆解</span><ChevronRight14 /><span>{chapterCount} 章大纲</span><ChevronRight14 /><span>每批 {batchSize} 章正文</span><ChevronRight14 /><span>制作交接</span></div>
     <div className="content-inline-actions"><button type="button" className="content-secondary-button" onClick={onCancel} disabled={!canCancel || busy}>取消</button><button type="button" className="content-primary-button" disabled={intent.trim().length < 2 || busy} onClick={onSubmit}>{busy ? <LoaderCircle size={16} /> : <Sparkles size={16} />}{busy ? "正在进行结构拆解" : "开始结构拆解"}</button></div>
+    </aside></div>
   </section>;
 }
 

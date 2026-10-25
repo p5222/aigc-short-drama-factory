@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import type { ExportJob as ExportJobRow, Prisma, PrismaClient } from "@prisma/client";
+import { adminUserQuery, type AdminUserPageOptions } from "./adminUserQuery.js";
 import { lockCreditAccount } from "../billing/accountCredits.js";
 import { grantMembership } from "../billing/membership.js";
 import { assertProductionMediaProvider, mediaCheckpoint, runMediaTask } from "../billing/mediaTask.js";
@@ -522,17 +523,25 @@ export async function listAdminUsers(): Promise<AdminUserRow[]> {
   return (await listAdminUsersPage({ pageSize: 100 })).items;
 }
 
-export async function listAdminUsersPage(options: { page?: number; pageSize?: number; keyword?: string; role?: string; status?: string } = {}) {
+export async function listAdminUsersPage(options: AdminUserPageOptions = {}) {
   const page = Math.max(1, Math.floor(Number(options.page) || 1));
   const pageSize = Math.max(1, Math.min(100, Math.floor(Number(options.pageSize) || 20)));
-  const keyword = options.keyword?.trim().slice(0, 200);
-  const where: Prisma.UserWhereInput = {
-    ...(options.role && ["admin", "creator"].includes(options.role) ? { role: options.role } : {}),
-    status: options.status && ["active", "disabled", "deleted"].includes(options.status) ? options.status : { not: "deleted" },
-    ...(keyword ? { OR: [{ name: { contains: keyword, mode: "insensitive" } }, { email: { contains: keyword, mode: "insensitive" } }, { phone: { contains: keyword } }, { id: keyword }] } : {})
-  };
+  const { where, orderBy } = adminUserQuery(options);
+  const skip = (page - 1) * pageSize;
+  const include = { credit: true, _count: { select: { projects: true } } } as const;
+  async function findPage() {
+    if (options.sort !== "credits_desc") return prisma.user.findMany({ where, include, orderBy, skip, take: pageSize });
+    // A legacy account can have no credit row. PostgreSQL DESC otherwise puts
+    // those NULL relations before funded accounts; keep them at the end.
+    const fundedWhere = { ...where, credit: { isNot: null } };
+    const withAccount = await prisma.user.count({ where: fundedWhere });
+    const regular = skip < withAccount ? await prisma.user.findMany({ where: fundedWhere, include, orderBy, skip, take: pageSize }) : [];
+    if (regular.length === pageSize) return regular;
+    const missing = await prisma.user.findMany({ where: { ...where, credit: { is: null } }, include, orderBy: { id: "asc" }, skip: Math.max(0, skip - withAccount), take: pageSize - regular.length });
+    return [...regular, ...missing];
+  }
   const [users, total] = await Promise.all([
-    prisma.user.findMany({ where, include: { credit: true, _count: { select: { projects: true } } }, orderBy: [{ createdAt: "desc" }, { id: "asc" }], skip: (page - 1) * pageSize, take: pageSize }),
+    findPage(),
     prisma.user.count({ where })
   ]);
   const items = users.map((user) => ({
@@ -548,6 +557,8 @@ export async function listAdminUsersPage(options: { page?: number; pageSize?: nu
     projects: user._count.projects,
     status: user.status,
     hasPassword: Boolean(user.passwordHash),
+    createdAt: user.createdAt.toISOString(),
+    updatedAt: user.updatedAt.toISOString(),
     lastLoginAt: user.lastLoginAt?.toISOString()
   }));
   return { items, total, page, pageSize };
@@ -626,6 +637,8 @@ export async function createAdminUser(input: {
     projects: user._count.projects,
     status: user.status,
     hasPassword: true,
+    createdAt: user.createdAt.toISOString(),
+    updatedAt: user.updatedAt.toISOString(),
     lastLoginAt: user.lastLoginAt?.toISOString()
   };
 }
@@ -679,7 +692,9 @@ export async function updateAdminUser(
     email: user.email ?? undefined,
     phone: user.phone ?? undefined,
     role: user.role,
-    status: user.status
+    status: user.status,
+    createdAt: user.createdAt.toISOString(),
+    updatedAt: user.updatedAt.toISOString()
   };
 }
 

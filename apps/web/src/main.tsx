@@ -29,6 +29,8 @@ import "./theme-contract.css";
 import "./components/creator-shell.css";
 import "./design-system/product.css";
 import "./design-system/studio-design.css";
+import "./design-system/creation-design.css";
+import "./design-system/production-design.css";
 import "./design-system/public-design.css";
 import "./admin/console-design.css";
 

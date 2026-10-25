@@ -1,5 +1,12 @@
 /* Public entrance retains the existing film assets, with calmer brand typography. */
-.cine-home-page .cine-top-nav { height: 88px; padding-inline: max(32px,calc((100vw - 1320px) / 2)); background: rgb(9 19 14 / 88%); backdrop-filter: blur(12px); }
+.cine-home-page .cine-top-nav { height: 88px; padding-inline: max(32px,calc((100vw - 1320px) / 2)); }
+.cine-home-page[data-public-view="home"] .cine-top-nav {
+  background: transparent; backdrop-filter: none; border-bottom-color: transparent; box-shadow: none;
+}
+.cine-home-page[data-public-view="home"] :is(.cine-video-layer, .cine-bg-buffer) { filter: none; mix-blend-mode: normal; }
+.cine-home-page[data-public-view="home"] .cine-top-nav :is(.nav-logo, .cine-nav-links button, .cine-language > button) { text-shadow: 0 1px 5px rgb(0 0 0 / 70%); }
+.cine-home-page[data-public-view="home"] .cine-center-copy { text-shadow: 0 2px 16px rgb(0 0 0 / 55%), 0 1px 3px rgb(0 0 0 / 60%); }
+.cine-home-page[data-public-view="home"] .cine-login-pill { background: rgb(20 40 32 / 28%); backdrop-filter: blur(8px); color: white; }
 .cine-home-page .nav-logo span { color: #eff8ef; font-size: 28px; font-weight: 600; letter-spacing: -.04em; }
 .cine-home-page .nav-logo small { color: #a0b8aa; letter-spacing: .16em; font-size: 8px; }
 .cine-home-page .cine-nav-links { gap: 16px; }

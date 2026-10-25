@@ -70,6 +70,7 @@ import { AdminEvaluationPage, AdminMasterDetail, AdminTablePage } from "../admin
 import { closeAfterAdminSuccess, createAdminActionRunner, createCreditAdjustmentAttempt, isValidCreditAdjustment, runAdminBatch, type AdminActionResult } from "../admin/adminActionModel";
 import { useAdminDialog } from "../admin/useAdminDialog";
 import { fetchAdminUserPage } from "../admin/adminApi";
+import type { AdminColumn } from "../admin/AdminTablePage";
 import { AdminAuditLogPage } from "../admin/AdminAuditLogPage";
 import { formatAdminMoney, formatAdminTaskSuccess, qualityMetricAvailability } from "../admin/adminMetricsModel";
 import { providerTestAvailability, testSavedProvider } from "../admin/adminProviderTestModel";
@@ -450,6 +451,7 @@ function DashboardSection({ summary, providers, modelPrices }: { summary?: Admin
   const enabledPrices = modelPrices.filter((item) => item.enabled).length;
   return (
     <section className="admin-v2-section">
+      <div className="adm-metric-heading"><h2>创作与服务</h2><span>当前系统记录 · 今日任务按北京时间统计</span></div>
       <div className="admin-product-metrics">
         <AdminMetric icon={<UserRound size={22} />} label="注册用户" value={summary?.users ?? "未读取"} hint="当前系统用户" tone="blue" />
         <AdminMetric icon={<DatabaseZap size={22} />} label="项目数量" value={summary?.projects ?? "未读取"} hint={`今日 ${summary?.tasksToday ?? "—"} 个生成任务（北京时间）`} tone="amber" />
@@ -457,6 +459,7 @@ function DashboardSection({ summary, providers, modelPrices }: { summary?: Admin
         <AdminMetric icon={<Activity size={22} />} label="启用渠道" value={enabledProviders} hint={`${enabledPrices} 条价格启用`} tone="violet" />
       </div>
 
+      <div className="adm-metric-heading"><h2>积分与收款</h2><span>实扣积分、现金实收和供应商成本分别核算</span></div>
       <div className="admin-product-metrics compact">
         <AdminMetric icon={<WalletCards size={20} />} label="实扣积分" value={summary?.creditsConsumed.toLocaleString() ?? "未读取"} hint="以消耗流水为准" tone="blue" />
         <AdminMetric icon={<CircleDollarSign size={20} />} label="充值实收" value={formatAdminMoney(summary?.paidRechargeCny, "未读取")} hint="已支付的真实订单金额" tone="green" />
@@ -494,7 +497,8 @@ function DashboardSection({ summary, providers, modelPrices }: { summary?: Admin
           { key: "modality", label: "能力", render: (row) => ({ text: "文本", image: "图片", video: "视频", tts: "配音", embedding: "向量" }[row.modality] ?? row.modality) },
           { key: "models", label: "模型数", render: (row) => row.models.length },
           { key: "status", label: "状态", render: (row) => <span className="adm-status" data-status={row.enabled ? "active" : "disabled"}>{row.enabled ? "已启用" : "已停用"}</span> },
-          { key: "prices", label: "价格覆盖", render: (row) => modelPrices.filter((price) => price.providerId === row.id && price.enabled).length }
+          { key: "prices", label: "价格覆盖", render: (row) => modelPrices.filter((price) => price.providerId === row.id && price.enabled).length },
+          { key: "action", label: "配置", sticky: "right", render: () => <button className="adm-row-open" type="button" onClick={() => navigateAdminHash("模型路由")}>管理渠道<ChevronRight size={14} /></button> }
         ]}
         rows={providers}
         rowKey={(row) => row.id}
@@ -527,8 +531,8 @@ function ContentProjectsAdminSection() {
     { key: "owner", label: "创作者", render: row => row.user?.name || row.user?.email || "未记录" },
     { key: "step", label: "当前阶段", render: row => steps[row.activeStep] || row.activeStep },
     { key: "status", label: "状态", render: row => <span className="adm-status" data-status={row.status}>{statuses[row.status] || row.status}</span> },
-    { key: "content", label: "内容数量", render: row => `分析 ${row.counts.analyses} / 大纲 ${row.counts.outlines} / 正文 ${row.counts.chapters} / 剧本 ${row.counts.scripts}` },
-    { key: "updated", label: "更新时间", render: row => formatDate(row.updatedAt) }
+    { key: "content", label: "内容数量", render: row => <div className="adm-content-counts"><span>分析 <b>{row.counts.analyses}</b></span><span>大纲 <b>{row.counts.outlines}</b></span><span>正文 <b>{row.counts.chapters}</b></span><span>剧本 <b>{row.counts.scripts}</b></span></div> },
+    { key: "updated", label: "更新时间", render: row => <AdminDate value={row.updatedAt} /> }
   ]} rows={pagination.items} rowKey={row => row.id} loading={loading} error={error} emptyText="没有匹配的内容项目，可调整关键词后重试。" /><TableFooter total={filtered.length} page={pagination.page} pageSize={pagination.pageSize} onPageChange={pagination.setPage} /></>;
 }
 
@@ -2286,6 +2290,11 @@ function UsersSection({
   const [segment, setSegment] = useState("all");
   const [users, setUsers] = useState<AdminUserRow[]>([]);
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+  const [sort, setSort] = useState("created_desc");
+  const [registeredFrom, setRegisteredFrom] = useState("");
+  const [registeredTo, setRegisteredTo] = useState("");
+  const [visibleColumns, setVisibleColumns] = useState(["role", "credits", "projects", "status", "login", "created"]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
@@ -2301,8 +2310,13 @@ function UsersSection({
     const controller = new AbortController();
     setLoading(true);
     setLoadError("");
+    if (registeredFrom && registeredTo && registeredFrom > registeredTo) {
+      setLoadError("注册开始日期不能晚于结束日期，请调整筛选。");
+      setLoading(false);
+      return () => { controller.abort(); };
+    }
     const timer = window.setTimeout(() => {
-      void fetchAdminUserPage({ page, keyword: keyword.trim(), role, status }, controller.signal).then((result) => {
+      void fetchAdminUserPage({ page, pageSize, keyword: keyword.trim(), role, status, sort, registeredFrom, registeredTo }, controller.signal).then((result) => {
         if (!current) return;
         const lastPage = Math.max(1, Math.ceil(result.total / result.pageSize));
         if (page > lastPage) { setPage(lastPage); return; }
@@ -2310,14 +2324,14 @@ function UsersSection({
         setTotal(result.total);
         setSelectedUser(current => {
           const latest = result.items.find(item => item.id === current?.id);
-          return current && latest ? { ...current, credits: latest.credits, frozenCredits: latest.frozenCredits, totalRecharge: latest.totalRecharge, totalConsume: latest.totalConsume, projects: latest.projects, hasPassword: latest.hasPassword, lastLoginAt: latest.lastLoginAt } : current;
+          return current && latest ? { ...current, credits: latest.credits, frozenCredits: latest.frozenCredits, totalRecharge: latest.totalRecharge, totalConsume: latest.totalConsume, projects: latest.projects, hasPassword: latest.hasPassword, lastLoginAt: latest.lastLoginAt, createdAt: latest.createdAt, updatedAt: latest.updatedAt } : current;
         });
       }).catch((reason) => {
         if (current) setLoadError(reason instanceof Error ? reason.message : "用户列表读取失败");
       }).finally(() => { if (current) setLoading(false); });
     }, 200);
     return () => { current = false; controller.abort(); window.clearTimeout(timer); };
-  }, [page, keyword, role, status, reloadKey, refreshSnapshot]);
+  }, [page, pageSize, keyword, role, status, sort, registeredFrom, registeredTo, reloadKey, refreshSnapshot]);
   const rows = users;
   const activeUsers = users.filter((user) => user.status === "active").length;
   const paidUsers = users.filter((user) => user.totalRecharge > 0).length;
@@ -2354,60 +2368,87 @@ function UsersSection({
     }
   }
 
+  function openUser(user: AdminUserRow) {
+    if (user.id === selectedUserId || canLeaveAdminEditor()) { setSelectedUserId(user.id); setSelectedUser(user); }
+  }
+  function resetQuery() {
+    if (!canLeaveAdminEditor()) return;
+    setKeyword(""); setRole("all"); setStatus("all"); setSegment("all"); setRegisteredFrom(""); setRegisteredTo(""); setSort("created_desc"); setPage(1); setSelectedUserIds([]);
+  }
+  const optionalColumns: AdminColumn<AdminUserRow>[] = [
+    { key: "phone", label: "手机号", render: user => user.phone || "未绑定" },
+    { key: "role", label: "角色", render: user => <span className="adm-role" data-role={user.role}>{adminRoleLabels[user.role] ?? user.role}</span> },
+    { key: "credits", label: "可用 / 冻结积分", align: "right", render: user => <div className="adm-balance"><strong>{user.credits.toLocaleString()}</strong><small>冻结 {user.frozenCredits.toLocaleString()}</small></div> },
+    { key: "recharge", label: "累计入账积分", align: "right", render: user => user.totalRecharge.toLocaleString() },
+    { key: "consumed", label: "累计消耗积分", align: "right", render: user => user.totalConsume.toLocaleString() },
+    { key: "projects", label: "项目", align: "right", render: user => user.projects.toLocaleString() },
+    { key: "status", label: "状态", render: user => <span className="adm-status" data-status={user.status}>{adminStatusLabels[user.status] ?? user.status}</span> },
+    { key: "login", label: "最近登录", render: user => <AdminDate value={user.lastLoginAt} empty="暂无登录记录" /> },
+    { key: "created", label: "注册时间", render: user => <AdminDate value={user.createdAt} /> }
+  ];
+  const columns: AdminColumn<AdminUserRow>[] = [
+    { key: "select", label: "选择", width: "48px", render: user => <input type="checkbox" aria-label={`选择${user.name}`} checked={selectedUserIds.includes(user.id)} onChange={() => setSelectedUserIds(current => current.includes(user.id) ? current.filter(id => id !== user.id) : [...current, user.id])} /> },
+    { key: "user", label: "用户", render: user => <div className="adm-user-cell"><span className="adm-user-avatar" aria-hidden="true">{user.name.trim().slice(0, 1).toUpperCase()}</span><div><strong>{user.name}{user.id === currentUserId ? <em>我</em> : null}</strong><small title={user.email || user.phone || user.id}>{user.email || user.phone || user.id}</small></div></div> },
+    ...optionalColumns.filter(column => visibleColumns.includes(column.key)),
+    { key: "actions", label: "操作", width: "88px", sticky: "right", render: user => <button className="adm-row-open" type="button" aria-label={`管理用户 ${user.name}`} onClick={() => openUser(user)}><FilePenLine size={15} />管理</button> }
+  ];
+
   return (
-    <section className="admin-v2-section">
+    <section className="admin-v2-section adm-users-section">
       <AdminModuleWorkbench
         railTitle="用户分层"
         railDescription="先选运营视角，再用搜索和筛选精确定位账号。"
         railItems={railItems}
         activeRail={segment}
         onRailChange={(next) => { setSegment(next); setPage(1); setRole(next === "admin" || next === "creator" ? next : "all"); setStatus(["active", "disabled", "deleted"].includes(next) ? next : "all"); setSelectedUserIds([]); }}
-        railFooter={<span>共匹配 {total} 条，本页 {rows.length} 条，已选 {selectedVisibleCount} 条。</span>}
+        railFooter={<span>账号状态与权限管理</span>}
       >
-        <div className="admin-product-metrics compact">
-          <AdminMetric icon={<UserRound size={20} />} label="匹配用户" value={total} hint={`本页 ${activeUsers} 个正常账号`} tone="blue" />
-          <AdminMetric icon={<WalletCards size={20} />} label="本页积分余额" value={totalCredits.toLocaleString()} hint="本页账号可用积分合计" tone="green" />
-          <AdminMetric icon={<CircleDollarSign size={20} />} label="本页有入账记录" value={paidUsers} hint="含赠送与运营调整" tone="amber" />
-          <AdminMetric icon={<ShieldCheck size={20} />} label="本页后台成员" value={users.filter((user) => user.role !== "creator").length} hint="后台管理员" tone="violet" />
+        <div className="adm-users-overview" aria-label="用户列表统计" aria-busy={loading}>
+          <div><span>匹配用户</span><strong>{loading || loadError ? "—" : total.toLocaleString()}<small>位</small></strong></div>
+          <div><span>本页正常账号</span><strong>{loading || loadError ? "—" : activeUsers}<small>/ {rows.length}</small></strong></div>
+          <div><span>本页可用积分</span><strong>{loading || loadError ? "—" : totalCredits.toLocaleString()}</strong></div>
+          <div><span>本页有入账记录</span><strong>{loading || loadError ? "—" : paidUsers}<small>含赠送与调整</small></strong></div>
         </div>
         <AdminToolbar
           right={
             <AdminActionBar>
-              <button className="admin-secondary-btn compact" disabled={!selectedVisibleCount || action.pending || loading || status === "deleted"} type="button" onClick={() => void batchSetStatus("active")}>启用当前已选</button>
-              <button className="admin-secondary-btn compact" disabled={!selectedVisibleCount || action.pending || loading || status === "deleted"} type="button" onClick={() => void batchSetStatus("disabled")}>停用当前已选</button>
+              <button className="admin-icon-btn" aria-label="刷新用户列表" title="刷新用户列表" disabled={loading} onClick={() => setReloadKey((value) => value + 1)}><RefreshCw size={18} /></button>
               <button className="admin-primary-btn" type="button" onClick={() => setCreateOpen(true)}><Plus size={18} />创建用户</button>
             </AdminActionBar>
           }
         >
-          <SearchField value={keyword} onChange={(value) => { setKeyword(value); setPage(1); setSelectedUserIds([]); }} placeholder="在全部用户中搜索姓名、邮箱、手机号、ID..." />
+          <SearchField value={keyword} onChange={(value) => { setKeyword(value); setPage(1); setSelectedUserIds([]); }} placeholder="搜索姓名、邮箱、手机号或完整 ID..." />
           <SelectFilter value={role} onChange={(value) => { setRole(value); setSegment("all"); setPage(1); setSelectedUserIds([]); }} options={["all", "creator", "admin"]} labels={{ all: "全部角色", creator: "创作者", admin: "后台管理员" }} />
           <SelectFilter value={status} onChange={(value) => { setStatus(value); setSegment("all"); setPage(1); setSelectedUserIds([]); }} options={["all", "active", "disabled", "deleted"]} labels={{ all: "未删除用户", active: "正常", disabled: "停用", deleted: "已删除" }} />
-          <button className="admin-icon-btn" aria-label="刷新用户列表" title="刷新用户列表" disabled={loading} onClick={() => setReloadKey((value) => value + 1)}><RefreshCw size={18} /></button>
         </AdminToolbar>
+        <details className="adm-user-filters" open={registeredFrom || registeredTo ? true : undefined}>
+          <summary><SlidersHorizontal size={15} />注册日期与排序{registeredFrom || registeredTo ? <span>已设置日期范围</span> : null}</summary>
+          <div>
+            <label>注册开始日期<input type="date" aria-label="注册开始日期" value={registeredFrom} max={registeredTo || undefined} onChange={event => { if (canLeaveAdminEditor()) { setRegisteredFrom(event.target.value); setPage(1); setSelectedUserIds([]); } }} /></label>
+            <label>注册结束日期<input type="date" aria-label="注册结束日期" value={registeredTo} min={registeredFrom || undefined} onChange={event => { if (canLeaveAdminEditor()) { setRegisteredTo(event.target.value); setPage(1); setSelectedUserIds([]); } }} /></label>
+            <label>排列顺序<select aria-label="用户排序" value={sort} onChange={event => { if (canLeaveAdminEditor()) { setSort(event.target.value); setPage(1); setSelectedUserIds([]); } }}><option value="created_desc">最近注册</option><option value="created_asc">最早注册</option><option value="login_desc">最近登录</option><option value="credits_desc">可用积分从高到低</option><option value="name_asc">用户名升序</option></select></label>
+            <button type="button" className="admin-secondary-btn" onClick={resetQuery}>重置筛选</button>
+          </div>
+          <p>日期按当前设备时区，包含开始与结束当天；最近登录不代表最近一次使用。</p>
+        </details>
+        {selectedVisibleCount ? <div className="adm-selection-bar" role="region" aria-label="用户批量操作"><strong>本页已选 {selectedVisibleCount} 位</strong><span>不修改当前管理员和已删除账号</span><button className="admin-secondary-btn compact" disabled={action.pending || loading || Boolean(loadError) || status === "deleted"} type="button" onClick={() => void batchSetStatus("active")}>启用当前已选</button><button className="admin-secondary-btn compact" disabled={action.pending || loading || Boolean(loadError) || status === "deleted"} type="button" onClick={() => void batchSetStatus("disabled")}>停用当前已选</button><button className="admin-text-btn" type="button" onClick={() => setSelectedUserIds([])}>取消选择</button></div> : null}
         <AdminTablePage
           title="账号列表"
-          summary="点击一行，在右侧完成身份、状态、积分与密码管理。"
-          actions={<label className="admin-row-checkbox"><input type="checkbox" checked={allVisibleSelected} onChange={toggleVisibleUsers} />选择当前结果</label>}
-          columns={[
-            { key: "select", label: "选择", render: (user) => <input type="checkbox" aria-label={`选择${user.name}`} checked={selectedUserIds.includes(user.id)} onChange={() => setSelectedUserIds(current => current.includes(user.id) ? current.filter(id => id !== user.id) : [...current, user.id])} /> },
-            { key: "user", label: "用户", render: (user) => <div><strong>{user.name}</strong><small>{user.email || user.id}</small></div> },
-            { key: "phone", label: "手机号", render: (user) => user.phone || "未绑定" },
-            { key: "role", label: "身份", render: (user) => adminRoleLabels[user.role] ?? user.role },
-            { key: "status", label: "状态", render: (user) => <span className="adm-status" data-status={user.status}>{adminStatusLabels[user.status] ?? user.status}</span> },
-            { key: "credits", label: "积分", render: (user) => user.credits.toLocaleString() },
-            { key: "recharge", label: "累计入账积分", render: (user) => user.totalRecharge.toLocaleString() },
-            { key: "consumed", label: "累计消耗", render: (user) => user.totalConsume.toLocaleString() },
-            { key: "projects", label: "项目", render: (user) => user.projects }
-          ]}
+          summary="查看账号与使用概况，点击管理展开完整资料。"
+          actions={<div className="adm-table-tools"><label className="admin-row-checkbox"><input type="checkbox" checked={allVisibleSelected} disabled={loading || Boolean(loadError) || !rows.length} ref={node => { if (node) node.indeterminate = Boolean(selectedVisibleCount && !allVisibleSelected); }} onChange={toggleVisibleUsers} />选择本页</label><details className="adm-column-picker"><summary><SlidersHorizontal size={15} />显示列</summary><div>{optionalColumns.map(column => <label key={column.key}><input type="checkbox" checked={visibleColumns.includes(column.key)} onChange={() => setVisibleColumns(current => current.includes(column.key) ? current.filter(key => key !== column.key) : [...current, column.key])} />{column.label}</label>)}</div></details></div>}
+          columns={columns}
           rows={rows}
           rowKey={(user) => user.id}
           loading={loading}
           error={loadError}
           page={page}
-          totalPages={Math.max(1, Math.ceil(total / 25))}
+          totalPages={Math.max(1, Math.ceil(total / pageSize))}
+          total={total}
+          pageSize={pageSize}
+          onPageSizeChange={size => { setPageSize(size); setPage(1); setSelectedUserIds([]); }}
           onPageChange={(next) => { setPage(next); setSelectedUserIds([]); setSelectedUserId(null); }}
           emptyText="没有匹配的用户；请调整分层、搜索或筛选条件"
-          onRowClick={(user) => { if (user.id === selectedUserId || canLeaveAdminEditor()) { setSelectedUserId(user.id); setSelectedUser(user); } }}
+          onRowClick={openUser}
         />
       </AdminModuleWorkbench>
       <AdminMasterDetail open={Boolean(selectedUser)} title={selectedUser?.name ?? "用户详情"} meta={selectedUser ? <p>{selectedUser.email || selectedUser.phone || selectedUser.id}</p> : null} busy={action.pending} onClose={() => { setSelectedUserId(null); setSelectedUser(null); }}>
@@ -2758,7 +2799,7 @@ function AnnouncementRow({
   return (
     <article className="admin-announcement-card" data-admin-dirty={dirty || undefined}>
       <details className="admin-record-disclosure">
-        <summary><div><strong>{announcement.title}</strong><p>{announcement.body}</p></div><div className="admin-record-meta"><StatusChip active={status === "active"} label={announcementStatusLabels[status]} /><DraftIndicator dirty={dirty} /><span>编辑公告</span><ChevronDown size={16} /></div></summary>
+        <summary><div><strong>{announcement.title}</strong><p>{announcement.body}</p><div className="adm-record-subline"><span>{announcementTypeLabel(announcement.type)}</span>{announcement.pinned ? <span>已置顶</span> : null}<time dateTime={announcement.updatedAt}>更新于 {formatDate(announcement.updatedAt)}</time></div></div><div className="admin-record-meta"><StatusChip active={status === "active"} label={announcementStatusLabels[status]} /><DraftIndicator dirty={dirty} /><span>编辑公告</span><ChevronDown size={16} /></div></summary>
         <div className="admin-record-editor"><AdminScopedActionNotice />
       <div className="admin-announcement-card-head">
         <span className={`admin-chip announcement-${draft.type}`}>{announcementTypeLabel(draft.type)}</span>
@@ -4310,6 +4351,12 @@ function AdminUserCreator({
   );
 }
 
+function AdminDate({ value, empty = "暂无记录" }: { value?: string; empty?: string }) {
+  if (!value || !Number.isFinite(Date.parse(value))) return <span className="adm-date-empty">{empty}</span>;
+  const date = new Date(value);
+  return <time className="adm-date" dateTime={value} title={date.toLocaleString("zh-CN")}><span>{date.toLocaleDateString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit" })}</span><small>{date.toLocaleTimeString("zh-CN", { hour12: false, hour: "2-digit", minute: "2-digit" })}</small></time>;
+}
+
 function UserRow({
   user,
   isSelf,
@@ -4353,12 +4400,15 @@ function UserRow({
   return (
     <article className="adm-user-profile" data-admin-dirty={dirty || Boolean(password || amount || description) || undefined}>
       <div className="adm-user-contact">
-        <strong>{identity}</strong>
-        <span>邮箱：{user.email || "未绑定"}</span>
-        <span>手机号：{user.phone || "未绑定"}</span>
-        <small>最近登录：{formatDate(user.lastLoginAt)}</small>
-        <small>账号 ID：{user.id}</small>
+        <div className="adm-profile-identity"><span className="adm-user-avatar" aria-hidden="true">{user.name.trim().slice(0, 1).toUpperCase()}</span><div><strong>{identity}</strong><span className="adm-status" data-status={user.status}>{adminStatusLabels[user.status] ?? user.status}</span></div></div>
+        <span>邮箱：{user.email || "未绑定"}</span><span>手机号：{user.phone || "未绑定"}</span>
+        <small className="adm-user-id">账号 ID：{user.id}</small>
       </div>
+      <dl className="adm-user-dates" aria-label="账号时间记录">
+        <div><dt>注册时间</dt><dd><AdminDate value={user.createdAt} /></dd></div>
+        <div><dt>最近登录</dt><dd><AdminDate value={user.lastLoginAt} empty="暂无登录记录" /></dd></div>
+        <div><dt>资料更新时间</dt><dd><AdminDate value={user.updatedAt} /></dd></div>
+      </dl>
       <dl className="adm-user-stat-grid" aria-label="账号统计">
         <div><dt>可用积分</dt><dd>{user.credits.toLocaleString()}</dd></div>
         <div><dt>冻结积分</dt><dd>{user.frozenCredits.toLocaleString()}</dd></div>
@@ -4385,13 +4435,13 @@ function UserRow({
         <p>正数入账，负数扣减；操作会记录积分流水。</p>
         <label><span>调整积分</span><input type="number" step={1} value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="例如：100 或 -100" required /></label>
         <label><span>调整原因</span><input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="填写补偿或扣减原因" required /></label>
-        <button className="admin-primary-btn" type="submit" disabled={!isValidCreditAdjustment(amount, description)}><WalletCards size={16} />提交积分调整</button>
+        <button className="admin-primary-btn" type="submit" disabled={action.pending || !isValidCreditAdjustment(amount, description)}><WalletCards size={16} />提交积分调整</button>
       </form>
       <form className="adm-user-form-section" aria-label="重置登录密码" onSubmit={(event) => { event.preventDefault(); if (password.length >= 12) void closeAfterAdminSuccess(() => onPasswordReset(user.id, password), () => setPassword("")); }}>
         <h3>重置登录密码</h3>
         <p>重置后旧会话会失效，用户需使用新密码登录。</p>
         <label><span>新密码</span><input type="password" autoComplete="new-password" minLength={12} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="至少 12 位" required /></label>
-        <button className="admin-secondary-btn" type="submit" disabled={password.length < 12}>重置密码</button>
+        <button className="admin-secondary-btn" type="submit" disabled={action.pending || password.length < 12}>重置密码</button>
       </form>
       <div className="adm-user-form-section"><h3>删除用户</h3><p>请先停用账号。删除后移入回收站，保留作品、积分与流水，支持恢复。</p><button className="admin-secondary-btn" disabled={action.pending || dirty || isSelf || user.status !== "disabled"} onClick={() => { if (window.confirm(`确认将用户「${user.name}」移入回收站？该账号将无法登录，作品与账务记录保留。`)) void onDeleteUser(user.id); }}><Trash2 size={16} />删除用户</button></div>
       <label className="adm-user-batch-selection"><input type="checkbox" checked={selected} onChange={onToggleSelected} />加入当前页批量选择</label>
@@ -4746,7 +4796,7 @@ function ProviderRow({
         <AdminProviderIcon provider={provider} />
         <div className="admin-provider-title">
           <strong>{provider.name}</strong>
-          <span>{provider.id} · {provider.apiKeyConfigured ? `Key ${provider.apiKeyPreview}` : "未配置 Key"}</span>
+          <span>{provider.id} · {provider.apiKeyConfigured ? provider.apiKeyPreview ? `Key ${provider.apiKeyPreview}` : "已配置 Key" : "未配置 Key"}</span>
         </div>
         <span className="admin-chip">{modalityLabel(draft.modality)}</span>
         <StatusChip active={provider.enabled} /><DraftIndicator dirty={dirty} />

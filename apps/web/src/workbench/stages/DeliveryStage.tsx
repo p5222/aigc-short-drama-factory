@@ -174,7 +174,7 @@ export function DeliveryStage({
   const queuePanelRef = useRef<HTMLElement>(null), queueCloseRef = useRef<HTMLButtonElement>(null);
   const inspectorPanelRef = useRef<HTMLElement>(null), inspectorCloseRef = useRef<HTMLButtonElement>(null);
   const queueDrawerActive = useResponsiveDrawer({ open: railOpen, maxWidth: 979, onClose: onCloseRail, panelRef: queuePanelRef, initialFocusRef: queueCloseRef });
-  const inspectorDrawerActive = useResponsiveDrawer({ open: inspectorOpen, maxWidth: 1199, onClose: onCloseInspector, panelRef: inspectorPanelRef, initialFocusRef: inspectorCloseRef });
+  const inspectorDrawerActive = useResponsiveDrawer({ open: inspectorOpen, maxWidth: 1399, onClose: onCloseInspector, panelRef: inspectorPanelRef, initialFocusRef: inspectorCloseRef });
   const onRefreshRef = useRef(onRefresh);
   onRefreshRef.current = onRefresh;
 

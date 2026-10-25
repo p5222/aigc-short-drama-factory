@@ -5,14 +5,16 @@ export function useCreatorNavigation(enabled: boolean) {
   const [route, setRoute] = useState<CreatorRoute>(() => enabled ? readCreatorRoute(window.location.hash) : { page: "workbench" });
   const routeRef = useRef(route);
   const apply = useCallback((next: CreatorRoute) => { routeRef.current = next; setRoute(next); }, []);
-  const navigate = useCallback((next: CreatorRoute, replace = false, force = false) => {
-    if (!enabled) return;
+  const navigate = useCallback((next: CreatorRoute, replace = false, force = false, restart = false) => {
+    if (!enabled) return false;
     next = readCreatorRoute(creatorRouteHash(next));
-    if (creatorRouteHash(next) === creatorRouteHash(routeRef.current)) return;
-    if (!force && !window.dispatchEvent(new CustomEvent(BEFORE_CREATOR_NAVIGATION, { cancelable: true, detail: next }))) return;
-    window.history[replace ? "replaceState" : "pushState"](null, "", creatorRouteHash(next));
+    const sameRoute = creatorRouteHash(next) === creatorRouteHash(routeRef.current);
+    if (sameRoute && !restart) return true;
+    if (!force && !window.dispatchEvent(new CustomEvent(BEFORE_CREATOR_NAVIGATION, { cancelable: true, detail: next }))) return false;
+    window.history[replace || sameRoute ? "replaceState" : "pushState"](null, "", creatorRouteHash(next));
     apply(next);
     window.scrollTo({ top: 0 });
+    return true;
   }, [apply, enabled]);
   useEffect(() => {
     if (!enabled) return;

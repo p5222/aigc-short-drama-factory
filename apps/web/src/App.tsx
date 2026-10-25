@@ -133,7 +133,12 @@ export function App() {
   ], []);
   const { route, routeRef, navigate } = useCreatorNavigation(!isAdminRoute);
   const activePage = route.page;
-  const setActivePage = useCallback((page: PageKey) => navigate({ page }), [navigate]);
+  const [creationSession, setCreationSession] = useState(0);
+  const setActivePage = useCallback((page: PageKey) => {
+    if (navigate({ page }, false, false, page === "wizard") && page === "wizard") {
+      setCreationSession(current => current + 1);
+    }
+  }, [navigate]);
   const [adminHash, setAdminHash] = useState(() => isAdminRoute ? normalizeAdminHash(readAcceptedAdminHash()) : "运营总览");
   const [adminMobileOpen, setAdminMobileOpen] = useState(false);
   const [tourOpen, setTourOpen] = useState(false);
@@ -455,7 +460,6 @@ export function App() {
 
   const page = useMemo(() => {
     const openFreshWizard = () => {
-      clearWizardDraft();
       setActivePage("wizard");
     };
     const openFreshContent = () => {
@@ -472,6 +476,7 @@ export function App() {
       case "wizard":
         return (
           <WizardPage
+            key={`${user?.id ?? "anonymous"}:${creationSession}`}
             providers={providers}
             canManageModels={canManageModelTests(user?.role)}
             onCreateContent={openFreshContent}
@@ -547,7 +552,7 @@ export function App() {
       default:
         return null;
     }
-  }, [navigate, openProject, projectError, route.projectId, account, activePage, adminPlans, adminSummary, adminUsers, announcements, contentFocusId, contentProjects, handleThemeChange, helpArticles, membershipPlans, modelPrices, openingProjectId, orders, plans, projects, providers, redeemCodes, summary, tasks, templates, theme, transactions, workflow, load, user]);
+  }, [navigate, setActivePage, creationSession, openProject, projectError, route.projectId, account, activePage, adminPlans, adminSummary, adminUsers, announcements, contentFocusId, contentProjects, handleThemeChange, helpArticles, membershipPlans, modelPrices, openingProjectId, orders, plans, projects, providers, redeemCodes, summary, tasks, templates, theme, transactions, workflow, load, user]);
 
   const unreadResources = (isAdminRoute ? adminPageResources[adminHash] ?? [] : creatorPageResources[activePage] ?? []).filter((label) => !readResources.has(label));
   const initialReadState = !dataReady || unreadResources.length ? <div className="page-stack"><StatePanel
