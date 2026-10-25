@@ -17,6 +17,7 @@ import { acceptWechatTransaction, getMembership, paymentAvailability, prepareChe
 import { decryptWechatNotification, PaymentError, wechatConfig } from "./billing/wechat.js";
 import { createRateLimitMiddleware, positiveInteger, RequestRateLimiter } from "./security/rateLimit.js";
 import { ensureSeedData, DEMO_USER_ID } from "./db/seed.js";
+import { adminUserPageQuery } from "./db/adminUserQuery.js";
 import {
   cancelTask,
   createAdminUser,
@@ -2679,7 +2680,7 @@ const adminPageQuery = z.object({
   status: z.string().max(30).optional(), actorId: z.string().max(100).optional()
 });
 app.get("/api/admin/users/page", requireAdminPermission("users:read"), asyncRoute(async (req, res) => {
-  const parsed = adminPageQuery.safeParse(req.query);
+  const parsed = adminUserPageQuery.safeParse(req.query);
   if (!parsed.success) return res.status(400).json(parsed.error.flatten());
   res.json(await listAdminUsersPage(parsed.data));
 }));

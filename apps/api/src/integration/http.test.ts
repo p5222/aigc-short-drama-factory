@@ -119,6 +119,18 @@ test("HTTP business boundaries: sessions, administrator writes, private media an
       assert.equal(range.status, 206);
       assert.equal((await range.arrayBuffer()).byteLength, 8);
     });
+    await t.test("admin account page exposes persisted timestamps and validates filter boundaries", async () => {
+      const stored = await db.user.findUniqueOrThrow({ where: { id: ids[0]! } });
+      const response = await request(`/api/admin/users/page?keyword=${ids[0]}&sort=created_asc&pageSize=10`, admin.token);
+      assert.equal(response.status, 200);
+      const page = await response.json() as { items: Array<{ id: string; createdAt: string; updatedAt: string }>; total: number; pageSize: number };
+      assert.equal(page.total, 1); assert.equal(page.pageSize, 10);
+      assert.equal(page.items[0]?.createdAt, stored.createdAt.toISOString());
+      assert.equal(page.items[0]?.updatedAt, stored.updatedAt.toISOString());
+      for (const query of ["sort=passwordHash", "pageSize=101", "registeredFrom=invalid", "registeredFrom=2026-10-26T00:00:00Z&registeredTo=2026-10-25T00:00:00Z"]) {
+        assert.equal((await request(`/api/admin/users/page?${query}`, admin.token)).status, 400);
+      }
+    });
     await t.test("creator cannot call admin APIs or spend platform money through connection tests", async () => {
       for (const path of ["/api/admin/users/page", "/api/admin/audit-logs"]) assert.equal((await request(path, owner.token)).status, 403);
       for (const kind of ["model-test", "image-model-test", "video-model-test"]) assert.equal((await request(`/api/settings/${kind}`, owner.token, "POST", {})).status, 403);

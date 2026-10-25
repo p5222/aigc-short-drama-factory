@@ -14,7 +14,7 @@ export function Inspector({ children, open = false, onClose, title = "检查器"
   const panelRef = useRef<HTMLDivElement>(null);
   const drawerActive = useResponsiveDrawer({
     open,
-    maxWidth: 1199,
+    maxWidth: 1399,
     onClose,
     panelRef,
     initialFocusRef: closeButtonRef

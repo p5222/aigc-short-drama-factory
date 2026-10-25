@@ -152,6 +152,20 @@ test("PostgreSQL commerce and startup configuration are idempotent", { skip: !da
       assert.equal(result.total, 1); assert.equal(result.items[0]?.id, ids[0]);
       const page = await repository.listAdminUsersPage({ keyword: prefix, page: 6, pageSize: 20 });
       assert.equal(page.total, 105); assert.equal(page.items.length, 5); assert.equal(page.page, 6);
+      assert.equal(result.items[0]?.createdAt, "2000-01-01T00:00:00.000Z");
+      assert.ok(Number.isFinite(Date.parse(result.items[0]!.updatedAt)));
+      const oldest = await repository.listAdminUsersPage({ keyword: prefix, sort: "created_asc", pageSize: 10 });
+      assert.deepEqual(oldest.items.map(row => row.id), ids.slice(0, 10));
+      const range = await repository.listAdminUsersPage({ keyword: prefix, registeredFrom: "2000-01-02T00:00:00.000Z", registeredTo: "2000-01-03T23:59:59.999Z", sort: "created_asc" });
+      assert.equal(range.total, 2); assert.deepEqual(range.items.map(row => row.id), ids.slice(1, 3));
+      await db.user.update({ where: { id: ids[20] }, data: { lastLoginAt: new Date() } });
+      const logins = await repository.listAdminUsersPage({ keyword: prefix, sort: "login_desc", pageSize: 1 });
+      assert.equal(logins.items[0]?.id, ids[20]);
+      await db.creditAccount.create({ data: { id: `credit_${ids[30]}`, userId: ids[30]!, balance: 1234 } });
+      const balances = await repository.listAdminUsersPage({ keyword: prefix, sort: "credits_desc", pageSize: 100 });
+      assert.equal(balances.items[0]?.id, ids[30]);
+      assert.equal(balances.items[0]?.credits, 1234);
+      assert.equal(balances.items.length, 100);
     });
     await t.test("provider secrets stay server-side and masked edits preserve the credential", async () => {
       const id = `audit-provider-${crypto.randomUUID()}`; providerIds.push(id);

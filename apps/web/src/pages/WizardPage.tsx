@@ -7,7 +7,7 @@ import { ModelRoutePicker } from "../components/ModelRoutePicker";
 import { analyzeSourceEpisodes, episodeScopeOptions, parseSampleManifest, type SourceEpisodeAnalysis } from "./wizardSourceModel";
 import { clearWizardDraft, readWizardDraft, saveWizardDraft } from "./wizardDraftStorage";
 import { buildEstimateInput, buildGenerationInput, creationBillingSignature, createCreationQuoteGate, isConfiguredModelRoute, normalizeWizardSourceType } from "./wizardRequestModel";
-import { getCreationRequestId } from "./creationAttemptStorage";
+import { CREATION_ATTEMPT_KEY, getCreationRequestId } from "./creationAttemptStorage";
 import { BEFORE_CREATOR_NAVIGATION } from "../lib/creatorNavigation";
 import { InlineNotice, PageHeader } from "../design-system/ui";
 import "./creator-pages.css";
@@ -65,9 +65,10 @@ const stylePresets = [
 export function WizardPage({ providers, canManageModels = false, onCreated, onCreateContent }: WizardPageProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pendingModelTests = useRef(new Set<string>());
-  const [form, setForm] = useState<CreateProjectInput>(() => normalizeDraft(loadDraft() ?? defaultForm));
+  const [recoverableDraft] = useState(() => loadDraft());
+  const [form, setForm] = useState<CreateProjectInput>(() => normalizeDraft(defaultForm));
   const [step, setStep] = useState<WizardStep>("story");
-  const [entrySelected, setEntrySelected] = useState(Boolean(loadDraft()?.content));
+  const [entrySelected, setEntrySelected] = useState(false);
   const [estimateSnapshot, setEstimateSnapshot] = useState<{ signature: string; sequence: number; value: CreationEstimate } | null>(null);
   const [isEstimating, setIsEstimating] = useState(false);
   const quoteGate = useRef(createCreationQuoteGate());
@@ -88,7 +89,8 @@ export function WizardPage({ providers, canManageModels = false, onCreated, onCr
   const [generationStartedAt, setGenerationStartedAt] = useState<number | null>(null);
   const [generationElapsed, setGenerationElapsed] = useState(0);
 
-  useEffect(() => { saveWizardDraft(form); }, [form]);
+  // A fresh entry stays blank. Only an explicitly opened editor may replace the saved draft.
+  useEffect(() => { if (entrySelected) saveWizardDraft(form); }, [form, entrySelected]);
   useEffect(() => {
     const guard = (event: Event) => {
       if (!startInFlight.current) return;
@@ -340,13 +342,33 @@ export function WizardPage({ providers, canManageModels = false, onCreated, onCr
     setError("");
   }
 
+  function openBlankEditor() {
+    try { window.sessionStorage.removeItem(CREATION_ATTEMPT_KEY); } catch { /* start() reports unavailable storage before submitting. */ }
+    setEntrySelected(true);
+  }
+
   if (!entrySelected) {
-    return <div className="page-stack creation-entry-page creator-page" data-tour-id="creation-entry"><PageHeader title="新建漫剧" description="选择故事的起点。已有文本可以直接导入，还没有故事可以先创作。" /><div className="creation-entry-grid"><button type="button" onClick={onCreateContent}><Sparkles size={22} /><strong>先写一个故事</strong><span>从标题、题材或参考作品出发，完成大纲、章节和剧本。</span><ChevronRight size={18} /></button><button type="button" onClick={() => { setForm((current) => ({ ...current, sourceType: "novel", content: "" })); setEntrySelected(true); }}><BookOpenCheck size={22} /><strong>导入小说或剧本</strong><span>准备好原稿后，确认风格和范围，查看报价再开始制作。</span><ChevronRight size={18} /></button></div><p className="creator-page-footnote">生成内容后仍可逐步编辑。图片、视频与配音在各自的制作阶段单独确认费用。</p></div>;
+    return <div className="page-stack creation-entry-page creator-page" data-tour-id="creation-entry">
+      <PageHeader title="让一个新故事，从这里开始" description="选择你的创作起点，逐步完成从文字到画面的制作。" />
+      <div className="creation-entry-grid">
+        <button type="button" onClick={onCreateContent}><span className="creation-entry-icon"><Sparkles size={25} /></span><small>从灵感出发</small><strong>先写一个故事</strong><span>把一句灵感发展为大纲、章节和剧本，再进入漫剧制作。</span><b>开始内容创作 <ChevronRight size={18} /></b></button>
+        <button type="button" onClick={openBlankEditor}><span className="creation-entry-icon"><BookOpenCheck size={25} /></span><small>从原稿出发</small><strong>导入小说或剧本</strong><span>导入你准备好的文本，确认视觉风格与制作范围，建立新项目。</span><b>导入我的原稿 <ChevronRight size={18} /></b></button>
+      </div>
+      {recoverableDraft?.content.trim() ? <section className="creation-draft-recovery" aria-label="可恢复的草稿">
+        <FileText size={22} /><div><strong>{recoverableDraft.title || "未命名草稿"}</strong><span>此浏览器有一份未完成草稿 · {recoverableDraft.content.trim().length.toLocaleString()} 字</span></div>
+        <button type="button" className="ghost-button" onClick={() => { setForm(normalizeDraft(recoverableDraft)); setEntrySelected(true); }}>恢复草稿</button>
+      </section> : null}
+      <section className="creation-journey" aria-label="漫剧制作流程">
+        <div><span className="section-kicker">你的制作路线</span><h2>每一步，都有自己的工作空间</h2></div>
+        <ol>{[["剧本", "梳理剧情与场次"], ["资产", "统一角色与场景"], ["分镜", "逐镜生成画面"], ["成片", "配音、合成与导出"]].map(([title, hint], index) => <li key={title}><span>0{index + 1}</span><strong>{title}</strong><small>{hint}</small></li>)}</ol>
+      </section>
+      <p className="creator-page-footnote">新项目从空白开始。已有作品可在“我的作品”继续编辑；每次生成前都会单独确认费用。</p>
+    </div>;
   }
 
   return (
     <div className="page-stack creation-workbench u-wizard creator-page" data-tour-id="creation-entry">
-      <PageHeader title="新建漫剧" description="导入原稿，确认制作设置，查看费用后创建项目。" actions={<button className="ghost-button" disabled={isGenerating} onClick={saveDraft}>
+      <PageHeader title="新建漫剧" description="把故事、画面和制作范围准备好，开启你的新作品。" actions={<button className="ghost-button" disabled={isGenerating} onClick={saveDraft}>
           <Save size={18} />保存草稿
         </button>} />
 
@@ -369,6 +391,7 @@ export function WizardPage({ providers, canManageModels = false, onCreated, onCr
       {error ? <InlineNotice tone="error">{error}</InlineNotice> : null}
       {message && !isGenerating ? <InlineNotice tone="info" onDismiss={() => setMessage("")}>{message}</InlineNotice> : null}
       <fieldset className="creator-wizard-fields" disabled={isGenerating}><legend className="creator-sr-only">当前创作步骤</legend>
+      {step !== "story" ? <div className="creation-context-strip"><span><FileText size={17} /><strong>{form.title || "未命名作品"}</strong></span><span>{words.toLocaleString()} 字</span><span>本次 {form.targetEpisodes ?? 1} 集</span><button type="button" onClick={() => goTo("story")}>修改原稿</button></div> : null}
       {step === "story" ? (
         <StoryStep
           fileInputRef={fileInputRef}
@@ -391,6 +414,7 @@ export function WizardPage({ providers, canManageModels = false, onCreated, onCr
         <SettingsStep
           form={form}
           onChange={setForm}
+          onBack={() => goTo("story")}
           onNext={nextStep}
         />
       ) : null}
@@ -428,6 +452,7 @@ export function WizardPage({ providers, canManageModels = false, onCreated, onCr
           isEstimating={isEstimating}
           message={message}
           onStart={start}
+          onBack={() => goTo("settings")}
         />
       ) : null}
       </fieldset>
@@ -467,15 +492,15 @@ function StoryStep({
         <div className="u-card-head">
           <div>
             <span className="section-kicker">STEP 1</span>
-            <h2>选择原稿类型并导入内容</h2>
-            <p>小说会先转换为标准剧本；已有剧本跳过改编，直接拆解场次、角色和资产。</p>
+            <h2>先把故事放进来</h2>
+            <p>支持小说、大纲和已有剧本。原稿会保留在项目中，方便随时对照。</p>
           </div>
         </div>
 
         <div className="source-type-switch" role="radiogroup" aria-label="原稿类型">
           <button className={form.sourceType !== "script" ? "active" : ""} onClick={() => onChange({ ...form, sourceType: "novel" })} role="radio" aria-checked={form.sourceType !== "script"} type="button">
             <BookOpenCheck size={19} />
-            <span><strong>小说 / 故事</strong><small>先按内置提示词转成可拍摄剧本</small></span>
+            <span><strong>小说 / 故事</strong><small>改编为可拍摄的剧本</small></span>
           </button>
           <button className={form.sourceType === "script" ? "active" : ""} onClick={() => onChange({ ...form, sourceType: "script" })} role="radio" aria-checked={form.sourceType === "script"} type="button">
             <FileText size={19} />
@@ -491,6 +516,7 @@ function StoryStep({
         <label className="field story-input-field">
           <span>{form.sourceType === "script" ? "剧本文本" : "小说正文"}</span>
           <textarea
+            aria-label={form.sourceType === "script" ? "剧本文本" : "小说正文"}
             value={form.content}
             onChange={(event) => onChange({ ...form, content: event.target.value })}
             placeholder={form.sourceType === "script" ? "粘贴已有剧本，建议包含场次、地点、角色、动作和对白。" : "粘贴小说正文或故事大纲，系统会先改编为标准剧本，再进入资产生产。"}
@@ -500,21 +526,19 @@ function StoryStep({
         <div className="inline-actions input-toolbar">
           <input ref={fileInputRef} type="file" accept=".txt,.md" hidden onChange={onImport} />
           <button className="ghost-button" onClick={() => fileInputRef.current?.click()} type="button">
-            <FileUp size={18} />导入 .txt
+            <FileUp size={18} />导入文本文件
           </button>
           <button className="ghost-button" onClick={onSample} type="button">
             <Sparkles size={18} />导入示例：北境婚书
           </button>
-          <button className="ghost-button" onClick={onSave} type="button">
-            <Save size={18} />保存草稿
-          </button>
+          <span className="creation-word-count">{words.toLocaleString()} 字 · 支持 TXT / Markdown</span>
         </div>
 
       </section>
 
       <aside className="u-side-stack">
         <section className="u-card import-stats-card">
-          <div className="import-summary-head"><h3>导入摘要</h3><span>{form.sourceType === "script" ? "剧本直拆" : "小说转剧本"}</span></div>
+          <div className="import-summary-head"><h3>本次制作范围</h3><span>{form.sourceType === "script" ? "剧本直拆" : "小说改编"}</span></div>
           <div className="mini-metrics import-metrics">
             <div><strong>{words.toLocaleString()}</strong><span>字数</span></div>
             <div><strong>{suggestedEpisodes}</strong><span>结构支持集数</span></div>
@@ -529,14 +553,14 @@ function StoryStep({
             </select>
           </label>
           <small>{episodeAnalysis.summary}。选择范围只控制本次先生产多少集，不会把全部内容强行重切。</small>
-          {words < 2000 ? <p className="warning-text">内容较短，系统会自动减少场次与镜头，避免剧情被过度拆分。</p> : null}
+          {words > 0 && words < 2000 ? <p className="warning-text">短篇内容会自动减少场次与镜头，保留故事节奏。</p> : null}
+          <button className="primary-button full-button" onClick={onNext} disabled={!form.content.trim()} type="button">
+            下一步：全局设定 <ChevronRight size={18} />
+          </button>
         </section>
 
-        <section className="u-card ai-plan-card">
-          <div className="u-card-head compact">
-            <h3>接下来会生成什么</h3>
-            <small>每一步都可以在项目工作台继续编辑、重生和质检。</small>
-          </div>
+        <details className="u-card ai-plan-card creation-process-detail">
+          <summary>原稿将如何变成漫剧</summary>
           {(form.sourceType === "script"
             ? ["识别集与场次", "提取角色 / 场景 / 道具", "生成分镜拆解", "建立一致性资产", "进入图片与视频生产"]
             : ["分析小说结构", "转换为标准剧本", "识别集与场次", "提取角色 / 场景 / 道具", "进入分镜与资产生产"]
@@ -546,10 +570,7 @@ function StoryStep({
               <strong>{item}</strong>
             </div>
           ))}
-          <button className="primary-button full-button" onClick={onNext} disabled={!form.content.trim()} type="button">
-            下一步：全局设定 <ChevronRight size={18} />
-          </button>
-        </section>
+        </details>
       </aside>
     </div>
   );
@@ -557,19 +578,22 @@ function StoryStep({
 function SettingsStep({
   form,
   onChange,
+  onBack,
   onNext
 }: {
   form: CreateProjectInput;
   onChange: (form: CreateProjectInput) => void;
+  onBack: () => void;
   onNext: () => void;
 }) {
   return (
+    <div className="u-wizard-grid creation-settings-grid">
     <section className="u-card settings-card settings-step-redesign">
       <div className="u-card-head">
         <div>
           <span className="section-kicker">STEP 2</span>
-          <h2>完成基础生产设置</h2>
-          <p>先确认画面比例、视觉风格和题材倾向，后续角色、分镜图和视频会沿用这组设定。</p>
+          <h2>定下作品的视觉方向</h2>
+          <p>统一画幅与风格，让角色、场景和镜头保持一致。</p>
         </div>
       </div>
 
@@ -585,7 +609,7 @@ function SettingsStep({
         <div className="setting-title"><span>2</span><div><h3>想要什么画面风格？</h3><p>风格会贯穿角色、场景、分镜图和视频画面。</p></div></div>
         <div className="style-chip-grid">
           {stylePresets.map((style) => (
-            <button className={form.artStyle === style ? "active" : ""} key={style} onClick={() => onChange({ ...form, artStyle: style })} type="button">
+            <button className={form.artStyle === style ? "active" : ""} aria-pressed={form.artStyle === style} key={style} onClick={() => onChange({ ...form, artStyle: style })} type="button">
               {style}
             </button>
           ))}
@@ -600,12 +624,23 @@ function SettingsStep({
         </div>
       </div>
 
-      <div className="u-card-actions">
-        <button className="primary-button" onClick={onNext} type="button">
-          下一步：核心剧情·剧本 <ChevronRight size={18} />
-        </button>
-      </div>
     </section>
+    <aside className="u-side-stack">
+      <section className="u-card creation-setting-preview">
+        <span className="section-kicker">画幅预览</span>
+        <div className="creation-ratio-stage" aria-label={`${form.videoRatio} 画幅预览`}><div className={form.videoRatio === "16:9" ? "is-landscape" : ""}><span>{form.videoRatio}</span><i /><i /></div></div>
+        <h3>{form.artStyle || "由故事决定画面风格"}</h3>
+        <dl><div><dt>题材</dt><dd>{form.genre || "根据原稿识别"}</dd></div><div><dt>本次范围</dt><dd>{form.targetEpisodes ?? 1} 集</dd></div><div><dt>画面方向</dt><dd>{form.videoRatio === "16:9" ? "横屏 · 叙事画幅" : "竖屏 · 移动端"}</dd></div></dl>
+        <p>画幅示意用于查看比例，实际画面将在资产和分镜阶段生成。</p>
+        <div className="creation-step-actions">
+        <button className="primary-button" onClick={onNext} type="button">
+          下一步：确认创建 <ChevronRight size={18} />
+        </button>
+        <button className="ghost-button" onClick={onBack} type="button">返回原稿</button>
+        </div>
+      </section>
+    </aside>
+    </div>
   );
 }
 function ScriptStep({
@@ -637,7 +672,8 @@ function ScriptStep({
   isGenerating,
   isEstimating,
   message,
-  onStart
+  onStart,
+  onBack
 }: {
   form: CreateProjectInput;
   canManageModels: boolean;
@@ -670,6 +706,7 @@ function ScriptStep({
   isEstimating: boolean;
   message: string;
   onStart: () => void;
+  onBack: () => void;
 }) {
   const imageMultiplier = imageParameterMultiplier(form.imageSize, form.imageQuality).toFixed(2);
   const [activeRoute, setActiveRoute] = useState<"text" | "image" | "video">("text");
@@ -689,20 +726,20 @@ function ScriptStep({
       <section className="u-card script-plan-card wizard-script-card shot-plan-main">
         <div className="u-card-head wizard-script-title">
           <div>
-            <span className="section-kicker">制作设置</span>
-            <h2>确认内容如何进入漫剧制作</h2>
-            <p>先完成剧本结构化和实体提取；镜头数量将在剧本解析后按每个真实场次自动建议。</p>
+            <span className="section-kicker">STEP 3</span>
+            <h2>核对设置，开始制作</h2>
+            <p>本次创建只解析文本。图片、视频与配音在后续步骤单独报价。</p>
           </div>
           <span className="plan-ready"><Route size={16} />{routeReady ? "当前制作配置" : "模型配置待完善"}</span>
         </div>
 
-        <div className="production-runway">
-          <article><span><BookOpenCheck size={19} /></span><div><strong>{form.sourceType === "script" ? "剧本结构化" : "小说转剧本"}</strong><small>{form.sourceType === "script" ? "识别场次、对白与动作" : "改编为可拍摄标准剧本"}</small></div></article>
-          <ChevronRight size={18} />
-          <article><span><UsersRound size={19} /></span><div><strong>角色与场景提取</strong><small>建立可复用的一致性资产</small></div></article>
-          <ChevronRight size={18} />
-          <article><span><Layers3 size={19} /></span><div><strong>创建项目工作区</strong><small>解析后再生成逐场镜头建议</small></div></article>
-        </div>
+        <dl className="creation-review-grid">
+          <div><dt>原稿类型</dt><dd>{form.sourceType === "script" ? "已有剧本" : "小说 / 故事"}</dd></div>
+          <div><dt>制作范围</dt><dd>{form.targetEpisodes ?? 1} 集</dd></div>
+          <div><dt>画面比例</dt><dd>{form.videoRatio}</dd></div>
+          <div><dt>视觉风格</dt><dd>{form.artStyle || "根据故事识别"}</dd></div>
+        </dl>
+        <details className="creation-source-review"><summary>查看原稿 · {form.content.trim().length.toLocaleString()} 字</summary><p>{form.content}</p></details>
 
         <div className="script-output-heading"><div><strong>将自动完成</strong><span>创建后进入项目工作台继续调整</span></div><span>{form.sourceType === "script" ? "剧本直接拆解" : "小说先转为剧本"}</span></div>
         <div className="script-preview-list script-output-map compact-output-map">
@@ -710,21 +747,21 @@ function ScriptStep({
             <PreviewLine key={asset.title} title={asset.title} text={asset.text} icon={asset.icon} meta={asset.meta} />
           ))}
         </div>
-
-        <EstimatePanel estimate={estimate} form={form} onEstimate={onEstimate} isEstimating={isEstimating} />
-
-        <div className="inline-actions stretch wizard-script-actions">
-          <button className="ghost-button" onClick={onEstimate} disabled={isEstimating || isGenerating} type="button">{isEstimating ? "正在获取报价..." : "刷新本次文本报价"}</button>
-          <button className="primary-button large" onClick={onStart} disabled={isGenerating || isEstimating || !routeReady} type="button">
-            {isGenerating ? <Loader2 size={18} className="spin-icon" /> : <WandSparkles size={18} />}
-            {isGenerating ? "正在建立项目..." : isEstimating ? "正在获取报价..." : estimate ? `确认冻结 ${estimate.estimatedCredits} 积分并创建` : "获取文本报价并确认"}
-          </button>
-        </div>
-        {isGenerating ? <OperationProgress title={form.sourceType === "script" ? "剧本拆解中" : "小说改编中"} elapsed={generationElapsed} detail="系统正在建立剧本、场次、角色、场景和镜头计划，请不要重复提交。" /> : null}
+        <button className="ghost-button" onClick={onBack} disabled={isGenerating} type="button">返回设定</button>
       </section>
 
       <aside className="u-side-stack">
-        <section className="u-card route-card-clean route-card-polished recommended-route-card">
+        <section className="u-card creation-checkout">
+          <EstimatePanel estimate={estimate} form={form} onEstimate={onEstimate} isEstimating={isEstimating} />
+          <button className="primary-button full-button" onClick={onStart} disabled={isGenerating || isEstimating || !routeReady} type="button">
+            {isGenerating ? <Loader2 size={18} className="spin-icon" /> : <WandSparkles size={18} />}
+            {isGenerating ? "正在建立项目..." : isEstimating ? "正在获取报价..." : estimate ? `确认冻结 ${estimate.estimatedCredits} 积分并创建` : "获取文本报价并确认"}
+          </button>
+          {estimate ? <button className="ui-text-button" type="button" onClick={onEstimate} disabled={isGenerating || isEstimating}>重新获取报价</button> : null}
+          {isGenerating ? <OperationProgress title={form.sourceType === "script" ? "剧本拆解中" : "小说改编中"} elapsed={generationElapsed} detail="系统正在建立剧本、场次、角色和场景，请不要重复提交。" /> : null}
+        </section>
+        <details className="u-card route-card-clean route-card-polished recommended-route-card creation-model-settings" open={!routeReady || undefined}>
+          <summary><Route size={18} /><span>生成模型与参数<small>{routeReady ? "已选择可配置模型，按需调整" : "请完善模型配置后继续"}</small></span><ChevronDown size={16} /></summary>
           <div className="recommended-route-head model-route-head">
             <div><span>模型路由</span><strong>{routeReady ? "已选择平台配置" : "请检查模型选择"}</strong></div>
             <Route size={20} />
@@ -756,7 +793,7 @@ function ScriptStep({
           </div>
           <p className="route-cost-note">这里只确认模型已列入平台配置，不代表连接已验证。{canManageModels ? "可测试文本与图像连接；视频会在生成时校验。" : "连接问题请联系管理员；实际可用性会在生成时校验。"}</p>
           <div className="route-cost-note"><CircleDollarSign size={15} /><span>创建前仅锁定路由，不产生扣费；实际按任务和后台价格结算。</span><strong>x{imageMultiplier}</strong></div>
-        </section>
+        </details>
       </aside>
     </div>
   );
@@ -770,7 +807,6 @@ function EstimatePanel({ estimate, form, onEstimate, isEstimating }: { estimate:
           <strong>{isEstimating ? "报价中" : "待确认"}</strong>
         </div>
         <p>按文本渠道、模型和本次集数获取报价。查看报价不扣积分，确认创建后才冻结；图片、视频和配音在对应步骤另行报价。</p>
-        <button className="ghost-button" onClick={onEstimate} disabled={isEstimating} type="button">获取文本报价</button>
       </div>
     );
   }
@@ -815,7 +851,7 @@ function RouteChannel({ icon, title, purpose, model, active, warning, onClick }:
 }
 
 function ChoiceCard({ active, title, desc, badge, onClick }: { active: boolean; title: string; desc: string; badge?: string; onClick: () => void }) {
-  return <button className={active ? "choice-card active" : "choice-card"} onClick={onClick} type="button"><strong>{title}</strong><span>{desc}</span>{badge ? <em>{badge}</em> : null}</button>;
+  return <button className={active ? "choice-card active" : "choice-card"} aria-pressed={active} onClick={onClick} type="button"><strong>{title}</strong><span>{desc}</span>{badge ? <em>{badge}</em> : null}</button>;
 }
 
 function PreviewLine({ title, text, icon, meta }: { title: string; text: string; icon?: ReactNode; meta?: string }) {
@@ -873,9 +909,9 @@ function normalizeDraft(form: CreateProjectInput): CreateProjectInput {
 
 function stepLabel(step: WizardStep) {
   const map: Record<WizardStep, string> = {
-    story: "内容输入",
-    settings: "创作设定",
-    script: "镜头计划"
+    story: "导入原稿",
+    settings: "全局设定",
+    script: "确认创建"
   };
   return map[step];
 }
@@ -883,8 +919,8 @@ function stepLabel(step: WizardStep) {
 function stepHint(step: WizardStep, sourceType: CreateProjectInput["sourceType"]) {
   const map: Record<WizardStep, string> = {
     story: sourceType === "script" ? "导入已有剧本" : "导入小说原文",
-    settings: "风格、画幅与目标集数",
-    script: sourceType === "script" ? "拆解场次并自动规划" : "改编剧本并自动规划"
+    settings: "选择画幅与视觉风格",
+    script: "核对内容与本次费用"
   };
   return map[step];
 }

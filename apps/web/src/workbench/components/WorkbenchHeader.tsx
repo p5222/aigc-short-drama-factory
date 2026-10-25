@@ -14,6 +14,7 @@ import { nextWorkbenchTheme, type WorkbenchStage, type WorkbenchTheme } from "..
 export interface WorkbenchHeaderStage {
   id: WorkbenchStage;
   label: string;
+  detail?: string;
   done?: boolean;
 }
 
@@ -108,15 +109,17 @@ export function WorkbenchHeader({
       </div>
 
       <nav className="wb-stage-nav" aria-label="项目生产阶段">
-        {stages.map((stage) => (
+        {stages.map((stage, index) => (
           <button
             className={stage.id === activeStage ? "is-active" : undefined}
             type="button"
             key={stage.id}
+            aria-label={stage.label}
             aria-current={stage.id === activeStage ? "step" : undefined}
             onClick={() => onStageChange(stage.id)}
           >
-            <span>{stage.label}</span>
+            <span className="wb-stage-number" aria-hidden="true">{String(index + 1).padStart(2, "0")}</span>
+            <span className="wb-stage-copy"><strong>{stage.label}</strong>{stage.detail ? <small>{stage.detail}</small> : null}</span>
             {stage.done ? (
               <span className="wb-stage-complete">
                 <i aria-hidden="true" />
@@ -133,12 +136,12 @@ export function WorkbenchHeader({
         </span>
         {onOpenRail ? (
           <button className="wb-icon-button wb-header__drawer-trigger wb-header__rail-trigger" type="button" aria-label="打开对象列表" onClick={onOpenRail}>
-            <ListTree aria-hidden="true" />
+            <ListTree aria-hidden="true" /><span>目录</span>
           </button>
         ) : null}
         {onOpenInspector ? (
           <button className="wb-icon-button wb-header__drawer-trigger" type="button" aria-label="打开检查器" onClick={onOpenInspector}>
-            <PanelRight aria-hidden="true" />
+            <PanelRight aria-hidden="true" /><span>设置</span>
           </button>
         ) : null}
         {onOpenTasks ? <button className="wb-icon-button wb-header__overflow-action" type="button" aria-label="打开生成任务" title="生成任务" onClick={onOpenTasks}><ListTree aria-hidden="true" /></button> : null}

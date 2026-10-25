@@ -1018,9 +1018,6 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
               }}
             />
           ))}
-          <div className="cine-radial-glow" />
-          <div className="cine-bottom-gradient" />
-          <div className="cine-left-gradient" />
         </div>
 
         <div className="cine-center-copy">

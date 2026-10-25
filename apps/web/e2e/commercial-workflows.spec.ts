@@ -227,7 +227,7 @@ test("creator route inventory renders without crashes or document overflow", asy
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
   await fixtureApi(page);
-  for (const [route, title] of [["scripts", "我的作品"], ["tasks", "生成队列"], ["profile", "我的账户"], ["recharge", "积分充值"], ["ledger", "积分明细"], ["settings", "设置"], ["help", "帮助中心"], ["studio", "剪辑中心"], ["wizard", "新建漫剧"], ["content/__new__", "新建内容创作"]]) {
+  for (const [route, title] of [["scripts", "我的作品"], ["tasks", "生成队列"], ["profile", "我的账户"], ["recharge", "积分充值"], ["ledger", "积分明细"], ["settings", "设置"], ["help", "帮助中心"], ["studio", "剪辑中心"], ["wizard", "让一个新故事，从这里开始"], ["content/__new__", "新建内容创作"]]) {
     await page.goto(`/#/${route}`);
     await expect(page.getByRole("heading", { name: title, exact: true }).first()).toBeVisible();
     await expect(page.locator('[aria-busy="true"]')).toHaveCount(0);

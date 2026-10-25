@@ -67,7 +67,8 @@ export function AdminAuditLogPage() {
         { key: "action", label: "操作", render: (row) => row.action },
         { key: "target", label: "目标", render: (row) => row.target },
         { key: "result", label: "结果", render: (row) => <span className="adm-status" data-status={row.status}>{statusLabels[row.status] ?? row.status}</span> },
-        { key: "code", label: "响应状态", render: (row) => row.statusCode ?? "待核对" }
+        { key: "code", label: "响应状态", render: (row) => row.statusCode ?? "待核对" },
+        { key: "detail", label: "详情", sticky: "right", render: row => <button className="adm-row-open" type="button" aria-label={`查看操作记录 ${row.id}`} onClick={() => setSelectedId(row.id)}>查看详情</button> }
       ]}
       rows={rows}
       rowKey={(row) => row.id}
@@ -76,6 +77,8 @@ export function AdminAuditLogPage() {
       emptyText="没有匹配的操作记录。请调整筛选条件；新操作完成后可刷新查看。"
       page={page}
       totalPages={Math.max(1, Math.ceil(total / 30))}
+      total={total}
+      pageSize={30}
       onPageChange={setPage}
       onRowClick={(row) => setSelectedId(row.id)}
     />
