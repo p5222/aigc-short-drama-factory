@@ -21,7 +21,7 @@ import { InlineNotice, PageHeader, StatePanel } from "../design-system/ui";
 import "./creator-pages.css";
 import type { ReactNode } from "react";
 import type { GenerationTask, TaskStatus, TaskType } from "@aifilm/shared";
-import { canCancelTask, canRetryTask, createTaskActionRunner, type PendingTaskActions, type TaskAction } from "./taskActionModel";
+import { canCancelTask, canRetryTask, createTaskActionRunner, taskRecoveryHint, taskSupportDiagnostic, type PendingTaskActions, type TaskAction } from "./taskActionModel";
 import { ListPagination } from "../components/ListPagination";
 
 type QueueFilter = "all" | "active" | "failed" | "succeeded" | "pending" | "canceled";
@@ -41,13 +41,15 @@ export function TaskCenterPage({
   onRetry,
   onCancel,
   onRefresh,
-  onOpenProject
+  onOpenProject,
+  onOpenSupport
 }: {
   tasks: GenerationTask[];
   onRetry: (taskId: string) => void | Promise<void>;
   onCancel: (taskId: string) => void | Promise<void>;
   onRefresh: () => void | Promise<void>;
   onOpenProject: (projectId: string) => void;
+  onOpenSupport: () => void;
 }) {
   const [activeFilter, setActiveFilter] = useState<QueueFilter>("all");
   const [activeStage, setActiveStage] = useState<TaskType | "all">("all");
@@ -195,7 +197,7 @@ export function TaskCenterPage({
           <ListPagination total={filteredTasks.length} page={currentPage} pageSize={pageSize} onChange={page => { setRequestedPage(page); setSelectedTaskId(""); }} />
         </div>
 
-        {selectedTask ? <TaskDetailPanel task={selectedTask} onOpenProject={onOpenProject} queuePolicy={queuePolicy} pendingAction={pendingActions[selectedTask.id]} onRetry={(id) => void runAction(id, "retry")} onCancel={(id) => void runAction(id, "cancel")} /> : null}
+        {selectedTask ? <TaskDetailPanel task={selectedTask} onOpenProject={onOpenProject} onOpenSupport={onOpenSupport} queuePolicy={queuePolicy} pendingAction={pendingActions[selectedTask.id]} onRetry={(id) => void runAction(id, "retry")} onCancel={(id) => void runAction(id, "cancel")} /> : null}
       </section>
       <p className="creator-page-footnote">当前显示你的任务。成功后正式扣费，失败或取消会退回未消耗的冻结积分。</p>
     </div>
@@ -205,6 +207,7 @@ export function TaskCenterPage({
 function TaskDetailPanel({
   task,
   onOpenProject,
+  onOpenSupport,
   queuePolicy,
   pendingAction,
   onRetry,
@@ -212,11 +215,14 @@ function TaskDetailPanel({
 }: {
   task?: GenerationTask;
   onOpenProject: (projectId: string) => void;
+  onOpenSupport: () => void;
   queuePolicy: ReturnType<typeof buildQueuePolicy>;
   pendingAction?: TaskAction;
   onRetry: (taskId: string) => void;
   onCancel: (taskId: string) => void;
 }) {
+  const [copyMessage, setCopyMessage] = useState("");
+  useEffect(() => setCopyMessage(""), [task?.id]);
   if (!task) {
     return (
       <aside className="queue-detail-card empty"><StatePanel compact title="选择任务查看详情" description="任务结果、积分和失败原因会显示在这里。" /></aside>
@@ -273,14 +279,15 @@ function TaskDetailPanel({
           <QueueDetail label="创建时间" value={formatTaskTime(task.createdAt)} />
           <QueueDetail label="更新时间" value={formatTaskTime(task.updatedAt)} />
         </div>
-        <div className="queue-task-id" title={task.jobId ?? task.id}><span>任务 ID</span><code>{task.jobId ?? task.id}</code></div>
+        <div className="queue-task-id" title={task.id}><span>平台任务 ID</span><code>{task.id}</code></div>
+        {task.jobId ? <div className="queue-task-id" title={task.jobId}><span>队列标识</span><code>{task.jobId}</code></div> : null}
       </div>
 
       {task.errorReason ? (
         <div className="queue-error-box">
           <strong><AlertTriangle size={14} />失败原因</strong>
           <p>{task.errorReason}</p>
-          <p className="queue-error-hint">可直接重试；若同一渠道反复失败，建议在生产台切换模型渠道后再生成。</p>
+          <p className="queue-error-hint">{taskRecoveryHint(task)}</p>
         </div>
       ) : (
         <div className="queue-next-box">
@@ -294,6 +301,16 @@ function TaskDetailPanel({
         <p>{task.refundPolicy ?? "失败或取消会退回未消耗积分；成功后正式扣费。"}</p>
         <p>{task.fallbackHint ?? "如同一模型反复失败，可以到生产台切换模型，或向支持人员提交工单。"}</p>
       </div>
+      <details className="queue-fallback-box">
+        <summary>工单诊断摘要</summary>
+        <pre className="queue-diagnostic">{taskSupportDiagnostic(task)}</pre>
+        <button type="button" className="ghost-button" onClick={() => {
+          if (!navigator.clipboard?.writeText) { setCopyMessage("当前浏览器无法复制，请手动选择上方摘要。"); return; }
+          void navigator.clipboard.writeText(taskSupportDiagnostic(task)).then(() => setCopyMessage("诊断摘要已复制，可粘贴到工单。")).catch(() => setCopyMessage("复制失败，请手动选择上方摘要。"));
+        }}>复制诊断摘要</button>
+        {copyMessage ? <p role="status">{copyMessage}</p> : null}
+      </details>
+      <button type="button" className="ghost-button" onClick={onOpenSupport}>前往帮助中心提交工单</button>
 
       {task.projectId ? <button type="button" className="primary-button" onClick={() => onOpenProject(task.projectId!)}><Film size={16} /> 打开所属作品</button> : <p className="muted">对应作品已不可用，任务记录仍保留。</p>}
       <div className="queue-detail-actions">
@@ -458,8 +475,7 @@ function nextStepText(task: GenerationTask) {
   if (task.status === "pending") return "任务已进入队列，实际开始时间取决于模型和阶段的可用额度。";
   if (task.status === "running") return "任务生成中，切换页面后仍会继续执行。";
   if (task.status === "succeeded") return "可以回到项目生产台查看生成结果，继续下一阶段。";
-  if (task.status === "failed") return "建议先检查模型渠道、图片 URL、内容审核或余额后再重试。";
-  return "如需重新生成，可在失败或取消后使用重试。";
+  return taskRecoveryHint(task);
 }
 
 function formatDuration(seconds: number) {

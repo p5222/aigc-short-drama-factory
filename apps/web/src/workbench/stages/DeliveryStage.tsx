@@ -556,6 +556,12 @@ export function DeliveryStage({
         </div>
       </header>
 
+      <section className="dlv2-delivery-checks" aria-label={`第 ${activeEpisode} 集交付检查`}>
+        <span><strong>视频</strong>{stats.videoReady}/{stats.total}{exportState.missingVideoCount ? ` · 需补齐 ${exportState.missingVideoCount} 镜` : stats.total ? " · 已齐全" : " · 暂无镜头"}</span>
+        <span><strong>配音</strong>{stats.audioCovered}/{stats.total}{stats.hasTrackAudio ? " · 已生成音轨" : " · 导出时按对白报价"}</span>
+        <span><strong>字幕</strong>{stats.hasSubtitle ? "已生成" : "未生成，可按需导出"}</span>
+        <span><strong>当前成片</strong>{publishableCandidate?.id.startsWith("export:") ? "MP4 已完成，可预览交付" : "尚未合成当前范围 MP4"}</span>
+      </section>
       <div className="dlv2-main">
         <aside ref={queuePanelRef} className="dlv2-queue" aria-label="镜头队列" role={queueDrawerActive ? "dialog" : undefined} aria-modal={queueDrawerActive || undefined}>
           <header className="dlv2-panel-head">

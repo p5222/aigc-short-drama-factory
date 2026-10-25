@@ -1227,7 +1227,7 @@
   min-width: 0;
   min-height: 0;
   display: grid;
-  grid-template-rows: 48px minmax(0, 1fr) 210px;
+  grid-template-rows: 48px auto minmax(0, 1fr) 210px;
   overflow: hidden;
   background: var(--bg-app);
   color: var(--text-1);
@@ -2148,7 +2148,7 @@
 .wb-content-field textarea { font-size: 14px; line-height: 1.85; }
 .wb-asset-canvas > .ui-notice { margin-bottom: 16px; }
 .dlv2-topbar { min-height: 56px; padding-inline: 20px; flex-wrap: wrap; }
-.dlv2-frame { grid-template-rows: auto minmax(0, 1fr) 218px; }
+.dlv2-frame { grid-template-rows: auto auto minmax(0, 1fr) 218px; }
 .dlv2-main { grid-template-columns: 264px minmax(0, 1fr) 316px; }
 .dlv2-panel-head { min-height: 56px; padding-inline: 16px; }
 .dlv2-card { border-radius: 8px; box-shadow: none; }
@@ -2216,3 +2216,7 @@
 @media (max-width: 767px) {
   .wb-shell .dlv2-frame .dlv2-queue, .wb-shell .dlv2-frame .dlv2-side { top: var(--wb-mobile-header-height, 105px); }
 }
+
+.wb-shell .dlv2-delivery-checks { display: flex; flex-wrap: wrap; gap: 8px 24px; padding: 12px 18px; border-bottom: 1px solid var(--border-1); background: var(--surface-1); font-size: 12px; color: var(--text-2); }
+.wb-shell .dlv2-delivery-checks span { display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; }
+.wb-shell .dlv2-delivery-checks strong { color: var(--text-1); font-weight: 600; }

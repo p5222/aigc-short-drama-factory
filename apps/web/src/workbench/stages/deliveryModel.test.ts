@@ -153,7 +153,8 @@ test("resolveShotVideoStatus mirrors asset lifecycle including queued task refer
   assert.equal(resolveShotVideoStatus(asset("a", "a", "https://cdn.test/a.mp4")), "succeeded");
   assert.equal(resolveShotVideoStatus(asset("b", "b")), "failed");
   assert.equal(resolveShotVideoStatus(rawAsset({ id: "video_c", type: "video", status: "running", referenceUrl: "task-1" })), "running");
-  assert.equal(resolveShotVideoStatus(rawAsset({ id: "video_d", type: "video", status: "succeeded", referenceUrl: "task-2" })), "running");
+  assert.equal(resolveShotVideoStatus(rawAsset({ id: "video_d", type: "video", status: "succeeded", referenceUrl: "task-2" })), "missing");
+  assert.equal(resolveShotVideoStatus(rawAsset({ id: "video_e", type: "video", status: "succeeded", referenceUrl: "" })), "missing");
 });
 
 test("buildShotMediaIndex resolves audio and subtitle assets by shot id convention", () => {

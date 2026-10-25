@@ -890,20 +890,23 @@ async function resolveAuthUser(req: express.Request) {
   return session.user;
 }
 
-async function ensureCreditForUser(userId: string) {
+function initialUserCredit(userId: string) {
   const configuredCredits = Number(process.env.REGISTRATION_CREDITS ?? (isProduction ? 0 : 1000));
   const starterCredits = Number.isSafeInteger(configuredCredits) && configuredCredits >= 0 ? configuredCredits : 0;
+  return {
+    id: `credit_${userId}`,
+    balance: starterCredits,
+    frozenBalance: 0,
+    totalRecharge: starterCredits,
+    totalConsume: 0
+  };
+}
+
+async function ensureCreditForUser(userId: string) {
   await prisma.creditAccount.upsert({
     where: { userId },
     update: {},
-    create: {
-      id: `credit_${userId}`,
-      userId,
-      balance: starterCredits,
-      frozenBalance: 0,
-      totalRecharge: starterCredits,
-      totalConsume: 0
-    }
+    create: { userId, ...initialUserCredit(userId) }
   });
 }
 
@@ -980,19 +983,20 @@ app.post(
     if (existing?.email === email) return res.status(409).json({ message: "该邮箱已注册，请直接登录。" });
     if (phone && existing?.phone === phone) return res.status(409).json({ message: "该手机号已注册，请直接登录。" });
 
+    const userId = `user_${crypto.randomUUID()}`;
     const user = await prisma.user.create({
       data: {
-        id: `user_${crypto.randomUUID()}`,
+        id: userId,
         name: parsed.data.name?.trim() || (phone ? `用户${phone.slice(-4)}` : email.split("@")[0].slice(0, 20) || "创作者"),
         email,
         phone,
         passwordHash: await hashPassword(parsed.data.password),
         role: "creator",
-        status: "active"
+        status: "active",
+        credit: { create: initialUserCredit(userId) }
       }
     });
 
-    await ensureCreditForUser(user.id);
     const token = await issueToken(user.id, req, user.passwordHash ?? undefined);
     setMediaCookie(res, token);
     res.status(201).json({ token, user: publicUser(user) });

@@ -1055,6 +1055,10 @@ export interface WorkbenchSummary {
   storyboards: number;
   runningTasks: number;
   credits: number;
+  /** Account-wide counts; recent lists are only presentation samples. */
+  actionCounts?: { waiting: number; active: number; failed: number };
+  actionProjects?: Project[];
+  updatedAt?: string;
   recentProjects: Project[];
   recentTasks: GenerationTask[];
   announcements: Array<{
@@ -1193,6 +1197,7 @@ export interface AdminSummary {
   metricTimezone?: "Asia/Shanghai";
   refundCredits?: number;
   failedTasks?: number;
+  operations?: { openTickets: number; pendingWorks: number; pendingOrders: number; activeTasks: number; updatedAt: string };
   grossMarginEstimate?: number | null;
   grossMarginRate?: number | null;
   costByStage?: Array<{

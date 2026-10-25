@@ -515,6 +515,7 @@ export function App() {
           <TaskCenterPage
             tasks={tasks}
             onOpenProject={(id) => void openProject(id)}
+            onOpenSupport={() => setActivePage("help")}
             onRetry={(taskId) => refreshTaskAction(() => api.retryTask(taskId))}
             onCancel={(taskId) => refreshTaskAction(() => api.cancelTask(taskId))}
             onRefresh={() => load()}

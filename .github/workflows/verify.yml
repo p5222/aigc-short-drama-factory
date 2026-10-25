@@ -80,6 +80,24 @@ jobs:
         run: pnpm --filter @aifilm/api exec tsx --test --test-concurrency=1 src/**/*.test.ts
       - run: pnpm typecheck
       - run: pnpm build
+      - name: Install Chromium for isolated desktop and mobile UI regression
+        run: pnpm --filter @aifilm/web exec playwright install --with-deps chromium
+      - name: Verify all creator and administrator browser workflows
+        timeout-minutes: 6
+        env:
+          PLAYWRIGHT_OUTPUT_DIR: ${{ runner.temp }}/manjiao-browser-results
+          PLAYWRIGHT_REPORT_DIR: ${{ runner.temp }}/manjiao-browser-report
+          PLAYWRIGHT_SCREENSHOT_DIR: ${{ runner.temp }}/manjiao-browser-screenshots
+        run: pnpm --filter @aifilm/web test:e2e --workers=2
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: browser-regression-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/manjiao-browser-results
+            ${{ runner.temp }}/manjiao-browser-report
+            ${{ runner.temp }}/manjiao-browser-screenshots
+          retention-days: 7
       - run: node --test tools/git-workbench/workbench.test.mjs
       - run: node --test tools/commerce/*.test.mjs
       - name: Verify Project Hub authentication, real Git isolation, retry and persistent audit
@@ -87,8 +105,9 @@ jobs:
       - name: Verify the scoped Caddy operations route
         run: python3 -m unittest discover -s deploy/project-hub -p 'test_*.py' -v
       - run: python3 -m unittest discover -s deploy -p test_deployment.py -v
-      - run: bash -n deploy/manjiao_remote.sh deploy/server_git_post_receive.sh deploy/backup_server_state.sh deploy/install_git_hook.sh deploy/verify_backup_restore.sh deploy/test_backup_restore.sh deploy/test_runtime_image.sh deploy/verify_full_restore.sh deploy/test_full_restore.sh deploy/scheduled_backup.sh deploy/install_backup_timer.sh
+      - run: bash -n deploy/manjiao_remote.sh deploy/server_git_post_receive.sh deploy/backup_server_state.sh deploy/install_git_hook.sh deploy/verify_backup_restore.sh deploy/test_backup_restore.sh deploy/test_runtime_image.sh deploy/verify_full_restore.sh deploy/test_full_restore.sh deploy/scheduled_backup.sh deploy/install_backup_timer.sh deploy/scheduled_monitor.sh deploy/install_monitor_timer.sh
       - run: node --check deploy/verify_full_restore.mjs
+      - run: node --test deploy/site_monitor.test.mjs
       - name: Restore a real backup into an isolated PostgreSQL instance and reject corruption
         run: bash deploy/test_backup_restore.sh "${{ job.services.postgres.id }}"
       - name: Verify live Redis AOF migration preserves unsnapshotted queue data

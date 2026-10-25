@@ -57,7 +57,8 @@ import {
 
 export async function getWorkbenchSummary(userId = DEMO_USER_ID): Promise<WorkbenchSummary> {
   const taskWhere = { userId, NOT: { id: { startsWith: "content_operation_" } } };
-  const [user, projects, tasks, account, announcements, projectCount, storyboardCount, runningTaskCount] = await Promise.all([
+  const waitingWhere = { userId, status: { in: ["scripting", "storyboarding"] } };
+  const [user, projects, tasks, account, announcements, projectCount, storyboardCount, runningTaskCount, waitingCount, failedCount, actionProjects] = await Promise.all([
     prisma.user.findUniqueOrThrow({ where: { id: userId } }),
     prisma.project.findMany({ where: { userId }, orderBy: { updatedAt: "desc" }, take: 6 }),
     prisma.generationTask.findMany({ where: taskWhere, orderBy: { updatedAt: "desc" }, take: 8 }),
@@ -65,7 +66,10 @@ export async function getWorkbenchSummary(userId = DEMO_USER_ID): Promise<Workbe
     listPublicAnnouncements(),
     prisma.project.count({ where: { userId } }),
     prisma.storyboard.count({ where: { project: { userId } } }),
-    prisma.generationTask.count({ where: { ...taskWhere, status: { in: ["running", "pending"] } } })
+    prisma.generationTask.count({ where: { ...taskWhere, status: { in: ["running", "pending"] } } }),
+    prisma.project.count({ where: waitingWhere }),
+    prisma.generationTask.count({ where: { ...taskWhere, status: "failed" } }),
+    prisma.project.findMany({ where: waitingWhere, orderBy: { updatedAt: "asc" }, take: 3 })
   ]);
 
   return {
@@ -74,6 +78,9 @@ export async function getWorkbenchSummary(userId = DEMO_USER_ID): Promise<Workbe
     storyboards: storyboardCount,
     runningTasks: runningTaskCount,
     credits: account.balance,
+    actionCounts: { waiting: waitingCount, active: runningTaskCount, failed: failedCount },
+    actionProjects: actionProjects.map(mapProject),
+    updatedAt: new Date().toISOString(),
     recentProjects: projects.map(mapProject),
     recentTasks: tasks.map(mapTask),
     announcements: announcements.map((item) => ({
@@ -992,7 +999,7 @@ export async function getAdminSummary(_userId = DEMO_USER_ID): Promise<AdminSumm
   const chinaOffsetMs = 8 * 60 * 60 * 1000;
   const dayStart = new Date(Math.floor((Date.now() + chinaOffsetMs) / dayMs) * dayMs - chinaOffsetMs);
   const taskWhere = { NOT: { id: { startsWith: "content_operation_" } } };
-  const [users, projects, tasksToday, groups, accountTotals, consumed, refunds, paidOrders] = await Promise.all([
+  const [users, projects, tasksToday, groups, accountTotals, consumed, refunds, paidOrders, openTickets, pendingWorks, pendingOrders] = await Promise.all([
     prisma.user.count(),
     prisma.project.count(),
     prisma.generationTask.count({ where: { ...taskWhere, createdAt: { gte: dayStart, lt: new Date(dayStart.getTime() + dayMs) } } }),
@@ -1000,7 +1007,10 @@ export async function getAdminSummary(_userId = DEMO_USER_ID): Promise<AdminSumm
     prisma.creditAccount.findMany({ select: { userId: true, totalConsume: true } }),
     prisma.creditTransaction.groupBy({ by: ["userId"], where: { type: "consume", amount: { lt: 0 } }, _sum: { amount: true } }),
     prisma.creditTransaction.aggregate({ where: { type: "refund", amount: { gt: 0 } }, _sum: { amount: true } }),
-    prisma.rechargeOrder.aggregate({ where: { status: "paid", channel: { not: "mock" } }, _sum: { amountCny: true } })
+    prisma.rechargeOrder.aggregate({ where: { status: "paid", channel: { not: "mock" } }, _sum: { amountCny: true } }),
+    prisma.supportTicket.count({ where: { status: "open" } }),
+    prisma.showcaseWork.count({ where: { status: "pending" } }),
+    prisma.rechargeOrder.count({ where: { status: "pending", channel: { not: "mock" } } })
   ]);
   const totalTasks = groups.reduce((sum, group) => sum + group._count._all, 0);
   const done = groups.filter(group => group.status === "succeeded").reduce((sum, group) => sum + group._count._all, 0);
@@ -1030,6 +1040,11 @@ export async function getAdminSummary(_userId = DEMO_USER_ID): Promise<AdminSumm
   };
   return {
     users, projects, tasksToday, totalTasks, completedTasks,
+    operations: {
+      openTickets, pendingWorks, pendingOrders,
+      activeTasks: groups.filter(group => ["pending", "running"].includes(group.status)).reduce((sum, group) => sum + group._count._all, 0),
+      updatedAt: new Date().toISOString()
+    },
     successRate: completedTasks ? Math.round(100 * done / completedTasks) : 0,
     creditsConsumed, unreconciledCredits,
     // Recharge receipts are cash inflow, not earned credit consumption revenue.

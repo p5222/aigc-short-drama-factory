@@ -60,7 +60,7 @@ async function adminFixtures(page: Page) {
 async function capture(page: Page, label: string) {
   await expect(page.getByText("页面暂时无法显示", { exact: true })).toHaveCount(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBeTruthy();
-  await page.screenshot({ path: `../../outputs/ui-redesign-20261025/screenshots/admin-${label}-${test.info().project.name}.png`, fullPage: true });
+  await page.screenshot({ path: `${process.env.PLAYWRIGHT_SCREENSHOT_DIR ?? "../../outputs/ui-redesign-20261025/screenshots"}/admin-${label}-${test.info().project.name}.png`, fullPage: true });
 }
 
 test("populated user table exposes real dates, display columns, server filters and page size", async ({ page }) => {

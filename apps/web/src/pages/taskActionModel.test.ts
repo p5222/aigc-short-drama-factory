@@ -1,7 +1,19 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { GenerationTask } from "@aifilm/shared";
-import { canRetryTask, canCancelTask, createTaskActionRunner, type PendingTaskActions } from "./taskActionModel.ts";
+import { canRetryTask, canCancelTask, createTaskActionRunner, taskRecoveryHint, taskSupportDiagnostic, type PendingTaskActions } from "./taskActionModel.ts";
+
+test("blocked recovery does not invite another charge and diagnostics exclude private payloads", () => {
+  const task = { id: "platform-id", jobId: "private-queue-id", type: "video", status: "failed", retryable: false,
+    errorReason: "private error", title: "private title", requestPayload: { apiKey: "secret" }, estimatedCredits: 20,
+    createdAt: "2026-10-26", updatedAt: "2026-10-26" } as unknown as GenerationTask;
+  assert.match(taskRecoveryHint(task), /不能从队列直接重试/);
+  assert.match(taskRecoveryHint({ ...task, status: "running" }), /先刷新/);
+  assert.match(taskRecoveryHint({ ...task, retryable: true }), /可以重试/);
+  const diagnostic = taskSupportDiagnostic(task);
+  assert.match(diagnostic, /platform-id/);
+  assert.doesNotMatch(diagnostic, /secret|private/);
+});
 
 test("task capabilities never override terminal state and honor explicit refusal", () => {
   const task = (status: GenerationTask["status"], extra = {}) => ({ status, ...extra }) as GenerationTask;
