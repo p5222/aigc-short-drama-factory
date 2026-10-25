@@ -369,6 +369,7 @@ test("video eligibility requires a succeeded image and no succeeded playable vid
   assert.equal(resolveVideoAssetStatus(queuedVideo), "running");
   assert.equal(resolveVideoAssetStatus(completedVideo), "succeeded");
   assert.equal(resolveVideoAssetStatus({ ...completedVideo, status: "running" }), "running");
+  assert.equal(resolveVideoAssetStatus({ ...completedVideo, referenceUrl: "task-without-result" }), "missing");
 });
 
 test("web video readiness follows the shared persisted URL contract", () => {

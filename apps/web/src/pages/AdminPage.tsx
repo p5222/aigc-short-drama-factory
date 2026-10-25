@@ -451,6 +451,19 @@ function DashboardSection({ summary, providers, modelPrices }: { summary?: Admin
   const enabledPrices = modelPrices.filter((item) => item.enabled).length;
   return (
     <section className="admin-v2-section">
+      <div className="adm-metric-heading"><h2>运营待办</h2><span>{summary?.operations?.updatedAt ? `更新于 ${new Date(summary.operations.updatedAt).toLocaleString("zh-CN")}` : "等待读取全量待办"}</span></div>
+      <div className="admin-product-metrics">
+        <AdminMetric icon={<MessageSquareText size={22} />} label="待处理工单" value={summary?.operations?.openTickets ?? "未读取"} hint="用户等待平台回复" tone="blue" />
+        <AdminMetric icon={<ShieldCheck size={22} />} label="待审核作品" value={summary?.operations?.pendingWorks ?? "未读取"} hint="审核通过后才公开展示" tone="amber" />
+        <AdminMetric icon={<ReceiptText size={22} />} label="待确认订单" value={summary?.operations?.pendingOrders ?? "未读取"} hint="非模拟订单；尚未确认收款" tone="violet" />
+        <AdminMetric icon={<Activity size={22} />} label="活动任务" value={summary?.operations?.activeTasks ?? "未读取"} hint="排队与运行，不含内部操作锁" tone="green" />
+      </div>
+      <div className="admin-setup-links" aria-label="待办处理入口">
+        <button className="ghost-button" type="button" onClick={() => navigateAdminHash("支持工单")}><MessageSquareText size={16} />回复待处理工单</button>
+        <button className="ghost-button" type="button" onClick={() => navigateAdminHash("创作现场管理")}><ShieldCheck size={16} />审核待发布作品</button>
+        <button className="ghost-button" type="button" onClick={() => navigateAdminHash("用户管理")}><UserRound size={16} />查看用户与账单</button>
+      </div>
+      <p className="admin-list-note">待确认订单不是已收款；支付由签名回调或主动查单核对。失败任务请结合用户账单、模型配置和工单排查，不手动重复提交上游生成。</p>
       <div className="adm-metric-heading"><h2>创作与服务</h2><span>当前系统记录 · 今日任务按北京时间统计</span></div>
       <div className="admin-product-metrics">
         <AdminMetric icon={<UserRound size={22} />} label="注册用户" value={summary?.users ?? "未读取"} hint="当前系统用户" tone="blue" />

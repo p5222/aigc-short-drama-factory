@@ -1,0 +1,15 @@
+[Unit]
+Description=Manjiao read-only readiness revision and backup freshness monitor
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=root
+UMask=0077
+Nice=10
+StateDirectory=manjiao-monitor
+ExecStart=/bin/bash /opt/manjiao/deploy/scheduled_monitor.sh
+TimeoutStartSec=90
+NoNewPrivileges=true
+PrivateTmp=true

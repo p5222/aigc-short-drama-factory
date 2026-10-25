@@ -1,0 +1,11 @@
+[Unit]
+Description=Manjiao readiness and backup check every five minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+RandomizedDelaySec=20s
+Unit=manjiao-monitor.service
+
+[Install]
+WantedBy=timers.target

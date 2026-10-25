@@ -260,7 +260,7 @@ export function resolveVideoUnitCredits(
 
 export function resolveVideoAssetStatus(asset?: AssetItem): "missing" | "running" | "failed" | "succeeded" {
   if (!asset) return "missing";
-  if (asset.status === "succeeded" && isPersistedPlayableVideoReference(asset.referenceUrl)) return "succeeded";
+  if (asset.status === "succeeded") return isPersistedPlayableVideoReference(asset.referenceUrl) ? "succeeded" : "missing";
   if (asset.status === "failed") return "failed";
   return "running";
 }

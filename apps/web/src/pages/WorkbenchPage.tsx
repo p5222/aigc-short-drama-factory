@@ -18,7 +18,8 @@ interface WorkbenchPageProps {
 export function WorkbenchPage({ summary, onStart, onOpen, onOpenTasks, onRecharge, onOpenWorks, onStartContent }: WorkbenchPageProps) {
   const projects = summary?.recentProjects ?? [];
   const tasks = summary?.recentTasks ?? [];
-  const actions = collectWorkbenchActions(projects, tasks);
+  const actions = collectWorkbenchActions(summary?.actionProjects ?? projects, tasks);
+  const counts = summary?.actionCounts;
   const latestProject = projects[0];
   const announcements: Array<WorkbenchSummary["announcements"][number] & { pinned?: boolean }> = summary?.announcements ?? [];
 
@@ -54,27 +55,28 @@ export function WorkbenchPage({ summary, onStart, onOpen, onOpenTasks, onRecharg
       {projects.length || tasks.length ? <section className="dashboard-focus-grid" aria-label="待处理工作">
         <article className="dashboard-focus-card warning">
           <span><Clock3 size={18} />等待你确认</span>
-          <strong>{actions.waiting.length}</strong>
-          <p>{actions.waiting[0] ? `${actions.waiting[0].name} · ${projectNextAction(actions.waiting[0])}` : "当前没有待确认的剧本或分镜"}</p>
+          <strong>{counts?.waiting ?? "未确认"}</strong>
+          <p>{counts?.waiting === 0 ? "当前没有待确认的剧本或分镜" : actions.waiting[0] ? `${actions.waiting[0].name} · ${projectNextAction(actions.waiting[0])}` : "查看全部作品，处理待确认的剧本与分镜"}</p>
           {actions.waiting[0] ? <button type="button" onClick={() => onOpen(actions.waiting[0].id)}>去处理<ArrowRight size={15} /></button> : null}
         </article>
         <article className="dashboard-focus-card active">
           <span><Sparkles size={18} />正在生成</span>
-          <strong>{actions.active.length}</strong>
-          <p>{actions.active[0] ? `${actions.active[0].title} · ${actions.active[0].progress}%` : "当前没有排队或运行中的任务"}</p>
-          {actions.active.length ? <button type="button" onClick={onOpenTasks}>查看队列<ArrowRight size={15} /></button> : null}
+          <strong>{counts?.active ?? "未确认"}</strong>
+          <p>{counts?.active === 0 ? "当前没有排队或运行中的任务" : actions.active[0] ? `${actions.active[0].title} · ${actions.active[0].progress}%` : "查看队列，了解所有排队或运行任务"}</p>
+          {counts?.active || actions.active.length ? <button type="button" onClick={onOpenTasks}>查看队列<ArrowRight size={15} /></button> : null}
         </article>
         <article className="dashboard-focus-card danger">
           <span><AlertTriangle size={18} />失败待处理</span>
-          <strong>{actions.failed.length}</strong>
-          <p>{actions.failed[0]?.errorReason || (actions.failed.length ? actions.failed[0].title : "当前没有失败任务")}</p>
-          {actions.failed.length ? <button type="button" onClick={onOpenTasks}>查看原因<ArrowRight size={15} /></button> : null}
+          <strong>{counts?.failed ?? "未确认"}</strong>
+          <p>{counts?.failed === 0 ? "当前没有失败任务" : actions.failed[0]?.errorReason || actions.failed[0]?.title || "查看队列，核对失败原因和恢复方式"}</p>
+          {counts?.failed || actions.failed.length ? <button type="button" onClick={onOpenTasks}>查看原因<ArrowRight size={15} /></button> : null}
         </article>
       </section> : null}
+      {summary?.updatedAt ? <p className="creator-page-footnote">待办数量统计全部作品与任务 · 更新于 {new Date(summary.updatedAt).toLocaleString("zh-CN")}</p> : null}
       <div className="dashboard-work-grid">
         <section className="panel dashboard-project-panel">
           <div className="panel-head">
-            <div><h2>最近项目</h2><small>待处理摘要基于最近项目与任务</small></div>
+            <div><h2>最近项目</h2><small>最近作品便于续创，待办数量覆盖全部记录</small></div>
             <button className="ghost-button" type="button" onClick={onOpenWorks}>全部作品<ArrowRight size={15} /></button>
           </div>
           <div className="dashboard-project-list">

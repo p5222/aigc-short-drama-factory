@@ -42,6 +42,65 @@ async function noOverflow(page: Page) {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBeTruthy();
 }
 
+test("account-wide backlog remains actionable when recent task samples are empty", async ({ page }) => {
+  await fixtureApi(page, { populated: true });
+  const project = { id: "old-waiting", name: "早期待确认作品", type: "漫剧", status: "scripting", storyboards: 3, videoRatio: "9:16", updatedAt: "2026-10-20T00:00:00Z" };
+  await page.route("**/api/workbench/summary", route => route.fulfill({ json: {
+    userName: "验收创作者", projects: 12, storyboards: 30, runningTasks: 11, credits: 100,
+    actionCounts: { waiting: 9, active: 11, failed: 4 }, actionProjects: [project], updatedAt: "2026-10-26T00:00:00Z",
+    recentProjects: [{ ...project, id: "recent", name: "最近作品", status: "completed" }], recentTasks: [], announcements: []
+  } }));
+  await page.goto("/#/workbench");
+  const waiting = page.locator(".dashboard-focus-card.warning");
+  await expect(waiting).toContainText("9");
+  await expect(waiting).toContainText("早期待确认作品");
+  await expect(page.locator(".dashboard-focus-card.active")).toContainText("11");
+  await expect(page.locator(".dashboard-focus-card.danger")).toContainText("4");
+  await page.locator(".dashboard-focus-card.danger").getByRole("button", { name: "查看原因" }).click();
+  await expect(page.getByRole("heading", { name: "生成队列", exact: true })).toBeVisible();
+  await noOverflow(page);
+});
+
+test("admin overview shows real operational backlog and enters open support tickets", async ({ page }) => {
+  await fixtureApi(page, { admin: true });
+  await page.route("**/api/admin/summary", route => route.fulfill({ json: {
+    users: 3, projects: 2, tasksToday: 1, totalTasks: 6, completedTasks: 2, successRate: 100, creditsConsumed: 20,
+    providerCost: null, paidRechargeCny: 0,
+    operations: { openTickets: 4, pendingWorks: 2, pendingOrders: 1, activeTasks: 3, updatedAt: "2026-10-26T00:00:00Z" }
+  } }));
+  await page.goto("/admin");
+  await expect(page.getByRole("heading", { name: "运营待办", exact: true })).toBeVisible();
+  const metrics = page.locator(".admin-product-metrics").first();
+  await expect(metrics).toContainText("待处理工单");
+  await expect(metrics).toContainText("4");
+  await expect(metrics).toContainText("待确认订单");
+  await page.getByRole("button", { name: "回复待处理工单", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "支持工单", exact: true }).first()).toBeVisible();
+  await noOverflow(page);
+});
+
+test("non-retryable task exposes platform ID, manual diagnostics and support without a retry", async ({ page, context }) => {
+  await fixtureApi(page);
+  await context.grantPermissions(["clipboard-write"]);
+  await page.route("**/api/tasks", route => route.fulfill({ json: [{
+    id: "platform-support-id", jobId: "media:internal-job", type: "video", title: "视频生成失败",
+    provider: "fixture", model: "fixture", status: "failed", progress: 0, retryable: false, cancelable: false,
+    estimatedCredits: 20, finalCredits: 0, errorReason: "需要核对原任务结果",
+    createdAt: "2026-10-26T00:00:00Z", updatedAt: "2026-10-26T00:00:00Z"
+  }] }));
+  await page.goto("/#/tasks");
+  await expect(page.getByText(/此任务不能从队列直接重试/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "重试任务", exact: true })).toHaveCount(0);
+  await expect(page.getByText("platform-support-id", { exact: true })).toBeVisible();
+  await page.getByText("工单诊断摘要", { exact: true }).click();
+  await page.getByRole("button", { name: "复制诊断摘要", exact: true }).click();
+  await expect(page.getByText("诊断摘要已复制，可粘贴到工单。")).toBeVisible();
+  await expect(page.locator(".queue-diagnostic")).not.toContainText("media:internal-job");
+  await noOverflow(page);
+  await page.getByRole("button", { name: "前往帮助中心提交工单" }).click();
+  await expect(page.getByRole("heading", { name: "帮助中心", exact: true })).toBeVisible();
+});
+
 test("online cashier reuses pending orders and refreshes the UI after a confirmed-paid fixture", async ({ page }) => {
   await fixtureApi(page);
   const plan = { id: "cashier-trial", name: "支付验收套餐", price: 9.9, credits: 1000, bonusCredits: 0, features: [], enabled: true };

@@ -109,7 +109,7 @@ export type DeliveryShotVideoStatus = "succeeded" | "running" | "failed" | "miss
 /** 与 model.resolveVideoAssetStatus 语义一致；在此复刻以避免引入 ../model 的依赖链。 */
 export function resolveShotVideoStatus(asset?: AssetItem): DeliveryShotVideoStatus {
   if (!asset) return "missing";
-  if (asset.status === "succeeded" && isPersistedPlayableVideoReference(asset.referenceUrl)) return "succeeded";
+  if (asset.status === "succeeded") return isPersistedPlayableVideoReference(asset.referenceUrl) ? "succeeded" : "missing";
   if (asset.status === "failed") return "failed";
   return "running";
 }

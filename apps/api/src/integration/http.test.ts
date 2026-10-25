@@ -83,6 +83,46 @@ test("HTTP business boundaries: sessions, administrator writes, private media an
       sessions.push({ token: body.token, cookie: response.headers.get("set-cookie")!.split(";")[0]! });
     }
     const [owner, other, admin] = sessions as [typeof sessions[number], typeof sessions[number], typeof sessions[number]];
+    await t.test("concurrent registration creates exactly one user with its credit account", async () => {
+      const email = `registration_${run}@example.test`;
+      try {
+        const results = await Promise.all(Array.from({ length: 3 }, () => request("/api/auth/register", undefined, "POST", { email, password, name: "Registration test" })));
+        assert.deepEqual(results.map(response => response.status).sort(), [201, 409, 409]);
+        const users = await db.user.findMany({ where: { email }, include: { credit: true } });
+        assert.equal(users.length, 1);
+        assert.ok(users[0]!.credit);
+        assert.equal(users[0]!.credit!.balance, users[0]!.credit!.totalRecharge);
+        assert.equal(users[0]!.credit!.frozenBalance, 0);
+      } finally { await db.user.deleteMany({ where: { email } }); }
+    });
+    await t.test("workbench counts cover old work beyond recent slices and do not count another user", async () => {
+      const prefix = `summary_${run}_`;
+      try {
+        await db.project.createMany({ data: Array.from({ length: 9 }, (_, i) => ({
+          id: `${prefix}project${i}`, userId: ids[0]!, name: "Backlog test", type: "test", sourceType: "script",
+          artStyle: "test", videoRatio: "9:16", status: "scripting"
+        })) });
+        await db.generationTask.createMany({ data: Array.from({ length: 12 }, (_, i) => ({
+          id: `${prefix}task${i}`, userId: i === 11 ? ids[1]! : ids[0]!, type: "text", title: "Backlog test", provider: "fixture", model: "fixture",
+          status: i < 2 || i === 11 ? "failed" : "pending", estimatedCredits: 0, progress: 0
+        })) });
+        const summary = await (await request("/api/workbench/summary", owner.token)).json();
+        assert.equal(summary.recentProjects.length, 6);
+        assert.equal(summary.recentTasks.length, 8);
+        assert.deepEqual(summary.actionCounts, { waiting: 9, active: 9, failed: 2 });
+        assert.equal(summary.actionProjects.length, 3);
+        assert.ok(summary.actionProjects.every((project: { id: string }) => project.id.startsWith(prefix)));
+        const denied = await request("/api/admin/summary", owner.token);
+        assert.equal(denied.status, 403);
+        const overview = await (await request("/api/admin/summary", admin.token)).json();
+        assert.ok(overview.operations.activeTasks >= 9);
+        assert.equal(overview.operations.openTickets, await db.supportTicket.count({ where: { status: "open" } }));
+        assert.equal(overview.operations.pendingWorks, await db.showcaseWork.count({ where: { status: "pending" } }));
+      } finally {
+        await db.generationTask.deleteMany({ where: { id: { startsWith: prefix } } });
+        await db.project.deleteMany({ where: { id: { startsWith: prefix } } });
+      }
+    });
     await t.test("live checkout fails closed without merchant configuration and membership endpoints require a session", async () => {
       assert.equal((await request("/api/billing/availability")).status, 401);
       assert.equal((await request("/api/billing/membership")).status, 401);

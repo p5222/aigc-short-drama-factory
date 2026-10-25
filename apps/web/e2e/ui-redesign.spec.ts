@@ -47,7 +47,7 @@ async function fixtures(page: Page) {
 async function screenshot(page: Page, name: string) {
   await expect(page.getByText("页面暂时无法显示", { exact: true })).toHaveCount(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBeTruthy();
-  await page.screenshot({ path: `../../outputs/ui-redesign-20261025/screenshots/${name}-${test.info().project.name}.png`, fullPage: true });
+  await page.screenshot({ path: `${process.env.PLAYWRIGHT_SCREENSHOT_DIR ?? "../../outputs/ui-redesign-20261025/screenshots"}/${name}-${test.info().project.name}.png`, fullPage: true });
 }
 async function newFromSidebar(page: Page) {
   if (await page.getByRole("button", { name: "打开导航", exact: true }).isVisible()) await page.getByRole("button", { name: "打开导航", exact: true }).click();
@@ -133,6 +133,12 @@ test("populated production stages, compact drawers and content fresh entry", asy
   const nav = page.getByRole("navigation", { name: "项目生产阶段" });
   for (const [index, label] of ["内容", "资产", "分镜", "成片"].entries()) {
     await nav.getByRole("button", { name: label, exact: true }).click();
+    if (label === "成片") {
+      const checks = page.getByRole("region", { name: "第 1 集交付检查" });
+      await expect(checks).toContainText("需补齐 3 镜");
+      await expect(checks).toContainText("尚未合成当前范围 MP4");
+      await expect(page.getByRole("button", { name: "导出第 1 集 MP4", exact: true })).toBeDisabled();
+    }
     await screenshot(page, `production-${index}`);
     if (await page.getByRole("button", { name: "打开检查器", exact: true }).isVisible()) {
       await page.getByRole("button", { name: "打开检查器", exact: true }).click();
