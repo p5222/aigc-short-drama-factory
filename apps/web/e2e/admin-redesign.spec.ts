@@ -253,7 +253,12 @@ test("help creator and all record editors retain failed changes and can save aga
     if (await dialog.isVisible()) {
       await page.keyboard.press("Escape");
       const discard = page.getByRole("alertdialog").getByRole("button", { name: "放弃修改", exact: true });
+      // Confirmations mount asynchronously; wait for the close outcome before
+      // deciding whether to discard or navigating to the next editor.
+      await expect.poll(async () => !(await dialog.isVisible()) || await discard.isVisible()).toBe(true);
       if (await discard.isVisible()) await discard.click();
+      await expect(dialog).toBeHidden();
+      await expect(page.getByRole("alertdialog")).toHaveCount(0);
     }
   }
   await page.goto("/admin#平台公告");
