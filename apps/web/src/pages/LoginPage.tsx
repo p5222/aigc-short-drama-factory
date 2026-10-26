@@ -18,8 +18,9 @@ import {
 import gsap from "gsap";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent } from "react";
-import { api, type AuthUser } from "../lib/api";
+import { api, type AuthUser, type RegistrationPolicy } from "../lib/api";
 import { clearAuthToken, storeAuthToken } from "../lib/authStorage";
+import { HttpError } from "../lib/httpClient";
 import "./CineHome.css";
 import { PublicShowcase, type PublicLocale, type PublicView } from "./PublicShowcase";
 import { cineScenes as scenes } from "./cineScenes";
@@ -42,7 +43,7 @@ const ICP_REGION = import.meta.env.VITE_ICP_REGION?.trim() || "";
 const ICP_YEAR = new Date().getFullYear();
 
 const phonePattern = /^1[3-9]\d{9}$/;
-const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const emailPattern = /^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?@qq\.com$/i;
 const BG_FRAME_TIMEOUT_MS = 8000;
 
 const copy = {
@@ -58,7 +59,7 @@ const copy = {
     welcome: "欢迎回来",
     createAccount: "创建账号",
     loginIntro: "登录后继续进入 AI 漫剧创作工作台。",
-    registerIntro: "注册后即可开始管理作品、积分和生成记录。",
+    registerIntro: "填写手机号，验证 QQ 邮箱后即可创建账号。手机号无需短信验证。",
     accountLabel: "手机 / 邮箱 / 用户名",
     accountPlaceholder: "请输入手机号、邮箱或用户名",
     adminAccountPlaceholder: "请输入管理员邮箱",
@@ -68,10 +69,23 @@ const copy = {
     captchaPlaceholder: "请输入图中字符",
     remember: "记住我",
     forgot: "忘记密码?",
-    phone: "手机号（选填）",
-    phonePlaceholder: "可留空，仅用邮箱注册",
-    email: "邮箱",
-    emailPlaceholder: "请输入邮箱地址",
+    phone: "手机号",
+    phonePlaceholder: "11 位手机号，仅收集，无需短信",
+    email: "QQ 邮箱",
+    emailPlaceholder: "请输入你的 qq.com 邮箱",
+    emailCode: "邮箱验证码",
+    emailCodePlaceholder: "输入邮件中的 6 位验证码",
+    sendCode: "发送验证码",
+    sendingCode: "发送中…",
+    verifyEmail: "验证邮箱",
+    verifyingEmail: "验证中…",
+    verifiedEmail: "QQ 邮箱已验证",
+    mailUnavailable: "邮箱验证服务暂未开通，请稍后再试或联系平台管理员。已有账号可继续登录。",
+    checkingMail: "正在检查邮箱验证服务…",
+    retryMail: "重新检查",
+    sentCode: "验证码已发送至 QQ 邮箱，10 分钟内有效，请检查收件箱和垃圾邮件。",
+    needVerification: "请先完成 QQ 邮箱验证。",
+    verificationExpired: "邮箱验证已过期，请重新发送验证码。",
     setPassword: "设置密码",
     setPasswordPlaceholder: "至少 8 位",
     confirmPassword: "再次输入密码",
@@ -104,7 +118,7 @@ const copy = {
     welcome: "Welcome back",
     createAccount: "Create account",
     loginIntro: "Log in to continue your AI comic-drama workspace.",
-    registerIntro: "Create an account to manage projects, credits and generation history.",
+    registerIntro: "Enter your phone number and verify your QQ email to create an account. No SMS verification needed.",
     accountLabel: "Phone / Email / Username",
     accountPlaceholder: "Enter phone, email or username",
     adminAccountPlaceholder: "Enter admin email",
@@ -114,10 +128,23 @@ const copy = {
     captchaPlaceholder: "Enter the characters",
     remember: "Remember me",
     forgot: "Forgot password?",
-    phone: "Phone (optional)",
-    phonePlaceholder: "Optional - email-only signup works",
-    email: "Email",
-    emailPlaceholder: "Enter email address",
+    phone: "Phone number",
+    phonePlaceholder: "11-digit China phone; no SMS needed",
+    email: "QQ email",
+    emailPlaceholder: "Enter your qq.com email",
+    emailCode: "Email verification code",
+    emailCodePlaceholder: "6-digit code from your email",
+    sendCode: "Send code",
+    sendingCode: "Sending…",
+    verifyEmail: "Verify email",
+    verifyingEmail: "Verifying…",
+    verifiedEmail: "QQ email verified",
+    mailUnavailable: "Email verification is not available yet. Try later or contact the administrator. Existing accounts can still log in.",
+    checkingMail: "Checking email verification…",
+    retryMail: "Check again",
+    sentCode: "Code sent to your QQ email. Valid for 10 minutes. Check your inbox and spam folder.",
+    needVerification: "Please verify your QQ email first.",
+    verificationExpired: "Email verification expired. Please send a new code.",
     setPassword: "Set password",
     setPasswordPlaceholder: "At least 8 characters",
     confirmPassword: "Confirm password",
@@ -201,6 +228,14 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
   const [account, setAccount] = useState("");
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
+  const [emailCode, setEmailCode] = useState("");
+  const [registrationPolicy, setRegistrationPolicy] = useState<RegistrationPolicy | null>(null);
+  const [policyFailed, setPolicyFailed] = useState(false);
+  const [emailAction, setEmailAction] = useState<"send" | "verify" | null>(null);
+  const emailPending = useRef(false);
+  const [emailGrant, setEmailGrant] = useState<{ email: string; token: string; expiresAt: number } | null>(null);
+  const [resendAt, setResendAt] = useState(0);
+  const [now, setNow] = useState(Date.now());
   const [captcha, setCaptcha] = useState(() => createCaptcha());
   const [captchaInput, setCaptchaInput] = useState("");
   const [password, setPassword] = useState("");
@@ -230,6 +265,22 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
   const isAdmin = variant === "admin";
   const activeMode = isAdmin ? "login" : mode;
   const t = copy[locale];
+  const authBusy = loading || emailAction !== null;
+  const emailVerified = Boolean(emailGrant && emailGrant.email === email.trim().toLowerCase() && emailGrant.expiresAt > now);
+  const resendSeconds = Math.max(0, Math.ceil((resendAt - now) / 1000));
+  useEffect(() => {
+    if (mode !== "register") return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [mode]);
+  useEffect(() => {
+    if (mode !== "register") return;
+    let active = true;
+    setPolicyFailed(false);
+    void api.registrationPolicy().then(policy => { if (active) setRegistrationPolicy(policy); })
+      .catch(() => { if (active) setPolicyFailed(true); });
+    return () => { active = false; };
+  }, [mode]);
   const sceneUrls = useMemo(
     () => scenes.map((scene, index) => {
       const sourceIndex = sceneSourceIndexes[index] ?? 0;
@@ -627,6 +678,8 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
     setMessage("");
     setCaptcha(createCaptcha());
     setCaptchaInput("");
+    setEmailGrant(null);
+    setEmailCode("");
   }, []);
 
   function openAuth(nextMode: AuthMode) {
@@ -652,7 +705,7 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
   }
 
   async function submit() {
-    if (submitPending.current) return;
+    if (submitPending.current || emailPending.current) return;
     setMessageKind("error");
     const cleanAccount = account.trim();
     const cleanPhone = phone.trim();
@@ -663,15 +716,19 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
       setMessage(locale === "cn" ? "请输入手机号、邮箱或用户名。" : "Please enter phone, email or username.");
       return;
     }
-    if (activeMode === "register" && cleanPhone && !phonePattern.test(cleanPhone)) {
-      setMessage(locale === "cn" ? "手机号格式不正确；也可以留空，仅用邮箱注册。" : "Invalid phone number; leave it empty to register with email only.");
+    if (activeMode === "register" && !phonePattern.test(cleanPhone)) {
+      setMessage(locale === "cn" ? "请输入 11 位中国大陆手机号，仅收集，无需短信验证。" : "Enter an 11-digit China phone number. No SMS verification needed.");
       return;
     }
     if (activeMode === "register" && !emailPattern.test(cleanEmail)) {
-      setMessage(locale === "cn" ? "请输入有效邮箱，后续可用于账号绑定。" : "Please enter a valid email address.");
+      setMessage(locale === "cn" ? "请使用 qq.com 邮箱注册。" : "Please use a qq.com email.");
       return;
     }
-    if (cleanCaptcha !== captcha) {
+    if (activeMode === "register" && (!emailGrant || emailGrant.email !== cleanEmail || emailGrant.expiresAt <= Date.now())) {
+      setMessage(t.needVerification);
+      return;
+    }
+    if (activeMode === "login" && cleanCaptcha !== captcha) {
       setMessage(locale === "cn" ? "图形验证码不正确，请重新输入。" : "Captcha is incorrect. Please try again.");
       return;
     }
@@ -696,7 +753,7 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
       const result =
         activeMode === "login"
           ? await api.login({ account: cleanAccount, password })
-          : await api.register({ phone: cleanPhone || undefined, email: cleanEmail, password });
+          : await api.register({ phone: cleanPhone, email: cleanEmail, password, verificationToken: emailGrant!.token });
 
       if (isAdmin && !["admin", "operator", "finance", "support"].includes(result.user.role)) {
         clearAuthToken();
@@ -708,6 +765,7 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
     } catch (error) {
       setCaptcha(createCaptcha());
       setCaptchaInput("");
+      if (activeMode === "register" && error instanceof HttpError && error.status === 400) setEmailGrant(null);
       setMessage(error instanceof Error ? error.message : locale === "cn" ? "登录失败，请稍后重试。" : "Login failed. Please try again.");
     } finally {
       submitPending.current = false;
@@ -718,6 +776,45 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     void submit();
+  }
+
+  async function emailOperation(action: "send" | "verify") {
+    if (emailPending.current || submitPending.current) return;
+    const cleanEmail = email.trim().toLowerCase();
+    setMessageKind("error");
+    if (!emailPattern.test(cleanEmail)) { setMessage(locale === "cn" ? "请使用 qq.com 邮箱注册。" : "Please use a qq.com email."); return; }
+    if (action === "verify" && !/^\d{6}$/.test(emailCode.trim())) {
+      setMessage(locale === "cn" ? "请输入邮件中的 6 位验证码。" : "Enter the 6-digit code from your email."); return;
+    }
+    emailPending.current = true;
+    setEmailAction(action);
+    setMessage("");
+    try {
+      if (action === "send") {
+        const result = await api.sendRegistrationCode(cleanEmail);
+        setEmailGrant(null);
+        setEmailCode("");
+        setNow(Date.now());
+        setResendAt(Date.now() + result.resendAfterSeconds * 1000);
+        setMessageKind("info");
+        setMessage(t.sentCode);
+      } else {
+        const result = await api.verifyRegistrationCode(cleanEmail, emailCode.trim());
+        setNow(Date.now());
+        setEmailGrant({ email: cleanEmail, token: result.verificationToken, expiresAt: Date.now() + result.expiresInSeconds * 1000 });
+        setMessageKind("info");
+        setMessage("");
+      }
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : locale === "cn" ? "邮箱验证失败，请稍后重试。" : "Email verification failed. Please retry.");
+    } finally { emailPending.current = false; setEmailAction(null); }
+  }
+
+  async function retryMailPolicy() {
+    setPolicyFailed(false);
+    setRegistrationPolicy(null);
+    try { setRegistrationPolicy(await api.registrationPolicy()); }
+    catch { setPolicyFailed(true); }
   }
 
   function captchaField(name: string) {
@@ -758,7 +855,7 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
   }
 
   const authForm = (
-    <form className="cine-auth-form" onSubmit={handleSubmit} aria-busy={loading}><fieldset className="creator-auth-fields" disabled={loading}>
+    <form className="cine-auth-form" onSubmit={handleSubmit} aria-busy={authBusy}><fieldset className="creator-auth-fields" disabled={authBusy}>
       {activeMode === "login" ? (
         <>
           <label className="cine-auth-field">
@@ -831,6 +928,8 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
                 autoComplete="off"
                 data-lpignore="true"
                 inputMode="tel"
+                maxLength={11}
+                required
                 name="register_phone"
                 value={phone}
                 onChange={(event) => {
@@ -849,9 +948,15 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
                 autoComplete="off"
                 data-lpignore="true"
                 name="register_email"
+                type="email"
+                inputMode="email"
+                maxLength={71}
+                required
                 value={email}
                 onChange={(event) => {
                   setEmail(event.target.value);
+                  setEmailGrant(null);
+                  setEmailCode("");
                   clearMessage();
                 }}
                 placeholder={t.emailPlaceholder}
@@ -859,7 +964,38 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
             </div>
           </label>
           </div>
-          <div className="cine-register-full">{captchaField("register_captcha")}</div>
+          <div className="cine-email-verification">
+            {registrationPolicy?.mailAvailable ? (
+              <>
+                <div className="cine-email-heading">
+                  <span><ShieldCheck size={16} />{emailVerified ? t.verifiedEmail : t.emailCode}</span>
+                  {!emailVerified ? <button type="button" className="cine-email-action" disabled={authBusy || resendSeconds > 0} onClick={() => void emailOperation("send")}>
+                    {emailAction === "send" ? t.sendingCode : resendSeconds > 0 ? `${resendSeconds}s` : t.sendCode}
+                  </button> : null}
+                </div>
+                {emailVerified ? <p className="cine-email-success" role="status"><Check size={16} />{locale === "cn" ? "验证完成，请设置密码并注册。" : "Verified. Set your password to create your account."}</p> : (
+                  <label className="cine-auth-field">
+                    <span className="sr-only">{t.emailCode}</span>
+                    <div className="cine-auth-input">
+                      <Mail size={18} />
+                      <input name="register_email_code" autoComplete="one-time-code" inputMode="numeric" maxLength={6} value={emailCode}
+                        onChange={event => { setEmailCode(event.target.value.replace(/\D/g, "")); clearMessage(); }}
+                        placeholder={t.emailCodePlaceholder} />
+                      <button type="button" className="cine-email-action" disabled={authBusy || emailCode.length !== 6} onClick={() => void emailOperation("verify")}>
+                        {emailAction === "verify" ? t.verifyingEmail : t.verifyEmail}
+                      </button>
+                    </div>
+                    {emailGrant && !emailVerified ? <small>{t.verificationExpired}</small> : null}
+                  </label>
+                )}
+              </>
+            ) : (
+              <div className="cine-email-policy" role="status">
+                <p>{registrationPolicy || policyFailed ? t.mailUnavailable : t.checkingMail}</p>
+                {registrationPolicy || policyFailed ? <button className="cine-email-action" type="button" onClick={() => void retryMailPolicy()}>{t.retryMail}</button> : null}
+              </div>
+            )}
+          </div>
           <div className="cine-register-grid">
           <label className="cine-auth-field">
             <span>{t.setPassword}</span>
@@ -923,7 +1059,7 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
         </>
       )}
 
-      <button className="cine-submit-button" disabled={loading} type="submit">
+      <button className="cine-submit-button" disabled={authBusy || (activeMode === "register" && !emailVerified)} type="submit">
         {loading ? t.loading : isAdmin ? t.submitAdmin : activeMode === "login" ? t.submitLogin : t.submitRegister}
         <ArrowRight size={17} />
       </button>
@@ -1139,13 +1275,13 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
 
       <footer className="cine-icp-line">© {ICP_YEAR} 漫角 manjiao.cloud · <a className="cine-icp-link" href="https://beian.miit.gov.cn/" target="_blank" rel="noreferrer">{ICP_NUMBER}</a>{ICP_COMPANY ? ` · ${ICP_COMPANY}` : ""}{ICP_REGION ? ` · ${ICP_REGION}` : ""}</footer>
 
-      <Dialog open={authOpen} title={activeMode === "login" ? t.welcome : t.createAccount} description={activeMode === "login" ? t.loginIntro : t.registerIntro} busy={loading} onClose={() => setAuthOpen(false)} className={`creator-auth-dialog ${activeMode === "register" ? "register-mode" : "login-mode"}`}>
+      <Dialog open={authOpen} title={activeMode === "login" ? t.welcome : t.createAccount} description={activeMode === "login" ? t.loginIntro : t.registerIntro} busy={authBusy} onClose={() => setAuthOpen(false)} className={`creator-auth-dialog ${activeMode === "register" ? "register-mode" : "login-mode"}`}>
             <div className="creator-auth-wordmark">漫角 <span>MANJIAO STUDIO</span></div>
             <div className="cine-auth-tabs" role="group" aria-label={locale === "cn" ? "登录或注册" : "Authentication mode"}>
-              <button className={activeMode === "login" ? "active" : undefined} aria-pressed={activeMode === "login"} disabled={loading} type="button" onClick={() => switchMode("login")}>
+              <button className={activeMode === "login" ? "active" : undefined} aria-pressed={activeMode === "login"} disabled={authBusy} type="button" onClick={() => switchMode("login")}>
                 {t.login}
               </button>
-              <button className={activeMode === "register" ? "active" : undefined} aria-pressed={activeMode === "register"} disabled={loading} type="button" onClick={() => switchMode("register")}>
+              <button className={activeMode === "register" ? "active" : undefined} aria-pressed={activeMode === "register"} disabled={authBusy} type="button" onClick={() => switchMode("register")}>
                 <UserPlus size={15} />
                 {t.register}
               </button>

@@ -22,9 +22,13 @@ docker run -d --name "$name" --network host \
   -e AIFILM_LOAD_ENV_FILES=false -e SEED_DEFAULT_USERS=false -e SEED_DEMO_USER=false -e SEED_DEMO_DATA=false \
   -e ENABLE_MOCK_PAYMENT=true -e OBJECT_STORAGE_LOCAL_DIR=/tmp/manjiao-runtime-storage \
   manjiao-verify >/dev/null
-node --input-type=module <<'JS'
+docker exec -i "$name" node --input-type=module <<'JS'
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { createRequire } from "node:module";
+import { hashPassword } from "./apps/api/dist/auth/password.js";
+const require = createRequire(new URL("./apps/api/package.json", import.meta.url));
+const { PrismaClient } = require("@prisma/client");
 const base = "http://127.0.0.1:4088";
 let healthy = false;
 for (let i = 0; i < 60; i++) {
@@ -41,13 +45,28 @@ const registration = await fetch(`${base}/api/auth/register`, {
   method: "POST", headers: { "Content-Type": "application/json" },
   body: JSON.stringify({ email: `runtime-${randomUUID()}@example.test`, password: `Runtime-${randomUUID()}`, name: "Runtime check" })
 });
-assert.equal(registration.status, 201);
-const { token } = await registration.json();
-for (const [endpoint, status] of [["mock-callback", 404], ["orders", 503]]) {
-  const response = await fetch(`${base}/api/billing/${endpoint}`, {
-    method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: "{}"
+assert.equal(registration.status, 400, "Unverified email must never create an account");
+const policy = await (await fetch(`${base}/api/auth/registration-policy`)).json();
+assert.equal(policy.mailAvailable, false);
+assert.equal(policy.smsRequired, false);
+const db = new PrismaClient();
+const id = `runtime_${randomUUID()}`, email = `${id}@example.test`, password = `Runtime-${randomUUID()}`;
+try {
+  await db.user.create({ data: { id, email, name: "Runtime fixture", passwordHash: await hashPassword(password), role: "creator", status: "active", credit: { create: { id: `credit_${id}`, balance: 100 } } } });
+  const login = await fetch(`${base}/api/auth/login`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ account: email, password })
   });
-  assert.equal(response.status, status, `Production billing/${endpoint} must reject simulated checkout`);
+  assert.equal(login.status, 200, "Existing accounts remain able to log in");
+  const { token } = await login.json();
+  for (const [endpoint, status] of [["mock-callback", 404], ["orders", 503]]) {
+    const response = await fetch(`${base}/api/billing/${endpoint}`, {
+      method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: "{}"
+    });
+    assert.equal(response.status, status, `Production billing/${endpoint} must reject simulated checkout`);
+  }
+} finally {
+  await db.user.deleteMany({ where: { id } });
+  await db.$disconnect();
 }
 console.log("PRODUCTION_RUNTIME_OK: real dependencies ready; simulated payment and unsupported checkout blocked");
 JS

@@ -1396,6 +1396,16 @@ body.auth-surface {
 }
 
 /* 备案信息行（参照通用站点页脚格式） */
+.cine-email-verification { display: grid; gap: 10px; padding: 14px; border: 1px solid var(--ds-border-default); border-radius: 12px; background: var(--ds-bg-subtle); color: var(--ds-text-primary); }
+.cine-email-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.cine-email-heading > span, .cine-email-success { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+.cine-email-action { min-height: 44px; border: 0; border-radius: 8px; padding: 8px 12px; background: var(--ds-action-soft); color: var(--ds-action-primary); font: inherit; font-size: 13px; font-weight: 600; white-space: nowrap; cursor: pointer; }
+.cine-email-action:disabled { opacity: .55; cursor: default; }
+.cine-email-verification .cine-auth-input > input { min-width: 0; }
+.cine-email-verification .cine-auth-input { min-width: 0; }
+.cine-email-policy p { margin: 0 0 8px; font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
+.cine-email-success { margin: 0; line-height: 1.6; color: var(--ds-action-primary); }
+.cine-email-verification .cine-auth-field > small { font-size: 12px; line-height: 1.5; }
 .cine-icp-line { display: inline-flex; flex-wrap: wrap; justify-content: center; gap: 4px; color: rgba(255,255,255,.5); font-size: 12px; }
 .cine-icp-line .cine-icp-link { color: rgba(255,255,255,.62); }
 :root[data-theme="light"] .cine-icp-line { color: #6b7a77; }
