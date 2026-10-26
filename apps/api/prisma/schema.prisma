@@ -36,6 +36,7 @@ model User {
   projects     Project[]
   credit       CreditAccount?
   transactions CreditTransaction[]
+  fundingLots  CreditFundingLot[]
   tasks        GenerationTask[]
   creationRequests CreationRequest[]
   redemptions  RedeemRedemption[]
@@ -63,9 +64,9 @@ model AuthSession {
   expiresAt  DateTime
   lastUsedAt DateTime  @default(now())
   revokedAt  DateTime?
-  createdAt  DateTime  @default(now())
-
+createdAt DateTime @default(now())
   @@index([userId])
+  @@index([userId, createdAt, id])
   @@index([expiresAt])
 }
 
@@ -271,6 +272,9 @@ model GenerationTask {
   estimatedCredits Int      @default(0)
   finalCredits     Int?
   billingDiscountPercent Int?
+  billingQuote     Json?
+  billingUsage     Json?
+  billingSettlement Json?
   queuePriority    Int      @default(100)
   errorReason      String?
   jobId            String?
@@ -643,6 +647,28 @@ model CreditAccount {
   updatedAt     DateTime @updatedAt
 }
 
+model CreditPricingPolicy {
+  id        String   @id
+  version   Int      @default(1)
+  policy    Json
+  updatedAt DateTime @updatedAt
+}
+
+model CreditFundingLot {
+  id             String   @id
+  sequence       Int      @unique @default(autoincrement())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  source         String
+  originalCredits Int
+  remainingCredits Int
+  cashMicros     BigInt?
+  referenceId    String?
+  createdAt      DateTime @default(now())
+  @@index([userId, createdAt])
+  @@index([source, remainingCredits])
+}
+
 model CreditTransaction {
   id           String   @id
   userId       String
@@ -857,6 +883,7 @@ model ModelPrice {
   unit          String
   unitCredits   Int
   vendorCostCny Float         @default(0)
+  billing       Json?
   enabled       Boolean       @default(true)
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt

@@ -23,6 +23,7 @@ import type { ReactNode } from "react";
 import type { GenerationTask, TaskStatus, TaskType } from "@aifilm/shared";
 import { canCancelTask, canRetryTask, createTaskActionRunner, taskRecoveryHint, taskSupportDiagnostic, type PendingTaskActions, type TaskAction } from "./taskActionModel";
 import { ListPagination } from "../components/ListPagination";
+import { BillingReceipt } from "../components/BillingReceipt";
 
 type QueueFilter = "all" | "active" | "failed" | "succeeded" | "pending" | "canceled" | "refunded";
 
@@ -271,9 +272,11 @@ function TaskDetailPanel({
       <div className="queue-detail-group">
         <h3>积分</h3>
         <div className="queue-detail-grid">
-          <QueueDetail label="预估冻结" value={`${task.estimatedCredits} 积分`} />
+            <QueueDetail label="应付上限" value={`${task.billing?.maximumCredits ?? task.estimatedCredits} 积分`} />
           <QueueDetail label="实际扣费" value={task.finalCredits != null ? `${task.finalCredits} 积分` : "未结算"} />
+            {task.billing ? <><QueueDetail label="原价 / 会员减免" value={`${task.billing.listCredits} 积分 / ${task.billing.discountPercent}%`} /><QueueDetail label="已释放冻结" value={task.billing.releasedCredits !== undefined ? `${task.billing.releasedCredits} 积分` : "待结算"} /><QueueDetail label="价格版本" value={`版本 ${task.billing.policyVersion}`} /></> : null}
         </div>
+          <BillingReceipt task={task} />
       </div>
 
       <div className="queue-detail-group">

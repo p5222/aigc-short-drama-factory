@@ -3,10 +3,13 @@ import type { GenerationTask, Prisma, PrismaClient } from "@prisma/client";
 import { prisma } from "../db/client.js";
 import { assertIndependentImageBatch, lockMediaProject, mediaSourceIsCurrent, MediaSourceConflict, readMediaSource, TERMINAL_MEDIA_STATUSES, type MediaSourceSnapshot } from "../db/mediaSource.js";
 import { lockTaskCredits, releaseTaskCredits, reserveTaskCredits, settleTaskCredits } from "./taskCredits.js";
+import { withTaskMeter, flushTaskMeter } from "./metering.js";
+import type { BillingUsage } from "@aifilm/shared";
 
 type MediaTaskInput = {
   userId: string; projectId: string; projectName: string; type: string; scope: string;
   provider: string; model: string; estimatedCredits: number; title: string; resume?: boolean; source?: MediaSourceSnapshot;
+  billingInput?: BillingUsage;
 };
 type FinalOptions<T extends object> = { status?: "succeeded" | "failed"; errorReason?: string | null; onStale?: (tx: Prisma.TransactionClient) => Promise<T> };
 export type MediaTaskContext = {
@@ -86,7 +89,7 @@ export async function runMediaTask<T>(input: MediaTaskInput, run: (context: Medi
       id: `task_${crypto.randomUUID()}`, userId: input.userId, projectId: input.projectId,
       projectName: input.projectName, type: input.type, title: input.title, provider: input.provider,
       model: input.model, estimatedCredits: input.estimatedCredits, status: "running", progress: 10, jobId,
-      ...(input.source ? { requestPayload: { kind: "media_source", source: JSON.parse(JSON.stringify(input.source)) } } : {}),
+      ...((input.source || input.billingInput) ? { requestPayload: { kind: "media_source", ...(input.source ? { source: JSON.parse(JSON.stringify(input.source)) } : {}), ...(input.billingInput ? { billingInput: JSON.parse(JSON.stringify(input.billingInput)) } : {}) } } : {}),
       errorReason: JSON.stringify({ kind: "media_checkpoint", metadata: { leaseId } })
     } });
     await reserveTaskCredits(tx, { taskId: created.id, userId: input.userId });
@@ -111,11 +114,12 @@ export async function runMediaTask<T>(input: MediaTaskInput, run: (context: Medi
     });
   }
   try {
-    const result = await run({
+    const result = await withTaskMeter(task.id, () => run({
       taskId: task.id, task,
       checkpoint: async (metadata) => { await saveCheckpoint(metadata, "running"); },
       defer: async (metadata) => { const pending = await saveCheckpoint(metadata, "pending"); finalized = true; return pending; },
       complete: async (credits, persist, options = {}) => {
+        await flushTaskMeter(credits > 0, db);
         const result = await db.$transaction(async (tx) => {
           await lockMediaProject(tx, input.projectId, input.userId);
           const locked = await lockTaskCredits(tx, task.id, input.userId);
@@ -124,7 +128,7 @@ export async function runMediaTask<T>(input: MediaTaskInput, run: (context: Medi
           const noOutputFailure = options.status === "failed" && credits === 0;
           const sourceCurrent = noOutputFailure || (!input.source && !originalSource) || Boolean(originalSource && await mediaSourceIsCurrent(tx, input.userId, originalSource));
           if (!sourceCurrent && !options.onStale) throw new MediaSourceConflict("生成输入已变化，结果暂未覆盖当前素材，请核对任务后恢复。");
-          const settlement = await settleTaskCredits(tx, { taskId: task.id, userId: input.userId, finalCredits: sourceCurrent ? credits : 0 });
+          const settlement = await settleTaskCredits(tx, { taskId: task.id, userId: input.userId, finalCredits: sourceCurrent ? credits : 0, attemptId: leaseId });
           if (!settlement.applied) throw new Error("该生成任务已处理，不能重复结算。");
           const saved = sourceCurrent ? await persist(tx, settlement.credits) : await options.onStale!(tx);
           const finalMessage = sourceCurrent ? options.errorReason : "生成期间输入已变化，结果已保留为历史素材，未扣费；请基于当前素材重新确认生成。";
@@ -137,7 +141,7 @@ export async function runMediaTask<T>(input: MediaTaskInput, run: (context: Medi
         finalized = true;
         return result;
       }
-    });
+    }), db, leaseId);
     if (!finalized) throw new Error("媒体任务未记录最终状态");
     return result;
   } catch (error) {

@@ -1,8 +1,11 @@
 import crypto from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import { activeMembership, discountedCredits, membershipQueuePriority } from "./membership.js";
+import { calculateOfficialBatchCredits, calculateOfficialCredits, officialSampleUsage, type BillingUsage, type TaskBillingQuote } from "@aifilm/shared";
+import { creditPolicy, readCostRule } from "./pricing.js";
+import { ensureFunding, spendFunding } from "./funding.js";
 
-type TaskCreditInput = { taskId: string; userId: string; description?: string };
+type TaskCreditInput = { taskId: string; userId: string; description?: string; attemptId?: string };
 export type TaskCreditMutation = { applied: boolean; credits: number; reservedCredits: number };
 
 function creditAmount(value: number, name: string) {
@@ -41,7 +44,7 @@ export async function lockTaskCredits(tx: Prisma.TransactionClient, taskId: stri
 
 export async function reserveTaskCredits(tx: Prisma.TransactionClient, input: TaskCreditInput): Promise<TaskCreditMutation> {
   const { task, account, reservedCredits, consumedCredits, ledgerBalance } = await lockTaskCredits(tx, input.taskId, input.userId);
-  const estimate = creditAmount(task.estimatedCredits, "预估积分");
+  let estimate = creditAmount(task.estimatedCredits, "预估积分");
   if (task.status === "succeeded" || task.finalCredits !== null || consumedCredits > 0) {
     throw new Error("已结算任务不能再次冻结积分");
   }
@@ -53,6 +56,29 @@ export async function reserveTaskCredits(tx: Prisma.TransactionClient, input: Ta
       queuePriority: membershipQueuePriority(membership?.priorityLevel ?? 0)
     } });
   }
+  if (!task.billingQuote && reservedCredits === 0) {
+    const price = await tx.modelPrice.findFirst({ where: { providerId: task.provider, model: task.model, enabled: true } });
+    const rule = readCostRule(price?.billing);
+    const policy = await creditPolicy(tx);
+    const membership = await activeMembership(tx, input.userId);
+    // With automatic costs + margin protection, membership savings are limited
+    // by the cost floor. Manual prices retain their existing membership benefit.
+    const discountPercent = rule && policy.protectMargin ? 0 : membership?.discountPercent ?? 0;
+    estimate = discountedCredits(task.estimatedCredits, discountPercent);
+    const payload = task.requestPayload as { billingInput?: BillingUsage } | null;
+    let estimatedUsage = payload?.billingInput;
+    if (!estimatedUsage && rule && rule.kind !== "tokens") {
+      const sampleCredits = calculateOfficialCredits(rule, officialSampleUsage(rule), policy).listCredits;
+      const quantity = sampleCredits ? Math.max(1, Math.floor(task.estimatedCredits / sampleCredits)) : 0;
+      estimatedUsage = rule.kind === "image" ? { images: quantity } : rule.kind === "second" ? { seconds: quantity } : undefined;
+    }
+    const quote: TaskBillingQuote = { version: 1, mode: rule ? "official" : "manual", rule,
+      policy, model: task.model, provider: task.provider, maximumCredits: estimate,
+      listCredits: task.estimatedCredits, payableCredits: estimate, discountPercent, estimatedUsage, quotedAt: new Date().toISOString() };
+    await tx.generationTask.update({ where: { id: task.id }, data: {
+      billingQuote: JSON.parse(JSON.stringify(quote)), billingDiscountPercent: discountPercent
+    } });
+  } else if (task.billingQuote) estimate = (task.billingQuote as unknown as TaskBillingQuote).maximumCredits;
   if (ledgerBalance < 0) throw new Error("历史任务退款记录异常，请联系管理员核对后重试");
   const credits = Math.max(0, estimate - reservedCredits);
   if (!credits) return { applied: false, credits: 0, reservedCredits };
@@ -75,9 +101,24 @@ export async function settleTaskCredits(
     return { applied: false, credits: 0, reservedCredits };
   }
   const baseCredits = creditAmount(input.finalCredits ?? task.estimatedCredits, "结算积分");
-  if (baseCredits > reservedCredits) throw new Error("任务冻结积分不足，不能结算");
-  const credits = discountedCredits(baseCredits, task.billingDiscountPercent ?? 0);
+  const quote = task.billingQuote as unknown as TaskBillingQuote | null;
+  const meter = task.billingUsage as { calls?: Array<{ usage: BillingUsage; provider: string; model: string; delivered: boolean; attemptId?: string }> } | null;
+  const calls = meter?.calls ?? [];
+  const matched = calls.filter(call => call.provider === (quote?.provider ?? task.provider) && call.model === (quote?.model ?? task.model));
+  const delivered = matched.filter(call => call.delivered && (!input.attemptId || call.attemptId === input.attemptId)).map(call => call.usage);
+  const outputUsage = quote?.estimatedUsage && baseCredits > 0 ? Object.fromEntries(Object.entries(quote.estimatedUsage).map(([key, value]) =>
+    [key, typeof value === "number" ? Math.floor(value * baseCredits / Math.max(1, task.estimatedCredits)) : value])) as BillingUsage : undefined;
+  const billable = delivered.length ? delivered : outputUsage ? [outputUsage] : [];
+  const measured = quote?.rule && billable.length ? calculateOfficialBatchCredits(quote.rule, billable, quote.policy, quote.discountPercent) : null;
+  const allCost = quote?.rule && matched.length ? calculateOfficialBatchCredits(quote.rule, matched.map(call => call.usage), quote.policy).costMicros : measured?.costMicros ?? null;
+  const discounted = discountedCredits(baseCredits, quote?.discountPercent ?? task.billingDiscountPercent ?? 0);
+  const calculated = baseCredits === 0 ? 0 : measured?.payableCredits ?? discounted;
+  if (!quote && baseCredits > reservedCredits) throw new Error("任务冻结积分不足，不能结算");
+  const credits = quote ? Math.min(calculated, quote.maximumCredits) : calculated;
+  if (credits > reservedCredits) throw new Error("任务冻结积分不足，不能结算");
   if (account.frozenBalance < reservedCredits || account.balance < credits) throw new Error("账户积分账目异常，请联系管理员核对");
+  await ensureFunding(tx, input.userId, account.balance);
+  const funding = await spendFunding(tx, input.userId, credits);
   await tx.creditAccount.update({ where: { userId: input.userId }, data: {
     frozenBalance: { decrement: reservedCredits }, balance: { decrement: credits }, totalConsume: { increment: credits }
   } });
@@ -93,7 +134,14 @@ export async function settleTaskCredits(
   } });
   // This marker also makes zero-credit settlements idempotent. The caller must
   // save succeeded + output in this same transaction, so a failure rolls it back.
-  await tx.generationTask.update({ where: { id: task.id }, data: { finalCredits: credits } });
+  await tx.generationTask.update({ where: { id: task.id }, data: {
+    finalCredits: credits,
+    billingSettlement: JSON.parse(JSON.stringify({ version: 1, chargedCredits: credits,
+      releasedCredits: reservedCredits - credits, calculatedCredits: calculated, capped: calculated > credits,
+      costMicros: allCost, costStatus: allCost === null ? "unverified" : matched.length ? "usage_derived" : "output_quantity",
+      usage: billable.reduce((sum, u) => ({ ...sum, ...u, inputTokens: (sum.inputTokens ?? 0) + (u.inputTokens ?? 0), outputTokens: (sum.outputTokens ?? 0) + (u.outputTokens ?? 0), cachedInputTokens: (sum.cachedInputTokens ?? 0) + (u.cachedInputTokens ?? 0) }), {} as BillingUsage),
+      routeMismatch: calls.length !== matched.length, funding }))
+  } });
   return { applied: true, credits, reservedCredits: 0 };
 }
 
@@ -106,6 +154,14 @@ export async function releaseTaskCredits(tx: Prisma.TransactionClient, input: Ta
     id: `tx_${crypto.randomUUID()}`, userId: input.userId, projectId: task.projectId, taskId: task.id,
     type: "refund", amount: reservedCredits, balanceAfter: account.balance,
     description: input.description ?? "任务结束，释放未消耗的冻结积分"
+  } });
+  const quote = task.billingQuote as unknown as TaskBillingQuote | null;
+  const meter = task.billingUsage as { calls?: Array<{ usage: BillingUsage; provider: string; model: string }> } | null;
+  const calls = (meter?.calls ?? []).filter(c => c.provider === quote?.provider && c.model === quote?.model);
+  const cost = quote?.rule && calls.length ? calculateOfficialBatchCredits(quote.rule, calls.map(c => c.usage), quote.policy).costMicros : null;
+  if (quote) await tx.generationTask.update({ where: { id: task.id }, data: {
+    billingSettlement: { version: 1, chargedCredits: 0, releasedCredits: reservedCredits, costMicros: cost,
+      costStatus: cost === null ? "unverified" : "usage_derived" }
   } });
   return { applied: true, credits: reservedCredits, reservedCredits: 0 };
 }

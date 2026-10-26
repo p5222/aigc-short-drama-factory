@@ -173,6 +173,13 @@ test("HTTP business boundaries: sessions, administrator writes, private media an
     });
     await t.test("creator cannot call admin APIs or spend platform money through connection tests", async () => {
       for (const path of ["/api/admin/users/page", "/api/admin/audit-logs"]) assert.equal((await request(path, owner.token)).status, 403);
+      for (const path of ["/api/admin/credits/pricing", "/api/admin/credits/accounts", "/api/admin/credits/funding", "/api/admin/credits/tasks", "/api/admin/credits/ledger", "/api/admin/credits/ledger.csv"]) {
+        assert.equal((await request(path, owner.token)).status, 403);
+        assert.equal((await request(path)).status, 401);
+      }
+      for (const path of ["/api/admin/credits/policy", "/api/admin/credits/cost-rule", "/api/admin/credits/verify-cost"]) {
+        assert.equal((await request(path, owner.token, path.endsWith("policy") ? "PATCH" : "POST", {})).status, 403);
+      }
       for (const kind of ["model-test", "image-model-test", "video-model-test"]) assert.equal((await request(`/api/settings/${kind}`, owner.token, "POST", {})).status, 403);
       const publicProviders = await (await request("/api/providers", owner.token)).json() as Array<Record<string, unknown>>;
       const provider = publicProviders.find(row => row.id === providerId)!;
@@ -180,6 +187,31 @@ test("HTTP business boundaries: sessions, administrator writes, private media an
       assert.equal(provider.baseUrl, undefined);
       assert.equal(provider.apiKeyPreview, undefined);
       assert.ok(!JSON.stringify(publicProviders).includes("never-disclose"));
+    });
+    await t.test("ledger CSV exports the displayed page and ignores another user's requested ID", async () => {
+      const prefix = `creditpage_${run}_`;
+      try {
+        await db.creditTransaction.createMany({ data: Array.from({ length: 45 }, (_, i) => ({
+          id: `${prefix}${String(i).padStart(2, "0")}`, userId: ids[0]!, type: "adjust", amount: 1, balanceAfter: 100,
+          description: i === 30 ? "=formula fixture" : "HTTP pagination fixture", createdAt: new Date(1000 + i)
+        })) });
+        const query = `page=2&pageSize=20&keyword=fixture&userId=${ids[1]}`;
+        const pageResponse = await request(`/api/credits/ledger?${query}`, owner.token);
+        assert.equal(pageResponse.status, 200);
+        const page = await pageResponse.json() as { items: Array<{ id: string }>; total: number };
+        assert.equal(page.total, 45); assert.equal(page.items.length, 20);
+        const csvResponse = await request(`/api/credits/ledger.csv?${query}`, owner.token);
+        assert.equal(csvResponse.status, 200);
+        const csv = await csvResponse.text();
+        const exportedIds = [...csv.matchAll(new RegExp(`${prefix}\\d{2}`, "g"))].map(m => m[0]);
+        assert.deepEqual(exportedIds, page.items.map(l => l.id));
+        assert.equal((await request(`/api/credits/ledger?pageSize=101`, owner.token)).status, 400);
+        assert.equal((await request(`/api/credits/ledger?from=invalid`, owner.token)).status, 400);
+        assert.equal((await request(`/api/credits/ledger`, undefined)).status, 401);
+        const adminPage = await request(`/api/admin/credits/ledger?userId=${ids[0]}&page=2&pageSize=20`, admin.token);
+        assert.equal(adminPage.status, 200);
+        assert.equal(((await adminPage.json()) as typeof page).items.length, 20);
+      } finally { await db.creditTransaction.deleteMany({ where: { id: { startsWith: prefix } } }); }
     });
     await t.test("admin duplicate credit submission creates one ledger entry and auditable action", async () => {
       const input = { userId: ids[0], amount: 25, description: "HTTP review adjustment", requestId: run };

@@ -1,5 +1,5 @@
 import type { ModelModality, ModelPrice, ModelProvider } from "@aifilm/shared";
-import { inspectModelPrice } from "@aifilm/shared";
+import { creditPriceUnit, inspectModelPrice } from "@aifilm/shared";
 
 export type ModelFamily = "openai" | "deepseek" | "qwen" | "wan" | "gemini" | "claude" | "seed" | "kling" | "flux" | "minimax" | "kimi" | "generic";
 export type ModelState = "configured" | "unknown" | "disabled" | "missing_key" | "cooling" | "limited" | "missing_price" | "price_conflict" | "invalid_price";
@@ -93,10 +93,7 @@ export function routePrices(prices: ModelPrice[] | undefined, provider: Pick<Mod
 
 export function modelPriceLabel(price?: ModelPrice): string {
   if (!price) return "报价时确认";
-  const units: Record<ModelPrice["unit"], string> = {
-    text_run: "次", image: "张", image2: "张", video_second: "秒", tts_character: "字", export: "次导出"
-  };
-  return `${price.unitCredits.toLocaleString("zh-CN")} 积分/${units[price.unit] ?? price.unit}`;
+  return `${price.unitCredits.toLocaleString("zh-CN")} 积分/${creditPriceUnit(price)}`;
 }
 
 export function buildModelCatalog(providers: ModelProvider[], prices?: ModelPrice[]): CatalogModel[] {

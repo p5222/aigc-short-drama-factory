@@ -2,6 +2,8 @@ export * from "./imageGeneration.js";
 export * from "./videoMedia.js";
 export * from "./episodePlanning.js";
 export * from "./modelPricing.js";
+export * from "./creditPricing.js";
+export * from "./creditCenter.js";
 
 export type ProjectStatus = "draft" | "planning" | "scripting" | "storyboarding" | "asseting" | "rendering" | "completed";
 
@@ -232,6 +234,7 @@ export interface GenerationTask {
   progress: number;
   estimatedCredits: number;
   finalCredits?: number;
+  billing?: { mode: string; listCredits: number; payableCredits: number; maximumCredits: number; discountPercent: number; policyVersion: number; usage?: import("./creditPricing.js").BillingUsage; releasedCredits?: number; costStatus?: string };
   errorReason?: string;
   estimatedSeconds?: number;
   refundPolicy?: string;
@@ -448,6 +451,7 @@ export interface ModelPrice {
   unit: "text_run" | "image" | "image2" | "video_second" | "tts_character" | "export";
   unitCredits: number;
   vendorCostCny: number;
+  billing?: import("./creditPricing.js").OfficialCostRule;
   enabled: boolean;
 }
 

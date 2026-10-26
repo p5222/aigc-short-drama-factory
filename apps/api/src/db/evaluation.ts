@@ -1,4 +1,5 @@
 import { lockCreditAccount } from "../billing/accountCredits.js";
+import { ensureFunding, grantFunding } from "../billing/funding.js";
 import crypto from "node:crypto";
 import { Prisma } from "@prisma/client";
 import type {
@@ -115,6 +116,8 @@ export async function createUserFeedback(userId: string, input: FeedbackInput): 
 
     if (input.projectId && !priorStageFeedback) {
       const account = await lockCreditAccount(tx, userId);
+      await ensureFunding(tx, userId, account.balance);
+      await grantFunding(tx, { userId, credits: 10, source: "gift", cashMicros: 0 });
       const updated = await tx.creditAccount.update({
         where: { userId },
         data: {

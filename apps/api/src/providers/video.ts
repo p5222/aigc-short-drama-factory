@@ -6,6 +6,14 @@ import { storageRoot } from "../storage/objectStorage.js";
 import { signProviderMediaUrl } from "../storage/mediaAccess.js";
 import { blockModelUntilNextDay, coolDownModel, getModelQuotaDecision, recordModelSubmission } from "./modelQuota.js";
 import { providerEnvApiKey } from "./credentials.js";
+import type { BillingUsage } from "@aifilm/shared";
+
+/** The quote and actual payload share the same provider normalization. */
+export function videoBillingInput(provider: string, duration: number, ratio: "9:16" | "16:9" | "1:1"): BillingUsage {
+  if (provider === "dashscope-video") return { seconds: Math.max(3, Math.min(5, duration)), resolution: dashScopeVideoResolution(ratio) };
+  if (provider === "doubao-seedance") return { seconds: Math.max(1, Math.min(15, duration)), resolution: process.env.DOUBAO_SEEDANCE_RESOLUTION || process.env.VIDEO_RESOLUTION || "1080p" };
+  return { seconds: Math.max(1, duration) };
+}
 
 interface AsyncTaskResponse {
   output?: {
@@ -602,9 +610,10 @@ function buildDoubaoSeedancePrompt(input: VideoGenerationInput) {
 }
 
 function buildDashScopeVideoPayload(input: VideoGenerationInput, model: string, imageUrl: string) {
-  const duration = Math.max(3, Math.min(5, input.duration ?? 5));
+  const billed = videoBillingInput("dashscope-video", input.duration ?? 5, input.ratio ?? "9:16");
+  const duration = billed.seconds;
   const parameters = {
-    resolution: dashScopeVideoResolution(input.ratio ?? "9:16"),
+    resolution: billed.resolution,
     duration,
     prompt_extend: true,
     watermark: false,

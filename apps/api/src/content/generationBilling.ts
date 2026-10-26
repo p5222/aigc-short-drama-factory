@@ -4,6 +4,8 @@ import type { Prisma } from "@prisma/client";
 import { inspectModelPrice } from "@aifilm/shared";
 import { prisma } from "../db/client.js";
 import { lockTaskCredits, releaseTaskCredits, reserveTaskCredits, settleTaskCredits } from "../billing/taskCredits.js";
+import { quotePrice } from "../billing/pricing.js";
+import { withTaskMeter } from "../billing/metering.js";
 
 type ContentProjectRoute = { id: string; userId: string; title: string; textProvider: string; textModel: string };
 type Operation = { id: string; userId: string; contentProjectId: string };
@@ -103,12 +105,12 @@ export async function runBilledContentGeneration<T, R>(project: ContentProjectRo
     if (!pricing.price) throw new Error(pricing.state === "conflict" ? "所选文本模型存在多条启用价格，请联系管理员核对" : "所选文本模型尚未配置有效价格，请联系管理员");
     const price = pricing.price;
     const id = `content_text_${crypto.randomUUID()}`;
-    const row = await tx.generationTask.create({ data: { id, userId: project.userId, projectId: null, projectName: project.title, type: "text", title, provider: provider.id, model: project.textModel, status: "running", estimatedCredits: price.unitCredits, jobId: `${billingPrefix(operation)}${id}` } });
+    const row = await tx.generationTask.create({ data: { id, userId: project.userId, projectId: null, projectName: project.title, type: "text", title, provider: provider.id, model: project.textModel, status: "running", estimatedCredits: await quotePrice(price, undefined, tx), jobId: `${billingPrefix(operation)}${id}` } });
     await reserveTaskCredits(tx, { taskId: id, userId: project.userId, description: `${title}：冻结积分` });
     return row;
   });
   try {
-    const result = await generate();
+    const result = await withTaskMeter(task.id, generate);
     return await prisma.$transaction(async (tx) => {
       await lockActiveOperation(tx, operation);
       const locked = await lockTaskCredits(tx, task.id, project.userId);

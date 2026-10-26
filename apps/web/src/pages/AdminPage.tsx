@@ -64,6 +64,7 @@ import type {
   VisualPipelineDescriptor,
   VisualPipelineTestResult
 } from "@aifilm/shared";
+import { creditPriceUnit } from "@aifilm/shared";
 import { api, type AdminContentProject } from "../lib/api";
 import { HttpError } from "../lib/httpClient";
 import { AdminEvaluationPage, AdminMasterDetail, AdminTablePage } from "../admin";
@@ -87,6 +88,7 @@ import { hasFeedbackDraftChanges, hasShowcaseDraftChanges } from "../admin/admin
 import { ModelRoutePicker } from "../components/ModelRoutePicker";
 import { ModelIdentity } from "../components/ModelIdentity";
 import { ModelLibrary } from "../components/ModelLibrary";
+import { CreditCenter } from "../admin/CreditCenter";
 
 const AdminActionContext = createContext({ pending: false, message: "", error: "", version: 0 });
 type ProviderTestResult = ModelTestResult | ImageModelTestResult | VideoModelTestResult;
@@ -99,9 +101,10 @@ type PipelineTestState = {
   result?: VisualPipelineTestResult;
 };
 
-const adminModules = ["运营总览", "用户管理", "平台公告", "支持工单", "创作现场管理", "创作质量中心", "提示词评分", "兑换码", "套餐会员", "订阅会员", "模型路由", "价格策略", "操作记录"];
+const adminModules = ["运营总览", "用户管理", "平台公告", "支持工单", "创作现场管理", "创作质量中心", "提示词评分", "兑换码", "套餐会员", "订阅会员", "积分中心", "模型路由", "价格策略", "操作记录"];
 
 const moduleCopy: Record<string, { title: string; subtitle: string }> = {
+  积分中心: { title: "积分中心", subtitle: "核对官方成本、40%毛利、账户资金和每一次任务结算。" },
   操作记录: { title: "操作记录", subtitle: "查看管理员配置和运营操作的执行记录，用于核对变更、排查失败。" },
   运营总览: { title: "运营总览", subtitle: "查看用户、积分、模型成本和任务健康度。" },
   用户管理: { title: "用户管理", subtitle: "管理账号状态、身份权限、积分余额、密码重置和运营入账。" },
@@ -349,6 +352,7 @@ export function AdminPage({
 
       <fieldset className="admin-action-scope" disabled={actionPending}>
       {activeModule === "操作记录" ? <AdminAuditLogPage /> : null}
+      {activeModule === "积分中心" ? <CreditCenter /> : null}
       {activeModule === "支持工单" ? <SupportAdminPanel userId={userId} /> : null}
       {activeModule === "运营总览" ? <DashboardSection summary={summary} providers={providers} modelPrices={modelPrices} /> : null}
       {activeModule === "创作现场管理" ? <ContentOperationsSection /> : null}
@@ -5159,10 +5163,10 @@ function PriceRow({ price, onSave, onDelete }: { price: ModelPrice; onSave: (id:
   const valid = isValidModelPriceDraft(draft.unitCredits, draft.vendorCostCny);
   function closeEditor() { setDraft(initial()); setEditing(false); }
   return <section className="admin-price-record" data-admin-dirty={dirty || undefined}>
-    <div className="admin-price-summary"><ModelIdentity model={price.model} providerName={price.providerName} modality={price.modality} /><div><strong>{price.unitCredits} 积分</strong><small>{unitLabel(price.unit)}</small></div><StatusChip active={price.enabled} /><DraftIndicator dirty={dirty} /><button type="button" className="admin-text-btn primary" aria-haspopup="dialog" onClick={() => setEditing(true)}>编辑价格</button></div>
+    <div className="admin-price-summary"><ModelIdentity model={price.model} providerName={price.providerName} modality={price.modality} /><div><strong>{price.unitCredits} 积分</strong><small>每{creditPriceUnit(price)}{price.billing ? " · 自动计价" : ""}</small></div><StatusChip active={price.enabled} /><DraftIndicator dirty={dirty} /><button type="button" className="admin-text-btn primary" aria-haspopup="dialog" onClick={() => setEditing(true)}>编辑价格</button></div>
     <AdminModal open={editing} title="编辑价格策略" description={`${price.model} · 保存后用于新的生成报价，配置成本不代表实际账单。`} onClose={closeEditor}>
       <div className="admin-editor-grid" data-admin-dirty={dirty || undefined}>
-        <label><span>积分 / {unitLabel(price.unit)}</span><input type="number" min="0" value={draft.unitCredits} onChange={event => setDraft({ ...draft, unitCredits: event.target.value })} /></label>
+        <label><span>积分 / {creditPriceUnit(price)}</span><input type="number" min="0" disabled={Boolean(price.billing)} value={draft.unitCredits} onChange={event => setDraft({ ...draft, unitCredits: event.target.value })} />{price.billing ? <small>自动价格请在积分中心预览和修改成本规则。</small> : null}</label>
         <label><span>配置成本（元 / {unitLabel(price.unit)}）</span><input type="number" min="0" step="0.001" value={draft.vendorCostCny} onChange={event => setDraft({ ...draft, vendorCostCny: event.target.value })} /></label>
         <label><span>保存后的状态</span><select value={draft.enabled ? "enabled" : "disabled"} onChange={event => setDraft({ ...draft, enabled: event.target.value === "enabled" })}><option value="enabled">启用</option><option value="disabled">停用</option></select></label>
       </div>

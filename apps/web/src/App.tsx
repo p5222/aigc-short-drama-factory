@@ -1,5 +1,5 @@
 ﻿import { useCallback, useEffect, useMemo, useState } from "react";
-import { Bell, ChartNoAxesCombined, ChevronDown, CircleDollarSign, FilePenLine, Gift, LayoutDashboard, Layers3, LogOut, Megaphone, Moon, ReceiptText, SlidersHorizontal, UserRound, Video } from "lucide-react";
+import { Bell, ChartNoAxesCombined, ChevronDown, CircleDollarSign, FilePenLine, Gift, LayoutDashboard, Layers3, LogOut, Megaphone, Moon, ReceiptText, SlidersHorizontal, UserRound, Video, WalletCards } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { firstAdminRefreshFailure } from "./admin/adminRefreshModel";
 import { useLayoutEffect } from "react";
@@ -119,6 +119,7 @@ export function App() {
     {
       label: "商业化",
       items: [
+        { name: "积分中心", icon: WalletCards },
         { name: "兑换码", icon: Gift },
         { name: "套餐会员", icon: CircleDollarSign },
         { name: "订阅会员", icon: ReceiptText }
@@ -679,7 +680,7 @@ export function App() {
         setTourIndex(0);
         setTourOpen(true);
       }}
-      credits={account?.balance ?? summary?.credits}
+      credits={account ? account.balance - account.frozenBalance : summary?.credits}
       theme={theme}
       onToggleTheme={handleToggleTheme}
       userName={user.name}

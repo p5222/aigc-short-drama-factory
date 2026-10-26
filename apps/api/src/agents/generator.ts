@@ -4,6 +4,7 @@ import { createToonflowScriptPlan, createToonflowStoryboardPlan } from "./toonfl
 import { blockModelUntilNextDay, coolDownModel, getModelQuotaDecision, recordModelSubmission } from "../providers/modelQuota.js";
 import { providerEnvApiKey } from "../providers/credentials.js";
 import { materializePrompt } from "../prompts/runtime.js";
+import { recordTextUsage } from "../billing/metering.js";
 
 interface PipelineCharacter {
   name: string;
@@ -386,7 +387,9 @@ async function callGeminiInteraction(body: Record<string, unknown>, options: Tex
     throw new Error(`Google AI Studio request failed: ${response.status} ${text.slice(0, 180)}`);
   }
 
-  return JSON.parse(text) as TextModelResponse;
+  const parsed = JSON.parse(text) as TextModelResponse;
+  recordTextUsage(parsed, runtime.provider, runtime.model);
+  return parsed;
 }
 
 async function callChatCompletionsApi(
@@ -420,6 +423,7 @@ async function callChatCompletionsApi(
         }
       });
       await recordModelSubmission(runtime.provider, model);
+      recordTextUsage(result, runtime.provider, model);
       return result;
     } catch (error) {
       lastError = error;
@@ -482,7 +486,7 @@ async function callResponsesApi(body: Record<string, unknown>, options: TextRunt
 
   const messages = (body.messages ?? []) as Array<{ role: string; content: string }>;
 
-  return postJsonWithFallback<TextModelResponse>({
+  const result = await postJsonWithFallback<TextModelResponse>({
     label: "Responses model",
     urls: endpointCandidates(runtime.baseUrl, "responses"),
     apiKey: runtime.apiKey,
@@ -497,6 +501,8 @@ async function callResponsesApi(body: Record<string, unknown>, options: TextRunt
       store: process.env.OPENAI_DISABLE_RESPONSE_STORAGE === "true" ? false : undefined
     }
   });
+  recordTextUsage(result, runtime.provider, runtime.model);
+  return result;
 }
 function endpointCandidates(baseUrl: string, path: string) {
   const normalized = baseUrl.replace(/\/$/, "");

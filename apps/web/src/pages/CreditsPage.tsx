@@ -1,6 +1,7 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { CheckCircle2, ClipboardList, Coins, CreditCard, Gift, ReceiptText, Sparkles, WalletCards } from "lucide-react";
 import type { CreditAccount, CreditTransaction, MembershipPlan, ModelPrice, Plan } from "@aifilm/shared";
+import { creditPriceUnit } from "@aifilm/shared";
 import { api } from "../lib/api";
 import { modelCreditRange, rechargeCheckoutUrl } from "./creditCheckoutModel";
 import { createTaskActionRunner } from "./taskActionModel";
@@ -9,6 +10,8 @@ import { ModelIdentity } from "../components/ModelIdentity";
 import "../components/model-experience.css";
 import "./creator-pages.css";
 import { OnlineCheckout } from "./OnlineCheckout";
+import { saveCreditCsv } from "../lib/creditCsv";
+import "./credit-ledger.css";
 
 const modalityOrder: Record<string, number> = { text: 0, image: 1, video: 2, tts: 3, embedding: 4 };
 
@@ -139,7 +142,7 @@ export function RechargePage({ plans, membershipPlans, modelPrices, onRefresh }:
               <strong>{price.providerName}</strong>
               <ModelIdentity model={price.model} modality={price.modality} compact />
               <span className={`model-price-chip modality-${price.modality}`}>{priceModalityText(price.modality)}</span>
-              <span className="model-price-unit">{priceUnitText(price.unit)}</span>
+              <span className="model-price-unit">每{creditPriceUnit(price)}</span>
               <b>{price.unitCredits}</b>
             </div>
           ))}
@@ -171,17 +174,12 @@ function priceModalityText(value: ModelPrice["modality"]) {
   return labels[value] ?? value;
 }
 
-function priceUnitText(value: ModelPrice["unit"]) {
-  const labels: Record<string, string> = { text_run: "每次", image: "每张", image2: "每张", video_second: "每秒", tts_character: "每字符", export: "每次导出" };
-  return labels[value] ?? value;
-}
-
 function buildCreditUsageReferences(prices: ModelPrice[]) {
   const reference = (unit: ModelPrice["unit"], label: string) => {
     const range = modelCreditRange(prices, unit);
     return range === null ? "暂无报价" : `${range} 积分 / ${label}`;
   };
-  const textRun = reference("text_run", "次");
+  const textRun = reference("text_run", prices.some(p => p.billing?.kind === "tokens") ? "参考次，实际按Token" : "次");
   const image = reference("image", "张");
   const videoSecond = reference("video_second", "秒");
   return [
@@ -198,42 +196,49 @@ const ledgerPageSize = 20;
 
 export function LedgerPage({ account, transactions }: { account?: CreditAccount; transactions: CreditTransaction[] }) {
   const [filter, setFilter] = useState<CreditTransaction["type"] | "all">("all");
-  const [visibleCount, setVisibleCount] = useState(ledgerPageSize);
-  const filteredTransactions = filter === "all" ? transactions : transactions.filter((tx) => tx.type === filter);
-  const visibleTransactions = filteredTransactions.slice(0, visibleCount);
-  const remainingCount = filteredTransactions.length - visibleTransactions.length;
-  const recharged = transactions.filter((tx) => tx.amount > 0).reduce((sum, tx) => sum + tx.amount, 0);
-  const consumed = Math.abs(transactions.filter((tx) => tx.amount < 0).reduce((sum, tx) => sum + tx.amount, 0));
+  const [page, setPage] = useState(1), [keyword, setKeyword] = useState(""), [from, setFrom] = useState(""), [to, setTo] = useState("");
+  const [visibleTransactions, setRows] = useState<CreditTransaction[]>(transactions.slice(0, ledgerPageSize)), [total, setTotal] = useState(transactions.length);
+  const [loading, setLoading] = useState(false), [error, setError] = useState(""), [reload, setReload] = useState(0), [exporting, setExporting] = useState(false);
+  const query = { page, pageSize: ledgerPageSize, ...(filter !== "all" ? { type: filter } : {}), keyword, from: from ? new Date(from + "T00:00:00").toISOString() : "", to: to ? new Date(to + "T23:59:59.999").toISOString() : "" };
+  useEffect(() => {
+    let live = true; setLoading(true); setError("");
+    api.creditLedger(query).then(data => { if (live) { setRows(data.items); setTotal(data.total); } }).catch(e => { if (live) setError(e.message); }).finally(() => { if (live) setLoading(false); });
+    return () => { live = false; };
+  }, [page, filter, keyword, from, to, reload]);
 
   function changeFilter(next: CreditTransaction["type"] | "all") {
     setFilter(next);
-    setVisibleCount(ledgerPageSize);
+    setPage(1);
   }
 
   return (
     <div className="page-stack ledger-page creator-page">
-      <PageHeader title="积分明细" description="核对每一笔充值、冻结、消耗和退还。" />
+      <PageHeader title="积分明细" description="可用 = 总余额 − 冻结。冻结与释放不计入消费或充值。" />
+      {error ? <InlineNotice tone="error">{error} 记录读取失败，请重新读取后核对。<button className="ghost-button" onClick={() => setReload(v => v + 1)}>重试</button></InlineNotice> : null}
       <div className="ledger-summary-grid">
         <article>
           <WalletCards size={22} />
           <span>当前可用积分</span>
-          <strong>{(account?.balance ?? 0).toLocaleString()}</strong>
+          <strong>{account ? (account.balance - account.frozenBalance).toLocaleString() : "—"}</strong>
+          <small>总余额 {account?.balance.toLocaleString() ?? "—"} · 冻结 {account?.frozenBalance.toLocaleString() ?? "—"}</small>
         </article>
         <article>
           <Gift size={22} />
           <span>累计充值</span>
-          <strong>{(account?.totalRecharge ?? recharged).toLocaleString()}</strong>
+          <strong>{account?.totalRecharge.toLocaleString() ?? "—"}</strong>
         </article>
         <article>
           <ReceiptText size={22} />
           <span>累计消费</span>
-          <strong>{(account?.totalConsume ?? consumed).toLocaleString()}</strong>
+          <strong>{account?.totalConsume.toLocaleString() ?? "—"}</strong>
         </article>
       </div>
       <section className="panel ledger-table-panel">
         <div className="panel-head">
-          <div><h2>流水记录</h2><small>共 {transactions.length} 条，筛选后 {filteredTransactions.length} 条，已显示 {visibleTransactions.length} 条。</small></div>
+          <div><h2>流水记录</h2><small>{loading ? "正在读取流水…" : `筛选后 ${total} 条 · 第 ${page} 页 · 本页 ${visibleTransactions.length} 条`}</small></div>
+          <button className="ghost-button" disabled={exporting || loading || Boolean(error)} onClick={async () => { setExporting(true); try { saveCreditCsv(await api.exportCreditLedger(query)); } catch (e) { setError(e instanceof Error ? e.message : "导出失败"); } finally { setExporting(false); } }}>{exporting ? "正在导出…" : "导出本页流水"}</button>
         </div>
+        <div className="ledger-query-controls"><label>搜索说明或任务<input value={keyword} onChange={e => { setKeyword(e.target.value); setPage(1); }} placeholder="模型、任务或流水说明" /></label><label>开始日期<input type="date" value={from} onChange={e => { setFrom(e.target.value); setPage(1); }} /></label><label>结束日期<input type="date" value={to} onChange={e => { setTo(e.target.value); setPage(1); }} /></label></div>
         <div className="ledger-filter-tabs" role="group" aria-label="流水类型">
           {ledgerFilters.map((item) => (
             <button className={filter === item.id ? "active" : undefined} aria-pressed={filter === item.id} key={item.id} type="button" onClick={() => changeFilter(item.id)}>
@@ -252,14 +257,10 @@ export function LedgerPage({ account, transactions }: { account?: CreditAccount;
             </tr>
           ))}
           </tbody></table></div>
-          {!filteredTransactions.length ? (
+          {!loading && !error && !visibleTransactions.length ? (
             <StatePanel compact title={filter === "all" ? "暂无积分流水" : "此类型暂无记录"} description={filter === "all" ? "兑换积分或开始生成后，每一笔变动都会保留在这里。" : "可以切回全部类型查看完整历史。"} action={filter !== "all" ? <button type="button" className="ghost-button" onClick={() => changeFilter("all")}>查看全部</button> : undefined} />
           ) : null}
-        {remainingCount > 0 ? (
-          <button className="ghost-button ledger-load-more" type="button" onClick={() => setVisibleCount((value) => value + ledgerPageSize)}>
-            加载更多（还有 {remainingCount} 条）
-          </button>
-        ) : null}
+        <div className="ledger-page-controls"><button className="ghost-button" disabled={loading || page <= 1} onClick={() => setPage(v => v - 1)}>上一页</button><span>第 {page} 页</span><button className="ghost-button" disabled={loading || page * ledgerPageSize >= total} onClick={() => setPage(v => v + 1)}>下一页</button></div>
       </section>
     </div>
   );
@@ -270,7 +271,7 @@ const ledgerFilters: Array<{ id: CreditTransaction["type"] | "all"; label: strin
   { id: "recharge", label: "充值" },
   { id: "consume", label: "消费" },
   { id: "freeze", label: "冻结" },
-  { id: "refund", label: "退款" },
+  { id: "refund", label: "释放冻结" },
   { id: "adjust", label: "调整" }
 ];
 
@@ -279,7 +280,7 @@ function transactionTypeLabel(value: CreditTransaction["type"]) {
     recharge: "充值入账",
     freeze: "冻结积分",
     consume: "消费扣费",
-    refund: "退款退回",
+    refund: "释放冻结",
     adjust: "后台调整"
   };
   return labels[value] ?? value;

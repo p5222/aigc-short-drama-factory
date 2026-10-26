@@ -251,7 +251,7 @@ export function ProfilePage({
     }
   }
 
-  const creditBalance = account?.balance ?? summary?.credits ?? 0;
+  const creditBalance = account ? account.balance - account.frozenBalance : summary?.credits ?? 0;
   const recentTransactions = transactions.slice(0, 4);
   const recentOrders = orders.slice(0, 3);
 
@@ -316,7 +316,7 @@ export function ProfilePage({
                 <span className="profile-v2-binding-icon"><UserRound size={17} /></span>
                 <div>
                   <strong>手机号</strong>
-                  <small>{user.phone ? maskContact(user.phone) : "未绑定（注册时选填）"}</small>
+                  <small>{user.phone ? maskContact(user.phone) : "未绑定手机号"}</small>
                 </div>
                 <em className={user.phone ? "bound" : ""}>{user.phone ? "已绑定" : "未绑定"}</em>
               </div>

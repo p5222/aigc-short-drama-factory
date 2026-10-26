@@ -82,6 +82,13 @@ export function mapTask(row: any): GenerationTask {
     progress: row.progress,
     estimatedCredits: row.estimatedCredits,
     finalCredits: row.finalCredits ?? undefined,
+    ...(row.billingQuote ? { billing: {
+        mode: row.billingQuote.mode, listCredits: row.billingQuote.listCredits,
+        payableCredits: row.billingQuote.payableCredits, maximumCredits: row.billingQuote.maximumCredits,
+        discountPercent: row.billingQuote.discountPercent, policyVersion: row.billingQuote.policy.version,
+        releasedCredits: row.billingSettlement?.releasedCredits, usage: row.billingSettlement?.usage,
+        costStatus: row.billingSettlement?.costStatus
+      } } : {}),
     errorReason: publicTaskError(row.errorReason),
     estimatedSeconds,
     refundPolicy: refundPolicyForTask(status),
@@ -429,6 +436,7 @@ export function mapModelPrice(row: any): ModelPrice {
     unit: row.unit,
     unitCredits: row.unitCredits,
     vendorCostCny: row.vendorCostCny,
+    billing: row.billing ?? undefined,
     enabled: row.enabled
   };
 }

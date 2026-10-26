@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import type { PrismaClient } from "@prisma/client";
 import { assertProductionMediaProvider, runMediaTask } from "../billing/mediaTask.js";
+import { quotePrice } from "../billing/pricing.js";
 import type { BatchGenerationResult, CreateProjectInput, StoryboardShot } from "@aifilm/shared";
 import { estimateImageCredits, normalizeImageOutputQuality, normalizeImageOutputSize, normalizeImageProviderId, resolveImageUnitCredits } from "@aifilm/shared";
 import { generateProjectStoryboards, textModelName, textProviderName } from "../agents/generator.js";
@@ -81,7 +82,7 @@ export async function runProjectStoryboardTasks(
   assertProductionMediaProvider(textProviderConfig, input.textProvider || "", textModelName(input), "text");
   const credits = await resolveTextRunCredits(input);
 
-  return runMediaTask({ userId, projectId, projectName: workflow.project.name, estimatedCredits: credits, type: "storyboard", scope: "storyboard", provider: textProviderName(input), model: textModelName(input), title: "分镜生成" }, async (billing) => {
+  return runMediaTask({ userId, projectId, projectName: workflow.project.name, estimatedCredits: credits, type: "storyboard", scope: "storyboard", provider: input.textProvider || textProviderName(input), model: textModelName(input), title: "分镜生成" }, async (billing) => {
   const generated = await generateProjectStoryboards(projectId, runtimeInput, workflow.script!, workflow.characters);
   if (process.env.NODE_ENV === "production" && generated.mode !== "real") throw new Error("真实分镜生成未成功，未使用占位分镜交付。");
 
@@ -504,12 +505,13 @@ export async function deleteCharacterReferenceImageV2(projectId: string, charact
 async function resolveTextRunCredits(input: CreateProjectInput) {
   const price = await prisma.modelPrice.findFirst({ where: { providerId: input.textProvider, modality: "text", model: textModelName(input), enabled: true } });
   if (!price && process.env.NODE_ENV === "production") throw new Error("该文本模型尚未配置价格，请联系管理员。");
-  return price?.unitCredits ?? 50;
+  return price ? await quotePrice(price) : 50;
 }
 
 async function resolveImageCredits(provider: string, model: string, size?: string, quality?: string) {
   const price = await prisma.modelPrice.findFirst({ where: { providerId: normalizeImageProviderId(provider), model, enabled: true } });
   if (!price && process.env.NODE_ENV === "production") throw new Error("该图片模型尚未配置价格，请联系管理员。");
+  if (price?.billing) return quotePrice(price, { images: 1 });
   return estimateImageCredits(resolveImageUnitCredits(price ? [price] : [], provider, model), size, quality);
 }
 

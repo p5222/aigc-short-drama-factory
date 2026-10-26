@@ -59,7 +59,7 @@ const copy = {
     welcome: "欢迎回来",
     createAccount: "创建账号",
     loginIntro: "登录后继续进入 AI 漫剧创作工作台。",
-    registerIntro: "填写手机号，验证 QQ 邮箱后即可创建账号。手机号无需短信验证。",
+    registerIntro: "填写11位手机号，验证 QQ 邮箱后即可创建账号。",
     accountLabel: "手机 / 邮箱 / 用户名",
     accountPlaceholder: "请输入手机号、邮箱或用户名",
     adminAccountPlaceholder: "请输入管理员邮箱",
@@ -70,7 +70,7 @@ const copy = {
     remember: "记住我",
     forgot: "忘记密码?",
     phone: "手机号",
-    phonePlaceholder: "11 位手机号，仅收集，无需短信",
+    phonePlaceholder: "11位手机号",
     email: "QQ 邮箱",
     emailPlaceholder: "请输入你的 qq.com 邮箱",
     emailCode: "邮箱验证码",
@@ -118,7 +118,7 @@ const copy = {
     welcome: "Welcome back",
     createAccount: "Create account",
     loginIntro: "Log in to continue your AI comic-drama workspace.",
-    registerIntro: "Enter your phone number and verify your QQ email to create an account. No SMS verification needed.",
+    registerIntro: "Enter your 11-digit phone number and verify your QQ email to create an account.",
     accountLabel: "Phone / Email / Username",
     accountPlaceholder: "Enter phone, email or username",
     adminAccountPlaceholder: "Enter admin email",
@@ -129,7 +129,7 @@ const copy = {
     remember: "Remember me",
     forgot: "Forgot password?",
     phone: "Phone number",
-    phonePlaceholder: "11-digit China phone; no SMS needed",
+    phonePlaceholder: "11-digit phone number",
     email: "QQ email",
     emailPlaceholder: "Enter your qq.com email",
     emailCode: "Email verification code",
@@ -717,7 +717,7 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
       return;
     }
     if (activeMode === "register" && !phonePattern.test(cleanPhone)) {
-      setMessage(locale === "cn" ? "请输入 11 位中国大陆手机号，仅收集，无需短信验证。" : "Enter an 11-digit China phone number. No SMS verification needed.");
+      setMessage(locale === "cn" ? "请输入11位手机号。" : "Enter an 11-digit phone number.");
       return;
     }
     if (activeMode === "register" && !emailPattern.test(cleanEmail)) {

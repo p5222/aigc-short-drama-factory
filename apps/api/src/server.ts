@@ -93,6 +93,8 @@ import {
   updateRedeemCode
 } from "./db/repository.js";
 import { prisma } from "./db/client.js";
+import { CreditQueryError, accountPage, billingTasks, fundingLots, ledgerCsv, ledgerPage, pricingOverview, saveCostRule, savePricingPolicy, verifyTaskCost } from "./billing/creditCenter.js";
+import type { CreditPolicy, OfficialCostRule } from "@aifilm/shared";
 import { beginAdminAudit, finishAdminAudit, listAdminAuditLogs } from "./admin/audit.js";
 import { captureStoryboardTailFrame, deleteCharacterReferenceImageV2, generateCharacterReferenceImages, generateSceneEnvironmentImage, regenerateStoryboardShotImage, runProjectStoryboardTasks, setCharacterReferenceImageV2, updateStoryboardShot } from "./db/storyboardActions.js";
 import { MediaSourceConflict } from "./db/mediaSource.js";
@@ -1819,6 +1821,14 @@ app.get(
   })
 );
 
+app.get("/api/credits/ledger", asyncRoute(async (req, res) => {
+  res.json(await ledgerPage(requestUserId(req) ?? DEMO_USER_ID, req.query));
+}));
+app.get("/api/credits/ledger.csv", asyncRoute(async (req, res) => {
+  const page = await ledgerPage(requestUserId(req) ?? DEMO_USER_ID, req.query);
+  res.type("text/csv").attachment("credit-ledger-page.csv").send(ledgerCsv(page.items));
+}));
+
 app.get(
   "/api/billing/orders",
   asyncRoute(async (req, res) => {
@@ -2781,12 +2791,43 @@ app.post(
   })
 );
 
+const creditAdminRead = requireAdminPermission("billing:manage");
+const creditAdminAction = (run: (req: express.Request) => Promise<unknown>) => asyncRoute(async (req, res) => {
+  try { res.json(await run(req)); }
+  catch (error) { res.status(error instanceof Error && /已变化|已被/.test(error.message) ? 409 : 400).json({ message: error instanceof Error ? error.message : "积分操作失败" }); }
+});
+app.get("/api/admin/credits/pricing", creditAdminRead, creditAdminAction(() => pricingOverview()));
+app.get("/api/admin/credits/accounts", creditAdminRead, creditAdminAction(req => accountPage(req.query)));
+app.get("/api/admin/credits/funding", creditAdminRead, creditAdminAction(req => fundingLots(String(req.query.userId ?? ""))));
+app.get("/api/admin/credits/tasks", creditAdminRead, creditAdminAction(req => billingTasks(req.query)));
+app.get("/api/admin/credits/ledger", creditAdminRead, creditAdminAction(req => ledgerPage(String(req.query.userId ?? ""), req.query)));
+app.get("/api/admin/credits/ledger.csv", creditAdminRead, asyncRoute(async (req, res) => {
+  const page = await ledgerPage(String(req.query.userId ?? ""), req.query);
+  res.type("text/csv").attachment("credit-ledger-page.csv").send(ledgerCsv(page.items));
+}));
+app.patch("/api/admin/credits/policy", creditAdminRead, creditAdminAction(req => {
+  const parsed = z.object({ expectedVersion: z.number().int().positive(), policy: z.object({
+    version: z.number().int().positive(), targetMarginBps: z.number().int().min(0).max(9999),
+    creditValueMicros: z.number().int().positive(), usdCnyMicros: z.number().int().positive().nullable(),
+    overheadBps: z.number().int().min(0).max(10000), protectMargin: z.boolean()
+  }) }).parse(req.body);
+  return savePricingPolicy(parsed as { expectedVersion: number; policy: CreditPolicy });
+}));
+app.post("/api/admin/credits/cost-rule", creditAdminRead, creditAdminAction(req => {
+  const parsed = z.object({ priceId: z.string().min(1), expectedUpdatedAt: z.string().datetime(), expectedPolicyVersion: z.number().int().positive(), rule: z.record(z.string(), z.unknown()).nullable() }).parse(req.body);
+  return saveCostRule(parsed as unknown as { priceId: string; expectedUpdatedAt: string; expectedPolicyVersion: number; rule: OfficialCostRule | null });
+}));
+app.post("/api/admin/credits/verify-cost", creditAdminRead, creditAdminAction(req => {
+  const parsed = z.object({ taskId: z.string().min(1), expectedUpdatedAt: z.string().datetime(), costMicros: z.number().int().min(0), invoiceReference: z.string().min(1).max(200) }).parse(req.body);
+  return verifyTaskCost(parsed);
+}));
+
 app.use((error: unknown, req: express.Request, res: express.Response, _next: express.NextFunction) => {
   if (error instanceof EmailVerificationError) {
     if (error.retryAfter) res.setHeader("Retry-After", String(error.retryAfter));
     return res.status(error.status).json({ message: error.message, retryAfterSeconds: error.retryAfter });
   }
-  if (error instanceof ProjectRequestError || error instanceof MediaSourceConflict || error instanceof AnnouncementScheduleError || error instanceof SupportTicketError) return res.status(error.status).json({ message: error.message });
+  if (error instanceof CreditQueryError || error instanceof ProjectRequestError || error instanceof MediaSourceConflict || error instanceof AnnouncementScheduleError || error instanceof SupportTicketError) return res.status(error.status).json({ message: error.message });
   const message = error instanceof Error ? error.message : "服务器异常";
   const cause = error instanceof Error && "cause" in error ? (error as Error & { cause?: unknown }).cause : undefined;
   const causeMessage = cause instanceof Error ? `${cause.name}: ${cause.message}` : typeof cause === "object" && cause ? JSON.stringify(cause).slice(0, 240) : "";

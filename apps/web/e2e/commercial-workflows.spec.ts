@@ -24,6 +24,7 @@ async function fixtureApi(page: Page, options: { admin?: boolean; tasks?: number
       "/tasks": tasks,
       "/projects/production/workflow": { project, characters: [], assets: [], storyboards: [], tasks: [] },
       "/credits/account": { userId: "fixture", balance: 100, frozenBalance: 0, totalRecharge: 100, totalConsume: 0 },
+      "/credits/ledger": { items: [], total: 0, page: 1, pageSize: 20 },
       "/admin/summary": { users: 0, projects: 0, tasksToday: 0, totalTasks: 0, completedTasks: 0, successRate: 0, creditsConsumed: 0, providerCost: null, paidRechargeCny: 0 },
       "/admin/evaluation/overview": { datasets: [], runs: [], promptVersions: [], experiments: [] },
       "/admin/users/page": { items: [], total: 0, page: 1, pageSize: 25 },

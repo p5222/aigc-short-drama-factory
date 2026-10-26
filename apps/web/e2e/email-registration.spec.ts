@@ -20,6 +20,8 @@ async function credentials(page: Page) {
 
 test("QQ signup verifies email before registration, preserves fields on failure and invalidates changed email", async ({ page }, info) => {
   await openSignup(page);
+  await expect(page.locator('[name="register_phone"]')).toHaveAttribute("placeholder", "11位手机号");
+  await expect(page.getByText(/仅收集|仅用于资料/)).toHaveCount(0);
   let sends = 0, verifications = 0, registrations = 0;
   let rejectVerify = true;
   await page.route("**/api/auth/email/send", route => {
