@@ -10,6 +10,7 @@ import {
 import { useEffect, useId, useRef, useState } from "react";
 import type { WorkbenchSaveState } from "../WorkbenchContext";
 import { nextWorkbenchTheme, type WorkbenchStage, type WorkbenchTheme } from "../model";
+import { StudioIcon } from "../../design-system/StudioIcon";
 
 export interface WorkbenchHeaderStage {
   id: WorkbenchStage;
@@ -109,7 +110,7 @@ export function WorkbenchHeader({
       </div>
 
       <nav className="wb-stage-nav" aria-label="项目生产阶段">
-        {stages.map((stage, index) => (
+        {stages.map((stage) => (
           <button
             className={stage.id === activeStage ? "is-active" : undefined}
             type="button"
@@ -118,7 +119,7 @@ export function WorkbenchHeader({
             aria-current={stage.id === activeStage ? "step" : undefined}
             onClick={() => onStageChange(stage.id)}
           >
-            <span className="wb-stage-number" aria-hidden="true">{String(index + 1).padStart(2, "0")}</span>
+            <span className="wb-stage-number" aria-hidden="true"><StudioIcon stage={stage.id} size={20} /></span>
             <span className="wb-stage-copy"><strong>{stage.label}</strong>{stage.detail ? <small>{stage.detail}</small> : null}</span>
             {stage.done ? (
               <span className="wb-stage-complete">

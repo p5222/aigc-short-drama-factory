@@ -25,6 +25,7 @@ import { PublicShowcase, type PublicLocale, type PublicView } from "./PublicShow
 import { cineScenes as scenes } from "./cineScenes";
 import { getCardPose, nextCardIndex, relativeCardOffset, shouldCorrectDrift, shouldReleasePreparedSlot } from "./cineHomeModel";
 import { Dialog, InlineNotice } from "../design-system/ui";
+import { StudioMark } from "../design-system/StudioIcon";
 
 interface LoginPageProps {
   onAuthed: (token: string, user: AuthUser) => void;
@@ -952,6 +953,7 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
     <main className={`cine-home-page relative w-screen bg-black text-white ${publicView === "home" ? "" : "cine-scroll-page"}`} data-public-view={publicView}>
       <nav className={`cine-top-nav ${publicView === "home" ? "" : "solid"}`} aria-label="首页导航">
         <button className="cine-logo-text nav-logo" type="button" onClick={() => setPublicView("home")}>
+          <StudioMark size={30} />
           <span>漫角</span>
           <small>MANJIAO.CLOUD</small>
         </button>

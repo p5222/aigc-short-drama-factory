@@ -2,6 +2,7 @@ import { AlertTriangle, ArrowRight, BookOpen, CheckCircle2, Clock3, Coins, Film,
 import type { WorkbenchSummary } from "@aifilm/shared";
 import { collectWorkbenchActions, formatRelativeUpdate, projectNextAction, projectStatusLabel, projectTone, taskStatusLabel } from "./workbenchPresentation";
 import { ChevronDown, Megaphone, Pin } from "lucide-react";
+import { StudioIcon, studioStages, type StudioStage } from "../design-system/StudioIcon";
 import "./workbench-announcements.css";
 import "./workbench-workflow.css";
 
@@ -21,6 +22,7 @@ export function WorkbenchPage({ summary, onStart, onOpen, onOpenTasks, onRecharg
   const actions = collectWorkbenchActions(summary?.actionProjects ?? projects, tasks);
   const counts = summary?.actionCounts;
   const latestProject = projects[0];
+  const currentStage: StudioStage = latestProject?.status === "completed" ? "delivery" : latestProject?.status === "asseting" ? "assets" : ["storyboarding", "rendering"].includes(latestProject?.status ?? "") ? "shots" : "content";
   const announcements: Array<WorkbenchSummary["announcements"][number] & { pinned?: boolean }> = summary?.announcements ?? [];
 
   return (
@@ -34,21 +36,24 @@ export function WorkbenchPage({ summary, onStart, onOpen, onOpenTasks, onRecharg
         <div className="workbench-header-actions"><button className="ghost-button" onClick={onStartContent}><BookOpen size={17} />内容创作</button><button className="primary-button large" onClick={onStart}><Plus size={18} />新建漫剧</button></div>
       </header>
 
-      {latestProject ? <section className="workbench-resume" aria-labelledby="workbench-resume-title">
+      {latestProject ? <section className="workbench-resume studio-resume" aria-labelledby="workbench-resume-title">
+        <div className="studio-resume-monogram" aria-hidden="true"><StudioIcon stage={currentStage} size={32} /><span>创作手帐</span></div>
         <div className="workbench-resume-copy">
           <span className="workbench-resume-label"><span />继续上次创作</span>
           <h2 id="workbench-resume-title">{latestProject.name}</h2>
           <p>{latestProject.type} · {latestProject.videoRatio} · {latestProject.storyboards} 个镜头<span>{formatRelativeUpdate(latestProject.updatedAt)}</span></p>
         </div>
         <div className="workbench-resume-action"><span>下一步 · {projectNextAction(latestProject)}</span><button type="button" onClick={() => onOpen(latestProject.id)}>进入创作<ArrowRight size={17} /></button></div>
+        <ol className="studio-stage-ribbon" aria-label="当前创作阶段">
+          {studioStages.map((stage, index) => <li key={stage.id} aria-current={stage.id === currentStage ? "step" : undefined}>
+            <StudioIcon stage={stage.id} size={18} /><span><small>{String(index + 1).padStart(2, "0")}</small>{stage.label}</span>
+          </li>)}
+        </ol>
       </section> : null}
       {!latestProject ? <section className="workbench-journey" aria-labelledby="workbench-journey-title">
         <div className="workbench-journey-heading"><span className="section-kicker">创作流程</span><h2 id="workbench-journey-title">把第一个故事变成作品</h2><p>逐步确认内容，再进入生成。每次生成前核对模型与积分报价。</p></div>
         <ol>
-          <li><span>01</span><div><strong>故事与剧本</strong><small>输入灵感，确认剧本与分镜</small></div></li>
-          <li><span>02</span><div><strong>角色与场景</strong><small>建立资产，保持视觉一致</small></div></li>
-          <li><span>03</span><div><strong>镜头制作</strong><small>生成画面、视频与配音</small></div></li>
-          <li><span>04</span><div><strong>成片交付</strong><small>检查时间线，导出并审核发布</small></div></li>
+          {studioStages.map((stage, index) => <li key={stage.id}><span><StudioIcon stage={stage.id} size={24} /><b>{String(index + 1).padStart(2, "0")}</b></span><div><strong>{stage.label}</strong><small>{stage.detail}</small></div></li>)}
         </ol>
         <button type="button" className="ghost-button" onClick={onStart}>开始第一部漫剧<ArrowRight size={16} /></button>
       </section> : null}
@@ -76,7 +81,7 @@ export function WorkbenchPage({ summary, onStart, onOpen, onOpenTasks, onRecharg
       <div className="dashboard-work-grid">
         <section className="panel dashboard-project-panel">
           <div className="panel-head">
-            <div><h2>最近项目</h2><small>最近作品便于续创，待办数量覆盖全部记录</small></div>
+            <div><span className="studio-section-number">作品手帐 / 01</span><h2>最近项目</h2><small>最近作品便于续创，待办数量覆盖全部记录</small></div>
             <button className="ghost-button" type="button" onClick={onOpenWorks}>全部作品<ArrowRight size={15} /></button>
           </div>
           <div className="dashboard-project-list">
@@ -84,7 +89,7 @@ export function WorkbenchPage({ summary, onStart, onOpen, onOpenTasks, onRecharg
               <button key={project.id} type="button" onClick={() => onOpen(project.id)}>
                 <span className="dashboard-project-index" aria-hidden="true">{String(index + 1).padStart(2, "0")}</span>
                 <span className="dashboard-project-main">
-                  <strong>{project.name}</strong>
+                  <strong><StudioIcon stage="content" size={17} />{project.name}</strong>
                   <small>{project.type} · {project.videoRatio} · {project.storyboards} 个镜头 <span className={`dashboard-project-state ${projectTone(project.status)}`}>{projectStatusLabel(project.status)}</span></small>
                 </span>
                 <span className="dashboard-project-next"><small>{formatRelativeUpdate(project.updatedAt)}</small><strong>{projectNextAction(project)}<ArrowRight size={14} /></strong></span>

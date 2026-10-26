@@ -32,7 +32,9 @@ import "./design-system/studio-design.css";
 import "./design-system/creation-design.css";
 import "./design-system/production-design.css";
 import "./design-system/public-design.css";
+import "./design-system/studio-notebook.css";
 import "./admin/console-design.css";
+import "./admin/dialog-design.css";
 
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

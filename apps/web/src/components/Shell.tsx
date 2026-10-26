@@ -1,13 +1,9 @@
 import {
   Bell,
-  BookOpen,
   CircleHelp,
   ClipboardList,
-  Coins,
   CreditCard,
-  Film,
-  FileText,
-  Gauge,
+  ListVideo,
   Grid2X2,
   LogOut,
   Menu,
@@ -23,6 +19,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { ContentProjectSummary, GenerationTask, Project } from "@aifilm/shared";
 import { searchCreatorItems, type CreatorSearchItem } from "./creatorSearchModel";
 import { dialogStackForDocument } from "../design-system/dialogStack";
+import { StudioIcon, StudioMark } from "../design-system/StudioIcon";
 
 export type PageKey =
   | "workbench"
@@ -60,16 +57,16 @@ const sections: Array<{ label: string; items: Array<{ key: PageKey; label: strin
   {
     label: "创作",
     items: [
-      { key: "workbench", label: "工作台", icon: <Grid2X2 size={19} /> },
-      { key: "wizard", label: "新建漫剧", icon: <WandSparkles size={19} /> },
-      { key: "scripts", label: "我的作品", icon: <BookOpen size={19} /> }
+      { key: "workbench", label: "工作台", icon: <Grid2X2 size={20} /> },
+      { key: "wizard", label: "新建漫剧", icon: <WandSparkles size={20} /> },
+      { key: "scripts", label: "我的作品", icon: <StudioIcon stage="content" /> }
     ]
   },
   {
     label: "生产",
     items: [
-      { key: "studio", label: "剪辑中心", icon: <Film size={19} /> },
-      { key: "tasks", label: "生成队列", icon: <Gauge size={19} /> }
+      { key: "studio", label: "剪辑中心", icon: <StudioIcon stage="delivery" /> },
+      { key: "tasks", label: "生成队列", icon: <ListVideo size={20} /> }
     ]
   },
   {
@@ -138,7 +135,7 @@ export function Shell({ active, onNavigate, children, credits, theme, onToggleTh
       <a href="#creator-main-content" className="ui-skip-link" onClick={event => { event.preventDefault(); document.getElementById("creator-main-content")?.focus(); }}>跳到主要内容</a>
       <aside ref={sidebarRef} id="creator-sidebar" className={`sidebar${mobileOpen ? " is-open" : ""}`} inert={compact && !mobileOpen} aria-hidden={compact && !mobileOpen || undefined} role={compact ? "dialog" : undefined} aria-modal={compact && mobileOpen || undefined} aria-label={compact ? "创作导航" : undefined}>
         <div className="brand">
-          <div className="brand-mark" aria-hidden="true">漫</div>
+          <div className="brand-mark"><StudioMark /></div>
           <div>
             <strong>漫角 Studio</strong>
             <span>创作工作空间</span>
@@ -152,9 +149,9 @@ export function Shell({ active, onNavigate, children, credits, theme, onToggleTh
         </button>
 
         <nav className="nav" aria-label="创作与账户">
-          {sections.map((section) => (
+          {sections.map((section, index) => (
             <div key={section.label} className="nav-section">
-              <p>{section.label}</p>
+              <p><span aria-hidden="true">{String(index + 1).padStart(2, "0")}</span>{section.label}</p>
               {section.items.map((item) => (
                 <button
                   key={item.key}
