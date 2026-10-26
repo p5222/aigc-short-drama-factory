@@ -231,11 +231,16 @@ export function getDeliveryStats(shots: StoryboardShot[], assets: AssetItem[], j
   };
 }
 
-/** 与服务端 /videos/generate 的筛选一致：没有可播放视频、且已有分镜图资产的镜头。 */
+/** New submissions require a successful first frame; running videos remain in the task queue. */
 export function getRemainingVideoShots(shots: StoryboardShot[], assets: AssetItem[]): StoryboardShot[] {
   const videos = buildShotMediaIndex(shots, assets, "video");
   const images = buildShotMediaIndex(shots, assets, "image");
-  return shots.filter((shot) => !isPersistedPlayableVideoReference(videos.get(shot.id)?.referenceUrl) && images.has(shot.id));
+  return shots.filter((shot) => {
+    const image = images.get(shot.id);
+    const video = videos.get(shot.id);
+    return resolveShotVideoStatus(video) !== "running" && !isPersistedPlayableVideoReference(video?.referenceUrl)
+      && image?.status === "succeeded" && Boolean(image.referenceUrl && /^(?:https?:\/\/|\/storage\/|data:image\/)/i.test(image.referenceUrl));
+  });
 }
 
 const DEFAULT_VIDEO_DESCRIPTION_PREFIX = "基于分镜图生成视频";

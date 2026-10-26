@@ -225,6 +225,16 @@ test("getRemainingVideoShots mirrors server eligibility: no playable video and a
   assert.deepEqual(getRemainingVideoShots(shots, assets).map((item) => item.id), ["b"]);
 });
 
+test("remaining submissions exclude failed, missing or temporary frames and videos still generating", () => {
+  const shots = ["failed-frame", "no-url", "blob", "running", "ready"].map(id => shot(id, 2));
+  const frames = shots.map(item => rawAsset({ id: `image_${item.id}`, type: "image", status: "succeeded", referenceUrl: "/storage/frame.png" }));
+  frames[0].status = "failed";
+  frames[1].referenceUrl = undefined;
+  frames[2].referenceUrl = "blob:temporary";
+  const assets = [...frames, rawAsset({ id: "video_running", type: "video", status: "running" })];
+  assert.deepEqual(getRemainingVideoShots(shots, assets).map(item => item.id), ["ready"]);
+});
+
 test("getShotFailureMessage prefers provider error on the asset, then task errorReason, then a safe default", () => {
   const failed = rawAsset({ id: "video_a", type: "video", status: "failed", description: "余额不足：视频渠道拒绝任务" });
   assert.equal(getShotFailureMessage(failed, []), "余额不足：视频渠道拒绝任务");

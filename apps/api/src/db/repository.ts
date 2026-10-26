@@ -5,11 +5,11 @@ import { lockCreditAccount } from "../billing/accountCredits.js";
 import { grantMembership } from "../billing/membership.js";
 import { assertProductionMediaProvider, mediaCheckpoint, runMediaTask } from "../billing/mediaTask.js";
 import sharp from "sharp";
-import type { AdminSummary, AdminUserRow, AssetItem, BatchGenerationResult, CreateProjectInput, CreationEstimate, GenerationTask, HelpArticle, PlatformAnnouncement, ProjectWorkflow, SegmentProfile, StoryboardExportRow, StoryboardShot, WorkbenchSummary } from "@aifilm/shared";
+import type { AdminSummary, AdminUserRow, AssetItem, BatchGenerationResult, CreateProjectInput, CreationEstimate, GenerationTask, HelpArticle, ModelModality, PlatformAnnouncement, ProjectWorkflow, SegmentProfile, StoryboardExportRow, StoryboardShot, WorkbenchSummary } from "@aifilm/shared";
 import { textModelName, textProviderName } from "../agents/generator.js";
 import { buildSeedanceVideoPrompt, buildStoryboardFirstFramePrompt, createStoryboardProductionPackage, resolveStoryboardReferenceAssets } from "../agents/storyboardProduction.js";
 import { estimateCreation } from "../agents/workflow.js";
-import { estimateImageCredits, isPersistedPlayableVideoReference, normalizeImageOutputQuality, normalizeImageOutputSize, normalizeImageProviderId, resolveImageUnitCredits } from "@aifilm/shared";
+import { estimateImageCredits, inspectModelPrice, isPersistedPlayableVideoReference, normalizeImageOutputQuality, normalizeImageOutputSize, normalizeImageProviderId, resolveImageUnitCredits } from "@aifilm/shared";
 import { hashPassword } from "../auth/password.js";
 import { buildDirectorStoryboardRow, createDirectorStoryboardPackage } from "../export/directorStoryboard.js";
 import { selectExportWorkflow } from "../export/exportSelection.js";
@@ -1434,14 +1434,7 @@ export async function runProjectVideoTasks(
 }
 
 async function resolveVideoCreditPerSecond(provider: string, model: string) {
-  const price = await prisma.modelPrice.findFirst({
-    where: {
-      providerId: videoProviderId(provider),
-      model,
-      enabled: true
-    }
-  });
-  if (!price && process.env.NODE_ENV === "production") throw new Error("该视频模型尚未配置价格，请联系管理员。");
+  const price = await readGenerationPrice(prisma, videoProviderId(provider), model, "video");
   return price?.unitCredits ?? videoCreditPerSecond(provider);
 }
 
@@ -2094,24 +2087,23 @@ function defaultVendorCost(modality: string) {
 
 async function resolveTextRunCredits(input: CreationQuoteInput, suggestedEpisodes: number, db: Pick<Prisma.TransactionClient, "modelPrice"> = prisma) {
   const model = textModelName(input);
-  const price = await db.modelPrice.findFirst({ where: {
-    modality: "text", model, providerId: input.textProvider || process.env.TEXT_PROVIDER || null, enabled: true
-  } });
-  if (!price && process.env.NODE_ENV === "production") throw new Error("该文本渠道与模型尚未配置启用价格，请联系管理员。");
+  const price = await readGenerationPrice(db, input.textProvider || process.env.TEXT_PROVIDER || null, model, "text");
   const defaultUnit = estimateCreation(input).breakdown?.[0]?.unitCredits ?? 50;
   return (price?.unitCredits ?? defaultUnit) * Math.max(1, suggestedEpisodes);
 }
 
+async function readGenerationPrice(db: Pick<Prisma.TransactionClient, "modelPrice">, providerId: string | null, model: string, modality: ModelModality) {
+  const rows = await db.modelPrice.findMany({ where: { providerId, model, modality, enabled: true }, take: 2 });
+  const result = inspectModelPrice(rows, { providerId, model, modality });
+  if (result.state === "conflict") throw new Error("该渠道与模型存在多条启用价格，请联系管理员核对。");
+  if (result.state === "invalid") throw new Error("该模型价格配置无效，请核对计费单位和积分单价。");
+  if (result.state === "missing" && process.env.NODE_ENV === "production") throw new Error("该渠道与模型尚未配置启用价格，请联系管理员。");
+  return result.price;
+}
+
 async function resolveImageBaseCreditPerShot(provider: string, model: string) {
   const providerId = normalizeImageProviderId(provider);
-  const price = await prisma.modelPrice.findFirst({
-    where: {
-      providerId,
-      model,
-      enabled: true
-    }
-  });
-  if (!price && process.env.NODE_ENV === "production") throw new Error("该图片模型尚未配置价格，请联系管理员。");
+  const price = await readGenerationPrice(prisma, providerId, model, "image");
   return resolveImageUnitCredits(price ? [price] : [], provider, model);
 }
 

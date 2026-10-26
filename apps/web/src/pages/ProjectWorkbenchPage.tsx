@@ -252,13 +252,16 @@ function LoadedProjectWorkbenchPage({ workflow, providers, modelPrices, theme, o
   async function saveModelRoutes(routes: Partial<Pick<Project, "textProvider" | "textModel" | "imageProvider" | "imageModel" | "imageSize" | "imageQuality" | "videoProvider" | "videoModel">>) {
     setIsBusy(true);
     setError("");
+    let saved = false;
     try {
       await api.updateProjectModelRoutes(project.id, routes);
+      saved = true;
       setMessage("本项目模型路由已更新。");
       await refreshProject();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "模型路由保存失败");
-      throw err;
+      const message = saved ? "模型已保存，但项目数据暂未刷新。请重新核对项目数据后再生成。" : err instanceof Error ? err.message : "模型路由保存失败";
+      setError(message);
+      throw new Error(message);
     } finally {
       setIsBusy(false);
     }

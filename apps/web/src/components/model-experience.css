@@ -25,7 +25,7 @@
 .model-identity--compact { gap: 8px; }
 .model-identity--compact .model-identity-copy strong { font-size: 12px; }
 .model-identity--compact .model-identity-copy small { font-size: 10px; }
-:root .mrp-root { display: flex; width: 100%; min-width: 0; max-width: 100%; }
+:root .mrp-root { display: flex; flex-direction: column; width: 100%; min-width: 0; max-width: 100%; container: model-route / inline-size; }
 :root .mrp-trigger {
   display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0; min-height: 56px;
   padding: 10px 12px; border: 1px solid var(--ds-border-default); border-radius: 12px;
@@ -41,7 +41,15 @@
 .mrp-trigger-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ds-text-secondary); font-size: 10px; }
 :root .mrp-badge { color: var(--ds-action-primary); background: var(--ds-action-soft); font-size: 10px; padding: 4px 7px; border-radius: 6px; white-space: nowrap; }
 :root .mrp-caret { flex: 0 0 15px; margin-left: auto; color: var(--ds-text-secondary); }
-:root .mrp-root.is-compact { width: auto; max-width: 260px; }
+@container model-route (max-width: 320px) {
+  :root .mrp-root:not(.is-compact) .mrp-trigger { display: grid; grid-template-columns: 28px minmax(0, 1fr) 15px; gap: 6px 10px; }
+  :root .mrp-root:not(.is-compact) .mrp-trigger-model { white-space: normal; overflow: visible; overflow-wrap: anywhere; }
+  .mrp-root:not(.is-compact) .mrp-trigger-copy { grid-column: 2; grid-row: 1; }
+  .mrp-root:not(.is-compact) .mrp-trigger-copy small { white-space: normal; overflow-wrap: anywhere; }
+  :root .mrp-root:not(.is-compact) .mrp-badge { grid-column: 2; grid-row: 2; justify-self: start; }
+  :root .mrp-root:not(.is-compact) .mrp-caret { grid-column: 3; grid-row: 1; margin: 0; }
+}
+:root .mrp-root.is-compact { width: auto; max-width: 260px; container-type: normal; }
 :root .mrp-root.is-compact .mrp-trigger { min-height: 44px; padding: 6px 10px; border-radius: 10px; }
 :root .route-channel-detail .mrp-trigger { border-radius: 12px; }
 .ui-dialog.model-picker-dialog {
@@ -88,7 +96,9 @@
 .model-option-meta > strong { font-size: 11px; font-weight: 600; white-space: nowrap; color: var(--ds-text-primary); }
 .model-state { font-size: 10px; font-weight: 500; color: var(--ds-text-secondary); }
 .model-state--configured { color: var(--ds-action-primary); }
-.model-state--missing_key, .model-state--missing_price, .model-state--cooling, .model-state--limited, .model-state--price_conflict { color: var(--ds-status-warning); }
+.model-state--missing_key, .model-state--missing_price, .model-state--cooling, .model-state--limited, .model-state--price_conflict, .model-state--invalid_price { color: var(--ds-status-warning); }
+.model-library-card .model-configuration-issues { margin: 0; color: var(--ds-status-warning); font-size: 12px; line-height: 1.6; }
+.mrp-route-warning { display: block; margin-top: 6px; color: var(--ds-status-warning); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
 .model-option-check { flex-shrink: 0; color: var(--ds-action-primary); }
 .model-picker-detail { display: flex; flex-direction: column; align-items: flex-start; gap: 14px; min-width: 0; padding: 22px 20px; border-left: 1px solid var(--ds-border-default); background: var(--ds-bg-subtle); max-height: min(440px, calc(100dvh - 280px)); overflow: auto; }
 .model-detail-kicker { font-size: 10px; color: var(--ds-text-secondary); }

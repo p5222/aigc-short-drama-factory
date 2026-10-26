@@ -251,7 +251,7 @@ function LoadedShotStage({
   }
 
   async function generateImages(scope: "current" | "selected" | "pending") {
-    if (!activeShot || pending || !validImageRoute) return;
+    if (!activeShot || pending || refreshRequired || !validImageRoute) return;
     const payloads = buildShotImageGenerationPayload(activeShot.id, selectedIds, pendingShotIds);
     const payload = payloads[scope];
     if (!payload.shotIds.length) return;
@@ -280,7 +280,7 @@ function LoadedShotStage({
   }
 
   async function generateVideos() {
-    if (pending || !validVideoRoute || !eligibleVideoShotIds.length || !window.confirm(`视频请求范围 ${eligibleVideoShotIds.length} 个符合条件的待完成片段；服务端按当前批次上限接收，最终数量和扣费以后端返回为准。\n实际接收片段单价 ${videoUnit} · ${videoRoute.videoProvider} / ${videoRoute.videoModel}\n如修改模型，将同时更新项目默认模型。确认继续？`)) return;
+    if (pending || refreshRequired || !validVideoRoute || !eligibleVideoShotIds.length || !window.confirm(`视频请求范围 ${eligibleVideoShotIds.length} 个符合条件的待完成片段；服务端按当前批次上限接收，最终数量和扣费以后端返回为准。\n实际接收片段单价 ${videoUnit} · ${videoRoute.videoProvider} / ${videoRoute.videoModel}\n如修改模型，将同时更新项目默认模型。确认继续？`)) return;
     setPending("video");
     setMessage("");
     setError("");
@@ -345,8 +345,8 @@ function LoadedShotStage({
         <div className="wb-shot-route"><span>渠道 / 模型</span><ModelRoutePicker modality="image" providers={imageProviders.map((provider) => ({ ...provider, models: provider.models.filter((model) => !failedImageModels.has(model)) }))} modelPrices={modelPrices} value={{ providerId: imageRoute.imageProvider, model: imageRoute.imageModel }} onChange={(providerId, model) => { const pair = resolveImageRoutePair(providerId, model, providers, failedImageModels); setImageRoute((current) => ({ ...current, ...pair })); }} disabled={Boolean(pending)} /></div>
         <div className="wb-shot-route-grid"><RouteSelect label="尺寸" value={imageRoute.imageSize} options={imageOutputSizeOptions.map((item) => ({ value: item.value, label: item.label }))} onChange={(value) => setImageRoute((current) => ({ ...current, imageSize: normalizeImageOutputSize(value) }))} /><RouteSelect label="质量" value={imageRoute.imageQuality} options={imageOutputQualityOptions.map((item) => ({ value: item.value, label: item.label }))} onChange={(value) => setImageRoute((current) => ({ ...current, imageQuality: normalizeImageOutputQuality(value) }))} /></div>
         <small>单个实际接收镜头约 {imageUnitEstimate} · 服务端按当前批次上限结算</small>
-        <button className="wb-primary-button" type="button" disabled={!activeShot || Boolean(pending) || hasUnsavedDraft || !validImageRoute || selectedImageCount === 0} onClick={() => void generateImages(selectedIds.length ? "selected" : "current")}>{pending.startsWith("image:") ? <Loader2 className="wb-spin" /> : <WandSparkles />}{selectedIds.length ? `生成已选 ${selectedIds.length} 个首帧` : activeImage?.referenceUrl ? "当前首帧已生成" : "生成当前首帧"}</button>
-        <button className="wb-secondary-button" type="button" disabled={!pendingShotIds.length || Boolean(pending) || hasUnsavedDraft || !validImageRoute} onClick={() => void generateImages("pending")}>生成全部待生成（{pendingShotIds.length}）</button>
+        <button className="wb-primary-button" type="button" disabled={!activeShot || Boolean(pending) || refreshRequired || hasUnsavedDraft || !validImageRoute || selectedImageCount === 0} onClick={() => void generateImages(selectedIds.length ? "selected" : "current")}>{pending.startsWith("image:") ? <Loader2 className="wb-spin" /> : <WandSparkles />}{selectedIds.length ? `生成已选 ${selectedIds.length} 个首帧` : activeImage?.referenceUrl ? "当前首帧已生成" : "生成当前首帧"}</button>
+        <button className="wb-secondary-button" type="button" disabled={!pendingShotIds.length || Boolean(pending) || refreshRequired || hasUnsavedDraft || !validImageRoute} onClick={() => void generateImages("pending")}>生成全部待生成（{pendingShotIds.length}）</button>
       </section> : null}
       {state.shotMode === "video" ? <section className="wb-shot-generation"><h3>批量生成视频</h3><p>按已就绪首帧补齐待完成片段。需要重新生成单个镜头时，可在成片阶段选择对应镜头。</p>
         <div className="wb-video-input-preview"><div><span>本镜头首帧参考</span>{activeImage?.referenceUrl ? <img src={activeImage.referenceUrl} alt="本镜头首帧参考" /> : <strong>请先生成首帧图</strong>}</div><div><span>视频提示词</span><pre>{activeShot.videoPrompt || "暂无视频提示词"}</pre></div></div>
@@ -354,7 +354,7 @@ function LoadedShotStage({
         <small>{eligibleVideoShotIds.length} 个符合条件片段 · 共 {videoSeconds}s · {videoUnit}，实际扣费以后端本批次结果为准</small>
         {!eligibleVideoShotIds.length ? <p>当前没有可生成片段。请先生成成功首帧，或等待现有视频任务完成。</p> : null}
         {latestVideoTask?.status === "failed" ? <p className="wb-action-feedback--error">项目视频任务失败：{latestVideoTask.errorReason || "未提供失败原因"}</p> : null}
-        <button className="wb-primary-button" type="button" disabled={!eligibleVideoShotIds.length || Boolean(pending) || hasUnsavedDraft || !validVideoRoute} onClick={() => void generateVideos()}>{pending === "video" ? <Loader2 className="wb-spin" /> : <Film />}生成当前批次视频</button>
+        <button className="wb-primary-button" type="button" disabled={!eligibleVideoShotIds.length || Boolean(pending) || refreshRequired || hasUnsavedDraft || !validVideoRoute} onClick={() => void generateVideos()}>{pending === "video" ? <Loader2 className="wb-spin" /> : <Film />}生成当前批次视频</button>
       </section> : null}
       {refreshRequired ? <button className="wb-secondary-button wb-shot-refresh" type="button" disabled={pending === "refresh" || hasUnsavedDraft} onClick={() => void retryRefresh()}>{pending === "refresh" ? <Loader2 className="wb-spin" /> : null}重试刷新</button> : null}
     </div>}

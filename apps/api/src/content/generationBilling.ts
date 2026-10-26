@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { Prisma } from "@prisma/client";
+import { inspectModelPrice } from "@aifilm/shared";
 import { prisma } from "../db/client.js";
 import { lockTaskCredits, releaseTaskCredits, reserveTaskCredits, settleTaskCredits } from "../billing/taskCredits.js";
 
@@ -97,8 +98,10 @@ export async function runBilledContentGeneration<T, R>(project: ContentProjectRo
     await lockActiveOperation(tx, operation);
     const provider = await tx.modelProvider.findFirst({ where: { id: project.textProvider, enabled: true, modality: "text" } });
     if (!provider?.models.includes(project.textModel)) throw new Error("所选文本模型不可用，请先切换模型");
-    const price = await tx.modelPrice.findFirst({ where: { providerId: provider.id, modality: "text", model: project.textModel, enabled: true, unit: "text_run" }, orderBy: { updatedAt: "desc" } });
-    if (!price || !Number.isSafeInteger(price.unitCredits) || price.unitCredits < 0) throw new Error("所选文本模型尚未配置有效价格，请联系管理员");
+    const rows = await tx.modelPrice.findMany({ where: { providerId: provider.id, modality: "text", model: project.textModel, enabled: true }, take: 2 });
+    const pricing = inspectModelPrice(rows, { providerId: provider.id, modality: "text", model: project.textModel });
+    if (!pricing.price) throw new Error(pricing.state === "conflict" ? "所选文本模型存在多条启用价格，请联系管理员核对" : "所选文本模型尚未配置有效价格，请联系管理员");
+    const price = pricing.price;
     const id = `content_text_${crypto.randomUUID()}`;
     const row = await tx.generationTask.create({ data: { id, userId: project.userId, projectId: null, projectName: project.title, type: "text", title, provider: provider.id, model: project.textModel, status: "running", estimatedCredits: price.unitCredits, jobId: `${billingPrefix(operation)}${id}` } });
     await reserveTaskCredits(tx, { taskId: id, userId: project.userId, description: `${title}：冻结积分` });

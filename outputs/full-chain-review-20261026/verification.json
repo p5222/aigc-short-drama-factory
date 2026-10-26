@@ -1,0 +1,37 @@
+{
+  "date": "2026-10-26",
+  "baseRevision": "cb37201a3685971d574c0f1842ce0c70c2ff9264",
+  "branch": "feat/model-experience-20261026",
+  "evidenceScope": "local code and isolated browser fixtures",
+  "typecheck": "passed",
+  "productionBuild": "passed locally",
+  "unitTests": {
+    "shared": { "passed": 8, "failed": 0 },
+    "web": { "passed": 249, "failed": 0 },
+    "api": { "passed": 94, "failed": 0, "skipped": 20 },
+    "httpTransport": { "passed": 5, "failed": 0 }
+  },
+  "browser": {
+    "engine": "installed Google Chrome",
+    "projects": ["desktop", "mobile emulation"],
+    "passed": 88,
+    "failed": 0,
+    "skipped": 2,
+    "addedScenariosPassed": 14,
+    "retainedScreenshots": 14,
+    "screenshotBytes": 3172051
+  },
+  "release": {
+    "githubPushed": false,
+    "remoteCiVerified": false,
+    "productionDeployed": false,
+    "blocker": "GitHub authorization service requires starting a new conversation before retrying."
+  },
+  "externalAcceptance": {
+    "realDatabaseIntegrationExecuted": false,
+    "physicalMobileDevicesTested": false,
+    "qqInboxRegistrationVerified": false,
+    "realPaymentVerified": false,
+    "paidSupplierSampleVerified": false
+  }
+}

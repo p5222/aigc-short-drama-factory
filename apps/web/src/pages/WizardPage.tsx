@@ -4,7 +4,7 @@ import type { CreateProjectInput, CreationEstimate, ModelPrice, ModelProvider } 
 import { imageOutputQualityOptions, imageOutputSizeOptions, imageParameterMultiplier, normalizeImageOutputQuality, normalizeImageOutputSize } from "@aifilm/shared";
 import { api } from "../lib/api";
 import { ModelRoutePicker } from "../components/ModelRoutePicker";
-import { buildModelCatalog } from "../components/modelCatalog";
+import { buildModelCatalog, defaultModelRoute } from "../components/modelCatalog";
 import { modelIdentity } from "../components/modelCatalog";
 import { analyzeSourceEpisodes, episodeScopeOptions, parseSampleManifest, type SourceEpisodeAnalysis } from "./wizardSourceModel";
 import { clearWizardDraft, readWizardDraft, saveWizardDraft } from "./wizardDraftStorage";
@@ -41,14 +41,14 @@ const defaultForm: CreateProjectInput = {
   videoRatio: "9:16",
   artStyle: "",
   targetEpisodes: 1,
-  textProvider: "dashscope-text",
-  textModel: "qwen3.7-plus",
-  imageProvider: "dashscope-image",
-  imageModel: "wan2.6-t2i",
+  textProvider: "",
+  textModel: "",
+  imageProvider: "",
+  imageModel: "",
   imageSize: "2048x1152",
   imageQuality: "medium",
-  videoProvider: "dashscope-video",
-  videoModel: "wan2.7-i2v-2026-04-25"
+  videoProvider: "",
+  videoModel: ""
 };
 
 const stylePresets = [
@@ -117,15 +117,14 @@ export function WizardPage({ providers, modelPrices, canManageModels = false, on
   const textProviders = useMemo(() => filterProviders(providers, "text", preferredTextProviderIds), [providers]);
   const imageProviders = useMemo(() => filterProviders(providers, "image", preferredImageProviderIds), [providers]);
   const videoProviders = useMemo(() => filterProviders(providers, "video", preferredVideoProviderIds), [providers]);
-  const selectedTextProvider = textProviders.find((provider) => provider.id === form.textProvider) ?? textProviders[0];
-  const selectedImageProvider = imageProviders.find((provider) => provider.id === form.imageProvider) ?? imageProviders[0];
-  const selectedVideoProvider = videoProviders.find((provider) => provider.id === form.videoProvider) ?? videoProviders[0];
-  const currentTextModels = selectedTextProvider?.models.length ? selectedTextProvider.models : ["deepseek-v4-pro"];
+  const selectedTextProvider = textProviders.find((provider) => provider.id === form.textProvider);
+  const selectedImageProvider = imageProviders.find((provider) => provider.id === form.imageProvider);
+  const selectedVideoProvider = videoProviders.find((provider) => provider.id === form.videoProvider);
+  const currentTextModels = selectedTextProvider?.models ?? [];
   const currentImageModels = useMemo(() => {
-    const models = (selectedImageProvider?.models.length ? selectedImageProvider.models : ["wan2.6-t2i"]).filter((model) => !failedImageModels.has(model));
-    return models.length ? models : ["wan2.6-t2i"];
+    return (selectedImageProvider?.models ?? []).filter((model) => !failedImageModels.has(model));
   }, [selectedImageProvider]);
-  const currentVideoModels = selectedVideoProvider?.models.length ? selectedVideoProvider.models : [form.videoModel || "wan2.7-i2v-2026-04-25"];
+  const currentVideoModels = selectedVideoProvider?.models ?? [];
   const activeStepIndex = stepOrder.indexOf(step);
 
   useEffect(() => {
@@ -135,19 +134,24 @@ export function WizardPage({ providers, modelPrices, canManageModels = false, on
   }, [generationStartedAt]);
 
   useEffect(() => {
-    if (selectedTextProvider && form.textProvider !== selectedTextProvider.id) {
-      setForm((draft) => ({ ...draft, textProvider: selectedTextProvider.id, textModel: selectedTextProvider.models[0] ?? draft.textModel }));
-    }
-    if (selectedImageProvider && form.imageProvider !== selectedImageProvider.id) {
-      setForm((draft) => ({ ...draft, imageProvider: selectedImageProvider.id, imageModel: selectedImageProvider.models.find((model) => !failedImageModels.has(model)) ?? "wan2.6-t2i" }));
-    }
-  }, [selectedTextProvider, selectedImageProvider, form.textProvider, form.imageProvider]);
-
-  useEffect(() => {
-    if (!currentImageModels.includes(form.imageModel || "")) {
-      setForm((draft) => ({ ...draft, imageModel: currentImageModels[0] }));
-    }
-  }, [currentImageModels, form.imageModel]);
+    const defaults = {
+      text: defaultModelRoute(textProviders, "text", modelPrices),
+      image: defaultModelRoute(imageProviders.map(provider => ({ ...provider, models: provider.models.filter(model => !failedImageModels.has(model)) })), "image", modelPrices),
+      video: defaultModelRoute(videoProviders, "video", modelPrices)
+    };
+    setForm(draft => {
+      const next = { ...draft };
+      let changed = false;
+      for (const modality of ["text", "image", "video"] as const) {
+        if (!draft[`${modality}Provider`] && !draft[`${modality}Model`] && defaults[modality].providerId) {
+          next[`${modality}Provider`] = defaults[modality].providerId;
+          next[`${modality}Model`] = defaults[modality].model;
+          changed = true;
+        }
+      }
+      return changed ? next : draft;
+    });
+  }, [textProviders, imageProviders, videoProviders, modelPrices, form.textProvider, form.textModel, form.imageProvider, form.imageModel, form.videoProvider, form.videoModel]);
 
   useEffect(() => {
     const current = form.targetEpisodes ?? 1;
@@ -174,6 +178,9 @@ export function WizardPage({ providers, modelPrices, canManageModels = false, on
 
   async function estimateCost() {
     if (pendingQuote.current || isGenerating) return null;
+    if (!buildModelCatalog(textProviders, modelPrices).some(item => item.provider.id === form.textProvider && item.model === form.textModel && item.selectable)) {
+      setError("请先选择可用的文本模型，再获取报价。"); return null;
+    }
     const signature = creationBillingSignature(normalizeDraft(form));
     const ticket = quoteGate.current.begin(signature);
     pendingQuote.current = true;
@@ -198,6 +205,9 @@ export function WizardPage({ providers, modelPrices, canManageModels = false, on
 
   async function start() {
     if (startInFlight.current || pendingQuote.current) return;
+    if (!buildModelCatalog(textProviders, modelPrices).some(item => item.provider.id === form.textProvider && item.model === form.textModel && item.selectable)) {
+      setError("当前文本模型不可用，请重新选择后获取报价。"); return;
+    }
     const input = buildGenerationInput(normalizeDraft(form));
     if (!input.content.trim()) {
       setError("请先粘贴小说、故事大纲或已有剧本。");
@@ -898,17 +908,17 @@ function filterProviders(providers: ModelProvider[], modality: ModelProvider["mo
 }
 
 function normalizeDraft(form: CreateProjectInput): CreateProjectInput {
-  const imageProvider = form.imageProvider || "dashscope-image";
-  const imageModel = !form.imageModel || failedImageModels.has(form.imageModel) ? "wan2.6-t2i" : form.imageModel;
   return {
     ...defaultForm,
     ...form,
     sourceType: normalizeWizardSourceType(form.sourceType),
     targetEpisodes: Math.max(1, form.targetEpisodes ?? 1),
-    textProvider: form.textProvider || defaultForm.textProvider,
-    textModel: form.textModel || defaultForm.textModel,
-    imageProvider,
-    imageModel,
+    textProvider: form.textProvider || "",
+    textModel: form.textModel || "",
+    imageProvider: form.imageProvider || "",
+    imageModel: form.imageModel || "",
+    videoProvider: form.videoProvider || "",
+    videoModel: form.videoModel || "",
     imageSize: normalizeImageOutputSize(form.imageSize),
     imageQuality: normalizeImageOutputQuality(form.imageQuality)
   };

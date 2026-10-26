@@ -1,7 +1,8 @@
 import type { ModelModality, ModelPrice, ModelProvider } from "@aifilm/shared";
+import { inspectModelPrice } from "@aifilm/shared";
 
 export type ModelFamily = "openai" | "deepseek" | "qwen" | "wan" | "gemini" | "claude" | "seed" | "kling" | "flux" | "minimax" | "kimi" | "generic";
-export type ModelState = "configured" | "unknown" | "disabled" | "missing_key" | "cooling" | "limited" | "missing_price" | "price_conflict";
+export type ModelState = "configured" | "unknown" | "disabled" | "missing_key" | "cooling" | "limited" | "missing_price" | "price_conflict" | "invalid_price";
 export interface CatalogModel {
   key: string;
   model: string;
@@ -13,6 +14,7 @@ export interface CatalogModel {
   selectable: boolean;
   statusLabel: string;
   description: string;
+  issues: string[];
   tags: string[];
   preferred: boolean;
 }
@@ -29,7 +31,7 @@ const purposes: Record<ModelModality, string> = {
 };
 const stateLabels: Record<ModelState, string> = {
   configured: "配置齐全", unknown: "连接待确认", disabled: "已停用", missing_key: "待配置",
-  cooling: "冷却中", limited: "额度暂不可用", missing_price: "未配置价格", price_conflict: "价格配置冲突"
+  cooling: "冷却中", limited: "额度暂不可用", missing_price: "未配置价格", price_conflict: "价格配置冲突", invalid_price: "价格配置无效"
 };
 const stateDescriptions: Partial<Record<ModelState, string>> = {
   unknown: "连接状态尚未确认，实际调用时由服务器校验。",
@@ -38,7 +40,8 @@ const stateDescriptions: Partial<Record<ModelState, string>> = {
   cooling: "该模型暂时处于冷却期，请稍后刷新或选择其他模型。",
   limited: "该模型的可提交额度暂不可用，请选择其他模型。",
   missing_price: "当前渠道与模型没有启用的价格策略。",
-  price_conflict: "当前渠道与模型存在多条启用价格，请联系管理员核对。"
+  price_conflict: "当前渠道与模型存在多条启用价格，请联系管理员核对。",
+  invalid_price: "计费单位与模型类型不匹配，或积分单价无效，请联系管理员核对。"
 };
 
 export function modelRouteKey(providerId: string, model: string): string {
@@ -98,18 +101,23 @@ export function modelPriceLabel(price?: ModelPrice): string {
 
 export function buildModelCatalog(providers: ModelProvider[], prices?: ModelPrice[]): CatalogModel[] {
   return providers.flatMap(provider => [...new Set(provider.models.map(model => model.trim()).filter(Boolean))].map(model => {
-    const matches = routePrices(prices, provider, model);
+    const pricing = inspectModelPrice(prices ?? [], { providerId: provider.id, modality: provider.modality, model });
     const quota = provider.routing?.quotaStatus?.find(item => item.model === model);
+    const priceState: ModelState | undefined = prices === undefined || pricing.state === "ready" ? undefined
+      : pricing.state === "missing" ? "missing_price" : pricing.state === "conflict" ? "price_conflict" : "invalid_price";
+    const issues = [
+      provider.apiKeyConfigured === false ? "missing_key" : undefined,
+      quota?.coolingDown ? "cooling" : quota?.available === false ? "limited" : undefined,
+      priceState
+    ].filter((state): state is ModelState => Boolean(state)).map(state => stateLabels[state]);
     const state: ModelState = !provider.enabled ? "disabled"
       : provider.apiKeyConfigured === false ? "missing_key"
       : quota?.coolingDown ? "cooling"
       : quota?.available === false ? "limited"
-      : matches.length > 1 ? "price_conflict"
-      : prices !== undefined && !matches.length ? "missing_price"
-      : provider.apiKeyConfigured === true ? "configured" : "unknown";
+      : priceState ?? (provider.apiKeyConfigured === true ? "configured" : "unknown");
     return {
       key: modelRouteKey(provider.id, model), model, ...modelIdentity(model), provider,
-      price: matches.length === 1 ? matches[0] : undefined,
+      price: pricing.price, issues,
       state, selectable: state === "configured" || state === "unknown",
       statusLabel: stateLabels[state], description: stateDescriptions[state] ?? purposes[provider.modality],
       tags: modelCapabilityTags(provider), preferred: provider.routing?.preferredModel === model
@@ -120,7 +128,7 @@ export function buildModelCatalog(providers: ModelProvider[], prices?: ModelPric
 export function searchModelCatalog(items: CatalogModel[], query: string): CatalogModel[] {
   const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
   return items.filter(item => {
-    const text = `${item.name} ${item.model} ${item.provider.name} ${item.provider.id} ${item.tags.join(" ")} ${item.statusLabel}`.toLowerCase();
+    const text = `${item.name} ${item.model} ${item.provider.name} ${item.provider.id} ${item.tags.join(" ")} ${item.statusLabel} ${item.issues.join(" ")}`.toLowerCase();
     return terms.every(term => text.includes(term));
   });
 }

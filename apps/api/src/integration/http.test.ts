@@ -44,8 +44,8 @@ test("HTTP business boundaries: sessions, administrator writes, private media an
   await db.asset.create({ data: { id: `api_asset_${run}`, projectId, type: "image", name: "Private image", description: "Test fixture", prompt: "", referenceUrl: mediaPath, status: "succeeded" } });
   await db.modelProvider.create({ data: { id: providerId, name: "Private route", costHint: "test", modality: "text", enabled: true, models: ["test-model"], baseUrl: "https://private.example.test", apiKey: "never-disclose-test-secret", capability: {} } });
   await db.modelPrice.createMany({ data: [
-    { id: `api_text_price_${run}`, providerId, providerName: "Private route", model: "test-model", modality: "text", unit: "text_episode", unitCredits: 37 },
-    { id: `api_other_price_${run}`, providerName: "Other route", model: "test-model", modality: "text", unit: "text_episode", unitCredits: 1 },
+    { id: `api_text_price_${run}`, providerId, providerName: "Private route", model: "test-model", modality: "text", unit: "text_run", unitCredits: 37 },
+    { id: `api_other_price_${run}`, providerName: "Other route", model: "test-model", modality: "text", unit: "text_run", unitCredits: 1 },
     { id: `api_image_price_${run}`, providerId, providerName: "Private route", model: "test-image", modality: "image", unit: "image", unitCredits: 999 },
     { id: `api_video_price_${run}`, providerId, providerName: "Private route", model: "test-video", modality: "video", unit: "video_second", unitCredits: 999 }
   ] });

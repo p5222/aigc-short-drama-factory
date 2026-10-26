@@ -64,3 +64,11 @@ test("legacy responses with no connection flag remain unknown; search matches bo
   assert.equal(searchModelCatalog(items, "DeepSeek 渠道").length, 1);
   assert.equal(searchModelCatalog(items, "no-match").length, 0);
 });
+
+test("a missing key does not hide a second price defect from the administrator", () => {
+  const [item] = buildModelCatalog([provider("a", { apiKeyConfigured: false })], [price("a", { unit: "image" })]);
+  assert.equal(item.state, "missing_key");
+  assert.deepEqual(item.issues, ["待配置", "价格配置无效"]);
+  assert.equal(item.price, undefined);
+  assert.equal(searchModelCatalog([item], "价格配置无效").length, 1);
+});

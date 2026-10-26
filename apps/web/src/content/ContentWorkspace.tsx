@@ -84,11 +84,13 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
   const handoffPending = useRef(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const preserveCreationFeedback = useRef(false);
   const [detailLoading, setDetailLoading] = useState(Boolean(selectedId));
   const [detailError, setDetailError] = useState("");
   const [detailReload, setDetailReload] = useState(0);
   const [outlineDraft, setOutlineDraft] = useState<ContentEditorDraft<Record<string, unknown>> | null>(null);
   const [failedProjectId, setFailedProjectId] = useState("");
+  const failedCreationInput = useRef<Parameters<typeof contentApi.analyze>[1] | null>(null);
   const [savedSources, setSavedSources] = useState<Record<string, { title: string; content: string }>>({});
   const [packages, setPackages] = useState<Record<string, ContentProductionPackage>>({});
   const [versions, setVersions] = useState<Record<string, ContentVersionHistory>>({});
@@ -100,7 +102,8 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
   useEffect(() => {
     activeRequest.current = null;
     setBusy((current) => current === "save" ? "" : current);
-    if (!creating) { setMessage(""); setError(""); }
+    if (!creating && !preserveCreationFeedback.current) { setMessage(""); setError(""); }
+    preserveCreationFeedback.current = false;
     const source = contentSourceForProject(savedSources, selectedId);
     setSourceTitle(source.title); setSourceContent(source.content); setSourceOpen(false); setFocusStage("");
   }, [selectedId]);
@@ -229,20 +232,26 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
   }
 
   async function createProject() {
-    if (!createTitle.trim() || busy || createInFlight.current) return;
+    if (!createTitle.trim() || busy || createInFlight.current || failedProjectId) return;
     if (!createRouteReady) { setError("请先选择配置完整的文本模型。"); return; }
     createInFlight.current = true;
     setBusy("create"); setError("");
     let createdId = "";
+    const analysisInput = { intentType, intent: createTitle.trim(), targetWords, chapterCount, batchSize };
     try {
       const intent = createTitle.trim();
       const created = await contentApi.createProject({ title: intent.slice(0, 80), mode: "same_genre", styleProfile: { ...emptyStyle, ...createStyle }, textProvider: createRoute.providerId, textModel: createRoute.model });
       createdId = created.id;
-      const result = await contentApi.analyze(created.id, { intentType, intent, targetWords, chapterCount, batchSize });
+      setProjects(current => [created, ...current.filter(project => project.id !== created.id)]);
+      failedCreationInput.current = analysisInput;
+      const result = await contentApi.analyze(created.id, analysisInput);
       setPackages((current) => ({ ...current, [created.id]: result }));
-      setSelectedId(created.id); setProjects(await onReload()); setCreating(false); setFocusStage(""); setMessage("结构拆解已完成，请继续生成大纲");
+      preserveCreationFeedback.current = selectedId !== created.id;
+      setSelectedId(created.id); setCreating(false); setFocusStage(""); setFailedProjectId(""); failedCreationInput.current = null;
+      setMessage("结构拆解已完成，请继续生成大纲");
+      try { setProjects(await onReload()); } catch { setMessage("结构拆解已完成。作品列表暂未刷新，可点击刷新重新同步，不必重复创建。"); }
     } catch (reason) {
-      setProjects(await onReload().catch(() => projects));
+      try { setProjects(await onReload()); } catch { /* Preserve a confirmed project when the list cannot refresh. */ }
       if (createdId) { setFailedProjectId(createdId); setSelectedId(createdId); }
       setError(reason instanceof Error ? reason.message : "创建失败");
     }
@@ -250,14 +259,16 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
   }
 
   async function retryDevelop() {
-    if (!failedProjectId || busy) return;
+    if (!failedProjectId || busy || createInFlight.current || !failedCreationInput.current) return;
+    createInFlight.current = true;
     setBusy("create"); setError(""); setMessage("正在重试当前创作阶段...");
     try {
-      const result = await contentApi.analyze(failedProjectId, { intentType, intent: createTitle.trim(), targetWords, chapterCount, batchSize });
+      const result = await contentApi.analyze(failedProjectId, failedCreationInput.current);
       setPackages((current) => ({ ...current, [failedProjectId]: result }));
-      setProjects(await onReload()); setSelectedId(failedProjectId); setFailedProjectId(""); setCreating(false); setFocusStage(""); setMessage("结构拆解已完成");
+      setSelectedId(failedProjectId); setFailedProjectId(""); failedCreationInput.current = null; setCreating(false); setFocusStage(""); setMessage("结构拆解已完成");
+      try { setProjects(await onReload()); } catch { setMessage("结构拆解已完成。作品列表暂未刷新，请刷新同步，不必重复生成。"); }
     } catch (reason) { setError(reason instanceof Error ? reason.message : "重试失败"); }
-    finally { setBusy(""); }
+    finally { createInFlight.current = false; setBusy(""); }
   }
 
   async function removeContentProject(projectId: string) {
@@ -265,6 +276,7 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
     if (!project || !window.confirm(`确认删除“${project.title}”？分析、大纲、章节和版本都会删除。`)) return;
     try {
       await contentApi.deleteProject(projectId);
+      if (failedProjectId === projectId) { setFailedProjectId(""); failedCreationInput.current = null; setError(""); }
       setPackages((current) => { const next = { ...current }; delete next[projectId]; return next; });
       setSavedSources((current) => { const next = { ...current }; delete next[projectId]; return next; });
       setProjects(await onReload());
@@ -477,8 +489,15 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
   // ---------- 中央区 ----------
   let stageView: ReactElement;
   if (creating) {
-    stageView = <div className="cw2-stage-scroll"><ContentCreationIntent intent={createTitle} intentType={intentType} targetWords={targetWords} chapterCount={chapterCount} batchSize={batchSize} busy={busy === "create"} canSubmit={createRouteReady} modelSelection={<div className="content-create-model"><span>文本创作模型</span><ModelRoutePicker modality="text" label="选择文本创作模型" providers={providers} modelPrices={modelPrices} value={createRoute} onChange={(providerId, model) => setCreateRoute({ providerId, model })} disabled={Boolean(busy)} /><small>结构拆解与后续内容生成使用此模型，费用按当前渠道价格及生成阶段计算。</small></div>} canCancel={Boolean(projects.length)} onIntentChange={setCreateTitle} onIntentTypeChange={setIntentType} onTargetWordsChange={setTargetWords} onChapterCountChange={setChapterCount} onBatchSizeChange={setBatchSize} onCancel={() => changeView(() => setCreating(false))} onSubmit={() => void createProject()} styleKey={createStyle.key} onStyleChange={(key) => setCreateStyle(styleOptions.find((item) => item.key === key) ?? styleOptions[0])} />
-      {error ? <div className="content-creation-error" role="alert"><CircleAlert size={17} /><div><strong>创作流程中断，项目已保留</strong><p>{error}</p><div className="content-inline-actions"><button type="button" className="content-secondary-button" onClick={() => void retryDevelop()} disabled={!failedProjectId || Boolean(busy)}><RefreshCw size={15} />重试当前阶段</button><button type="button" className="content-secondary-button" onClick={() => failedProjectId && void removeContentProject(failedProjectId)} disabled={!failedProjectId || Boolean(busy)}><Trash2 size={15} />删除失败项目</button></div></div></div> : null}
+    stageView = <div className="cw2-stage-scroll"><ContentCreationIntent
+      intent={createTitle} intentType={intentType} targetWords={targetWords} chapterCount={chapterCount} batchSize={batchSize}
+      busy={busy === "create"} locked={Boolean(failedProjectId)} canSubmit={createRouteReady && !failedProjectId}
+      modelSelection={<div className="content-create-model"><span>文本创作模型</span><ModelRoutePicker modality="text" label="选择文本创作模型" providers={providers} modelPrices={modelPrices} value={createRoute} onChange={(providerId, model) => setCreateRoute({ providerId, model })} disabled={Boolean(busy) || Boolean(failedProjectId)} /><small>{failedProjectId ? "保留的项目沿用首次提交的意图、参数与模型。请重试当前阶段，或删除后重新创建。" : "结构拆解与后续内容生成使用此模型，费用按当前渠道价格及生成阶段计算。"}</small></div>}
+      canCancel={Boolean(projects.length)} onIntentChange={setCreateTitle} onIntentTypeChange={setIntentType}
+      onTargetWordsChange={setTargetWords} onChapterCountChange={setChapterCount} onBatchSizeChange={setBatchSize}
+      onCancel={() => changeView(() => setCreating(false))} onSubmit={() => void createProject()}
+      styleKey={createStyle.key} onStyleChange={key => setCreateStyle(styleOptions.find(item => item.key === key) ?? styleOptions[0])} />
+      {error ? <div className="content-creation-error" role="alert"><CircleAlert size={17} /><div><strong>{failedProjectId ? "结构拆解中断，项目已保留" : "暂时无法确认项目创建结果"}</strong><p>{error}</p>{failedProjectId ? <div className="content-inline-actions"><button type="button" className="content-secondary-button" onClick={() => void retryDevelop()} disabled={Boolean(busy)}><RefreshCw size={15} />重试当前阶段</button><button type="button" className="content-secondary-button" onClick={() => void removeContentProject(failedProjectId)} disabled={Boolean(busy)}><Trash2 size={15} />删除失败项目</button></div> : <p>输入内容仍在当前页面。请刷新作品列表核对后再重试。</p>}</div></div> : null}
     </div>;
   } else if (!selected) {
     stageView = <section className="content-unavailable"><BookOpen size={30} /><h2>创建第一个内容项目</h2><p>从一个标题、题材方向或参考作品开始。</p><button type="button" className="content-primary-button" onClick={() => setCreating(true)}><Plus size={16} />新建内容创作</button></section>;
@@ -672,13 +691,14 @@ function OutlineStage({ pkg, value: outlineDraft, onChange, busy, selectedChapte
   </section>;
 }
 
-function ContentCreationIntent({ intent, intentType, targetWords, chapterCount, batchSize, busy, canCancel, canSubmit, modelSelection, styleKey, onIntentChange, onIntentTypeChange, onTargetWordsChange, onChapterCountChange, onBatchSizeChange, onStyleChange, onCancel, onSubmit }: {
+function ContentCreationIntent({ intent, intentType, targetWords, chapterCount, batchSize, busy, locked = false, canCancel, canSubmit, modelSelection, styleKey, onIntentChange, onIntentTypeChange, onTargetWordsChange, onChapterCountChange, onBatchSizeChange, onStyleChange, onCancel, onSubmit }: {
   intent: string;
   intentType: "title" | "genre" | "references";
   targetWords: number;
   chapterCount: number;
   batchSize: number;
   busy: boolean;
+  locked?: boolean;
   canCancel: boolean;
   canSubmit: boolean;
   modelSelection: ReactNode;
@@ -701,15 +721,15 @@ function ContentCreationIntent({ intent, intentType, targetWords, chapterCount, 
   return <section className="content-intent-workspace">
     <header><span className="content-eyebrow">STEP 1 · 创作意图</span><h2>一个想法，就是故事的起点</h2><p>写下标题、题材或参考作品，先梳理故事结构，再逐章完善正文。</p></header>
     <div className="content-intent-layout"><div className="content-intent-editor">
-    <div className="content-intent-modes">{options.map((option) => <button type="button" key={option.id} disabled={busy} aria-pressed={intentType === option.id} className={intentType === option.id ? "is-active" : ""} onClick={() => onIntentTypeChange(option.id)}><strong>{option.label}</strong><span>{option.hint}</span></button>)}</div>
-    <label className="content-intent-input"><span>{options.find((item) => item.id === intentType)?.label}</span><textarea aria-label={options.find((item) => item.id === intentType)?.label} disabled={busy} value={intent} onChange={(event) => onIntentChange(event.target.value)} maxLength={2000} placeholder={placeholder} autoFocus /><small>{intent.length}/2000</small></label>
+    <div className="content-intent-modes">{options.map((option) => <button type="button" key={option.id} disabled={busy || locked} aria-pressed={intentType === option.id} className={intentType === option.id ? "is-active" : ""} onClick={() => onIntentTypeChange(option.id)}><strong>{option.label}</strong><span>{option.hint}</span></button>)}</div>
+    <label className="content-intent-input"><span>{options.find((item) => item.id === intentType)?.label}</span><textarea aria-label={options.find((item) => item.id === intentType)?.label} disabled={busy || locked} value={intent} onChange={(event) => onIntentChange(event.target.value)} maxLength={2000} placeholder={placeholder} autoFocus /><small>{intent.length}/2000</small></label>
     <p className="content-intent-help">可以补充主角、核心冲突、故事背景和期待的结局，帮助系统理解你的方向。</p>
     </div><aside className="content-intent-plan"><h3>本次创作计划</h3>
     <div className="content-plan-controls">
-      <label><span>目标字数</span><select disabled={busy} value={targetWords} onChange={(event) => onTargetWordsChange(Number(event.target.value))}><option value={10000}>10000 字</option><option value={20000}>20000 字</option><option value={30000}>30000 字</option><option value={50000}>50000 字</option></select></label>
-      <label><span>章节数量</span><select disabled={busy} value={chapterCount} onChange={(event) => onChapterCountChange(Number(event.target.value))}><option value={5}>5 章</option><option value={10}>10 章</option><option value={15}>15 章</option><option value={20}>20 章</option></select></label>
-      <label><span>每批生成</span><select disabled={busy} value={batchSize} onChange={(event) => onBatchSizeChange(Number(event.target.value))}><option value={2}>2 章</option><option value={3}>3 章</option></select></label>
-      <label><span>视觉风格</span><select disabled={busy} value={styleKey} onChange={(event) => onStyleChange(event.target.value)}>{styleOptions.map((style) => <option key={style.key} value={style.key}>{style.name}</option>)}</select></label>
+      <label><span>目标字数</span><select disabled={busy || locked} value={targetWords} onChange={(event) => onTargetWordsChange(Number(event.target.value))}><option value={10000}>10000 字</option><option value={20000}>20000 字</option><option value={30000}>30000 字</option><option value={50000}>50000 字</option></select></label>
+      <label><span>章节数量</span><select disabled={busy || locked} value={chapterCount} onChange={(event) => onChapterCountChange(Number(event.target.value))}><option value={5}>5 章</option><option value={10}>10 章</option><option value={15}>15 章</option><option value={20}>20 章</option></select></label>
+      <label><span>每批生成</span><select disabled={busy || locked} value={batchSize} onChange={(event) => onBatchSizeChange(Number(event.target.value))}><option value={2}>2 章</option><option value={3}>3 章</option></select></label>
+      <label><span>视觉风格</span><select disabled={busy || locked} value={styleKey} onChange={(event) => onStyleChange(event.target.value)}>{styleOptions.map((style) => <option key={style.key} value={style.key}>{style.name}</option>)}</select></label>
     </div>
     {modelSelection}
     <div className="content-flow-preview"><b>接下来</b><span>爆款结构拆解</span><ChevronRight14 /><span>{chapterCount} 章大纲</span><ChevronRight14 /><span>每批 {batchSize} 章正文</span><ChevronRight14 /><span>制作交接</span></div>

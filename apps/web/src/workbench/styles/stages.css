@@ -1227,7 +1227,7 @@
   min-width: 0;
   min-height: 0;
   display: grid;
-  grid-template-rows: 48px auto minmax(0, 1fr) 210px;
+  grid-template-rows: 48px auto auto minmax(0, 1fr) 210px;
   overflow: hidden;
   background: var(--bg-app);
   color: var(--text-1);
@@ -1651,6 +1651,23 @@
   font-size: 11px;
   line-height: 1.5;
 }
+
+.dlv2-generation-state {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border-1);
+  color: var(--text-2);
+  background: var(--surface-2);
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.dlv2-generation-state > span:first-child { color: var(--text-1); font-weight: 600; }
+.dlv2-route-status { margin: 0; color: var(--text-2); font-size: 12px; line-height: 1.6; }
 
 .dlv2-failure-list {
   margin: 0;
@@ -2148,7 +2165,7 @@
 .wb-content-field textarea { font-size: 14px; line-height: 1.85; }
 .wb-asset-canvas > .ui-notice { margin-bottom: 16px; }
 .dlv2-topbar { min-height: 56px; padding-inline: 20px; flex-wrap: wrap; }
-.dlv2-frame { grid-template-rows: auto auto minmax(0, 1fr) 218px; }
+.dlv2-frame { grid-template-rows: auto auto auto minmax(0, 1fr) 218px; }
 .dlv2-main { grid-template-columns: 264px minmax(0, 1fr) 316px; }
 .dlv2-panel-head { min-height: 56px; padding-inline: 16px; }
 .dlv2-card { border-radius: 8px; box-shadow: none; }

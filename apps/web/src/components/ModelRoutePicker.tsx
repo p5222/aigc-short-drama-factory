@@ -77,6 +77,7 @@ export function ModelRoutePicker({ modality, providers, modelPrices, value, onCh
       {!compact && current?.price ? <span className="mrp-badge">{modelPriceLabel(current.price)}</span> : null}
       <ChevronDown size={15} className="mrp-caret" aria-hidden="true" />
     </button>
+    {!allowUnavailable && value.model && (!current || !current.selectable) ? <small className="mrp-route-warning" role="status">{current?.statusLabel || "当前模型不在可用配置中"}，请重新选择。</small> : null}
     <Dialog open={open} title={title} description={allowUnavailable ? "选择配置中的模型；此操作不会发起测试或生成。" : "按模型、渠道或能力搜索。实际费用以生成前的报价为准。"} onClose={() => setOpen(false)} className={`model-picker-dialog${adminTheme ? " model-admin-theme" : ""}`} footer={<div className="model-picker-footer"><span><kbd>↑ ↓</kbd> 浏览 <kbd>Enter</kbd> 选择 <kbd>Esc</kbd> 关闭</span><small>收藏与最近选择仅保存在此浏览器</small></div>}>
       <div className="model-picker-tools">
         <label className="model-search"><Search size={18} aria-hidden="true" /><input ref={search} data-autofocus role="combobox" aria-label="搜索模型或渠道" aria-autocomplete="list" aria-expanded="true" aria-controls={`${id}-list`} aria-activedescendant={active ? optionId(active.key) : undefined} value={query} placeholder="搜索名称、渠道或能力…" onChange={event => { setQuery(event.target.value); setActiveKey(""); }} onKeyDown={onSearchKey} /></label>
