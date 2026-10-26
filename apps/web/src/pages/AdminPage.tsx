@@ -84,6 +84,9 @@ import { BEFORE_CREATOR_NAVIGATION } from "../lib/creatorNavigation";
 import { canLeaveAdminEditor } from "../admin/adminDirtyState";
 import { navigateAdminHash, readAcceptedAdminHash, subscribeAdminNavigation } from "../admin/adminNavigation";
 import { hasFeedbackDraftChanges, hasShowcaseDraftChanges } from "../admin/adminEditorDraftModel";
+import { ModelRoutePicker } from "../components/ModelRoutePicker";
+import { ModelIdentity } from "../components/ModelIdentity";
+import { ModelLibrary } from "../components/ModelLibrary";
 
 const AdminActionContext = createContext({ pending: false, message: "", error: "", version: 0 });
 type ProviderTestResult = ModelTestResult | ImageModelTestResult | VideoModelTestResult;
@@ -408,6 +411,7 @@ export function AdminPage({
       {activeModule === "模型路由" ? (
         <ProvidersSection
           providers={providers}
+          modelPrices={modelPrices}
           relayPolicy={relayPolicy}
           testResult={testResult}
           imageTestResult={imageTestResult}
@@ -1750,8 +1754,8 @@ function EvaluationSection({
                     </div>
                     <div className="evaluation-model-chip-grid">
                       {group.models.map((item) => (
-                        <button type="button" key={item.key} className={selectedModels.includes(item.key) ? "active" : ""} onClick={() => toggleString(selectedModels, item.key, setSelectedModels)} disabled={mode === "rules"}>
-                          {item.model}
+                        <button type="button" key={item.key} aria-pressed={selectedModels.includes(item.key)} className={selectedModels.includes(item.key) ? "active" : ""} onClick={() => toggleString(selectedModels, item.key, setSelectedModels)} disabled={mode === "rules"}>
+                          <ModelIdentity model={item.model} modality="text" compact />
                         </button>
                       ))}
                     </div>
@@ -3565,6 +3569,7 @@ function MembershipSection({
 
 function ProvidersSection({
   providers,
+  modelPrices,
   relayPolicy,
   testResult,
   imageTestResult,
@@ -3582,6 +3587,7 @@ function ProvidersSection({
   onTest
 }: {
   providers: ModelProvider[];
+  modelPrices: ModelPrice[];
   relayPolicy: RelayGatewayPolicy | null;
   testResult: ModelTestResult | null;
   imageTestResult: ImageModelTestResult | null;
@@ -3603,6 +3609,8 @@ function ProvidersSection({
   const [status, setStatus] = useState("all");
   const [segment, setSegment] = useState("all");
   const [createOpen, setCreateOpen] = useState(false);
+  const [view, setView] = useState<"channels" | "catalog">("channels");
+  const [editingProvider, setEditingProvider] = useState("");
   const rows = providers.filter((provider) => {
     const matchedKeyword = `${provider.name} ${provider.id} ${provider.models.join(" ")}`.toLowerCase().includes(keyword.toLowerCase());
     const matchedModality = modality === "all" || provider.modality === modality;
@@ -3637,7 +3645,14 @@ function ProvidersSection({
 
   return (
     <section className="admin-v2-section">
-      <AdminModuleWorkbench
+      <div className="model-filter-tabs admin-model-view-tabs" aria-label="模型管理视图">
+        <button type="button" aria-pressed={view === "channels"} onClick={() => { if (canLeaveAdminEditor()) setView("channels"); }}>渠道管理</button>
+        <button type="button" aria-pressed={view === "catalog"} onClick={() => { if (canLeaveAdminEditor()) setView("catalog"); }}>模型目录与配置检查</button>
+      </div>
+      {view === "catalog" ? <ModelLibrary admin providers={providers} modelPrices={modelPrices} onPrice={() => navigateAdminHash("价格策略")} onConfigure={providerId => {
+        setKeyword(providerId); setModality("all"); setStatus("all"); setSegment("all"); pagination.setPage(1);
+        setEditingProvider(providerId); setView("channels");
+      }} /> : <AdminModuleWorkbench
         railTitle="模型能力"
         railDescription="按能力、密钥和路由模式管理生产渠道。"
         railItems={railItems}
@@ -3674,12 +3689,12 @@ function ProvidersSection({
         {relayPolicy ? <RelayGatewayPreview policy={relayPolicy} /> : null}
         <div className="admin-provider-card-list">
           {pagination.items.map((provider) => (
-            <ProviderRow key={provider.id} provider={provider} testStates={providerTests} onSave={onSave} onDelete={onDelete} onTest={onTest} />
+            <ProviderRow key={provider.id} provider={provider} modelPrices={modelPrices} autoOpen={editingProvider === provider.id} onEditorClose={() => setEditingProvider("")} testStates={providerTests} onSave={onSave} onDelete={onDelete} onTest={onTest} />
           ))}
           {!rows.length ? <EmptyHint text="没有匹配的模型渠道。可以切换左侧能力分类，或新增一个渠道。" /> : null}
         </div>
         <TableFooter total={rows.length} page={pagination.page} pageSize={pagination.pageSize} onPageChange={pagination.setPage} />
-      </AdminModuleWorkbench>
+      </AdminModuleWorkbench>}
       <AdminModal open={createOpen} title="新增模型渠道" description="密钥只写入服务端，后台列表只展示是否已配置和 Key 预览。" onClose={() => setCreateOpen(false)} wide>
         <ProviderCreator onCreate={(input) => closeAfterAdminSuccess(() => onCreate(input), () => setCreateOpen(false))} />
       </AdminModal>
@@ -4719,18 +4734,25 @@ function MembershipRow({
 
 function ProviderRow({
   provider,
+  modelPrices,
+  autoOpen = false,
+  onEditorClose,
   testStates,
   onSave,
   onDelete,
   onTest
 }: {
   provider: ModelProvider;
+  modelPrices: ModelPrice[];
+  autoOpen?: boolean;
+  onEditorClose?: () => void;
   testStates: Record<string, ProviderTestState>;
   onSave: (id: string, input: Partial<Pick<ModelProvider, "name" | "modality" | "enabled" | "baseUrl" | "iconUrl" | "models" | "costHint">> & { apiKey?: string | null; routing?: { mode?: "auto" | "manual"; preferredModel?: string; modelPool?: string[] } }) => void;
   onDelete: (id: string) => void;
   onTest: (provider: ModelProvider, model: string, dirty?: boolean) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  useEffect(() => { if (autoOpen) setExpanded(true); }, [autoOpen]);
   const detailsId = useId();
   const testHintId = useId();
   const [draft, setDraft] = useState({
@@ -4761,6 +4783,7 @@ function ProviderRow({
     setSelectedModel(provider.models[0] ?? "");
   }, [expanded, provider.id, provider.name, provider.modality, provider.enabled, provider.baseUrl, provider.iconUrl, provider.costHint, provider.models.join(" | "), provider.routing?.mode, provider.routing?.preferredModel]);
   const models = splitModelText(draft.models);
+  const draftProvider: ModelProvider = { ...provider, name: draft.name, modality: draft.modality, enabled: draft.enabled, models, routing: { ...provider.routing, mode: draft.routingMode, preferredModel: draft.preferredModel, modelPool: models, quotaStatus: provider.routing?.quotaStatus ?? [] } };
   const [selectedModel, setSelectedModel] = useState(models[0] ?? "");
   const testKey = `${provider.id}:${selectedModel}`;
   const testState = testStates[testKey];
@@ -4815,7 +4838,7 @@ function ProviderRow({
         <span className="admin-chip">{modalityLabel(draft.modality)}</span>
         <StatusChip active={provider.enabled} /><DraftIndicator dirty={dirty} />
         <div className="admin-provider-model-chips">
-          {models.slice(0, 4).map((model) => <span key={model}>{model}</span>)}
+          {models.slice(0, 4).map((model) => <span key={model}><ModelIdentity model={model} modality={provider.modality} compact /></span>)}
           {models.length > 4 ? <span>+{models.length - 4}</span> : null}
         </div>
         <div className="admin-row-actions">
@@ -4838,7 +4861,7 @@ function ProviderRow({
       <p id={testHintId} className={`admin-provider-test-hint${dirty ? " unsaved" : ""}`}>{testReadiness.reason}</p>
       <ProviderInlineTestResult state={dirty ? undefined : testState} />
 
-      <AdminModal open={expanded} title={`编辑${provider.name}渠道`} description="修改模型连接、路由和状态，保存后生效。" onClose={() => setExpanded(false)} wide>
+      <AdminModal open={expanded} title={`编辑${provider.name}渠道`} description="修改模型连接、路由和状态，保存后生效。" onClose={() => { setExpanded(false); onEditorClose?.(); }} wide>
         <div id={detailsId} className="admin-provider-expanded admin-editor-grid" data-admin-dirty={dirty || undefined}>
           <label>
             <span>渠道名称</span>
@@ -4877,12 +4900,10 @@ function ProviderRow({
             <span>模型列表</span>
             <textarea value={draft.models} onChange={(event) => setDraft({ ...draft, models: event.target.value })} placeholder="每行或逗号一个模型" />
           </label>
-          <label>
+          <div className="admin-model-field">
             <span>待测试模型</span>
-            <select value={selectedModel} onChange={(event) => setSelectedModel(event.target.value)}>
-              {models.map((model) => <option key={model} value={model}>{model}</option>)}
-            </select>
-          </label>
+            <ModelRoutePicker label="选择待测试模型" modality={draft.modality} providers={[draftProvider]} modelPrices={modelPrices} value={{ providerId: provider.id, model: selectedModel }} onChange={(_, model) => setSelectedModel(model)} allowUnavailable disabled={providerTesting} />
+          </div>
           <div className="admin-provider-routing-panel wide">
             <div className="admin-provider-routing-head">
               <div>
@@ -4899,17 +4920,15 @@ function ProviderRow({
               <button type="button" className={draft.routingMode === "auto" ? "active" : ""} onClick={() => setDraft({ ...draft, routingMode: "auto" })}>自动轮换</button>
               <button type="button" className={draft.routingMode === "manual" ? "active" : ""} onClick={() => setDraft({ ...draft, routingMode: "manual" })}>手动固定</button>
             </div>
-            <label className="admin-provider-routing-select">
+            <div className="admin-provider-routing-select admin-model-field">
               <span>固定模型</span>
-              <select value={draft.preferredModel} onChange={(event) => setDraft({ ...draft, preferredModel: event.target.value })}>
-                {models.map((model) => <option key={model} value={model}>{model}</option>)}
-              </select>
-            </label>
+              <ModelRoutePicker label="选择固定模型" modality={draft.modality} providers={[draftProvider]} modelPrices={modelPrices} value={{ providerId: provider.id, model: draft.preferredModel }} onChange={(_, model) => setDraft({ ...draft, preferredModel: model })} allowUnavailable disabled={providerTesting} />
+            </div>
             <div className="admin-provider-quota-grid">
               {quotaStatus.length ? quotaStatus.map((item) => (
                 <article className={`admin-provider-quota-card ${item.available ? "ready" : item.coolingDown ? "cooling" : "limited"}`} key={item.model}>
                   <div>
-                    <strong>{item.model}</strong>
+                    <ModelIdentity model={item.model} modality={provider.modality} compact />
                     <small>{item.available ? "可提交" : item.coolingDown ? "冷却中" : "额度已满"}</small>
                   </div>
                   <span>{item.submissions}{item.dailyLimit ? ` / ${item.dailyLimit}` : ""}</span>
@@ -5074,10 +5093,8 @@ function PriceCreator({
         <option value="tts">配音</option>
         <option value="embedding">向量</option>
       </select></label>
-      <label className="admin-create-field"><span>模型 ID</span><input value={draft.model} onChange={(event) => setDraft({ ...draft, model: event.target.value })} placeholder="模型 ID" list="admin-price-models" /></label>
-      <datalist id="admin-price-models">
-        {selectedProvider?.models.map((model) => <option key={model} value={model} />)}
-      </datalist>
+      {selectedProvider ? <div className="admin-create-field admin-model-field"><span>从渠道选择模型</span><ModelRoutePicker label="选择价格策略模型" modality={selectedProvider.modality} providers={[selectedProvider]} value={{ providerId: selectedProvider.id, model: draft.model }} onChange={(_, model) => setDraft({ ...draft, model })} allowUnavailable /></div> : null}
+      <label className="admin-create-field"><span>模型 ID（支持特殊模型）</span><input value={draft.model} onChange={(event) => setDraft({ ...draft, model: event.target.value })} placeholder="填写准确的模型 ID" /></label>
       <label className="admin-create-field"><span>积分 / {unitLabel(draft.unit)}</span><input type="number" min={0} value={draft.unitCredits} onChange={(event) => setDraft({ ...draft, unitCredits: event.target.value })} placeholder="积分单价" /></label>
       <label className="admin-create-field"><span>成本（元 / {unitLabel(draft.unit)}）</span><input type="number" min={0} step="0.001" value={draft.vendorCostCny} onChange={(event) => setDraft({ ...draft, vendorCostCny: event.target.value })} placeholder="成本" /></label>
       <AdminDialogActions><button className="admin-primary-btn" disabled={!draft.providerName.trim() || !draft.model.trim()} onClick={() => onCreate({ providerId: draft.providerId || undefined, providerName: draft.providerName, modality: draft.modality as ModelPrice["modality"], model: draft.model, unit: draft.unit as ModelPrice["unit"], unitCredits: Number(draft.unitCredits), vendorCostCny: Number(draft.vendorCostCny), enabled: true })}>
@@ -5141,7 +5158,7 @@ function PriceRow({ price, onSave, onDelete }: { price: ModelPrice; onSave: (id:
   const valid = [draft.unitCredits, draft.vendorCostCny].every(value => value.trim() && Number.isFinite(Number(value)) && Number(value) >= 0);
   function closeEditor() { setDraft(initial()); setEditing(false); }
   return <section className="admin-price-record" data-admin-dirty={dirty || undefined}>
-    <div className="admin-price-summary"><div><strong>{price.model}</strong><small>{price.providerName} · {modalityLabel(price.modality)}</small></div><div><strong>{price.unitCredits} 积分</strong><small>{unitLabel(price.unit)}</small></div><StatusChip active={price.enabled} /><DraftIndicator dirty={dirty} /><button type="button" className="admin-text-btn primary" aria-haspopup="dialog" onClick={() => setEditing(true)}>编辑价格</button></div>
+    <div className="admin-price-summary"><ModelIdentity model={price.model} providerName={price.providerName} modality={price.modality} /><div><strong>{price.unitCredits} 积分</strong><small>{unitLabel(price.unit)}</small></div><StatusChip active={price.enabled} /><DraftIndicator dirty={dirty} /><button type="button" className="admin-text-btn primary" aria-haspopup="dialog" onClick={() => setEditing(true)}>编辑价格</button></div>
     <AdminModal open={editing} title="编辑价格策略" description={`${price.model} · 保存后用于新的生成报价，配置成本不代表实际账单。`} onClose={closeEditor}>
       <div className="admin-editor-grid" data-admin-dirty={dirty || undefined}>
         <label><span>积分 / {unitLabel(price.unit)}</span><input type="number" min="0" value={draft.unitCredits} onChange={event => setDraft({ ...draft, unitCredits: event.target.value })} /></label>

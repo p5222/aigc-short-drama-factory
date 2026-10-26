@@ -5,6 +5,8 @@ import { api } from "../lib/api";
 import { modelCreditRange, rechargeCheckoutUrl } from "./creditCheckoutModel";
 import { createTaskActionRunner } from "./taskActionModel";
 import { InlineNotice, PageHeader, StatePanel } from "../design-system/ui";
+import { ModelIdentity } from "../components/ModelIdentity";
+import "../components/model-experience.css";
 import "./creator-pages.css";
 import { OnlineCheckout } from "./OnlineCheckout";
 
@@ -135,7 +137,7 @@ export function RechargePage({ plans, membershipPlans, modelPrices, onRefresh }:
           {sortedModelPrices.map((price) => (
             <div className="model-price-row" key={price.id}>
               <strong>{price.providerName}</strong>
-              <span>{price.model}</span>
+              <ModelIdentity model={price.model} modality={price.modality} compact />
               <span className={`model-price-chip modality-${price.modality}`}>{priceModalityText(price.modality)}</span>
               <span className="model-price-unit">{priceUnitText(price.unit)}</span>
               <b>{price.unitCredits}</b>

@@ -251,7 +251,7 @@ export function DeliveryStage({
     const nextProvider = project.videoProvider ?? fallbackProvider;
     setProviderId(nextProvider);
     setRouteModel(project.videoModel ?? videoProviders.find((provider) => provider.id === nextProvider)?.models[0] ?? "");
-  }, [project.id, project.videoProvider, project.videoModel, videoProviders]);
+  }, [project.id, project.videoProvider, project.videoModel]);
 
   // 生成中的镜头靠外部 workflow 数据驱动：仅在有 running 任务时低频轮询（8s，页面隐藏时跳过）。
   const hasRunningWork = shots.some((shot) => resolveShotVideoStatus(videoByShot.get(shot.id)) === "running")
@@ -701,7 +701,7 @@ export function DeliveryStage({
             <header className="dlv2-card-head"><SlidersHorizontal size={14} /><strong>视频生成参数</strong></header>
             <div className="dlv2-field">
               <span>模型</span>
-              <ModelRoutePicker modality="video" providers={providers} modelPrices={modelPrices} value={{ providerId, model: routeModel }} onChange={(nextProvider, nextModel) => { setProviderId(nextProvider); setRouteModel(nextModel); }} disabled={!videoProviders.length} />
+              <ModelRoutePicker modality="video" providers={providers} modelPrices={modelPrices} value={{ providerId, model: routeModel }} onChange={(nextProvider, nextModel) => { setProviderId(nextProvider); setRouteModel(nextModel); }} disabled={!videoProviders.length || busyAll || routeSaving} />
             </div>
             {unitCredits !== undefined && remaining.length ? (
               <p className="dlv2-estimate">预计 {Math.ceil(remainingSeconds * unitCredits)} 积分（剩余 {remaining.length} 镜 · {remainingSeconds}s × {unitCredits} 积分/秒）</p>

@@ -32,6 +32,7 @@ async function fixtures(page: Page) {
     const values: Record<string, unknown> = {
       "/auth/me": { user: { id: "designer", name: "林初", role: "creator", status: "active" } },
       "/providers": providers,
+      "/model-prices": providers.map(provider => ({ id: `price-${provider.id}`, providerId: provider.id, providerName: provider.name, model: provider.models[0], modality: provider.modality, unit: provider.modality === "text" ? "text_run" : provider.modality === "image" ? "image" : "video_second", unitCredits: 15, vendorCostCny: 0.1, enabled: true })),
       "/workbench/summary": { userName: "林初", projects: 1, storyboards: 3, runningTasks: 0, credits: 1000, recentProjects: [project], recentTasks: [], announcements: [] },
       "/projects": [project],
       "/credits/account": { userId: "designer", balance: 1000, frozenBalance: 0, totalRecharge: 1000, totalConsume: 15 },

@@ -47,6 +47,7 @@ import { InlineNotice, StatePanel } from "./design-system/ui";
 const AdminPage = lazy(routePageLoader(() => import("./pages/AdminPage").then(module => ({ default: module.AdminPage }))));
 const ProjectWorkbenchPage = lazy(routePageLoader(() => import("./pages/ProjectWorkbenchPage").then(module => ({ default: module.ProjectWorkbenchPage }))));
 const ContentCreatorPage = lazy(routePageLoader(() => import("./pages/ContentCreatorPage").then(module => ({ default: module.ContentCreatorPage }))));
+const ModelLibrary = lazy(routePageLoader(() => import("./components/ModelLibrary").then(module => ({ default: module.ModelLibrary }))));
 const WizardPage = lazy(routePageLoader(() => import("./pages/WizardPage").then(module => ({ default: module.WizardPage }))));
 const LoginPage = lazy(routePageLoader(() => import("./pages/LoginPage").then(module => ({ default: module.LoginPage }))));
 const ScriptsPage = lazy(routePageLoader(() => import("./pages/ScriptsPage").then(module => ({ default: module.ScriptsPage }))));
@@ -64,6 +65,7 @@ const AUTH_RESUME_PROJECT_KEY = "manjiao-auth-resume-project";
 const AUTH_RESUME_USER_KEY = "manjiao-auth-resume-user";
 
 const creatorPageResources: Partial<Record<PageKey, string[]>> = {
+  models: ["模型渠道", "模型价格"],
   workbench: ["工作台"], scripts: ["漫剧作品", "内容作品"], studio: ["漫剧作品", "生成队列"],
   tasks: ["生成队列"], profile: ["账户积分", "工作台", "积分明细", "充值记录"],
   recharge: ["充值套餐", "会员配置", "模型价格"], ledger: ["账户积分", "积分明细"],
@@ -469,7 +471,7 @@ export function App() {
       case "workbench":
         return <WorkbenchPage summary={summary} onStart={openFreshWizard} onStartContent={openFreshContent} onOpenWorks={() => setActivePage("scripts")} onOpen={(projectId) => void openProject(projectId)} onOpenTasks={() => setActivePage("tasks")} onRecharge={() => setActivePage("recharge")} />;
       case "content":
-        return <ContentCreatorPage key={`${user?.id ?? "anonymous"}:${contentFocusId || "default"}`} providers={providers} initialSelectedId={contentFocusId} onBack={() => setActivePage("scripts")} onEnterProduction={async (projectId) => {
+        return <ContentCreatorPage key={`${user?.id ?? "anonymous"}:${contentFocusId || "default"}`} providers={providers} modelPrices={modelPrices} initialSelectedId={contentFocusId} onBack={() => setActivePage("scripts")} onEnterProduction={async (projectId) => {
                 await openProject(projectId);
           void load().catch(() => undefined);
         }} />;
@@ -478,6 +480,7 @@ export function App() {
           <WizardPage
             key={`${user?.id ?? "anonymous"}:${creationSession}`}
             providers={providers}
+            modelPrices={modelPrices}
             canManageModels={canManageModelTests(user?.role)}
             onCreateContent={openFreshContent}
             onCreated={(projectId) => {
@@ -510,6 +513,8 @@ export function App() {
         );
       case "studio":
         return <StudioPage projects={projects} tasks={tasks} onOpenProject={(projectId) => void openProject(projectId)} onRefresh={() => load()} />;
+      case "models":
+        return <ModelLibrary providers={providers} modelPrices={modelPrices} onCreate={openFreshWizard} />;
       case "tasks":
         return (
           <TaskCenterPage

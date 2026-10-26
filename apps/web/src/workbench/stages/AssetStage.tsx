@@ -20,6 +20,7 @@ import {
 } from "@aifilm/shared";
 import { api } from "../../lib/api";
 import { ModelRoutePicker } from "../../components/ModelRoutePicker";
+import { buildModelCatalog } from "../../components/modelCatalog";
 import { InlineNotice } from "../../design-system/ui";
 import { MediaFrame } from "../components/MediaCanvas";
 import { ProductionWorkspace } from "../components/ProductionWorkspace";
@@ -365,9 +366,9 @@ function AssetImageRoute({
   const [error, setError] = useState("");
   const selectedProvider = imageProviders.find((provider) => provider.id === draft.imageProvider);
   const models = selectedProvider?.models.filter((model) => !failedImageModels.has(model)) ?? [];
-  const validPair = models.includes(draft.imageModel);
-  const unitCredits = resolveImageUnitCredits(modelPrices, draft.imageProvider, draft.imageModel);
-  const estimate = estimateImageCredits(unitCredits, draft.imageSize, draft.imageQuality);
+  const route = buildModelCatalog(pickerProviders, modelPrices).find(item => item.provider.id === draft.imageProvider && item.model === draft.imageModel);
+  const validPair = models.includes(draft.imageModel) && Boolean(route?.selectable);
+  const estimate = route?.price ? `${estimateImageCredits(route.price.unitCredits, draft.imageSize, draft.imageQuality)} 积分` : "报价时确认";
 
   // 注意：providers 每次轮询都是新数组引用，放进依赖会导致用户改到一半的渠道/模型
   // 每 4 秒被重置回项目默认值（表现为"切换模型自动跳回通义万相"）。
@@ -392,7 +393,7 @@ function AssetImageRoute({
     setSaving(false);
   }
 
-  return <section className="wb-route-panel"><header><strong><SlidersHorizontal aria-hidden="true" />图片模型</strong><small>预计 {estimate} 积分</small></header><div className="mrp-field"><span>渠道 / 模型</span><ModelRoutePicker modality="image" providers={pickerProviders} modelPrices={modelPrices} value={{ providerId: draft.imageProvider, model: draft.imageModel }} onChange={(providerId, model) => setDraft((current) => ({ ...current, ...resolveImageRoutePair(providerId, model, providers, failedImageModels) }))} /></div><div className="wb-route-grid"><label><span>尺寸</span><select value={draft.imageSize} onChange={(event) => setDraft((current) => ({ ...current, imageSize: normalizeImageOutputSize(event.target.value) }))}>{imageOutputSizeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label><label><span>质量</span><select value={draft.imageQuality} onChange={(event) => setDraft((current) => ({ ...current, imageQuality: normalizeImageOutputQuality(event.target.value) }))}>{imageOutputQualityOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label></div><button className="wb-primary-button" type="button" disabled={disabled || pending || saving || (!refreshRequired && !validPair)} onClick={() => void (refreshRequired ? onRetryRefresh() : applyAndGenerate())}>{pending || saving ? <Loader2 className="wb-spin" aria-hidden="true" /> : refreshRequired ? <Save aria-hidden="true" /> : <WandSparkles aria-hidden="true" />}{refreshRequired ? "重试刷新" : actionLabel}</button>{error ? <p className="wb-action-feedback--error">{error}</p> : null}</section>;
+  return <section className="wb-route-panel"><header><strong><SlidersHorizontal aria-hidden="true" />图片模型</strong><small>预计：{estimate}</small></header><div className="mrp-field"><span>渠道 / 模型</span><ModelRoutePicker modality="image" providers={pickerProviders} modelPrices={modelPrices} value={{ providerId: draft.imageProvider, model: draft.imageModel }} onChange={(providerId, model) => setDraft((current) => ({ ...current, ...resolveImageRoutePair(providerId, model, providers, failedImageModels) }))} disabled={disabled || pending || saving} /></div><div className="wb-route-grid"><label><span>尺寸</span><select value={draft.imageSize} onChange={(event) => setDraft((current) => ({ ...current, imageSize: normalizeImageOutputSize(event.target.value) }))}>{imageOutputSizeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label><label><span>质量</span><select value={draft.imageQuality} onChange={(event) => setDraft((current) => ({ ...current, imageQuality: normalizeImageOutputQuality(event.target.value) }))}>{imageOutputQualityOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label></div><button className="wb-primary-button" type="button" disabled={disabled || pending || saving || (!refreshRequired && !validPair)} onClick={() => void (refreshRequired ? onRetryRefresh() : applyAndGenerate())}>{pending || saving ? <Loader2 className="wb-spin" aria-hidden="true" /> : refreshRequired ? <Save aria-hidden="true" /> : <WandSparkles aria-hidden="true" />}{refreshRequired ? "重试刷新" : actionLabel}</button>{error ? <p className="wb-action-feedback--error">{error}</p> : null}</section>;
 }
 function FeedbackForm({ projectId, target, recentCount, disabled, onRefresh }: { projectId: string; target: ReturnType<typeof buildAssetFeedbackTarget>; recentCount: number; disabled: boolean; onRefresh: (projectId: string) => Promise<ProjectWorkflow> }) {
   const [rating, setRating] = useState(4);

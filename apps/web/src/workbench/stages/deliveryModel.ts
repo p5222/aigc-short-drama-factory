@@ -252,11 +252,10 @@ export function getShotFailureMessage(videoAsset?: AssetItem, tasks: GenerationT
   return latestVideoTaskError?.errorReason || "生成失败，可重试";
 }
 
-/** 视频单价（积分/秒）：先精确匹配渠道+模型，再退化为仅模型匹配；查不到返回 undefined（界面隐藏预估）。 */
+/** Only an unambiguous price for the selected route can be displayed. */
 export function videoUnitCredits(prices: ModelPrice[], providerId: string, model: string): number | undefined {
-  const candidates = prices.filter((price) => price.enabled && price.modality === "video" && price.unit === "video_second");
-  const exact = candidates.find((price) => price.providerId === providerId && price.model === model);
-  return (exact ?? candidates.find((price) => price.model === model))?.unitCredits;
+  const candidates = prices.filter((price) => price.enabled && price.modality === "video" && price.unit === "video_second" && price.providerId === providerId && price.model === model);
+  return candidates.length === 1 ? candidates[0].unitCredits : undefined;
 }
 
 export function collectDeliveryEpisodes(shots: StoryboardShot[], fallbackCount = 1): number[] {
