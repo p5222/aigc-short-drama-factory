@@ -9,12 +9,15 @@ test.describe("dual-theme creator workbench", () => {
 
   test("theme preference persists and reduced motion is honored", async ({ page }) => {
     await page.goto("/");
+    await expect(page.getByRole("navigation", { name: "首页导航", exact: true })).toBeVisible();
     await page.evaluate(() => localStorage.setItem("manjiao-theme", "dark"));
     await page.reload();
-    const rootTheme = await page.locator("html").getAttribute("data-theme");
-    expect(rootTheme === "dark" || rootTheme === null).toBeTruthy();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+    await expect.poll(() => page.evaluate(() => localStorage.getItem("manjiao-theme"))).toBe("dark");
+    await page.emulateMedia({ reducedMotion: "reduce" });
     const reduced = await page.evaluate(() => matchMedia("(prefers-reduced-motion: reduce)").matches);
-    expect(typeof reduced).toBe("boolean");
+    expect(reduced).toBe(true);
+    await expect.poll(() => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--ds-motion-fast").trim())).toBe("0ms");
   });
 
   test("unsupported controls are not exposed on the public entry", async ({ page }) => {

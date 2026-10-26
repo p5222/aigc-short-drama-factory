@@ -49,8 +49,8 @@ export function modelRouteKey(providerId: string, model: string): string {
 }
 
 /** Identify the model itself, never a relay's generic name. Unknown IDs remain explicit. */
-export function modelIdentity(model: string): { family: ModelFamily; name: string } {
-  const id = model.trim();
+export function modelIdentity(model: string | null | undefined): { family: ModelFamily; name: string } {
+  const id = model?.trim() ?? "";
   const leaf = id.includes("/") ? id.split("/").at(-1)! : id;
   const patterns: Array<[RegExp, ModelFamily, string]> = [
     [/^deepseek[-_]?/i, "deepseek", "DeepSeek "],

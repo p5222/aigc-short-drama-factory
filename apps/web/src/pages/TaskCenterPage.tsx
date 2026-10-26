@@ -24,7 +24,7 @@ import type { GenerationTask, TaskStatus, TaskType } from "@aifilm/shared";
 import { canCancelTask, canRetryTask, createTaskActionRunner, taskRecoveryHint, taskSupportDiagnostic, type PendingTaskActions, type TaskAction } from "./taskActionModel";
 import { ListPagination } from "../components/ListPagination";
 
-type QueueFilter = "all" | "active" | "failed" | "succeeded" | "pending" | "canceled";
+type QueueFilter = "all" | "active" | "failed" | "succeeded" | "pending" | "canceled" | "refunded";
 
 const stageOrder: TaskType[] = ["text", "storyboard", "character", "image", "video", "tts", "export"];
 const statusPriority: Record<TaskStatus, number> = {
@@ -66,8 +66,10 @@ export function TaskCenterPage({
   async function runAction(taskId: string, action: TaskAction) {
     setActionError("");
     setActionMessage("");
-    const result = await actionRunner.run(taskId, action, () => action === "retry" ? onRetry(taskId) : action === "cancel" ? onCancel(taskId) : onRefresh(), setPendingActions);
-    if (result.status === "failed") setActionError(result.message);
+    const result = action === "refresh"
+      ? await actionRunner.run(taskId, action, onRefresh, setPendingActions)
+      : await actionRunner.mutate(taskId, action, () => action === "retry" ? onRetry(taskId) : onCancel(taskId), onRefresh, setPendingActions);
+    if (result.status === "failed" || result.status === "sync-required") setActionError(result.message);
     if (result.status === "succeeded") setActionMessage(action === "retry" ? "重试请求已提交，任务状态已刷新。" : action === "cancel" ? "取消请求已处理，任务状态已刷新。" : "队列已刷新。");
   }
 
@@ -128,7 +130,8 @@ export function TaskCenterPage({
           ["pending", "排队中"],
           ["failed", "失败"],
           ["succeeded", "已完成"],
-          ["canceled", "已取消"]
+          ["canceled", "已取消"],
+          ["refunded", "已退款"]
         ].map(([value, label]) => (
           <button
             type="button"
@@ -178,12 +181,12 @@ export function TaskCenterPage({
                     {failedLike || cancelableRow ? (
                       <span className="queue-task-actions">
                         {failedLike ? (
-                          <button type="button" disabled={Boolean(pendingActions[task.id])} onClick={(event) => { event.stopPropagation(); void runAction(task.id, "retry"); }}>
+                          <button type="button" disabled={Boolean(pendingActions[task.id] || pendingActions.__refresh__) || actionRunner.isAwaitingSync(task.id)} onClick={(event) => { event.stopPropagation(); void runAction(task.id, "retry"); }}>
                             <RotateCcw size={13} />{pendingActions[task.id] === "retry" ? "提交中…" : "重试"}
                           </button>
                         ) : null}
                         {cancelableRow ? (
-                          <button type="button" className="danger" disabled={Boolean(pendingActions[task.id])} onClick={(event) => { event.stopPropagation(); void runAction(task.id, "cancel"); }}>
+                          <button type="button" className="danger" disabled={Boolean(pendingActions[task.id] || pendingActions.__refresh__) || actionRunner.isAwaitingSync(task.id)} onClick={(event) => { event.stopPropagation(); void runAction(task.id, "cancel"); }}>
                             <Square size={12} />{pendingActions[task.id] === "cancel" ? "取消中…" : "取消"}
                           </button>
                         ) : null}
@@ -197,7 +200,7 @@ export function TaskCenterPage({
           <ListPagination total={filteredTasks.length} page={currentPage} pageSize={pageSize} onChange={page => { setRequestedPage(page); setSelectedTaskId(""); }} />
         </div>
 
-        {selectedTask ? <TaskDetailPanel task={selectedTask} onOpenProject={onOpenProject} onOpenSupport={onOpenSupport} queuePolicy={queuePolicy} pendingAction={pendingActions[selectedTask.id]} onRetry={(id) => void runAction(id, "retry")} onCancel={(id) => void runAction(id, "cancel")} /> : null}
+        {selectedTask ? <TaskDetailPanel task={selectedTask} onOpenProject={onOpenProject} onOpenSupport={onOpenSupport} queuePolicy={queuePolicy} pendingAction={pendingActions[selectedTask.id]} actionsDisabled={Boolean(pendingActions.__refresh__) || actionRunner.isAwaitingSync(selectedTask.id)} onRetry={(id) => void runAction(id, "retry")} onCancel={(id) => void runAction(id, "cancel")} /> : null}
       </section>
       <p className="creator-page-footnote">当前显示你的任务。成功后正式扣费，失败或取消会退回未消耗的冻结积分。</p>
     </div>
@@ -210,6 +213,7 @@ function TaskDetailPanel({
   onOpenSupport,
   queuePolicy,
   pendingAction,
+  actionsDisabled,
   onRetry,
   onCancel
 }: {
@@ -218,6 +222,7 @@ function TaskDetailPanel({
   onOpenSupport: () => void;
   queuePolicy: ReturnType<typeof buildQueuePolicy>;
   pendingAction?: TaskAction;
+  actionsDisabled?: boolean;
   onRetry: (taskId: string) => void;
   onCancel: (taskId: string) => void;
 }) {
@@ -314,11 +319,11 @@ function TaskDetailPanel({
 
       {task.projectId ? <button type="button" className="primary-button" onClick={() => onOpenProject(task.projectId!)}><Film size={16} /> 打开所属作品</button> : <p className="muted">对应作品已不可用，任务记录仍保留。</p>}
       <div className="queue-detail-actions">
-        {canRetry ? <button type="button" onClick={() => onRetry(task.id)} disabled={Boolean(pendingAction)}>
+        {canRetry ? <button type="button" onClick={() => onRetry(task.id)} disabled={Boolean(pendingAction) || actionsDisabled}>
           <RotateCcw size={16} />
           {pendingAction === "retry" ? "提交重试中…" : "重试任务"}
         </button> : null}
-        {canCancel ? <button type="button" className="danger" onClick={() => onCancel(task.id)} disabled={Boolean(pendingAction)}>
+        {canCancel ? <button type="button" className="danger" onClick={() => onCancel(task.id)} disabled={Boolean(pendingAction) || actionsDisabled}>
           <Square size={15} />
           {pendingAction === "cancel" ? "取消中…" : "取消任务"}
         </button> : null}
@@ -454,7 +459,8 @@ function emptyListText(filter: QueueFilter, stage: TaskType | "all", totalTasks:
     pending: `${stagePrefix}当前没有排队中的任务。`,
     failed: `${stagePrefix}没有失败任务，一切正常。`,
     succeeded: `${stagePrefix}还没有已完成的任务。`,
-    canceled: `${stagePrefix}没有已取消的任务。`
+    canceled: `${stagePrefix}没有已取消的任务。`,
+    refunded: `${stagePrefix}没有已退款的任务。`
   };
   return `${filterTexts[filter]} 切回「全部」可查看完整历史。`;
 }

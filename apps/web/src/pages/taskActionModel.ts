@@ -2,7 +2,7 @@ import type { GenerationTask } from "@aifilm/shared";
 
 export type TaskAction = "retry" | "cancel" | "refresh";
 export type PendingTaskActions = Record<string, TaskAction>;
-export type TaskActionResult = { status: "ignored" | "succeeded" } | { status: "failed"; message: string };
+export type TaskActionResult = { status: "ignored" | "succeeded" } | { status: "failed" | "sync-required"; message: string };
 
 export function canRetryTask(task: GenerationTask): boolean {
   return ["failed", "canceled", "refunded"].includes(task.status) && task.retryable !== false;
@@ -38,25 +38,52 @@ export function taskSupportDiagnostic(task: GenerationTask): string {
 /** One in-flight mutation per task, including clicks made before React renders. */
 export function createTaskActionRunner() {
   const pending = new Map<string, TaskAction>();
+  const awaitingSync = new Set<string>();
+  async function run(
+    taskId: string,
+    action: TaskAction,
+    execute: () => void | Promise<void>,
+    onPendingChange: (value: PendingTaskActions) => void
+  ): Promise<TaskActionResult> {
+    if (pending.has(taskId) || (action === "refresh" && pending.size > 0)) return { status: "ignored" };
+    pending.set(taskId, action);
+    onPendingChange(Object.fromEntries(pending));
+    try {
+      await execute();
+      if (action === "refresh") awaitingSync.clear();
+      return { status: "succeeded" };
+    } catch (error) {
+      return { status: "failed", message: error instanceof Error ? error.message : "操作失败，请稍后重试。" };
+    } finally {
+      pending.delete(taskId);
+      onPendingChange(Object.fromEntries(pending));
+    }
+  }
   return {
-    async run(
+    run,
+    isAwaitingSync: (taskId: string) => awaitingSync.has(taskId),
+    async mutate(
       taskId: string,
-      action: TaskAction,
+      action: Exclude<TaskAction, "refresh">,
       execute: () => void | Promise<void>,
+      refresh: () => void | Promise<void>,
       onPendingChange: (value: PendingTaskActions) => void
     ): Promise<TaskActionResult> {
-      if (pending.has(taskId)) return { status: "ignored" };
-      pending.set(taskId, action);
-      onPendingChange(Object.fromEntries(pending));
-      try {
+      if (awaitingSync.has(taskId) || pending.has("__refresh__")) return { status: "ignored" };
+      let refreshError = "";
+      const result = await run(taskId, action, async () => {
         await execute();
-        return { status: "succeeded" };
-      } catch (error) {
-        return { status: "failed", message: error instanceof Error ? error.message : "操作失败，请稍后重试。" };
-      } finally {
-        pending.delete(taskId);
-        onPendingChange(Object.fromEntries(pending));
-      }
+        awaitingSync.add(taskId);
+        try {
+          await refresh();
+          awaitingSync.delete(taskId);
+        } catch (error) {
+          refreshError = `操作已受理，但最新状态读取失败。请刷新核对，当前任务不会重复提交。${error instanceof Error ? ` ${error.message}` : ""}`;
+        }
+      }, onPendingChange);
+      return result.status === "succeeded" && refreshError
+        ? { status: "sync-required", message: refreshError }
+        : result;
     }
   };
 }

@@ -15,6 +15,33 @@ test("blocked recovery does not invite another charge and diagnostics exclude pr
   assert.doesNotMatch(diagnostic, /secret|private/);
 });
 
+test("accepted mutation with failed refresh blocks another charge until an explicit refresh succeeds", async () => {
+  const runner = createTaskActionRunner();
+  let calls = 0;
+  const execute = async () => { calls++; };
+  const failedRefresh = async () => { throw new Error("断网"); };
+  const result = await runner.mutate("a", "retry", execute, failedRefresh, () => undefined);
+  assert.equal(result.status, "sync-required");
+  assert.equal(runner.isAwaitingSync("a"), true);
+  assert.deepEqual(await runner.mutate("a", "retry", execute, failedRefresh, () => undefined), { status: "ignored" });
+  await runner.run("__refresh__", "refresh", failedRefresh, () => undefined);
+  assert.equal(runner.isAwaitingSync("a"), true);
+  await runner.run("__refresh__", "refresh", async () => {}, () => undefined);
+  assert.equal(runner.isAwaitingSync("a"), false);
+  await runner.mutate("a", "retry", execute, async () => {}, () => undefined);
+  assert.equal(calls, 2);
+});
+
+test("mutations and refresh cannot overlap on the same queue snapshot", async () => {
+  const runner = createTaskActionRunner();
+  let finish!: () => void;
+  const mutation = runner.mutate("a", "cancel", () => new Promise<void>(resolve => { finish = resolve; }), async () => {}, () => undefined);
+  assert.deepEqual(await runner.run("__refresh__", "refresh", async () => {}, () => undefined), { status: "ignored" });
+  finish(); await mutation;
+  const refresh = runner.run("__refresh__", "refresh", () => new Promise<void>(resolve => { finish = resolve; }), () => undefined);
+  assert.deepEqual(await runner.mutate("b", "retry", async () => {}, async () => {}, () => undefined), { status: "ignored" });
+  finish(); await refresh;
+});
 test("task capabilities never override terminal state and honor explicit refusal", () => {
   const task = (status: GenerationTask["status"], extra = {}) => ({ status, ...extra }) as GenerationTask;
   assert.equal(canRetryTask(task("failed")), true);

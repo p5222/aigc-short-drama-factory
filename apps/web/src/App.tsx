@@ -383,10 +383,10 @@ export function App() {
     return nextWorkflow;
   }
 
-  async function refreshTaskAction(action: () => Promise<GenerationTask>) {
-    await action();
-    try { await load(); }
-    catch { throw new Error("操作已受理，但最新状态读取失败。请刷新队列核对，不要重复提交操作。"); }
+  async function applyTaskAction(action: () => Promise<GenerationTask>) {
+    const updated = await action();
+    setTasks(current => current.map(task => task.id === updated.id ? updated : task));
+    setWorkflow(current => current ? { ...current, tasks: current.tasks.map(task => task.id === updated.id ? updated : task) } : current);
   }
 
   function clearAuthState(preserveToken = false) {
@@ -471,7 +471,7 @@ export function App() {
       case "workbench":
         return <WorkbenchPage summary={summary} onStart={openFreshWizard} onStartContent={openFreshContent} onOpenWorks={() => setActivePage("scripts")} onOpen={(projectId) => void openProject(projectId)} onOpenTasks={() => setActivePage("tasks")} onRecharge={() => setActivePage("recharge")} />;
       case "content":
-        return <ContentCreatorPage key={`${user?.id ?? "anonymous"}:${contentFocusId || "default"}`} providers={providers} modelPrices={modelPrices} initialSelectedId={contentFocusId} onBack={() => setActivePage("scripts")} onEnterProduction={async (projectId) => {
+        return <ContentCreatorPage key={`${user?.id ?? "anonymous"}:${contentFocusId || "default"}`} providers={providers} modelPrices={modelPrices} initialSelectedId={contentFocusId} onProjectsChange={setContentProjects} onBack={() => setActivePage("scripts")} onEnterProduction={async (projectId) => {
                 await openProject(projectId);
           void load().catch(() => undefined);
         }} />;
@@ -494,6 +494,10 @@ export function App() {
           await api.deleteProject(projectId);
           setProjects((current) => current.filter((project) => project.id !== projectId));
           try { await load(); } catch { setError("作品已删除，部分统计未能刷新。请稍后重新加载。"); }
+        }} onDeleteContent={async projectId => {
+          await contentApi.deleteProject(projectId);
+          setContentProjects(current => current.filter(project => project.id !== projectId));
+          try { await load(); } catch { setError("故事已删除，部分统计未能刷新。请稍后重新加载。"); }
         }} />;
       case "project":
         return (
@@ -521,8 +525,8 @@ export function App() {
             tasks={tasks}
             onOpenProject={(id) => void openProject(id)}
             onOpenSupport={() => setActivePage("help")}
-            onRetry={(taskId) => refreshTaskAction(() => api.retryTask(taskId))}
-            onCancel={(taskId) => refreshTaskAction(() => api.cancelTask(taskId))}
+            onRetry={(taskId) => applyTaskAction(() => api.retryTask(taskId))}
+            onCancel={(taskId) => applyTaskAction(() => api.cancelTask(taskId))}
             onRefresh={() => load()}
           />
         );

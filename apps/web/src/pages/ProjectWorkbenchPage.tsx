@@ -356,8 +356,8 @@ function LoadedProjectWorkbenchPage({ workflow, providers, modelPrices, theme, o
         {message ? <InlineNotice tone="success" onDismiss={() => setMessage("")}>{message}</InlineNotice> : null}
         {error ? <InlineNotice tone="error" onDismiss={() => setError("")}>{error}<button className="wb-text-button" type="button" disabled={isBusy} onClick={() => void refreshProject().catch(() => undefined)}>重新核对项目数据</button></InlineNotice> : null}
       </div> : null}
-      <TaskDrawer open={taskDrawerOpen} tasks={workflow.tasks} onClose={() => setTaskDrawerOpen(false)} />
-      <EvaluationDrawer open={evaluationDrawerOpen} reports={qualityReports} feedbacks={feedbacks} onClose={() => setEvaluationDrawerOpen(false)} onRefresh={() => void refreshProject().catch(() => undefined)} />
+      <TaskDrawer open={taskDrawerOpen} tasks={workflow.tasks} onClose={() => setTaskDrawerOpen(false)} onRetry={async task => { await api.retryTask(task.id); }} onCancel={async task => { await api.cancelTask(task.id); }} onRefresh={refreshProject} />
+      <EvaluationDrawer open={evaluationDrawerOpen} reports={qualityReports} feedbacks={feedbacks} onClose={() => setEvaluationDrawerOpen(false)} onRefresh={refreshProject} />
       {activeTab === "content" ? (
         <ContentStage
           onSaveStateChange={setSaveState}

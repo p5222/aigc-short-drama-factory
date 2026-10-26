@@ -67,7 +67,7 @@ import type {
 import { api, type AdminContentProject } from "../lib/api";
 import { HttpError } from "../lib/httpClient";
 import { AdminEvaluationPage, AdminMasterDetail, AdminTablePage } from "../admin";
-import { closeAfterAdminSuccess, createAdminActionRunner, createCreditAdjustmentAttempt, isValidCreditAdjustment, runAdminBatch, type AdminActionResult } from "../admin/adminActionModel";
+import { closeAfterAdminSuccess, createAdminActionRunner, createCreditAdjustmentAttempt, isValidCreditAdjustment, isValidModelPriceDraft, runAdminBatch, type AdminActionResult } from "../admin/adminActionModel";
 import { AdminDialog, AdminDialogActions } from "../admin/AdminDialog";
 import { confirmAdminAction } from "../admin/AdminConfirm";
 import { fetchAdminUserPage } from "../admin/adminApi";
@@ -543,7 +543,7 @@ function ContentProjectsAdminSection() {
   const filtered = rows.filter(row => `${row.title} ${row.user?.name || ""} ${row.user?.email || ""} ${row.id}`.toLowerCase().includes(keyword.toLowerCase()));
   const pagination = useAdminPagination(filtered, keyword);
   const steps: Record<string, string> = { source: "创作意图", analysis: "内容分析", strategy: "创作策略", outline: "章节大纲", chapter: "正文", script: "剧本", entity: "人物与场景" };
-  const statuses: Record<string, string> = { draft: "草稿", active: "进行中", planning: "策划中", generating: "生成中", completed: "已完成", failed: "生成失败", archived: "已归档" };
+  const statuses: Record<string, string> = { draft: "草稿", active: "进行中", planning: "策划中", generating: "生成中", running: "生成中", succeeded: "已生成", confirmed: "已确认", stale: "内容待更新", completed: "已完成", failed: "生成失败", archived: "已归档" };
   return <><AdminTablePage title="内容创作进度" summary={`在已读取项目中匹配 ${filtered.length} 条。此处只读查看创作进度，作品发布请进入审核队列。`} filters={<SearchField value={keyword} onChange={setKeyword} placeholder="搜索项目、创作者或项目编号" />} actions={<button className="admin-secondary-btn" disabled={loading} type="button" onClick={() => setReload(value => value + 1)}><RefreshCw size={16} />刷新</button>} columns={[
     { key: "title", label: "项目", render: row => <div><strong>{row.title}</strong><small>{row.id}</small></div> },
     { key: "owner", label: "创作者", render: row => row.user?.name || row.user?.email || "未记录" },
@@ -5086,7 +5086,7 @@ function PriceCreator({
         {providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}
       </select></label>
       <label className="admin-create-field"><span>渠道名称</span><input value={draft.providerName} onChange={(event) => setDraft({ ...draft, providerName: event.target.value })} placeholder="渠道名称" /></label>
-      <label className="admin-create-field"><span>模型类型</span><select value={draft.modality} onChange={(event) => setDraft({ ...draft, modality: event.target.value as ModelPrice["modality"], unit: defaultUnitLabelValue(event.target.value) })}>
+      <label className="admin-create-field"><span>模型类型</span><select disabled={Boolean(selectedProvider)} value={draft.modality} onChange={(event) => setDraft({ ...draft, modality: event.target.value as ModelPrice["modality"], unit: defaultUnitLabelValue(event.target.value) })}>
         <option value="text">文本</option>
         <option value="image">生图</option>
         <option value="video">视频</option>
@@ -5097,7 +5097,8 @@ function PriceCreator({
       <label className="admin-create-field"><span>模型 ID（支持特殊模型）</span><input value={draft.model} onChange={(event) => setDraft({ ...draft, model: event.target.value })} placeholder="填写准确的模型 ID" /></label>
       <label className="admin-create-field"><span>积分 / {unitLabel(draft.unit)}</span><input type="number" min={0} value={draft.unitCredits} onChange={(event) => setDraft({ ...draft, unitCredits: event.target.value })} placeholder="积分单价" /></label>
       <label className="admin-create-field"><span>成本（元 / {unitLabel(draft.unit)}）</span><input type="number" min={0} step="0.001" value={draft.vendorCostCny} onChange={(event) => setDraft({ ...draft, vendorCostCny: event.target.value })} placeholder="成本" /></label>
-      <AdminDialogActions><button className="admin-primary-btn" disabled={!draft.providerName.trim() || !draft.model.trim()} onClick={() => onCreate({ providerId: draft.providerId || undefined, providerName: draft.providerName, modality: draft.modality as ModelPrice["modality"], model: draft.model, unit: draft.unit as ModelPrice["unit"], unitCredits: Number(draft.unitCredits), vendorCostCny: Number(draft.vendorCostCny), enabled: true })}>
+      {!isValidModelPriceDraft(draft.unitCredits, draft.vendorCostCny) ? <p className="admin-validation-hint" role="status">积分单价需填写非负整数，配置成本需填写非负数；免费价格请明确填 0。</p> : null}
+      <AdminDialogActions><button className="admin-primary-btn" disabled={!draft.providerName.trim() || !draft.model.trim() || !isValidModelPriceDraft(draft.unitCredits, draft.vendorCostCny)} onClick={() => onCreate({ providerId: draft.providerId || undefined, providerName: draft.providerName.trim(), modality: draft.modality as ModelPrice["modality"], model: draft.model.trim(), unit: draft.unit as ModelPrice["unit"], unitCredits: Number(draft.unitCredits), vendorCostCny: Number(draft.vendorCostCny), enabled: true })}>
         <Layers3 size={18} />新增价格
       </button></AdminDialogActions>
     </div>
@@ -5155,7 +5156,7 @@ function PriceRow({ price, onSave, onDelete }: { price: ModelPrice; onSave: (id:
   const [editing, setEditing] = useState(false), [draft, setDraft] = useState(initial);
   useEffect(() => { if (!editing) setDraft(initial()); }, [price, editing]);
   const dirty = editing && JSON.stringify(draft) !== JSON.stringify(initial());
-  const valid = [draft.unitCredits, draft.vendorCostCny].every(value => value.trim() && Number.isFinite(Number(value)) && Number(value) >= 0);
+  const valid = isValidModelPriceDraft(draft.unitCredits, draft.vendorCostCny);
   function closeEditor() { setDraft(initial()); setEditing(false); }
   return <section className="admin-price-record" data-admin-dirty={dirty || undefined}>
     <div className="admin-price-summary"><ModelIdentity model={price.model} providerName={price.providerName} modality={price.modality} /><div><strong>{price.unitCredits} 积分</strong><small>{unitLabel(price.unit)}</small></div><StatusChip active={price.enabled} /><DraftIndicator dirty={dirty} /><button type="button" className="admin-text-btn primary" aria-haspopup="dialog" onClick={() => setEditing(true)}>编辑价格</button></div>
@@ -5165,6 +5166,7 @@ function PriceRow({ price, onSave, onDelete }: { price: ModelPrice; onSave: (id:
         <label><span>配置成本（元 / {unitLabel(price.unit)}）</span><input type="number" min="0" step="0.001" value={draft.vendorCostCny} onChange={event => setDraft({ ...draft, vendorCostCny: event.target.value })} /></label>
         <label><span>保存后的状态</span><select value={draft.enabled ? "enabled" : "disabled"} onChange={event => setDraft({ ...draft, enabled: event.target.value === "enabled" })}><option value="enabled">启用</option><option value="disabled">停用</option></select></label>
       </div>
+      {!valid ? <p className="admin-validation-hint" role="status">积分单价需填写非负整数，配置成本需填写非负数；免费价格请明确填 0。</p> : null}
       <AdminDialogActions><button type="button" className="admin-text-btn danger" onClick={async () => { if (await confirmAdminAction(`确认删除「${price.model}」的价格？新的生成将不能使用这条报价。`, { title: "删除价格策略", confirmLabel: "删除策略" })) void closeAfterAdminSuccess(() => onDelete(price.id), closeEditor); }}>删除策略</button><button type="button" className="admin-primary-btn" disabled={!dirty || !valid} onClick={() => void closeAfterAdminSuccess(() => onSave(price.id, { unitCredits: Number(draft.unitCredits), vendorCostCny: Number(draft.vendorCostCny), enabled: draft.enabled }), () => setEditing(false))}>保存价格</button></AdminDialogActions>
     </AdminModal>
   </section>;

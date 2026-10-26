@@ -55,12 +55,15 @@ interface ContentWorkspaceProps {
   providers: ModelProvider[];
   modelPrices: ModelPrice[];
   onReload: () => Promise<ContentProjectSummary[]>;
+  onProjectsChange?: (projects: ContentProjectSummary[]) => void;
   onBack?: () => void;
   onEnterProduction: (projectId: string) => void | Promise<void>;
 }
 
-export function ContentWorkspace({ initialProjects, initialSelectedId, startBlank = false, providers, modelPrices, onReload, onBack, onEnterProduction }: ContentWorkspaceProps) {
+export function ContentWorkspace({ initialProjects, initialSelectedId, startBlank = false, providers, modelPrices, onReload, onProjectsChange, onBack, onEnterProduction }: ContentWorkspaceProps) {
   const [projects, setProjects] = useState(initialProjects);
+  useEffect(() => { onProjectsChange?.(projects); }, [projects, onProjectsChange]);
+  const deleting = useRef(false);
   const [selectedId, setSelectedId] = useState(() => startBlank ? "" : reconcileProjectId(initialProjects, initialSelectedId));
   const [creating, setCreating] = useState(startBlank || initialProjects.length === 0);
   const [createTitle, setCreateTitle] = useState("");
@@ -80,7 +83,7 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
   const [sourceOpen, setSourceOpen] = useState(false);
   const [focusStage, setFocusStage] = useState<StageId | "">("");
   const [selectedChapterNo, setSelectedChapterNo] = useState(1);
-  const [busy, setBusy] = useState<"create" | "save" | "generate" | "refresh" | "handoff" | "">("");
+  const [busy, setBusy] = useState<"create" | "save" | "generate" | "refresh" | "handoff" | "delete" | "">("");
   const handoffPending = useRef(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -272,17 +275,30 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
   }
 
   async function removeContentProject(projectId: string) {
+    if (deleting.current || busy) return;
     const project = projects.find((item) => item.id === projectId);
     if (!project || !window.confirm(`确认删除“${project.title}”？分析、大纲、章节和版本都会删除。`)) return;
+    deleting.current = true; setBusy("delete"); setError(""); setMessage("");
+    let deleted = false;
     try {
       await contentApi.deleteProject(projectId);
+      deleted = true;
+      activeRequest.current = null;
       if (failedProjectId === projectId) { setFailedProjectId(""); failedCreationInput.current = null; setError(""); }
       setPackages((current) => { const next = { ...current }; delete next[projectId]; return next; });
       setSavedSources((current) => { const next = { ...current }; delete next[projectId]; return next; });
+      setVersions(current => { const next = { ...current }; delete next[projectId]; return next; });
+      const remaining = projects.filter(item => item.id !== projectId);
+      setProjects(remaining);
+      setOutlineDraft(null); setEditingChapter(null);
+      preserveCreationFeedback.current = true;
+      if (selectedId === projectId) { setSelectedId(remaining[0]?.id ?? ""); setCreating(!remaining.length); }
+      setMessage("内容项目已删除；已交接的漫剧项目保留。");
       setProjects(await onReload());
-      if (selectedId === projectId) setSelectedId("");
-      setMessage("内容项目已删除");
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "删除失败"); }
+    } catch (reason) {
+      if (deleted) setMessage("内容项目已删除；作品列表暂未刷新，请点击刷新重新同步，不必重复删除。");
+      else setError(reason instanceof Error ? reason.message : "删除失败，内容项目仍保留。");
+    } finally { deleting.current = false; setBusy(""); }
   }
 
   async function saveSource() {
@@ -661,7 +677,7 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
         <p className="cw2-rail-meta">素材 {selected?.sourceCount ?? 0} · 大纲 v{productionPackage?.outline?.version ?? "-"} · 剧本 {selected?.scriptCount ?? 0}</p>
       </aside> : null}
       <main className="cw2-stage">
-        {(message || error || serverBusy) && !creating ? <div className="cw2-feedback"><InlineNotice tone={error ? "error" : busy || serverBusy ? "info" : "success"}>{error || (serverBusy ? "服务器正在生成，已完成内容会自动同步。" : message)}</InlineNotice></div> : null}
+        {(message || error || serverBusy) && (!creating || !error) ? <div className="cw2-feedback"><InlineNotice tone={error ? "error" : busy || serverBusy ? "info" : "success"}>{error || (serverBusy ? "服务器正在生成，已完成内容会自动同步。" : message)}</InlineNotice></div> : null}
         {detailError && productionPackage ? <div className="cw2-feedback"><InlineNotice tone="warning">{detailError} 已保留上次读取的内容。<button type="button" className="cw2-link-button" onClick={() => setDetailReload(value => value + 1)}>重新读取</button></InlineNotice></div> : null}
         {stageView}
       </main>

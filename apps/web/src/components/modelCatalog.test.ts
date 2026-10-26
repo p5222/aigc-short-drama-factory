@@ -22,6 +22,9 @@ test("a relay name cannot turn DeepSeek or an unknown custom ID into an OpenAI m
   assert.deepEqual(modelIdentity("google/gemini-2.5-pro"), { family: "gemini", name: "Gemini 2.5 Pro" });
 });
 
+test("legacy records without a model can still render a model selection prompt", () => {
+  for (const model of [undefined, null, ""]) assert.deepEqual(modelIdentity(model), { family: "generic", name: "未选择模型" });
+});
 test("a same-named model on another route never supplies the displayed price", () => {
   const items = buildModelCatalog([provider("a"), provider("b")], [price("a", { unitCredits: 3 })]);
   assert.equal(items[0].price?.unitCredits, 3);

@@ -1,0 +1,104 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-26",
+  "project": "漫角",
+  "baselineRevision": "4a109c0b36f19d4028520cc3e287543fb58ac1a1",
+  "branch": "feat/model-experience-20261026",
+  "implementationStatus": "local-complete",
+  "fixGroups": 10,
+  "unitAndTransport": {
+    "passed": 360,
+    "failed": 0,
+    "skipped": 20,
+    "sharedPassed": 8,
+    "webPassed": 253,
+    "apiPassed": 94,
+    "transportPassed": 5,
+    "skipReason": "API checks requiring database or external service environment were not enabled.",
+    "log": "logs/unit.log"
+  },
+  "finalWebTypecheck": {
+    "exitCode": 0,
+    "log": "logs/final-typecheck.log"
+  },
+  "finalWebBuild": {
+    "exitCode": 0,
+    "log": "logs/final-build.log"
+  },
+  "gitDiffCheck": {
+    "exitCode": 0
+  },
+  "browser": {
+    "environment": "Isolated API fixtures on local Vite with installed Chrome; desktop and Pixel 5 emulation.",
+    "automaticRetries": 0,
+    "newButtonCasesPassed": 20,
+    "latestPerCaseCoverage": {
+      "total": 110,
+      "passed": 108,
+      "skipped": 2,
+      "unresolvedFailures": 0,
+      "aggregation": "82 unaffected cases from the full run, 20 button cases from fixture recovery, 6 public entry cases from the final workbench run.",
+      "singleGreenFullRun": false,
+      "skipReason": "Authenticated real-project drawer checks require PLAYWRIGHT_WORKBENCH_URL."
+    },
+    "runs": [
+      {
+        "scope": "full-suite",
+        "total": 110,
+        "passed": 105,
+        "failed": 3,
+        "skipped": 2,
+        "exitCode": 1,
+        "resolvedBy": "Correct showcase pagination fixture and wait for initial theme persistence before overwriting the stored preference.",
+        "log": "logs/final-browser.log"
+      },
+      {
+        "scope": "button-function-review.spec.ts and workbench.spec.ts",
+        "total": 28,
+        "passed": 24,
+        "failed": 2,
+        "skipped": 2,
+        "exitCode": 1,
+        "resolvedBy": "Explicitly activate reduced-motion media in the public entry test and retain assertions for media, stored theme and 0ms CSS motion token.",
+        "log": "logs/final-recovery.log"
+      },
+      {
+        "scope": "workbench.spec.ts",
+        "total": 8,
+        "passed": 6,
+        "failed": 0,
+        "skipped": 2,
+        "exitCode": 0,
+        "log": "logs/final-workbench.log"
+      }
+    ],
+    "applicationSourceChangedDuringRecovery": false
+  },
+  "visuallyReviewedScreenshots": [
+    "screenshots/task-drawer-desktop.png",
+    "screenshots/asset-actions-mobile.png",
+    "screenshots/admin-price-validation-mobile.png",
+    "screenshots/creator-populated-dark-desktop.png",
+    "screenshots/creator-populated-dark-mobile.png"
+  ],
+  "trackedScreenshotHashes": {
+    "screenshots/task-drawer-desktop.png": "22baea8e784509bbccb33ff16b85703b5b2db53fd7b4897bf4af4be624cf8ff4",
+    "screenshots/asset-actions-mobile.png": "a153ed60dc695e6b6dad0b8a524442b5071684ce7156f3fc2f3f52913dc23a6f",
+    "screenshots/admin-price-validation-mobile.png": "2f2292485f9ec82dd1bf38acfb6b6ccb6175b18a2f502d38487fbf4996e5948f",
+    "screenshots/creator-populated-dark-mobile.png": "c7d09c6d3c06cfc55afd49fae1eab91bdd535f6f91d5bc35d556cf2fd9dd8a5a"
+  },
+  "release": {
+    "githubPushed": false,
+    "remoteCiVerified": false,
+    "tencentCloudDeployed": false,
+    "reason": "GitHub connection service required: Start a new conversation before retrying this service.",
+    "standingReleaseAuthorization": true
+  },
+  "notVerifiedByThisRun": [
+    "QQ SMTP production delivery",
+    "real cash payment",
+    "paid supplier sample quality and actual cost",
+    "production database integration",
+    "physical mobile devices"
+  ]
+}

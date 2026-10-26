@@ -15,7 +15,8 @@ export function ScriptsPage({
   onOpenContent,
   onNew,
   onNewContent,
-  onDelete
+  onDelete,
+  onDeleteContent
 }: {
   projects: Project[];
   contentProjects: ContentProjectSummary[];
@@ -25,12 +26,13 @@ export function ScriptsPage({
   onNew: () => void;
   onNewContent: () => void;
   onDelete: (projectId: string) => Promise<void>;
+  onDeleteContent: (projectId: string) => Promise<void>;
 }) {
   const [filter, setFilter] = useState<WorksFilter>("all");
   const [deletingIds, setDeletingIds] = useState(new Set<string>());
   const [deleteErrors, setDeleteErrors] = useState<Record<string, string>>({});
   const [deleteNotice, setDeleteNotice] = useState("");
-  const [deleteTarget, setDeleteTarget] = useState<Project | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string; kind: "production" | "content" } | null>(null);
   const [query, setQuery] = useState("");
   const deletionRunner = useRef(createWorkDeletionRunner((state) => {
     setDeletingIds((current) => {
@@ -45,10 +47,11 @@ export function ScriptsPage({
   const totalCount = contentProjects.length + projects.length;
   const sectionOrder = !visibleContent.length && visibleProjects.length ? ["production", "content"] : ["content", "production"];
 
-  async function deleteWork(project: Project) {
-    if (deletionRunner.current.isPending(project.id) || openingId === project.id) return;
+  async function deleteWork(project: NonNullable<typeof deleteTarget>) {
+    const key = `${project.kind}:${project.id}`;
+    if (deletionRunner.current.isPending(key) || openingId === project.id) return;
     setDeleteNotice("");
-    if (await deletionRunner.current.run(project.id, () => onDelete(project.id))) {
+    if (await deletionRunner.current.run(key, () => project.kind === "content" ? onDeleteContent(project.id) : onDelete(project.id))) {
       setDeleteNotice(`已删除作品“${project.name}”。`);
       setDeleteTarget(null);
     }
@@ -91,11 +94,13 @@ export function ScriptsPage({
           <div className="project-grid">
             {visibleContent.map((item) => {
               const status = contentWorkState(item);
+              const key = `content:${item.id}`;
+              const deleting = deletingIds.has(key);
               return (
                 <article className="project-card content-work-card" key={item.id} aria-labelledby={`content-work-${item.id}`}>
                   <div className="studio-work-kind"><StudioIcon stage="content" size={18} /><span>故事手稿</span><small>{item.chapterCount} 章</small></div>
                   <div className="works-card-heading">
-                    <h3 id={`content-work-${item.id}`}><button className="works-card-open" type="button" aria-label={`打开内容创作 ${item.title}`} onClick={() => onOpenContent(item.id)}>{item.title}</button></h3>
+                    <h3 id={`content-work-${item.id}`}><button className="works-card-open" type="button" disabled={deleting} aria-label={`打开内容创作 ${item.title}`} onClick={() => onOpenContent(item.id)}>{item.title}</button></h3>
                     <span className={`work-status is-${status.tone}`}>{status.label}</span>
                   </div>
                   <p>
@@ -108,6 +113,8 @@ export function ScriptsPage({
                     <span>{item.styleProfile?.name || "风格自动"}</span>
                     <span>{new Date(item.updatedAt).toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" })} 更新</span>
                   </div>
+                  <div className="works-card-footer"><span>{deleting ? "正在删除，请稍候…" : "继续内容创作"}</span><button className="works-card-delete" type="button" disabled={deleting} aria-label={`删除故事 ${item.title}`} onClick={() => setDeleteTarget({ id: item.id, name: item.title, kind: "content" })}>{deleting ? <LoaderCircle size={15} className="spin" /> : <Trash2 size={15} />}<span>{deleting ? "删除中" : "删除"}</span></button></div>
+                  {deleteErrors[key] ? <p className="works-delete-error" role="alert">删除失败：{deleteErrors[key]} 当前故事仍保留在列表中。</p> : null}
                 </article>
               );
             })}
@@ -132,7 +139,8 @@ export function ScriptsPage({
             {visibleProjects.map((project) => {
               const status = productionWorkState(project);
               const opening = openingId === project.id;
-              const deleting = deletingIds.has(project.id);
+              const key = `production:${project.id}`;
+              const deleting = deletingIds.has(key);
               return <article className={`project-card ${opening ? "is-opening" : ""}`} key={project.id} aria-labelledby={`production-work-${project.id}`} aria-busy={opening || deleting}>
                 <div className="studio-work-kind"><StudioIcon stage="shots" size={18} /><span>漫剧项目</span><small>{project.videoRatio}</small></div>
                 <div className="works-card-heading">
@@ -151,9 +159,9 @@ export function ScriptsPage({
                 </div>
                 <div className="works-card-footer">
                   <span>{deleting ? "正在删除，请稍候…" : "进入生产台继续制作"}</span>
-                  <button className="works-card-delete" type="button" disabled={opening || deleting} aria-label={`删除作品 ${project.name}`} onClick={() => setDeleteTarget(project)}>{deleting ? <LoaderCircle size={15} className="spin" /> : <Trash2 size={15} />}<span>{deleting ? "删除中" : "删除"}</span></button>
+                  <button className="works-card-delete" type="button" disabled={opening || deleting} aria-label={`删除作品 ${project.name}`} onClick={() => setDeleteTarget({ id: project.id, name: project.name, kind: "production" })}>{deleting ? <LoaderCircle size={15} className="spin" /> : <Trash2 size={15} />}<span>{deleting ? "删除中" : "删除"}</span></button>
                 </div>
-                {deleteErrors[project.id] ? <p className="works-delete-error" role="alert">删除失败：{deleteErrors[project.id]} 当前作品仍保留在列表中。</p> : null}
+                {deleteErrors[key] ? <p className="works-delete-error" role="alert">删除失败：{deleteErrors[key]} 当前作品仍保留在列表中。</p> : null}
                 {opening ? (
                   <div className="card-opening-mask" role="status">
                     <LoaderCircle size={18} className="spin" /> 正在打开…
@@ -167,7 +175,7 @@ export function ScriptsPage({
         ) : null}
       </section>
       ))}
-      <ConfirmDialog open={Boolean(deleteTarget)} title="删除这部作品？" description={<>{deleteTarget?.name}<br />作品下的脚本、分镜、资产和生成任务都会删除，此操作不可恢复。{deleteTarget && deleteErrors[deleteTarget.id] ? <span className="creator-confirm-error" role="alert">{deleteErrors[deleteTarget.id]} 作品仍保留，可以重试。</span> : null}</>} confirmLabel="删除作品" danger pending={deleteTarget ? deletingIds.has(deleteTarget.id) : false} onConfirm={() => { if (deleteTarget) void deleteWork(deleteTarget); }} onCancel={() => setDeleteTarget(null)} />
+      <ConfirmDialog open={Boolean(deleteTarget)} title="删除这部作品？" description={<>{deleteTarget?.name}<br />{deleteTarget?.kind === "content" ? "分析、大纲、章节及内容版本都会删除；已交接的漫剧项目保留。" : "剧本、分镜和资产都会删除；任务与积分历史保留。"}此操作不可恢复。{deleteTarget && deleteErrors[`${deleteTarget.kind}:${deleteTarget.id}`] ? <span className="creator-confirm-error" role="alert">{deleteErrors[`${deleteTarget.kind}:${deleteTarget.id}`]} 作品仍保留，可以重试。</span> : null}</>} confirmLabel="删除作品" danger pending={deleteTarget ? deletingIds.has(`${deleteTarget.kind}:${deleteTarget.id}`) : false} onConfirm={() => { if (deleteTarget) void deleteWork(deleteTarget); }} onCancel={() => setDeleteTarget(null)} />
     </div>
   );
 }
