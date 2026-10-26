@@ -3,6 +3,7 @@ import type { PrismaClient } from "@prisma/client";
 import type { ProjectWorkflow } from "@aifilm/shared";
 import { prisma } from "../db/client.js";
 import { readProviderRoutingState } from "../db/mappers.js";
+import { providerEnvApiKey } from "../providers/credentials.js";
 import { runMediaTask } from "../billing/mediaTask.js";
 import { readStoredAsset } from "../storage/objectStorage.js";
 import { buildVoiceCues, createTtsAudioAsset, type TtsAudioAsset, type TtsRuntime } from "./videoComposer.js";
@@ -34,7 +35,7 @@ async function narrationPlan(workflow: ProjectWorkflow, userId: string, db: Pris
     if (!model || !provider.models.includes(model)) throw new Error("配音模型未配置");
     const price = await db.modelPrice.findFirst({ where: { providerId: provider.id, model, modality: "tts", enabled: true } });
     if (!price || price.unit !== "tts_character" || !Number.isSafeInteger(price.unitCredits) || price.unitCredits < 0) configurationError = "配音模型尚未配置有效的按字符积分价格";
-    const apiKey = provider.apiKey || process.env.DASHSCOPE_TTS_API_KEY || process.env.TTS_API_KEY || process.env.DASHSCOPE_API_KEY || process.env.DASHSCOPE_TEXT_API_KEY;
+    const apiKey = provider.apiKey || providerEnvApiKey("dashscope-tts");
     if (!apiKey) configurationError = "配音渠道缺少 API Key，请管理员完成配置";
     const baseUrl = provider.baseUrl || "https://dashscope.aliyuncs.com/api/v1";
     runtime = { providerId: "dashscope-tts", apiKey: apiKey ?? "", baseUrl, model, defaultVoice: process.env.DASHSCOPE_TTS_DEFAULT_VOICE || process.env.TTS_VOICE || "Cherry" };

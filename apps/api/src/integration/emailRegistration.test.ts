@@ -13,6 +13,11 @@ import { Redis } from "ioredis";
 import { SMTPServer } from "smtp-server";
 import { EmailVerificationError, EmailVerificationService } from "../auth/emailVerification.js";
 
+function registrationCodeFromMessage(raw: string) {
+  const body = raw.split(/\r?\n\r?\n/, 2)[1];
+  return body?.match(/^(\d{6})(?:\r?\n|$)/)?.[1];
+}
+
 const databaseUrl = process.env.AIFILM_TEST_API_DATABASE_URL;
 test("QQ registration: real local TLS SMTP, Redis one-time verification and atomic PostgreSQL signup", { skip: !databaseUrl, timeout: 90_000 }, async t => {
   const dbUrl = new URL(databaseUrl!);
@@ -25,6 +30,8 @@ test("QQ registration: real local TLS SMTP, Redis one-time verification and atom
   const db = new PrismaClient({ datasourceUrl: databaseUrl });
   const root = await mkdtemp(resolve(tmpdir(), "manjiao-qq-registration-"));
   const run = crypto.randomBytes(6).toString("hex");
+  assert.equal(registrationCodeFromMessage("To: signup.123456@qq.com\r\nMessage-ID: <654321@test>\r\n\r\n012345\r\n\r\nBody"), "012345");
+  assert.equal(registrationCodeFromMessage("Message-ID: <123456@test>\r\n\r\nNo code"), undefined);
   const email = `signup.${run}@qq.com`;
   const phone = `139${crypto.randomInt(0, 100_000_000).toString().padStart(8, "0")}`;
   const key = resolve(root, "test-key.pem"), cert = resolve(root, "test-cert.pem");
@@ -43,7 +50,7 @@ test("QQ registration: real local TLS SMTP, Redis one-time verification and atom
       stream.on("data", data => { raw += data; });
       stream.on("end", () => {
         if (rejectMail) return callback(new Error("Isolated SMTP unavailable"));
-        const code = raw.match(/(?<!\d)\d{6}(?!\d)/)?.[0];
+        const code = registrationCodeFromMessage(raw);
         if (!code) return callback(new Error("No verification code in fixture message"));
         deliveries.push({ email: session.envelope.rcptTo[0]!.address, code });
         callback();

@@ -2,6 +2,7 @@
 
 import { createToonflowScriptPlan, createToonflowStoryboardPlan } from "./toonflowAdapter.js";
 import { blockModelUntilNextDay, coolDownModel, getModelQuotaDecision, recordModelSubmission } from "../providers/modelQuota.js";
+import { providerEnvApiKey } from "../providers/credentials.js";
 import { materializePrompt } from "../prompts/runtime.js";
 
 interface PipelineCharacter {
@@ -1003,7 +1004,7 @@ function resolveTextRuntime(options: TextRuntimeOptions = {}, providerOverride?:
   if (provider === "dashscope-text" || provider === "bailian-text") {
     return {
       provider: "dashscope-text",
-      apiKey: options.apiKey || process.env.DASHSCOPE_TEXT_API_KEY || process.env.DASHSCOPE_API_KEY || process.env.BAILIAN_TEXT_API_KEY,
+      apiKey: options.apiKey || providerEnvApiKey("dashscope-text"),
       baseUrl:
         options.baseUrl ||
         process.env.DASHSCOPE_TEXT_BASE_URL ||
@@ -1017,7 +1018,7 @@ function resolveTextRuntime(options: TextRuntimeOptions = {}, providerOverride?:
   if (provider === "zml-text") {
     return {
       provider,
-      apiKey: options.apiKey || process.env.ZML_API_KEY,
+      apiKey: options.apiKey || providerEnvApiKey(provider),
       baseUrl: options.baseUrl || process.env.ZML_BASE_URL || "https://api.zmlmfling.com",
       model: options.textModel || process.env.ZML_TEXT_MODEL || model
     };
@@ -1026,7 +1027,7 @@ function resolveTextRuntime(options: TextRuntimeOptions = {}, providerOverride?:
   if (provider === "manjiao") {
     return {
       provider,
-      apiKey: options.apiKey || process.env.MANJIAO_TEXT_API_KEY,
+      apiKey: options.apiKey || providerEnvApiKey(provider),
       baseUrl: options.baseUrl || process.env.MANJIAO_BASE_URL || "https://api.zmlmfling.com",
       model: options.textModel || process.env.MANJIAO_TEXT_MODEL || model
     };
@@ -1036,7 +1037,7 @@ function resolveTextRuntime(options: TextRuntimeOptions = {}, providerOverride?:
   if (provider === "doubao-text" || provider === "doubao") {
     return {
       provider: "doubao-text",
-      apiKey: options.apiKey || process.env.DOUBAO_TEXT_API_KEY || process.env.DOUBAO_API_KEY || process.env.ARK_API_KEY || process.env.VOLCENGINE_API_KEY,
+      apiKey: options.apiKey || providerEnvApiKey("doubao-text"),
       baseUrl: options.baseUrl || process.env.DOUBAO_TEXT_BASE_URL || process.env.DOUBAO_BASE_URL || process.env.ARK_BASE_URL || "https://ark.cn-beijing.volces.com/api/v3",
       model: options.textModel || process.env.DOUBAO_TEXT_MODEL || model
     };
@@ -1045,7 +1046,7 @@ function resolveTextRuntime(options: TextRuntimeOptions = {}, providerOverride?:
   if (provider === "openai-upstream") {
     return {
       provider,
-      apiKey: options.apiKey || process.env.OPENAI_API_KEY || process.env.OPENAI_COMPATIBLE_API_KEY,
+      apiKey: options.apiKey || providerEnvApiKey(provider),
       baseUrl: options.baseUrl || process.env.OPENAI_BASE_URL || process.env.OPENAI_COMPATIBLE_BASE_URL,
       model: options.textModel || process.env.OPENAI_TEXT_MODEL || model
     };
@@ -1054,7 +1055,7 @@ function resolveTextRuntime(options: TextRuntimeOptions = {}, providerOverride?:
   if (provider === "google-ai-studio") {
     return {
       provider,
-      apiKey: options.apiKey || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY,
+      apiKey: options.apiKey || providerEnvApiKey(provider),
       baseUrl: options.baseUrl || process.env.GEMINI_BASE_URL || process.env.GOOGLE_AI_STUDIO_BASE_URL || "https://generativelanguage.googleapis.com/v1beta",
       model
     };
@@ -1063,7 +1064,7 @@ function resolveTextRuntime(options: TextRuntimeOptions = {}, providerOverride?:
   if (provider === "openai-compatible") {
     return {
       provider,
-      apiKey: options.apiKey || process.env.OPENAI_COMPATIBLE_API_KEY || process.env.OPENAI_API_KEY,
+      apiKey: options.apiKey || providerEnvApiKey(provider, "text"),
       baseUrl: options.baseUrl || process.env.OPENAI_COMPATIBLE_BASE_URL || process.env.OPENAI_BASE_URL,
       model: options.textModel || process.env.OPENAI_COMPATIBLE_MODEL || model
     };
@@ -1071,7 +1072,7 @@ function resolveTextRuntime(options: TextRuntimeOptions = {}, providerOverride?:
 
   return {
     provider: "deepseek",
-    apiKey: options.apiKey || process.env.DEEPSEEK_API_KEY,
+    apiKey: options.apiKey || providerEnvApiKey("deepseek"),
     baseUrl: options.baseUrl || process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com",
     model
   };

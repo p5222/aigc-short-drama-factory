@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { storageRoot } from "../storage/objectStorage.js";
 import { blockModelUntilNextDay, coolDownModel, getModelQuotaDecision, recordModelSubmission } from "./modelQuota.js";
+import { providerEnvApiKey } from "./credentials.js";
 
 interface DashScopeResponse {
   output?: {
@@ -79,7 +80,7 @@ interface GeminiImageResponse {
 }
 
 export async function generateDashScopeImage(input: ImageGenerationInput): Promise<ImageGenerationResult> {
-  const apiKey = input.apiKey || process.env.DASHSCOPE_API_KEY;
+  const apiKey = input.apiKey || providerEnvApiKey("dashscope-image");
   if (!apiKey) throw new Error("Missing DASHSCOPE_API_KEY");
 
   const baseUrl = input.baseUrl || process.env.DASHSCOPE_BASE_URL || "https://dashscope.aliyuncs.com/api/v1";
@@ -393,7 +394,7 @@ function resolveImageRuntime(input: ImageGenerationInput, provider: string) {
   if (provider === "google-gemini-image") {
     return {
       name: "Google AI Studio / Gemini Image",
-      apiKey: input.apiKey || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY,
+      apiKey: input.apiKey || providerEnvApiKey(provider, "image"),
       baseUrl: input.baseUrl || process.env.GEMINI_BASE_URL || process.env.GOOGLE_AI_STUDIO_BASE_URL || "https://generativelanguage.googleapis.com/v1beta",
       model: normalizeGeminiImageModel(input.model || process.env.GEMINI_IMAGE_MODEL || "gemini-3-pro-image-preview")
     };
@@ -402,7 +403,7 @@ function resolveImageRuntime(input: ImageGenerationInput, provider: string) {
   if (provider === "zml-image") {
     return {
       name: "ZML Image Relay",
-      apiKey: input.apiKey || process.env.ZML_API_KEY,
+      apiKey: input.apiKey || providerEnvApiKey(provider, "image"),
       baseUrl: input.baseUrl || process.env.ZML_BASE_URL || "https://api.zmlmfling.com",
       model: normalizeRelayImageModel(input.model || process.env.ZML_IMAGE_MODEL || "gpt-image-2")
     };
@@ -411,7 +412,7 @@ function resolveImageRuntime(input: ImageGenerationInput, provider: string) {
   if (provider === "manjiao-image") {
     return {
       name: "Manjiao Image Relay",
-      apiKey: input.apiKey || process.env.MANJIAO_IMAGE_API_KEY,
+      apiKey: input.apiKey || providerEnvApiKey(provider, "image"),
       baseUrl: input.baseUrl || process.env.MANJIAO_BASE_URL || "https://api.zmlmfling.com",
       model: normalizeRelayImageModel(input.model || process.env.MANJIAO_IMAGE_MODEL || "gpt-image-2")
     };
@@ -420,7 +421,7 @@ function resolveImageRuntime(input: ImageGenerationInput, provider: string) {
   if (provider === "ripp-image") {
     return {
       name: "Ripp / GPT Image 2",
-      apiKey: input.apiKey || process.env.RIPP_IMAGE_API_KEY,
+      apiKey: input.apiKey || providerEnvApiKey(provider, "image"),
       baseUrl: input.baseUrl || process.env.RIPP_IMAGE_BASE_URL || "https://ripp.best",
       model: normalizeRelayImageModel(input.model || process.env.RIPP_IMAGE_MODEL || "gpt-image-2")
     };
@@ -429,7 +430,7 @@ function resolveImageRuntime(input: ImageGenerationInput, provider: string) {
   if (provider === "doubao-seedream") {
     return {
       name: "Doubao Seedream Image",
-      apiKey: input.apiKey || process.env.DOUBAO_API_KEY || process.env.ARK_API_KEY || process.env.VOLCENGINE_API_KEY,
+      apiKey: input.apiKey || providerEnvApiKey("doubao-seedream", "image"),
       baseUrl: input.baseUrl || process.env.DOUBAO_BASE_URL || process.env.ARK_BASE_URL || "https://ark.cn-beijing.volces.com/api/v3",
       model: normalizeDoubaoImageModel(input.model || process.env.DOUBAO_SEEDREAM_MODEL || "doubao-seedream-5-0-lite-260128")
     };
@@ -437,7 +438,7 @@ function resolveImageRuntime(input: ImageGenerationInput, provider: string) {
 
   return {
     name: "OpenAI-compatible Image Relay",
-    apiKey: input.apiKey || process.env.OPENAI_IMAGE_API_KEY || process.env.OPENAI_API_KEY || process.env.OPENAI_COMPATIBLE_API_KEY,
+    apiKey: input.apiKey || providerEnvApiKey("openai-compatible", "image"),
     baseUrl: input.baseUrl || process.env.OPENAI_IMAGE_BASE_URL || process.env.OPENAI_BASE_URL || process.env.OPENAI_COMPATIBLE_BASE_URL,
     model: normalizeRelayImageModel(input.model || process.env.OPENAI_IMAGE_MODEL || "gpt-image-2")
   };

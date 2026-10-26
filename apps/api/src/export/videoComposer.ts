@@ -9,6 +9,7 @@ import { generateEmbeddedMjpegVideo, writeEmbeddedExportBundle } from "./embedde
 import { buildSrt } from "./subtitleTools.js";
 import { assertRealNarration, assertVideoExportReady } from "./exportRequirements.js";
 import { downloadPublicMedia } from "../storage/remoteDownload.js";
+import { providerEnvApiKey } from "../providers/credentials.js";
 
 type ExportSize = { width: number; height: number };
 type CommandResult = { exitCode: number | null; stdout: string; stderr: string; errorMessage?: string; timedOut: boolean };
@@ -842,12 +843,7 @@ async function createDashScopeTtsNarration(session: ExportSession, cues: ReturnT
 }
 
 function resolveDashScopeTtsRuntime(options: TtsRuntime) {
-  const apiKey =
-    options.apiKey ||
-    process.env.DASHSCOPE_TTS_API_KEY ||
-    process.env.TTS_API_KEY ||
-    process.env.DASHSCOPE_API_KEY ||
-    process.env.DASHSCOPE_TEXT_API_KEY;
+  const apiKey = options.apiKey || providerEnvApiKey("dashscope-tts");
   if (!apiKey) throw new Error("Missing DASHSCOPE_TTS_API_KEY or DASHSCOPE_API_KEY for DashScope TTS");
   const baseUrl =
     options.baseUrl ||

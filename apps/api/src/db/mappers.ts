@@ -29,6 +29,7 @@ import type {
   AnalyticsEvent
 } from "@aifilm/shared";
 import { getProviderQuotaSnapshot } from "../providers/modelQuota.js";
+import { providerEnvApiKey } from "../providers/credentials.js";
 import { isHistoricalAssetId } from "./mediaAssetIdentity.js";
 
 export function mapProject(row: any): Project {
@@ -361,7 +362,7 @@ export function mapRedeemCode(row: any): RedeemCode {
 
 export async function mapProvider(row: any): Promise<ModelProvider> {
   const apiKey = typeof row.apiKey === "string" ? row.apiKey : "";
-  const envKey = providerEnvApiKey(row.id);
+  const envKey = providerEnvApiKey(row.id, row.modality);
   const effectiveKey = apiKey || envKey;
   const routing = readProviderRoutingState(row.capability, row.models);
   const quotaModels = routing.mode === "manual"
@@ -412,20 +413,6 @@ export function readProviderRoutingState(capability: unknown, models: string[]) 
     preferredModel,
     modelPool: uniqueStrings([preferredModel, ...modelPool])
   };
-}
-
-function providerEnvApiKey(providerId: string) {
-  if (providerId === "doubao-seedance" || providerId === "doubao-seedream" || providerId === "doubao-text") {
-    return process.env.DOUBAO_API_KEY || process.env.ARK_API_KEY || process.env.VOLCENGINE_API_KEY || "";
-  }
-  if (providerId === "dashscope-video" || providerId === "dashscope-image" || providerId === "dashscope-tts") {
-    return process.env.DASHSCOPE_TTS_API_KEY || process.env.DASHSCOPE_API_KEY || "";
-  }
-  if (providerId === "dashscope-text") return process.env.DASHSCOPE_TEXT_API_KEY || process.env.DASHSCOPE_API_KEY || "";
-  if (providerId === "google-gemini-image" || providerId === "google-ai-studio") return process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || "";
-  if (providerId === "zml-image" || providerId === "zml-text") return process.env.ZML_API_KEY || "";
-  if (providerId === "ripp-image") return process.env.RIPP_IMAGE_API_KEY || "";
-  return "";
 }
 
 function uniqueStrings(values: Array<string | undefined>) {
