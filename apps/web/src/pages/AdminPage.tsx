@@ -68,7 +68,8 @@ import { api, type AdminContentProject } from "../lib/api";
 import { HttpError } from "../lib/httpClient";
 import { AdminEvaluationPage, AdminMasterDetail, AdminTablePage } from "../admin";
 import { closeAfterAdminSuccess, createAdminActionRunner, createCreditAdjustmentAttempt, isValidCreditAdjustment, runAdminBatch, type AdminActionResult } from "../admin/adminActionModel";
-import { useAdminDialog } from "../admin/useAdminDialog";
+import { AdminDialog, AdminDialogActions } from "../admin/AdminDialog";
+import { confirmAdminAction } from "../admin/AdminConfirm";
 import { fetchAdminUserPage } from "../admin/adminApi";
 import type { AdminColumn } from "../admin/AdminTablePage";
 import { AdminAuditLogPage } from "../admin/AdminAuditLogPage";
@@ -2315,6 +2316,7 @@ function UsersSection({
   const [createOpen, setCreateOpen] = useState(false);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [selectedUser, setSelectedUser] = useState<AdminUserRow | null>(null);
+  const [userTab, setUserTab] = useState<"profile" | "credits" | "security">("profile");
   const batchPending = useRef(false);
   const action = useContext(AdminActionContext);
   const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
@@ -2371,7 +2373,7 @@ function UsersSection({
     if (batchPending.current) return;
     const targetIds = selectedUserIds.filter((id) => id !== currentUserId && rows.some((user) => user.id === id && user.status !== "deleted"));
     if (!targetIds.length) return;
-    if (!window.confirm(`确认将 ${targetIds.length} 个用户批量改为「${adminStatusLabels[nextStatus]}」？`)) return;
+    if (!await confirmAdminAction(`确认将 ${targetIds.length} 个用户批量改为「${adminStatusLabels[nextStatus]}」？`, { title: "批量修改账号状态", confirmLabel: nextStatus === "active" ? "启用用户" : "停用用户" })) return;
     batchPending.current = true;
     try {
       const completed = await runAdminBatch(targetIds, (id) => onUserSave(id, { status: nextStatus }));
@@ -2381,8 +2383,8 @@ function UsersSection({
     }
   }
 
-  function openUser(user: AdminUserRow) {
-    if (user.id === selectedUserId || canLeaveAdminEditor()) { setSelectedUserId(user.id); setSelectedUser(user); }
+  function openUser(user: AdminUserRow, tab: "profile" | "credits" | "security" = "profile") {
+    if (user.id === selectedUserId || canLeaveAdminEditor()) { setSelectedUserId(user.id); setSelectedUser(user); setUserTab(tab); }
   }
   function resetQuery() {
     if (!canLeaveAdminEditor()) return;
@@ -2403,7 +2405,7 @@ function UsersSection({
     { key: "select", label: "选择", width: "48px", render: user => <input type="checkbox" aria-label={`选择${user.name}`} checked={selectedUserIds.includes(user.id)} onChange={() => setSelectedUserIds(current => current.includes(user.id) ? current.filter(id => id !== user.id) : [...current, user.id])} /> },
     { key: "user", label: "用户", render: user => <div className="adm-user-cell"><span className="adm-user-avatar" aria-hidden="true">{user.name.trim().slice(0, 1).toUpperCase()}</span><div><strong>{user.name}{user.id === currentUserId ? <em>我</em> : null}</strong><small title={user.email || user.phone || user.id}>{user.email || user.phone || user.id}</small></div></div> },
     ...optionalColumns.filter(column => visibleColumns.includes(column.key)),
-    { key: "actions", label: "操作", width: "88px", sticky: "right", render: user => <button className="adm-row-open" type="button" aria-label={`管理用户 ${user.name}`} onClick={() => openUser(user)}><FilePenLine size={15} />管理</button> }
+    { key: "actions", label: "操作", width: "132px", sticky: "right", render: user => <div className="adm-user-row-actions"><button className="adm-row-open" type="button" aria-label={`管理用户 ${user.name}`} title="编辑用户资料" onClick={() => openUser(user)}><FilePenLine size={17} /></button><button className="adm-row-open" type="button" aria-label={`调整积分 ${user.name}`} title="积分与流水概况" onClick={() => openUser(user, "credits")}><WalletCards size={17} /></button><button className="adm-row-open" type="button" aria-label={`账号安全 ${user.name}`} title="密码与账号安全" onClick={() => openUser(user, "security")}><ShieldCheck size={17} /></button></div> }
   ];
 
   return (
@@ -2426,6 +2428,7 @@ function UsersSection({
           right={
             <AdminActionBar>
               <button className="admin-icon-btn" aria-label="刷新用户列表" title="刷新用户列表" disabled={loading} onClick={() => setReloadKey((value) => value + 1)}><RefreshCw size={18} /></button>
+              <button className="admin-secondary-btn" type="button" aria-pressed={status === "deleted"} onClick={() => { setStatus(status === "deleted" ? "all" : "deleted"); setPage(1); setSelectedUserIds([]); }}><Trash2 size={16} />回收站</button>
               <button className="admin-primary-btn" type="button" onClick={() => setCreateOpen(true)}><Plus size={18} />创建用户</button>
             </AdminActionBar>
           }
@@ -2466,7 +2469,7 @@ function UsersSection({
       </AdminModuleWorkbench>
       <AdminMasterDetail open={Boolean(selectedUser)} title={selectedUser?.name ?? "用户详情"} meta={selectedUser ? <p>{selectedUser.email || selectedUser.phone || selectedUser.id}</p> : null} busy={action.pending} onClose={() => { setSelectedUserId(null); setSelectedUser(null); }}>
         <AdminScopedActionNotice />
-        {selectedUser ? <div className="adm-user-detail-editor"><UserRow key={selectedUser.id} user={selectedUser} isSelf={selectedUser.id === currentUserId} selected={selectedUserIds.includes(selectedUser.id)} onToggleSelected={() => setSelectedUserIds((current) => current.includes(selectedUser.id) ? current.filter((id) => id !== selectedUser.id) : [...current, selectedUser.id])} onUserSave={async (id, input) => { const result = await onUserSave(id, input); if (result !== false) { setSelectedUser(current => current ? { ...current, ...input } : null); setReloadKey(value => value + 1); } return result; }} onDeleteUser={async (id) => { const result = await onDeleteUser(id); if (result !== false) { setSelectedUser(null); setSelectedUserId(null); setSelectedUserIds(current => current.filter(value => value !== id)); setReloadKey(value => value + 1); } return result; }} onPasswordReset={onPasswordReset} onCreditAdjust={onCreditAdjust} /></div> : null}
+        {selectedUser ? <div className="adm-user-detail-editor"><UserRow key={selectedUser.id} user={selectedUser} tab={userTab} onTabChange={setUserTab} isSelf={selectedUser.id === currentUserId} selected={selectedUserIds.includes(selectedUser.id)} onToggleSelected={() => setSelectedUserIds((current) => current.includes(selectedUser.id) ? current.filter((id) => id !== selectedUser.id) : [...current, selectedUser.id])} onUserSave={async (id, input) => { const result = await onUserSave(id, input); if (result !== false) { setSelectedUser(current => current ? { ...current, ...input } : null); setReloadKey(value => value + 1); } return result; }} onDeleteUser={async (id) => { const result = await onDeleteUser(id); if (result !== false) { setSelectedUser(null); setSelectedUserId(null); setSelectedUserIds(current => current.filter(value => value !== id)); setReloadKey(value => value + 1); } return result; }} onPasswordReset={onPasswordReset} onCreditAdjust={onCreditAdjust} /></div> : null}
       </AdminMasterDetail>
       <AdminModal open={createOpen} title="创建用户" description="创建后可立即登录；初始积分会写入流水，密码不在后台明文保存。" onClose={() => setCreateOpen(false)} wide>
         <AdminUserCreator onCreate={(input) => closeAfterAdminSuccess(() => onCreateUser(input), () => setCreateOpen(false))} />
@@ -2670,6 +2673,7 @@ function HelpArticleRow({
   onDelete: (id: string) => AdminActionResult;
 }) {
   const [draft, setDraft] = useState(() => helpArticleDraft(article));
+  const [editing, setEditing] = useState(false);
   useEffect(() => setDraft(helpArticleDraft(article)), [article.id, article.updatedAt]);
   const dirty =
     draft.title !== article.title ||
@@ -2682,14 +2686,14 @@ function HelpArticleRow({
     Number(draft.sortOrder) !== article.sortOrder;
   return (
     <article className="admin-announcement-card admin-help-article-card" data-admin-dirty={dirty || undefined}>
-      <details className="admin-record-disclosure">
-        <summary><div><strong>{article.title}</strong><p>{article.summary || article.content}</p></div><div className="admin-record-meta"><span>{helpCategoryLabel(article.category)}</span><StatusChip active={article.enabled} /><DraftIndicator dirty={dirty} /><span>编辑文章</span><ChevronDown size={16} /></div></summary>
-        <div className="admin-record-editor"><AdminScopedActionNotice />
+      <button className="admin-record-open" type="button" aria-label={`编辑文章 ${article.title}`} onClick={() => setEditing(true)}><div><strong>{article.title}</strong><p>{article.summary || article.content}</p></div><div className="admin-record-meta"><span>{helpCategoryLabel(article.category)}</span><StatusChip active={article.enabled} /><DraftIndicator dirty={dirty} /><span>编辑文章</span><FilePenLine size={16} /></div></button>
+      <AdminModal open={editing} title="编辑帮助文章" description={article.title} onClose={() => { setDraft(helpArticleDraft(article)); setEditing(false); }} wide>
+        <div data-admin-dirty={dirty || undefined}>
       <div className="admin-announcement-card-head">
         <span className={`admin-chip help-${draft.category}`}>{helpCategoryLabel(draft.category)}</span>
         <StatusChip active={article.enabled} label={article.enabled ? "已展示" : "已停用"} /><DraftIndicator dirty={dirty} />
         {draft.pinned ? <span className="admin-status enabled">置顶</span> : null}
-        <div className="admin-row-actions">
+        <AdminDialogActions>
           <button className="admin-icon-btn" title={draft.enabled ? "停用" : "启用"} onClick={() => setDraft({ ...draft, enabled: !draft.enabled })}>{draft.enabled ? <ToggleRight size={18} /> : <ToggleLeft size={18} />}</button>
           <button className={dirty ? "admin-text-btn primary" : "admin-text-btn"} disabled={!dirty || !draft.title.trim() || !draft.content.trim()} onClick={() => onSave(article.id, {
             title: draft.title,
@@ -2701,8 +2705,8 @@ function HelpArticleRow({
             pinned: draft.pinned,
             sortOrder: Number(draft.sortOrder) || 0
           })}>保存</button>
-          <button className="admin-icon-btn danger" title="删除帮助" onClick={() => { if (window.confirm("确认删除这条帮助内容？前台帮助中心会立即不再展示。")) onDelete(article.id); }}><Trash2 size={16} /></button>
-        </div>
+          <button className="admin-icon-btn danger" title="删除帮助" onClick={async () => { if (await confirmAdminAction("确认删除这条帮助内容？前台帮助中心会立即不再展示。", { title: "删除帮助文章", confirmLabel: "删除文章" })) void onDelete(article.id); }}><Trash2 size={16} /></button>
+        </AdminDialogActions>
       </div>
       <div className="admin-announcement-form-grid admin-help-form-grid">
         <label className="wide"><span>标题</span><input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} /></label>
@@ -2715,7 +2719,7 @@ function HelpArticleRow({
         <label className="wide"><span>正文</span><textarea value={draft.content} onChange={(event) => setDraft({ ...draft, content: event.target.value })} /></label>
         <label className="wide"><span>标签</span><input value={draft.tags} onChange={(event) => setDraft({ ...draft, tags: event.target.value })} placeholder="用逗号分隔，例如：新手必读，积分" /></label>
       </div>
-    </div></details>
+    </div></AdminModal>
     </article>
   );
 }
@@ -2747,7 +2751,7 @@ function HelpArticleCreator({ onCreate }: { onCreate: (input: HelpArticleInput) 
       <label className="admin-create-field wide"><span>标签</span><input value={draft.tags} onChange={(event) => setDraft({ ...draft, tags: event.target.value })} placeholder="用逗号分隔，例如：新手必读，积分" /></label>
       <label className="admin-create-field checkbox-field"><span>前台展示</span><input type="checkbox" checked={draft.enabled} onChange={(event) => setDraft({ ...draft, enabled: event.target.checked })} /></label>
       <label className="admin-create-field checkbox-field"><span>置顶</span><input type="checkbox" checked={draft.pinned} onChange={(event) => setDraft({ ...draft, pinned: event.target.checked })} /></label>
-      <button className="admin-primary-btn" disabled={!draft.title.trim() || !draft.content.trim()} onClick={() => onCreate({
+      <AdminDialogActions><button className="admin-primary-btn" disabled={!draft.title.trim() || !draft.content.trim()} onClick={() => onCreate({
         title: draft.title,
         summary: draft.summary,
         content: draft.content,
@@ -2758,7 +2762,7 @@ function HelpArticleCreator({ onCreate }: { onCreate: (input: HelpArticleInput) 
         sortOrder: Number(draft.sortOrder) || 0
       })}>
         <BookOpen size={18} />发布帮助
-      </button>
+      </button></AdminDialogActions>
     </div>
   );
 }
@@ -2796,6 +2800,7 @@ function AnnouncementRow({
   onDelete: (id: string) => AdminActionResult;
 }) {
   const [draft, setDraft] = useState(() => announcementDraft(announcement));
+  const [editing, setEditing] = useState(false);
   const scheduleHintId = useId();
   const scheduleErrorId = useId();
   const schedule = buildAnnouncementSchedule(draft, announcement);
@@ -2811,15 +2816,15 @@ function AnnouncementRow({
     draft.endsAt !== announcementDateInput(announcement.endsAt);
   return (
     <article className="admin-announcement-card" data-admin-dirty={dirty || undefined}>
-      <details className="admin-record-disclosure">
-        <summary><div><strong>{announcement.title}</strong><p>{announcement.body}</p><div className="adm-record-subline"><span>{announcementTypeLabel(announcement.type)}</span>{announcement.pinned ? <span>已置顶</span> : null}<time dateTime={announcement.updatedAt}>更新于 {formatDate(announcement.updatedAt)}</time></div></div><div className="admin-record-meta"><StatusChip active={status === "active"} label={announcementStatusLabels[status]} /><DraftIndicator dirty={dirty} /><span>编辑公告</span><ChevronDown size={16} /></div></summary>
-        <div className="admin-record-editor"><AdminScopedActionNotice />
+      <button className="admin-record-open" type="button" aria-label={`编辑公告 ${announcement.title}`} onClick={() => setEditing(true)}><div><strong>{announcement.title}</strong><p>{announcement.body}</p><div className="adm-record-subline"><span>{announcementTypeLabel(announcement.type)}</span>{announcement.pinned ? <span>已置顶</span> : null}<time dateTime={announcement.updatedAt}>更新于 {formatDate(announcement.updatedAt)}</time></div></div><div className="admin-record-meta"><StatusChip active={status === "active"} label={announcementStatusLabels[status]} /><DraftIndicator dirty={dirty} /><span>编辑公告</span><FilePenLine size={16} /></div></button>
+      <AdminModal open={editing} title="编辑平台公告" description={announcement.title} onClose={() => { setDraft(announcementDraft(announcement)); setEditing(false); }} wide>
+        <div data-admin-dirty={dirty || undefined}>
       <div className="admin-announcement-card-head">
         <span className={`admin-chip announcement-${draft.type}`}>{announcementTypeLabel(draft.type)}</span>
         <StatusChip active={status === "active"} label={announcementStatusLabels[status]} />
         {dirty ? <span className="admin-chip">未保存</span> : null}
         {draft.pinned ? <span className="admin-status enabled">置顶</span> : null}
-        <div className="admin-row-actions">
+        <AdminDialogActions>
           <button className="admin-icon-btn" title={draft.enabled ? "停用" : "启用"} onClick={() => setDraft({ ...draft, enabled: !draft.enabled })}>{draft.enabled ? <ToggleRight size={18} /> : <ToggleLeft size={18} />}</button>
           <button className={dirty ? "admin-text-btn primary" : "admin-text-btn"} disabled={!dirty || !draft.title.trim() || !draft.body.trim() || !schedule.ok} onClick={() => schedule.ok && onSave(announcement.id, {
             title: draft.title,
@@ -2829,8 +2834,8 @@ function AnnouncementRow({
             pinned: draft.pinned,
             ...schedule.patch
           })}>保存</button>
-          <button className="admin-icon-btn danger" title="删除公告" onClick={() => { if (window.confirm("确认删除这条平台公告？前台会立即不再展示。")) onDelete(announcement.id); }}><Trash2 size={16} /></button>
-        </div>
+          <button className="admin-icon-btn danger" title="删除公告" onClick={async () => { if (await confirmAdminAction("确认删除这条平台公告？前台会立即不再展示。", { title: "删除平台公告", confirmLabel: "删除公告" })) void onDelete(announcement.id); }}><Trash2 size={16} /></button>
+        </AdminDialogActions>
       </div>
       <div className="admin-announcement-form-grid">
         <label className="wide"><span>标题</span><input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} /></label>
@@ -2847,7 +2852,7 @@ function AnnouncementRow({
         {!schedule.ok ? <p className="admin-toast danger wide" id={scheduleErrorId} role="alert">{schedule.error}</p> : null}
         <label className="wide"><span>公告内容</span><textarea value={draft.body} onChange={(event) => setDraft({ ...draft, body: event.target.value })} /></label>
       </div>
-    </div></details>
+    </div></AdminModal>
     </article>
   );
 }
@@ -2885,7 +2890,7 @@ function AnnouncementCreator({ onCreate }: { onCreate: (input: AnnouncementInput
       {!schedule.ok ? <p className="admin-toast danger wide" id={scheduleErrorId} role="alert">{schedule.error}</p> : null}
       <label className="admin-create-field checkbox-field"><span>前台展示</span><input type="checkbox" checked={draft.enabled} onChange={(event) => setDraft({ ...draft, enabled: event.target.checked })} /></label>
       <label className="admin-create-field checkbox-field"><span>置顶</span><input type="checkbox" checked={draft.pinned} onChange={(event) => setDraft({ ...draft, pinned: event.target.checked })} /></label>
-      <button className="admin-primary-btn" disabled={!draft.title.trim() || !draft.body.trim() || !schedule.ok} onClick={() => schedule.ok && onCreate({
+      <AdminDialogActions><button className="admin-primary-btn" disabled={!draft.title.trim() || !draft.body.trim() || !schedule.ok} onClick={() => schedule.ok && onCreate({
         title: draft.title,
         body: draft.body,
         type: draft.type,
@@ -2894,7 +2899,7 @@ function AnnouncementCreator({ onCreate }: { onCreate: (input: AnnouncementInput
         ...schedule.patch
       })}>
         <Megaphone size={18} />发布公告
-      </button>
+      </button></AdminDialogActions>
     </div>
   );
 }
@@ -2987,7 +2992,7 @@ function EvaluationRecordsCard({
 
   async function deleteRun(run: EvaluationRun) {
     if (deletePending.current) return;
-    if (!window.confirm(`确认删除评测记录「${run.name}」？本次运行生成的质检报告也会一起删除。`)) return;
+    if (!await confirmAdminAction(`确认删除评测记录「${run.name}」？本次运行生成的质检报告也会一起删除。`, { title: "删除评测记录", confirmLabel: "删除记录" })) return;
     setDeleting(run.id);
     deletePending.current = true;
     setExportError("");
@@ -3003,7 +3008,7 @@ function EvaluationRecordsCard({
   }
   async function deleteDataset(dataset: EvaluationDataset) {
     if (deletePending.current) return;
-    if (!window.confirm(`确认删除样本集「${dataset.name}」？历史运行会保留当时的快照。`)) return;
+    if (!await confirmAdminAction(`确认删除样本集「${dataset.name}」？历史运行会保留当时的快照。`, { title: "删除样本集", confirmLabel: "删除样本集" })) return;
     setDeleting(dataset.id);
     deletePending.current = true;
     setExportError("");
@@ -3128,7 +3133,7 @@ function ProjectQualityPool({ projects, onDeleteQuality }: { projects: QualityPr
   const deletePending = useRef(false);
   async function cleanProject(row: QualityProjectRow) {
     if (deletePending.current) return;
-    if (!window.confirm(`确认清理「${row.project.name}」的质检报告和用户反馈？不会删除作品本身。`)) return;
+    if (!await confirmAdminAction(`确认清理「${row.project.name}」的质检报告和用户反馈？不会删除作品本身。`, { title: "清理质检数据", confirmLabel: "确认清理" })) return;
     setDeleting(row.project.id);
     setError("");
     deletePending.current = true;
@@ -3288,7 +3293,7 @@ function RedeemSection({
     if (batchPending.current) return;
     const target = codes.filter((code) => code.enabled !== enabled);
     if (!target.length) { setBatchNotice("当前筛选范围内没有需要变更的兑换码。"); return; }
-    if (!window.confirm(`确认${enabled ? "启用" : "停用"}当前筛选批次中的 ${target.length} 个兑换码？`)) return;
+    if (!await confirmAdminAction(`确认${enabled ? "启用" : "停用"}当前筛选批次中的 ${target.length} 个兑换码？`, { title: "修改兑换码状态", confirmLabel: enabled ? "启用兑换码" : "停用兑换码" })) return;
     batchPending.current = true;
     setBatchNotice(`正在处理 ${target.length} 个兑换码…`);
     try { const completed = await runAdminBatch(target, (code) => onSave(code.id, { enabled })); setBatchNotice(`批量${enabled ? "启用" : "停用"}：已完成 ${completed.length} / ${target.length} 个。${completed.length < target.length ? "其余未完成，已停止；请核对错误后再操作。" : ""}`); }
@@ -3299,7 +3304,7 @@ function RedeemSection({
     if (batchPending.current) return;
     const unused = codes.filter((code) => code.usedCount === 0);
     if (!unused.length) return;
-    if (!window.confirm(`确认删除 ${unused.length} 个未使用兑换码？已使用记录不会被删除。`)) return;
+    if (!await confirmAdminAction(`确认删除 ${unused.length} 个未使用兑换码？已使用记录不会被删除。`, { title: "删除未使用兑换码", confirmLabel: "删除兑换码" })) return;
     batchPending.current = true;
     setBatchNotice(`正在删除 ${unused.length} 个未使用兑换码…`);
     try { const completed = await runAdminBatch(unused, (code) => onDelete(code.id)); setBatchNotice(`批量删除：已完成 ${completed.length} / ${unused.length} 个。${completed.length < unused.length ? "其余未完成，已停止；已使用记录保留。" : "已使用记录保留。"}`); }
@@ -3824,7 +3829,7 @@ function PromptTemplateEditor({
             {draft.enabled ? <ToggleRight size={18} /> : <ToggleLeft size={18} />}
           </button>
           <button className={dirty || isMissingTemplate ? "admin-text-btn primary" : "admin-text-btn"} disabled={!dirty && !isMissingTemplate} onClick={() => saveTemplate()}>{isMissingTemplate ? "创建" : "保存"}</button>
-          <button className="admin-icon-btn danger" disabled={isMissingTemplate} title="停用模板" onClick={() => { if (window.confirm("确认停用该评分提示词？")) onDelete(item.template.id); }}><Trash2 size={16} /></button>
+          <button className="admin-icon-btn danger" disabled={isMissingTemplate} title="停用模板" onClick={async () => { if (await confirmAdminAction("确认停用该评分提示词？", { title: "停用评分模板", confirmLabel: "停用模板" })) void onDelete(item.template.id); }}><Trash2 size={16} /></button>
         </div>
       </div>
       <div className="prompt-editor-meta">
@@ -4214,27 +4219,7 @@ function AdminModal({
   wide?: boolean;
 }) {
   const action = useContext(AdminActionContext);
-  const { dialogRef, titleId, requestClose } = useAdminDialog(open, onClose, action.pending);
-  if (!open) return null;
-  return (
-    <div className="admin-modal-backdrop" role="presentation" onMouseDown={(event) => {
-      if (!action.pending && event.target === event.currentTarget) requestClose();
-    }}>
-      <section ref={dialogRef} tabIndex={-1} className={wide ? "admin-modal wide" : "admin-modal"} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-busy={action.pending} onChangeCapture={(event) => { if ((event.target as HTMLElement).matches("input,select,textarea")) event.currentTarget.dataset.adminDirty = "true"; }}>
-        <header className="admin-modal-head">
-          <div>
-            <h2 id={titleId}>{title}</h2>
-            {description ? <p>{description}</p> : null}
-          </div>
-          <button className="admin-icon-btn" type="button" disabled={action.pending} onClick={requestClose} title="关闭" aria-label="关闭弹窗">
-            <X size={18} />
-          </button>
-        </header>
-        <AdminScopedActionNotice />
-        {children}
-      </section>
-    </div>
-  );
+  return <AdminDialog open={open} title={title} description={description} onClose={onClose} busy={action.pending} wide={wide} trackChanges={/^(新增|创建|生成)/.test(title)} notice={<AdminScopedActionNotice />}>{children}</AdminDialog>;
 }
 
 function AdminScopedActionNotice() {
@@ -4330,6 +4315,8 @@ function AdminUserCreator({
 }: {
   onCreate: (input: { name: string; email?: string; phone?: string; password: string; role?: string; status?: string; initialCredits?: number }) => AdminActionResult;
 }) {
+  const formId = useId();
+  const [passwordVisible, setPasswordVisible] = useState(false);
   const [draft, setDraft] = useState({
     name: "新用户",
     email: "",
@@ -4339,27 +4326,26 @@ function AdminUserCreator({
     initialCredits: "300"
   });
   return (
-    <form className="admin-modal-form admin-user-create-strip" data-admin-dirty={Boolean(draft.email || draft.phone || draft.password || draft.name !== "新用户" || draft.initialCredits !== "300" || draft.role !== "creator") || undefined} onSubmit={(event) => { event.preventDefault(); void onCreate({ name: draft.name.trim(), email: draft.email.trim() || undefined, phone: draft.phone.trim() || undefined, password: draft.password, role: draft.role, status: "active", initialCredits: Number(draft.initialCredits) }); }}>
-      <div>
-        <strong>新建用户账号</strong>
-        <span>创建后立即可登录，初始积分会写入流水。</span>
-      </div>
-      <label className="admin-create-field"><span>用户名</span><input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder="例如：新用户" /></label>
+    <form id={formId} className="admin-modal-form admin-user-create-strip" data-admin-dirty={Boolean(draft.email || draft.phone || draft.password || draft.name !== "新用户" || draft.initialCredits !== "300" || draft.role !== "creator") || undefined} onSubmit={(event) => { event.preventDefault(); void onCreate({ name: draft.name.trim(), email: draft.email.trim() || undefined, phone: draft.phone.trim() || undefined, password: draft.password, role: draft.role, status: "active", initialCredits: Number(draft.initialCredits) }); }}>
+      <p className="admin-form-section-title wide">账号信息<small>邮箱和手机号至少填写一项</small></p>
+      <label className="admin-create-field wide"><span>用户名</span><input required maxLength={80} value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder="例如：新用户" /></label>
       <label className="admin-create-field"><span>邮箱</span><input type="email" maxLength={254} value={draft.email} onChange={(event) => setDraft({ ...draft, email: event.target.value })} placeholder="例如：user@example.com" /></label>
       <label className="admin-create-field"><span>手机号</span><input type="tel" pattern="1[3-9][0-9]{9}" maxLength={11} value={draft.phone} onChange={(event) => setDraft({ ...draft, phone: event.target.value })} placeholder="例如：13800138000，可选" /></label>
+      <div className="admin-create-field wide"><label htmlFor={`${formId}-password`}>初始密码</label><div className="admin-password-field"><input id={`${formId}-password`} aria-describedby={`${formId}-password-hint`} type={passwordVisible ? "text" : "password"} autoComplete="new-password" required minLength={12} maxLength={1024} value={draft.password} onChange={(event) => setDraft({ ...draft, password: event.target.value })} placeholder="至少 12 位" /><button type="button" className="admin-text-btn" aria-label={passwordVisible ? "隐藏初始密码" : "显示初始密码"} aria-pressed={passwordVisible} onClick={() => setPasswordVisible(value => !value)}>{passwordVisible ? "隐藏" : "显示"}</button></div><small id={`${formId}-password-hint`}>请通过安全方式告知用户，密码不会在列表中显示。</small></div>
+      <p className="admin-form-section-title wide">权限与积分</p>
       <label className="admin-create-field"><span>角色</span><select value={draft.role} onChange={(event) => setDraft({ ...draft, role: event.target.value })}>
         <option value="creator">创作者</option>
         <option value="admin">后台管理员</option>
       </select></label>
       <label className="admin-create-field"><span>初始积分</span><input type="number" min={0} max={2147483647} step={1} required value={draft.initialCredits} onChange={(event) => setDraft({ ...draft, initialCredits: event.target.value })} placeholder="例如：300" /></label>
-      <label className="admin-create-field"><span>初始密码</span><input type="password" autoComplete="new-password" minLength={12} maxLength={1024} value={draft.password} onChange={(event) => setDraft({ ...draft, password: event.target.value })} placeholder="至少 12 位" /></label>
-      <button
+      <AdminDialogActions><button
         className="admin-primary-btn"
         type="submit"
+        form={formId}
         disabled={!draft.name.trim() || (!draft.email.trim() && !draft.phone.trim()) || draft.password.length < 12}
       >
         <UserRound size={18} />创建
-      </button>
+      </button></AdminDialogActions>
     </form>
   );
 }
@@ -4372,6 +4358,8 @@ function AdminDate({ value, empty = "暂无记录" }: { value?: string; empty?: 
 
 function UserRow({
   user,
+  tab,
+  onTabChange,
   isSelf,
   onDeleteUser,
   selected,
@@ -4381,6 +4369,8 @@ function UserRow({
   onCreditAdjust
 }: {
   user: AdminUserRow;
+  tab: "profile" | "credits" | "security";
+  onTabChange: (tab: "profile" | "credits" | "security") => void;
   isSelf: boolean;
   onDeleteUser: (id: string) => AdminActionResult;
   selected: boolean;
@@ -4389,6 +4379,9 @@ function UserRow({
   onPasswordReset: (userId: string, password: string) => AdminActionResult;
   onCreditAdjust: (input: { userId: string; amount: number; description: string; requestId?: string }) => AdminActionResult;
 }) {
+  const profileFormId = useId();
+  const creditsFormId = useId();
+  const securityFormId = useId();
   const [name, setName] = useState(user.name);
   const [email, setEmail] = useState(user.email ?? "");
   const [phone, setPhone] = useState(user.phone ?? "");
@@ -4417,12 +4410,13 @@ function UserRow({
         <span>邮箱：{user.email || "未绑定"}</span><span>手机号：{user.phone || "未绑定"}</span>
         <small className="adm-user-id">账号 ID：{user.id}</small>
       </div>
-      <dl className="adm-user-dates" aria-label="账号时间记录">
+      {user.status !== "deleted" ? <nav className="admin-user-tabs" aria-label="用户管理操作"><button type="button" aria-pressed={tab === "profile"} onClick={() => onTabChange("profile")}><UserRound size={16} />资料与权限</button><button type="button" aria-pressed={tab === "credits"} onClick={() => onTabChange("credits")}><WalletCards size={16} />积分调整</button><button type="button" aria-pressed={tab === "security"} onClick={() => onTabChange("security")}><ShieldCheck size={16} />账号安全</button></nav> : null}
+      <dl className="adm-user-dates" aria-label="账号时间记录" hidden={tab !== "profile" && user.status !== "deleted"}>
         <div><dt>注册时间</dt><dd><AdminDate value={user.createdAt} /></dd></div>
         <div><dt>最近登录</dt><dd><AdminDate value={user.lastLoginAt} empty="暂无登录记录" /></dd></div>
         <div><dt>资料更新时间</dt><dd><AdminDate value={user.updatedAt} /></dd></div>
       </dl>
-      <dl className="adm-user-stat-grid" aria-label="账号统计">
+      <dl className="adm-user-stat-grid" aria-label="账号统计" hidden={tab !== "credits" && user.status !== "deleted"}>
         <div><dt>可用积分</dt><dd>{user.credits.toLocaleString()}</dd></div>
         <div><dt>冻结积分</dt><dd>{user.frozenCredits.toLocaleString()}</dd></div>
         <div><dt>累计入账积分</dt><dd>{user.totalRecharge.toLocaleString()}</dd></div>
@@ -4430,8 +4424,8 @@ function UserRow({
         <div><dt>项目数量</dt><dd>{user.projects.toLocaleString()}</dd></div>
         <div><dt>登录密码</dt><dd>{user.hasPassword ? "已设置" : "未设置"}</dd></div>
       </dl>
-      {user.status === "deleted" ? <div className="adm-user-form-section"><h3>用户回收站</h3><p>账号无法登录，原作品和账务记录仍保留。恢复后为停用状态，需要手动启用。</p><button className="admin-primary-btn" disabled={action.pending} onClick={() => void onUserSave(user.id, { status: "disabled" })}>恢复用户</button></div> : <>
-      <form className="adm-user-form-section" aria-label="账号资料" onSubmit={(event) => { event.preventDefault(); if (dirty && name.trim() && (email.trim() || phone.trim())) void onUserSave(user.id, { name: name.trim(), email: email.trim(), phone: phone.trim(), role, status }); }}>
+      {user.status === "deleted" ? <div className="adm-user-form-section"><h3>用户回收站</h3><p>账号无法登录，原作品和账务记录仍保留。恢复后为停用状态，需要手动启用。</p><button className="admin-primary-btn" disabled={action.pending} onClick={() => void closeAfterAdminSuccess(() => onUserSave(user.id, { status: "disabled" }), () => onTabChange("profile"))}>恢复用户</button></div> : <>
+      <form id={profileFormId} className="adm-user-form-section" hidden={tab !== "profile"} aria-label="账号资料" onSubmit={(event) => { event.preventDefault(); if (dirty && name.trim() && (email.trim() || phone.trim())) void onUserSave(user.id, { name: name.trim(), email: email.trim(), phone: phone.trim(), role, status }); }}>
         <h3>账号资料</h3>
         <label><span>用户名</span><input value={name} onChange={(event) => setName(event.target.value)} maxLength={80} required /></label>
         <label><span>邮箱</span><input type="email" value={email} onChange={(event) => setEmail(event.target.value)} maxLength={254} /></label>
@@ -4441,32 +4435,33 @@ function UserRow({
           <label><span>用户角色</span><select value={role} disabled={isSelf} onChange={(event) => setRole(event.target.value)}><option value="creator">创作者</option><option value="admin">后台管理员</option></select></label>
           <label><span>账号状态</span><select value={status} disabled={isSelf} onChange={(event) => setStatus(event.target.value)}><option value="active">正常</option><option value="disabled">停用</option></select></label>
         </div>
-        <button className="admin-primary-btn" type="submit" disabled={action.pending || !dirty || !name.trim() || (!email.trim() && !phone.trim())}><Save size={16} />保存账号资料</button>
+        {tab === "profile" ? <AdminDialogActions><button className="admin-primary-btn" type="submit" form={profileFormId} disabled={action.pending || !dirty || !name.trim() || (!email.trim() && !phone.trim())}><Save size={16} />保存账号资料</button></AdminDialogActions> : null}
       </form>
-      <form className="adm-user-form-section" aria-label="积分调整" onSubmit={(event) => { event.preventDefault(); void adjustCredits(); }}>
+      <form id={creditsFormId} className="adm-user-form-section" hidden={tab !== "credits"} aria-label="积分调整" onSubmit={(event) => { event.preventDefault(); void adjustCredits(); }}>
         <h3>积分调整</h3>
         <p>正数入账，负数扣减；操作会记录积分流水。</p>
         <label><span>调整积分</span><input type="number" step={1} value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="例如：100 或 -100" required /></label>
         <label><span>调整原因</span><input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="填写补偿或扣减原因" required /></label>
-        <button className="admin-primary-btn" type="submit" disabled={action.pending || !isValidCreditAdjustment(amount, description)}><WalletCards size={16} />提交积分调整</button>
+        {tab === "credits" ? <AdminDialogActions><button className="admin-primary-btn" type="submit" form={creditsFormId} disabled={action.pending || !isValidCreditAdjustment(amount, description)}><WalletCards size={16} />提交积分调整</button></AdminDialogActions> : null}
       </form>
-      <form className="adm-user-form-section" aria-label="重置登录密码" onSubmit={(event) => { event.preventDefault(); if (password.length >= 12) void closeAfterAdminSuccess(() => onPasswordReset(user.id, password), () => setPassword("")); }}>
+      <form id={securityFormId} className="adm-user-form-section" hidden={tab !== "security"} aria-label="重置登录密码" onSubmit={(event) => { event.preventDefault(); if (password.length >= 12) void closeAfterAdminSuccess(() => onPasswordReset(user.id, password), () => setPassword("")); }}>
         <h3>重置登录密码</h3>
         <p>重置后旧会话会失效，用户需使用新密码登录。</p>
         <label><span>新密码</span><input type="password" autoComplete="new-password" minLength={12} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="至少 12 位" required /></label>
-        <button className="admin-secondary-btn" type="submit" disabled={action.pending || password.length < 12}>重置密码</button>
+        {tab === "security" ? <AdminDialogActions><button className="admin-primary-btn" type="submit" form={securityFormId} disabled={action.pending || password.length < 12}>重置密码</button></AdminDialogActions> : null}
       </form>
-      <div className="adm-user-form-section"><h3>删除用户</h3><p>请先停用账号。删除后移入回收站，保留作品、积分与流水，支持恢复。</p><button className="admin-secondary-btn" disabled={action.pending || dirty || isSelf || user.status !== "disabled"} onClick={() => { if (window.confirm(`确认将用户「${user.name}」移入回收站？该账号将无法登录，作品与账务记录保留。`)) void onDeleteUser(user.id); }}><Trash2 size={16} />删除用户</button></div>
-      <label className="adm-user-batch-selection"><input type="checkbox" checked={selected} onChange={onToggleSelected} />加入当前页批量选择</label>
+      <div className="adm-user-form-section admin-user-danger-zone" hidden={tab !== "security"}><h3>删除用户</h3><p>请先停用账号。删除后移入回收站，保留作品、积分与流水，支持恢复。</p><button className="admin-secondary-btn" disabled={action.pending || dirty || isSelf || user.status !== "disabled"} onClick={async () => { if (await confirmAdminAction(`确认将用户「${user.name}」移入回收站？该账号将无法登录，作品与账务记录保留。`, { title: "删除用户", confirmLabel: "移入回收站" })) void onDeleteUser(user.id); }}><Trash2 size={16} />删除用户</button></div>
+      <label className="adm-user-batch-selection" hidden={tab !== "profile"}><input type="checkbox" checked={selected} onChange={onToggleSelected} />加入当前页批量选择</label>
       </>}
     </article>
   );
 }
 
 function RedeemBatchCreator({ onCreate }: { onCreate: (input: { name: string; prefix: string; credits: number; count: number; enabled?: boolean }) => AdminActionResult }) {
+  const formId = useId();
   const [draft, setDraft] = useState({ name: "新用户体验码", prefix: "TRIAL", credits: "300", count: "20", enabled: true });
   return (
-    <form className="admin-modal-form admin-redeem-create-form" data-admin-dirty={JSON.stringify(draft) !== JSON.stringify({ name: "新用户体验码", prefix: "TRIAL", credits: "300", count: "20", enabled: true }) || undefined} onSubmit={(event) => { event.preventDefault(); void onCreate({ name: draft.name.trim(), prefix: draft.prefix.trim(), credits: Number(draft.credits), count: Number(draft.count), enabled: draft.enabled }); }}>
+    <form id={formId} className="admin-modal-form admin-redeem-create-form" data-admin-dirty={JSON.stringify(draft) !== JSON.stringify({ name: "新用户体验码", prefix: "TRIAL", credits: "300", count: "20", enabled: true }) || undefined} onSubmit={(event) => { event.preventDefault(); void onCreate({ name: draft.name.trim(), prefix: draft.prefix.trim(), credits: Number(draft.credits), count: Number(draft.count), enabled: draft.enabled }); }}>
       <div>
         <strong>批量生成唯一兑换码</strong>
         <span>每份不同 code，默认单个 code 可兑换 1 次。</span>
@@ -4475,9 +4470,9 @@ function RedeemBatchCreator({ onCreate }: { onCreate: (input: { name: string; pr
       <label className="admin-create-field"><span>前缀</span><input required maxLength={16} value={draft.prefix} onChange={(event) => setDraft({ ...draft, prefix: event.target.value.toUpperCase() })} placeholder="例如：TRIAL" /></label>
       <label className="admin-create-field"><span>积分/码</span><input type="number" required min={1} max={1000000} step={1} value={draft.credits} onChange={(event) => setDraft({ ...draft, credits: event.target.value })} placeholder="例如：300" /></label>
       <label className="admin-create-field"><span>生成份数</span><input type="number" required min={1} max={1000} step={1} value={draft.count} onChange={(event) => setDraft({ ...draft, count: event.target.value })} placeholder="例如：20" /></label>
-      <button className="admin-primary-btn" type="submit" disabled={!draft.name.trim() || !draft.prefix.trim()}>
+      <AdminDialogActions><button className="admin-primary-btn" type="submit" form={formId} disabled={!draft.name.trim() || !draft.prefix.trim()}>
         <Gift size={18} />生成
-      </button>
+      </button></AdminDialogActions>
     </form>
   );
 }
@@ -4566,27 +4561,28 @@ function RedeemCodeRow({ code, onSave, onDelete }: {
   useEffect(() => { if (!editing) setDraft(initial()); }, [code, editing]);
   const dirty = editing && JSON.stringify(draft) !== JSON.stringify(initial());
   const valid = draft.code.trim() && draft.name.trim() && Number.isSafeInteger(Number(draft.credits)) && Number(draft.credits) > 0 && Number.isSafeInteger(Number(draft.maxRedemptions)) && Number(draft.maxRedemptions) >= Math.max(1, code.usedCount);
-  function closeEditor() { if (dirty && !window.confirm("放弃这个兑换码尚未保存的修改？")) return; setDraft(initial()); setEditing(false); }
+  function closeEditor() { setDraft(initial()); setEditing(false); }
   async function copyCode() {
     try { if (!navigator.clipboard) throw new Error("当前浏览器不支持自动复制，请选中兑换码手动复制。"); await navigator.clipboard.writeText(code.code); setCopyState("已复制已保存的兑换码"); }
     catch (reason) { setCopyState(reason instanceof Error ? reason.message : "复制失败，请手动复制。"); }
   }
   return <article className="admin-redeem-record" data-admin-dirty={dirty || undefined}>
-    <div className="admin-redeem-summary"><div><strong className="admin-redeem-saved-code">{code.code}</strong><small>{code.name} · {formatDate(code.createdAt)}</small><DraftIndicator dirty={dirty} /></div><div><strong>{code.credits} 积分</strong><small>已用 {code.usedCount} / {code.maxRedemptions} 次</small></div><RedeemStatusChip status={redeemStatus(code)} /><div className="admin-row-actions"><button className="admin-icon-btn subtle" type="button" title="复制已保存的兑换码" aria-label="复制已保存的兑换码" onClick={() => void copyCode()}><Copy size={15} /></button><button className="admin-text-btn primary" type="button" aria-expanded={editing} onClick={() => editing ? closeEditor() : setEditing(true)}>{editing ? "收起" : "编辑"}</button></div></div>
+    <div className="admin-redeem-summary"><div><strong className="admin-redeem-saved-code">{code.code}</strong><small>{code.name} · {formatDate(code.createdAt)}</small><DraftIndicator dirty={dirty} /></div><div><strong>{code.credits} 积分</strong><small>已用 {code.usedCount} / {code.maxRedemptions} 次</small></div><RedeemStatusChip status={redeemStatus(code)} /><div className="admin-row-actions"><button className="admin-icon-btn subtle" type="button" title="复制已保存的兑换码" aria-label="复制已保存的兑换码" onClick={() => void copyCode()}><Copy size={15} /></button><button className="admin-text-btn primary" type="button" aria-haspopup="dialog" onClick={() => setEditing(true)}>编辑</button></div></div>
     {copyState ? <p className="admin-copy-notice" role="status">{copyState}</p> : null}
-    {editing ? <div className="admin-inline-editor"><AdminScopedActionNotice /><p className="admin-editor-note">额度、次数和状态仅在保存后生效。已使用记录会保留。</p><div className="admin-editor-grid">
+    <AdminModal open={editing} title="编辑兑换码" description="额度、次数和状态仅在保存后生效，已使用记录保留。" onClose={closeEditor} wide><div className="admin-editor-grid" data-admin-dirty={dirty || undefined}>
       <label><span>兑换码</span><input value={draft.code} onChange={event => setDraft({ ...draft, code: event.target.value.toUpperCase() })} /></label><label><span>活动名称</span><input value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} /></label>
       <label><span>每次到账积分</span><input type="number" min="1" value={draft.credits} onChange={event => setDraft({ ...draft, credits: event.target.value })} /></label><label><span>可兑换总次数（已用 {code.usedCount} 次）</span><input type="number" min={Math.max(1, code.usedCount)} value={draft.maxRedemptions} onChange={event => setDraft({ ...draft, maxRedemptions: event.target.value })} /></label>
       <label><span>开始日期</span><input type="date" value={draft.startsAt} onChange={event => setDraft({ ...draft, startsAt: event.target.value })} /></label><label><span>结束日期</span><input type="date" value={draft.endsAt} onChange={event => setDraft({ ...draft, endsAt: event.target.value })} /></label>
       <label><span>保存后的状态</span><select value={draft.enabled ? "enabled" : "disabled"} onChange={event => setDraft({ ...draft, enabled: event.target.value === "enabled" })}><option value="enabled">启用</option><option value="disabled">停用</option></select></label></div>
-      <footer className="admin-editor-actions"><button className="admin-text-btn danger" type="button" onClick={() => { if (window.confirm(code.usedCount > 0 ? `停用「${code.name}」兑换码并保留已使用记录？` : `删除「${code.name}」这个未使用兑换码？`)) void onDelete(code.id); }}>{code.usedCount > 0 ? "停用并保留记录" : "删除兑换码"}</button><span /><button type="button" className="admin-secondary-btn" onClick={closeEditor}>取消</button><button className="admin-primary-btn" type="button" disabled={!dirty || !valid} onClick={() => void closeAfterAdminSuccess(() => onSave(code.id, { code: draft.code, name: draft.name, credits: Number(draft.credits), maxRedemptions: Number(draft.maxRedemptions), enabled: draft.enabled, startsAt: dateToIso(draft.startsAt), endsAt: dateToIso(draft.endsAt) }), () => setEditing(false))}>保存兑换码</button></footer></div> : null}
+      <AdminDialogActions><button className="admin-text-btn danger" type="button" onClick={async () => { if (await confirmAdminAction(code.usedCount > 0 ? `停用「${code.name}」兑换码并保留已使用记录？` : `删除「${code.name}」这个未使用兑换码？`, { title: "删除或停用兑换码", confirmLabel: code.usedCount > 0 ? "停用兑换码" : "删除兑换码" })) void closeAfterAdminSuccess(() => onDelete(code.id), closeEditor); }}>{code.usedCount > 0 ? "停用并保留记录" : "删除兑换码"}</button><button className="admin-primary-btn" type="button" disabled={!dirty || !valid} onClick={() => void closeAfterAdminSuccess(() => onSave(code.id, { code: draft.code, name: draft.name, credits: Number(draft.credits), maxRedemptions: Number(draft.maxRedemptions), enabled: draft.enabled, startsAt: dateToIso(draft.startsAt), endsAt: dateToIso(draft.endsAt) }), () => setEditing(false))}>保存兑换码</button></AdminDialogActions></AdminModal>
   </article>;
 }
 
 function PlanCreator({ onCreate }: { onCreate: (input: Pick<Plan, "name" | "price" | "credits" | "bonusCredits" | "badge" | "features" | "shopUrl" | "enabled">) => AdminActionResult }) {
+  const formId = useId();
   const [draft, setDraft] = useState({ name: "积分充值包", price: "9.9", credits: "600", bonusCredits: "100", badge: "", features: "", shopUrl: "" });
   return (
-    <form className="admin-modal-form admin-plan-create-strip" data-admin-dirty={JSON.stringify(draft) !== JSON.stringify({ name: "积分充值包", price: "9.9", credits: "600", bonusCredits: "100", badge: "", features: "", shopUrl: "" }) || undefined} onSubmit={(event) => { event.preventDefault(); void onCreate({ name: draft.name.trim(), price: Number(draft.price), credits: Number(draft.credits), bonusCredits: Number(draft.bonusCredits), badge: draft.badge || undefined, features: splitFeatureText(draft.features), shopUrl: draft.shopUrl.trim() || undefined, enabled: true }); }}>
+    <form id={formId} className="admin-modal-form admin-plan-create-strip" data-admin-dirty={JSON.stringify(draft) !== JSON.stringify({ name: "积分充值包", price: "9.9", credits: "600", bonusCredits: "100", badge: "", features: "", shopUrl: "" }) || undefined} onSubmit={(event) => { event.preventDefault(); void onCreate({ name: draft.name.trim(), price: Number(draft.price), credits: Number(draft.credits), bonusCredits: Number(draft.bonusCredits), badge: draft.badge || undefined, features: splitFeatureText(draft.features), shopUrl: draft.shopUrl.trim() || undefined, enabled: true }); }}>
       <div><strong>新增充值套餐</strong><span>前台按价格自动排序，只展示启用套餐。</span></div>
       <label className="admin-create-field"><span>套餐名</span><input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder="例如：内测体验包" /></label>
       <label className="admin-create-field"><span>售价</span><input type="number" required min={0} step="0.01" value={draft.price} onChange={(event) => setDraft({ ...draft, price: event.target.value })} placeholder="例如：9.9" /></label>
@@ -4595,9 +4591,9 @@ function PlanCreator({ onCreate }: { onCreate: (input: Pick<Plan, "name" | "pric
       <label className="admin-create-field"><span>标签</span><input value={draft.badge} onChange={(event) => setDraft({ ...draft, badge: event.target.value })} placeholder="例如：低价体验" /></label>
       <label className="admin-create-field wide"><span>卖点</span><input value={draft.features} onChange={(event) => setDraft({ ...draft, features: event.target.value })} placeholder="用分号分隔，例如：适合试用；可生成分镜图" /></label>
       <label className="admin-create-field wide"><span>店铺链接</span><input type="url" pattern="https?://.+" value={draft.shopUrl} onChange={(event) => setDraft({ ...draft, shopUrl: event.target.value })} placeholder="例如：https://pay.ldxp.cn/shop/ZHP28OV1" /></label>
-      <button className="admin-primary-btn" type="submit" disabled={!draft.name.trim()}>
+      <AdminDialogActions><button className="admin-primary-btn" type="submit" form={formId} disabled={!draft.name.trim()}>
         <CircleDollarSign size={18} />新增
-      </button>
+      </button></AdminDialogActions>
     </form>
   );
 }
@@ -4615,15 +4611,11 @@ function PlanRow({ plan, onSave, onDelete }: {
   const valid = draft.name.trim() && [draft.price, draft.credits, draft.bonusCredits].every(value => value.trim() && Number.isFinite(Number(value)) && Number(value) >= 0)
     && [draft.credits, draft.bonusCredits].every(value => Number.isSafeInteger(Number(value)) && Number(value) <= 2147483647)
     && (!draft.shopUrl.trim() || /^https?:\/\/[^\s]+$/i.test(draft.shopUrl.trim()));
-  function closeEditor() {
-    if (dirty && !window.confirm("放弃这个套餐尚未保存的修改？")) return;
-    setDraft(initial()); setEditing(false);
-  }
-  return <>
+  function closeEditor() { setDraft(initial()); setEditing(false); }
+  return (
     <tr className={editing ? "admin-record-selected" : undefined}>
-      <td><strong>{plan.name}</strong><DraftIndicator dirty={dirty} /></td><td>¥{plan.price}</td><td>{plan.credits.toLocaleString()}</td><td>{plan.bonusCredits.toLocaleString()}</td><td>{plan.badge || "—"}</td><td><span className="admin-cell-summary">{plan.features.join(" · ") || "未填写"}</span></td><td>{plan.shopUrl ? <span className="admin-cell-summary" title={plan.shopUrl}>已配置购买链接</span> : <span className="admin-muted">未配置</span>}</td><td><StatusChip active={plan.enabled ?? true} /></td><td><button className="admin-text-btn primary" type="button" aria-expanded={editing} onClick={() => editing ? closeEditor() : setEditing(true)}>{editing ? "收起" : "编辑"}</button></td>
-    </tr>
-    {editing ? <tr className="admin-expanded-row"><td colSpan={9}><section className="admin-inline-editor" data-admin-dirty={dirty || undefined} aria-label={`编辑${plan.name}`}><header><div><h3>编辑充值套餐</h3><p>保存后更新前台价格、到账积分与购买入口。</p></div><DraftIndicator dirty={dirty} /></header><AdminScopedActionNotice /><div className="admin-editor-grid">
+      <td><strong>{plan.name}</strong><DraftIndicator dirty={dirty} /></td><td>¥{plan.price}</td><td>{plan.credits.toLocaleString()}</td><td>{plan.bonusCredits.toLocaleString()}</td><td>{plan.badge || "—"}</td><td><span className="admin-cell-summary">{plan.features.join(" · ") || "未填写"}</span></td><td>{plan.shopUrl ? <span className="admin-cell-summary" title={plan.shopUrl}>已配置购买链接</span> : <span className="admin-muted">未配置</span>}</td><td><StatusChip active={plan.enabled ?? true} /></td><td><button className="admin-text-btn primary" type="button" aria-haspopup="dialog" onClick={() => setEditing(true)}>编辑</button>
+    <AdminModal open={editing} title="编辑充值套餐" description="保存后更新前台价格、到账积分与购买入口。" onClose={closeEditor} wide><div className="admin-editor-grid" data-admin-dirty={dirty || undefined}>
       <label><span>套餐名称</span><input value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} /></label>
       <label><span>售价（元）</span><input type="number" min="0" step="0.01" value={draft.price} onChange={event => setDraft({ ...draft, price: event.target.value })} /></label>
       <label><span>基础积分</span><input type="number" min="0" value={draft.credits} onChange={event => setDraft({ ...draft, credits: event.target.value })} /></label>
@@ -4632,8 +4624,8 @@ function PlanRow({ plan, onSave, onDelete }: {
       <label><span>保存后的状态</span><select value={draft.enabled ? "enabled" : "disabled"} onChange={event => setDraft({ ...draft, enabled: event.target.value === "enabled" })}><option value="enabled">启用</option><option value="disabled">停用</option></select></label>
       <label className="wide"><span>套餐说明（分号分隔）</span><textarea rows={3} value={draft.features} onChange={event => setDraft({ ...draft, features: event.target.value })} /></label>
       <label className="wide"><span>购买链接</span><input type="url" value={draft.shopUrl} placeholder="https://" onChange={event => setDraft({ ...draft, shopUrl: event.target.value })} /></label>
-    </div><footer className="admin-editor-actions"><button className="admin-text-btn danger" type="button" disabled={!plan.enabled} onClick={() => { if (window.confirm(`确认停用「${plan.name}」？前台会隐藏此充值套餐。`)) void onDelete(plan.id); }}>停用套餐</button><span /><button className="admin-secondary-btn" type="button" onClick={closeEditor}>取消</button><button className="admin-primary-btn" type="button" disabled={!dirty || !valid} onClick={() => void closeAfterAdminSuccess(() => onSave(plan.id, { name: draft.name, price: Number(draft.price), credits: Number(draft.credits), bonusCredits: Number(draft.bonusCredits), badge: draft.badge || undefined, features: splitFeatureText(draft.features), shopUrl: draft.shopUrl || undefined, enabled: draft.enabled }), () => setEditing(false))}>保存修改</button></footer></section></td></tr> : null}
-  </>;
+    </div><AdminDialogActions><button className="admin-text-btn danger" type="button" disabled={!plan.enabled} onClick={async () => { if (await confirmAdminAction(`确认停用「${plan.name}」？前台会隐藏此充值套餐。`, { title: "停用充值套餐", confirmLabel: "停用套餐" })) void closeAfterAdminSuccess(() => onDelete(plan.id), closeEditor); }}>停用套餐</button><button className="admin-primary-btn" type="button" disabled={!dirty || !valid} onClick={() => void closeAfterAdminSuccess(() => onSave(plan.id, { name: draft.name, price: Number(draft.price), credits: Number(draft.credits), bonusCredits: Number(draft.bonusCredits), badge: draft.badge || undefined, features: splitFeatureText(draft.features), shopUrl: draft.shopUrl || undefined, enabled: draft.enabled }), () => setEditing(false))}>保存修改</button></AdminDialogActions></AdminModal></td></tr>
+  );
 }
 
 
@@ -4653,9 +4645,9 @@ function MembershipCreator({ onCreate }: { onCreate: (input: Pick<MembershipPlan
       <label className="admin-create-field"><span>队列等级</span><input type="number" value={draft.priorityLevel} onChange={(event) => setDraft({ ...draft, priorityLevel: event.target.value })} placeholder="例如：1" /></label>
       <label className="admin-create-field wide"><span>权益</span><input value={draft.features} onChange={(event) => setDraft({ ...draft, features: event.target.value })} placeholder="用分号分隔，例如：固定额度；优先队列" /></label>
       <label className="admin-create-field wide"><span>店铺链接</span><input value={draft.shopUrl} onChange={(event) => setDraft({ ...draft, shopUrl: event.target.value })} placeholder="例如：https://pay.ldxp.cn/shop/ZHP28OV1" /></label>
-      <button className="admin-primary-btn" disabled={!valid} onClick={() => onCreate({ name: draft.name.trim(), monthlyPrice: Number(draft.monthlyPrice), monthlyCredits: Number(draft.monthlyCredits), discountPercent: Number(draft.discountPercent), priorityLevel: Number(draft.priorityLevel), badge: draft.badge, features: splitFeatureText(draft.features), shopUrl: draft.shopUrl.trim() || undefined, enabled: false })}>
+      <AdminDialogActions><button className="admin-primary-btn" disabled={!valid} onClick={() => onCreate({ name: draft.name.trim(), monthlyPrice: Number(draft.monthlyPrice), monthlyCredits: Number(draft.monthlyCredits), discountPercent: Number(draft.discountPercent), priorityLevel: Number(draft.priorityLevel), badge: draft.badge, features: splitFeatureText(draft.features), shopUrl: draft.shopUrl.trim() || undefined, enabled: false })}>
         <ReceiptText size={18} />新增
-      </button>
+      </button></AdminDialogActions>
     </div>
   );
 }
@@ -4681,6 +4673,8 @@ function MembershipRow({
     enabled: plan.enabled
   });
   const [draft, setDraft] = useState(initial);
+  const [editing, setEditing] = useState(false);
+  useEffect(() => { if (!editing) setDraft(initial()); }, [plan, editing]);
   const dirty =
     draft.name !== plan.name ||
     Number(draft.monthlyPrice) !== plan.monthlyPrice ||
@@ -4696,21 +4690,28 @@ function MembershipRow({
     && (!draft.shopUrl.trim() || /^https?:\/\/[^\s]+$/i.test(draft.shopUrl.trim()));
   return (
     <tr data-admin-dirty={dirty || undefined}>
-      <td><input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} /></td>
-      <td><input className="mini-number" type="number" value={draft.monthlyPrice} onChange={(event) => setDraft({ ...draft, monthlyPrice: event.target.value })} /></td>
-      <td><input className="mini-number" type="number" value={draft.monthlyCredits} onChange={(event) => setDraft({ ...draft, monthlyCredits: event.target.value })} /></td>
-      <td><input className="mini-number" type="number" value={draft.discountPercent} onChange={(event) => setDraft({ ...draft, discountPercent: event.target.value })} />%</td>
-      <td><input className="mini-number" type="number" value={draft.priorityLevel} onChange={(event) => setDraft({ ...draft, priorityLevel: event.target.value })} /></td>
-      <td><input value={draft.features} onChange={(event) => setDraft({ ...draft, features: event.target.value })} /></td>
-      <td><input value={draft.shopUrl} onChange={(event) => setDraft({ ...draft, shopUrl: event.target.value })} placeholder="https://..." /></td>
-      <td><StatusChip active={draft.enabled} /></td>
+      <td><strong>{plan.name}</strong></td>
+      <td>¥{plan.monthlyPrice}</td><td>{plan.monthlyCredits.toLocaleString()}</td><td>{plan.discountPercent}%</td><td>{plan.priorityLevel}</td>
+      <td><span className="admin-cell-summary">{plan.features.join(" · ") || "未填写"}</span></td><td>{plan.shopUrl ? "已配置" : "未配置"}</td>
+      <td><StatusChip active={plan.enabled} /></td>
       <td>
-        <div className="admin-row-actions">
+        <button className="admin-text-btn primary" type="button" aria-haspopup="dialog" onClick={() => setEditing(true)}>编辑方案</button>
+        <AdminModal open={editing} title="编辑订阅方案" description="仅保存预留配置，订阅购买及自动发放尚未开放。" onClose={() => { setDraft(initial()); setEditing(false); }} wide>
+          <div className="admin-editor-grid" data-admin-dirty={dirty || undefined}>
+            <label><span>方案名称</span><input value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} /></label>
+            <label><span>月费（元）</span><input type="number" min={0} step=".01" value={draft.monthlyPrice} onChange={event => setDraft({ ...draft, monthlyPrice: event.target.value })} /></label>
+            <label><span>月度积分</span><input type="number" min={0} value={draft.monthlyCredits} onChange={event => setDraft({ ...draft, monthlyCredits: event.target.value })} /></label>
+            <label><span>折扣（%）</span><input type="number" min={0} max={100} value={draft.discountPercent} onChange={event => setDraft({ ...draft, discountPercent: event.target.value })} /></label>
+            <label><span>队列等级</span><input type="number" min={0} value={draft.priorityLevel} onChange={event => setDraft({ ...draft, priorityLevel: event.target.value })} /></label>
+            <label><span>展示标签</span><input value={draft.badge} onChange={event => setDraft({ ...draft, badge: event.target.value })} /></label>
+            <label className="wide"><span>方案权益（分号分隔）</span><textarea value={draft.features} onChange={event => setDraft({ ...draft, features: event.target.value })} /></label>
+            <label className="wide"><span>购买链接</span><input type="url" value={draft.shopUrl} onChange={event => setDraft({ ...draft, shopUrl: event.target.value })} /></label>
+          </div>
+        <AdminDialogActions>
           <button className="admin-icon-btn" aria-label={draft.enabled ? "设为停用（保存后生效）" : "设为启用（保存后生效）"} onClick={() => setDraft({ ...draft, enabled: !draft.enabled })}>{draft.enabled ? <ToggleRight size={18} /> : <ToggleLeft size={18} />}</button>
-          <button className={dirty ? "admin-text-btn primary" : "admin-text-btn"} disabled={!dirty || !valid} onClick={() => onSave(plan.id, { name: draft.name, monthlyPrice: Number(draft.monthlyPrice), monthlyCredits: Number(draft.monthlyCredits), discountPercent: Number(draft.discountPercent), priorityLevel: Number(draft.priorityLevel), badge: draft.badge || undefined, features: splitFeatureText(draft.features), shopUrl: draft.shopUrl || undefined, enabled: draft.enabled })}>保存</button>
-          <button className="admin-text-btn" disabled={!dirty} onClick={() => { if (window.confirm("放弃此方案尚未保存的修改？")) setDraft(initial()); }}>撤销</button>
-          <button className="admin-icon-btn danger" disabled={dirty || !plan.enabled} title="停用订阅方案" aria-label="停用订阅方案" onClick={() => { if (window.confirm("确认停用该订阅方案？配置记录将保留。")) void closeAfterAdminSuccess(() => onDelete(plan.id), () => setDraft(current => ({ ...current, enabled: false }))); }}><Trash2 size={16} /></button>
-        </div>
+          <button className="admin-icon-btn danger" disabled={dirty || !plan.enabled} title="停用订阅方案" aria-label="停用订阅方案" onClick={async () => { if (await confirmAdminAction("确认停用该订阅方案？配置记录将保留。", { title: "停用订阅方案", confirmLabel: "停用方案" })) void closeAfterAdminSuccess(() => onDelete(plan.id), () => setDraft(current => ({ ...current, enabled: false }))); }}><Trash2 size={16} /></button>
+          <button className="admin-primary-btn" disabled={!dirty || !valid} onClick={() => void closeAfterAdminSuccess(() => onSave(plan.id, { name: draft.name, monthlyPrice: Number(draft.monthlyPrice), monthlyCredits: Number(draft.monthlyCredits), discountPercent: Number(draft.discountPercent), priorityLevel: Number(draft.priorityLevel), badge: draft.badge || undefined, features: splitFeatureText(draft.features), shopUrl: draft.shopUrl || undefined, enabled: draft.enabled }), () => setEditing(false))}>保存方案</button>
+        </AdminDialogActions></AdminModal>
       </td>
     </tr>
   );
@@ -4758,7 +4759,7 @@ function ProviderRow({
       preferredModel: provider.routing?.preferredModel ?? provider.models[0] ?? ""
     });
     setSelectedModel(provider.models[0] ?? "");
-  }, [provider.id, provider.name, provider.modality, provider.enabled, provider.baseUrl, provider.iconUrl, provider.costHint, provider.models.join(" | "), provider.routing?.mode, provider.routing?.preferredModel]);
+  }, [expanded, provider.id, provider.name, provider.modality, provider.enabled, provider.baseUrl, provider.iconUrl, provider.costHint, provider.models.join(" | "), provider.routing?.mode, provider.routing?.preferredModel]);
   const models = splitModelText(draft.models);
   const [selectedModel, setSelectedModel] = useState(models[0] ?? "");
   const testKey = `${provider.id}:${selectedModel}`;
@@ -4803,8 +4804,8 @@ function ProviderRow({
     <article data-admin-dirty={dirty || undefined} className="admin-provider-card">
       <fieldset className="admin-provider-fields" disabled={providerTesting} aria-label={`${provider.name}渠道配置`}>
       <div className="admin-provider-card-head">
-        <button className="admin-icon-btn" type="button" onClick={() => setExpanded(!expanded)} title={expanded ? "收起渠道" : "展开渠道"} aria-label={`${expanded ? "收起" : "展开"}${provider.name}渠道`} aria-expanded={expanded} aria-controls={expanded ? detailsId : undefined}>
-          {expanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
+        <button className="admin-icon-btn" type="button" onClick={() => setExpanded(true)} title="编辑渠道" aria-label={`展开${provider.name}渠道`} aria-haspopup="dialog">
+          <FilePenLine size={18} />
         </button>
         <AdminProviderIcon provider={provider} />
         <div className="admin-provider-title">
@@ -4818,26 +4819,11 @@ function ProviderRow({
           {models.length > 4 ? <span>+{models.length - 4}</span> : null}
         </div>
         <div className="admin-row-actions">
-          <button className="admin-icon-btn" title="启停" onClick={() => setDraft({ ...draft, enabled: !draft.enabled })}>{draft.enabled ? <ToggleRight size={18} /> : <ToggleLeft size={18} />}</button>
-          <button className={dirty ? "admin-text-btn primary" : "admin-text-btn"} disabled={!dirty} title="保存" onClick={() => onSave(provider.id, {
-            name: draft.name,
-            modality: draft.modality,
-            enabled: draft.enabled,
-            baseUrl: draft.baseUrl || undefined,
-            iconUrl: draft.iconUrl || undefined,
-            apiKey: draft.apiKey || undefined,
-            models,
-            costHint: draft.costHint,
-            routing: {
-              mode: draft.routingMode as "auto" | "manual",
-              preferredModel: draft.preferredModel || models[0] || undefined,
-              modelPool: models
-            }
-          })}>保存</button>
+          <button className="admin-text-btn primary" type="button" onClick={() => setExpanded(true)}>编辑渠道</button>
           <button className="admin-secondary-btn compact admin-provider-test-button" type="button" title={testReadiness.reason} aria-label={`测试${provider.name}已保存配置`} aria-describedby={testHintId} disabled={!testReadiness.available} onClick={() => onTest(provider, selectedModel, dirty)}>
             {providerTesting ? <Loader2 className="spin-icon" size={16} /> : <PlayCircle size={16} />}<span>{providerTesting ? "测试中" : ["tts", "embedding"].includes(provider.modality) ? "暂不支持测试" : "测试已保存配置"}</span>
           </button>
-          <button className="admin-icon-btn danger" title="删除/停用" onClick={() => { if (window.confirm("确认删除该模型渠道？如果存在价格策略会自动停用保留关联。")) onDelete(provider.id); }}>
+          <button className="admin-icon-btn danger" title="删除/停用" onClick={async () => { if (await confirmAdminAction("确认删除该模型渠道？如果存在价格策略会自动停用保留关联。", { title: "删除模型渠道", confirmLabel: "删除／停用" })) void onDelete(provider.id); }}>
             <Trash2 size={16} />
           </button>
         </div>
@@ -4852,8 +4838,8 @@ function ProviderRow({
       <p id={testHintId} className={`admin-provider-test-hint${dirty ? " unsaved" : ""}`}>{testReadiness.reason}</p>
       <ProviderInlineTestResult state={dirty ? undefined : testState} />
 
-      {expanded ? (
-        <div id={detailsId} className="admin-provider-expanded">
+      <AdminModal open={expanded} title={`编辑${provider.name}渠道`} description="修改模型连接、路由和状态，保存后生效。" onClose={() => setExpanded(false)} wide>
+        <div id={detailsId} className="admin-provider-expanded admin-editor-grid" data-admin-dirty={dirty || undefined}>
           <label>
             <span>渠道名称</span>
             <input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
@@ -4933,7 +4919,8 @@ function ProviderRow({
             </div>
           </div>
         </div>
-      ) : null}
+        <AdminDialogActions><button className="admin-secondary-btn" type="button" onClick={() => setDraft({ ...draft, enabled: !draft.enabled })}>{draft.enabled ? <ToggleRight size={18} /> : <ToggleLeft size={18} />}{draft.enabled ? "设为停用" : "设为启用"}</button><button className="admin-primary-btn" disabled={!dirty || !draft.name.trim() || !models.length} onClick={() => onSave(provider.id, { name: draft.name, modality: draft.modality, enabled: draft.enabled, baseUrl: draft.baseUrl || undefined, iconUrl: draft.iconUrl || undefined, apiKey: draft.apiKey || undefined, models, costHint: draft.costHint, routing: { mode: draft.routingMode as "auto" | "manual", preferredModel: draft.preferredModel || models[0] || undefined, modelPool: models } })}>保存渠道</button></AdminDialogActions>
+      </AdminModal>
       </fieldset>
     </article>
   );
@@ -4974,7 +4961,7 @@ function ProviderCreator({
     }));
   }
   return (
-    <div className="admin-channel-create-layout">
+    <div className="admin-channel-create-layout" data-admin-dirty={Boolean(draft.id || draft.baseUrl || draft.iconUrl || draft.apiKey || draft.name !== "自定义模型渠道" || draft.modality !== "text" || draft.models !== "model-name" || draft.unitCredits !== "8" || draft.vendorCostCny !== "0.02") || undefined}>
       <aside className="admin-channel-presets">
         <strong>接入模板</strong>
         <span>先选能力类型，再补 URL、Key 和模型池。</span>
@@ -5021,7 +5008,7 @@ function ProviderCreator({
             <label className="wide"><span>渠道说明</span><textarea value={draft.costHint} onChange={(event) => setDraft({ ...draft, costHint: event.target.value })} /></label>
           </div>
         </section>
-      <button
+      <AdminDialogActions><button
         className="admin-primary-btn"
         disabled={!draft.name.trim() || !splitModelText(draft.models).length}
         onClick={() => onCreate({
@@ -5039,7 +5026,7 @@ function ProviderCreator({
         })}
       >
         <SlidersHorizontal size={18} />新增渠道
-      </button>
+      </button></AdminDialogActions>
       </div>
     </div>
   );
@@ -5075,27 +5062,27 @@ function PriceCreator({
   return (
     <div className="admin-modal-form admin-price-create-strip">
       <div><strong>新增价格策略</strong><span>模型渠道新增后会自动补齐，也可以在这里手动添加特殊模型价。</span></div>
-      <select value={draft.providerId} onChange={(event) => setDraft({ ...draft, providerId: event.target.value, model: providers.find((item) => item.id === event.target.value)?.models[0] ?? "" })}>
+      <label className="admin-create-field"><span>模型渠道</span><select value={draft.providerId} onChange={(event) => setDraft({ ...draft, providerId: event.target.value, model: providers.find((item) => item.id === event.target.value)?.models[0] ?? "" })}>
         <option value="">自定义渠道</option>
         {providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}
-      </select>
-      <input value={draft.providerName} onChange={(event) => setDraft({ ...draft, providerName: event.target.value })} placeholder="渠道名称" />
-      <select value={draft.modality} onChange={(event) => setDraft({ ...draft, modality: event.target.value as ModelPrice["modality"], unit: defaultUnitLabelValue(event.target.value) })}>
+      </select></label>
+      <label className="admin-create-field"><span>渠道名称</span><input value={draft.providerName} onChange={(event) => setDraft({ ...draft, providerName: event.target.value })} placeholder="渠道名称" /></label>
+      <label className="admin-create-field"><span>模型类型</span><select value={draft.modality} onChange={(event) => setDraft({ ...draft, modality: event.target.value as ModelPrice["modality"], unit: defaultUnitLabelValue(event.target.value) })}>
         <option value="text">文本</option>
         <option value="image">生图</option>
         <option value="video">视频</option>
         <option value="tts">配音</option>
         <option value="embedding">向量</option>
-      </select>
-      <input value={draft.model} onChange={(event) => setDraft({ ...draft, model: event.target.value })} placeholder="模型 ID" list="admin-price-models" />
+      </select></label>
+      <label className="admin-create-field"><span>模型 ID</span><input value={draft.model} onChange={(event) => setDraft({ ...draft, model: event.target.value })} placeholder="模型 ID" list="admin-price-models" /></label>
       <datalist id="admin-price-models">
         {selectedProvider?.models.map((model) => <option key={model} value={model} />)}
       </datalist>
-      <input type="number" value={draft.unitCredits} onChange={(event) => setDraft({ ...draft, unitCredits: event.target.value })} placeholder="积分单价" />
-      <input type="number" step="0.001" value={draft.vendorCostCny} onChange={(event) => setDraft({ ...draft, vendorCostCny: event.target.value })} placeholder="成本" />
-      <button className="admin-primary-btn" disabled={!draft.providerName.trim() || !draft.model.trim()} onClick={() => onCreate({ providerId: draft.providerId || undefined, providerName: draft.providerName, modality: draft.modality as ModelPrice["modality"], model: draft.model, unit: draft.unit as ModelPrice["unit"], unitCredits: Number(draft.unitCredits), vendorCostCny: Number(draft.vendorCostCny), enabled: true })}>
+      <label className="admin-create-field"><span>积分 / {unitLabel(draft.unit)}</span><input type="number" min={0} value={draft.unitCredits} onChange={(event) => setDraft({ ...draft, unitCredits: event.target.value })} placeholder="积分单价" /></label>
+      <label className="admin-create-field"><span>成本（元 / {unitLabel(draft.unit)}）</span><input type="number" min={0} step="0.001" value={draft.vendorCostCny} onChange={(event) => setDraft({ ...draft, vendorCostCny: event.target.value })} placeholder="成本" /></label>
+      <AdminDialogActions><button className="admin-primary-btn" disabled={!draft.providerName.trim() || !draft.model.trim()} onClick={() => onCreate({ providerId: draft.providerId || undefined, providerName: draft.providerName, modality: draft.modality as ModelPrice["modality"], model: draft.model, unit: draft.unit as ModelPrice["unit"], unitCredits: Number(draft.unitCredits), vendorCostCny: Number(draft.vendorCostCny), enabled: true })}>
         <Layers3 size={18} />新增价格
-      </button>
+      </button></AdminDialogActions>
     </div>
   );
 }
@@ -5152,8 +5139,18 @@ function PriceRow({ price, onSave, onDelete }: { price: ModelPrice; onSave: (id:
   useEffect(() => { if (!editing) setDraft(initial()); }, [price, editing]);
   const dirty = editing && JSON.stringify(draft) !== JSON.stringify(initial());
   const valid = [draft.unitCredits, draft.vendorCostCny].every(value => value.trim() && Number.isFinite(Number(value)) && Number(value) >= 0);
-  function closeEditor() { if (dirty && !window.confirm("放弃这条价格尚未保存的修改？")) return; setDraft(initial()); setEditing(false); }
-  return <section className="admin-price-record" data-admin-dirty={dirty || undefined}><div className="admin-price-summary"><div><strong>{price.model}</strong><small>{price.providerName} · {modalityLabel(price.modality)}</small></div><div><strong>{price.unitCredits} 积分</strong><small>{unitLabel(price.unit)}</small></div><StatusChip active={price.enabled} /><DraftIndicator dirty={dirty} /><button type="button" className="admin-text-btn primary" aria-expanded={editing} onClick={() => editing ? closeEditor() : setEditing(true)}>{editing ? "收起" : "编辑价格"}</button></div>{editing ? <div className="admin-inline-editor"><AdminScopedActionNotice /><p className="admin-editor-note">保存后新的生成报价会使用此价格。供应商成本是配置值，不代表实际账单。</p><div className="admin-editor-grid"><label><span>积分 / {unitLabel(price.unit)}</span><input type="number" min="0" value={draft.unitCredits} onChange={event => setDraft({ ...draft, unitCredits: event.target.value })} /></label><label><span>配置成本（元 / {unitLabel(price.unit)}）</span><input type="number" min="0" step="0.001" value={draft.vendorCostCny} onChange={event => setDraft({ ...draft, vendorCostCny: event.target.value })} /></label><label><span>保存后的状态</span><select value={draft.enabled ? "enabled" : "disabled"} onChange={event => setDraft({ ...draft, enabled: event.target.value === "enabled" })}><option value="enabled">启用</option><option value="disabled">停用</option></select></label></div><footer className="admin-editor-actions"><button type="button" className="admin-text-btn danger" onClick={() => { if (window.confirm(`确认删除「${price.model}」的价格？新的生成将不能使用这条报价。`)) void onDelete(price.id); }}>删除策略</button><span /><button type="button" className="admin-secondary-btn" onClick={closeEditor}>取消</button><button type="button" className="admin-primary-btn" disabled={!dirty || !valid} onClick={() => void closeAfterAdminSuccess(() => onSave(price.id, { unitCredits: Number(draft.unitCredits), vendorCostCny: Number(draft.vendorCostCny), enabled: draft.enabled }), () => setEditing(false))}>保存价格</button></footer></div> : null}</section>;
+  function closeEditor() { setDraft(initial()); setEditing(false); }
+  return <section className="admin-price-record" data-admin-dirty={dirty || undefined}>
+    <div className="admin-price-summary"><div><strong>{price.model}</strong><small>{price.providerName} · {modalityLabel(price.modality)}</small></div><div><strong>{price.unitCredits} 积分</strong><small>{unitLabel(price.unit)}</small></div><StatusChip active={price.enabled} /><DraftIndicator dirty={dirty} /><button type="button" className="admin-text-btn primary" aria-haspopup="dialog" onClick={() => setEditing(true)}>编辑价格</button></div>
+    <AdminModal open={editing} title="编辑价格策略" description={`${price.model} · 保存后用于新的生成报价，配置成本不代表实际账单。`} onClose={closeEditor}>
+      <div className="admin-editor-grid" data-admin-dirty={dirty || undefined}>
+        <label><span>积分 / {unitLabel(price.unit)}</span><input type="number" min="0" value={draft.unitCredits} onChange={event => setDraft({ ...draft, unitCredits: event.target.value })} /></label>
+        <label><span>配置成本（元 / {unitLabel(price.unit)}）</span><input type="number" min="0" step="0.001" value={draft.vendorCostCny} onChange={event => setDraft({ ...draft, vendorCostCny: event.target.value })} /></label>
+        <label><span>保存后的状态</span><select value={draft.enabled ? "enabled" : "disabled"} onChange={event => setDraft({ ...draft, enabled: event.target.value === "enabled" })}><option value="enabled">启用</option><option value="disabled">停用</option></select></label>
+      </div>
+      <AdminDialogActions><button type="button" className="admin-text-btn danger" onClick={async () => { if (await confirmAdminAction(`确认删除「${price.model}」的价格？新的生成将不能使用这条报价。`, { title: "删除价格策略", confirmLabel: "删除策略" })) void closeAfterAdminSuccess(() => onDelete(price.id), closeEditor); }}>删除策略</button><button type="button" className="admin-primary-btn" disabled={!dirty || !valid} onClick={() => void closeAfterAdminSuccess(() => onSave(price.id, { unitCredits: Number(draft.unitCredits), vendorCostCny: Number(draft.vendorCostCny), enabled: draft.enabled }), () => setEditing(false))}>保存价格</button></AdminDialogActions>
+    </AdminModal>
+  </section>;
 }
 
 function RelayGatewayPreview({ policy }: { policy: RelayGatewayPolicy }) {

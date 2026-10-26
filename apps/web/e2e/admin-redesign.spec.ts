@@ -60,7 +60,7 @@ async function adminFixtures(page: Page) {
 async function capture(page: Page, label: string) {
   await expect(page.getByText("页面暂时无法显示", { exact: true })).toHaveCount(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBeTruthy();
-  await page.screenshot({ path: `${process.env.PLAYWRIGHT_SCREENSHOT_DIR ?? "../../outputs/ui-redesign-20261025/screenshots"}/admin-${label}-${test.info().project.name}.png`, fullPage: true });
+  await page.screenshot({ path: `${process.env.PLAYWRIGHT_SCREENSHOT_DIR ?? "../../outputs/ui-redesign-20261025/screenshots"}/admin-${label}-${test.info().project.name}.png`, fullPage: true, animations: "disabled" });
 }
 
 test("populated user table exposes real dates, display columns, server filters and page size", async ({ page }) => {
@@ -110,14 +110,16 @@ test("all admin modules with populated operational records fit desktop and mobil
     await expect(page.locator(".ui-state--loading")).toHaveCount(0);
     await capture(page, `module-${index}`);
     if (module === "平台公告") {
-      await page.locator(".admin-record-disclosure summary").first().click();
+      await page.getByRole("button", { name: /^编辑公告 / }).first().click();
       await capture(page, "announcement-edit");
+      await page.keyboard.press("Escape");
       await page.getByRole("button", { name: /帮助中心/ }).last().click();
       await capture(page, "help");
     }
     if (module === "模型路由") {
       await page.getByRole("button", { name: "展开文字创作渠道", exact: true }).click();
       await capture(page, "provider-edit");
+      await page.keyboard.press("Escape");
     }
     if (module === "创作现场管理") {
       await page.getByRole("button", { name: "内容创作进度", exact: true }).click();
@@ -126,4 +128,143 @@ test("all admin modules with populated operational records fit desktop and mobil
     }
   }
   expect(errors).toEqual([]);
+});
+
+test("all create dialogs keep footer visible, inherit theme and guard unsaved input", async ({ page }) => {
+  test.setTimeout(90_000);
+  await adminFixtures(page);
+  const entries = [
+    ["用户管理", "创建用户", "创建用户", "用户名"],
+    ["平台公告", "新增公告", "新增平台公告", "标题"],
+    ["兑换码", "生成兑换码", "生成兑换码", "活动名"],
+    ["套餐会员", "新增套餐", "新增充值套餐", "套餐名"],
+    ["订阅会员", "新增会员方案", "新增订阅会员", "会员名"],
+    ["模型路由", "新增渠道", "新增模型渠道", "渠道名称"],
+    ["价格策略", "新增价格", "新增价格策略", "渠道名称"]
+  ];
+  for (const [module, button, title, field] of entries) {
+    await page.goto(`/admin#${encodeURIComponent(module)}`);
+    await page.getByRole("button", { name: button, exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: title, exact: true });
+    await expect(dialog).toBeVisible();
+    const geometry = await dialog.evaluate(node => {
+      const rect = node.getBoundingClientRect();
+      const footer = node.querySelector(".admin-modal-footer")!.getBoundingClientRect();
+      return { within: rect.top >= 0 && rect.bottom <= innerHeight + 1, footer: footer.bottom <= innerHeight, scroll: getComputedStyle(node.querySelector(".admin-modal-body")!).overflowY };
+    });
+    expect(geometry).toEqual({ within: true, footer: true, scroll: "auto" });
+    await dialog.getByLabel(field, { exact: true }).fill("待保存的修改");
+    await dialog.getByRole("button", { name: "取消", exact: true }).click();
+    const confirm = page.getByRole("alertdialog", { name: "放弃未保存的修改？" });
+    await expect(confirm).toBeVisible();
+    await confirm.getByRole("button", { name: "取消", exact: true }).click();
+    await expect(dialog.getByLabel(field, { exact: true })).toHaveValue("待保存的修改");
+    await page.keyboard.press("Escape");
+    await confirm.getByRole("button", { name: "放弃修改", exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(page.getByRole("button", { name: button, exact: true })).toBeFocused();
+    await page.getByRole("button", { name: "切换主题", exact: true }).click();
+    await page.getByRole("button", { name: button, exact: true }).click();
+    await expect(dialog).toHaveCSS("background-color", "rgb(30, 41, 59)");
+    await expect(dialog.getByLabel(field, { exact: true })).toHaveCSS("color", "rgb(243, 244, 246)");
+    await capture(page, `create-${module}-dark`);
+    await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: "切换主题", exact: true }).click();
+  }
+});
+
+test("record editors open as dialogs and cancel deletion without sending a mutation", async ({ page }) => {
+  await adminFixtures(page);
+  let mutations = 0;
+  page.on("request", request => { if (["POST","PATCH","DELETE"].includes(request.method())) mutations++; });
+  await page.goto("/admin#平台公告");
+  await page.getByRole("button", { name: /^编辑公告 / }).first().click();
+  const editor = page.getByRole("dialog", { name: "编辑平台公告" });
+  await expect(editor.getByLabel("公告内容")).toBeVisible();
+  await editor.getByRole("button", { name: "删除公告", exact: true }).click();
+  await page.getByRole("alertdialog", { name: "删除平台公告" }).getByRole("button", { name: "取消" }).click();
+  await expect(editor).toBeVisible();
+  expect(mutations).toBe(0);
+  await page.keyboard.press("Escape");
+  await page.goto("/admin#套餐会员");
+  await page.getByRole("button", { name: "编辑", exact: true }).first().click();
+  await expect(page.getByRole("dialog", { name: "编辑充值套餐" })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "编辑充值套餐" })).toHaveCSS("background-color", "rgb(255, 255, 255)");
+  await expect(page.getByRole("dialog", { name: "编辑充值套餐" })).toHaveCSS("opacity", "1");
+  expect(await page.getByRole("dialog", { name: "编辑充值套餐" }).evaluate(node => {
+    const faded: string[] = [];
+    for (let element: Element | null = node; element; element = element.parentElement) {
+      const style = getComputedStyle(element);
+      if (Number(style.opacity) < 1 || style.filter !== "none") faded.push(`${element.className}: ${style.opacity} / ${style.filter}`);
+    }
+    return faded;
+  })).toEqual([]);
+  await capture(page, "edit-plan");
+  await page.keyboard.press("Escape");
+  await page.goto("/admin#订阅会员");
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.getByRole("button", { name: "编辑方案", exact: true }).first().click();
+  await expect(page.getByRole("dialog", { name: "编辑订阅方案" })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "编辑订阅方案" })).toHaveCSS("animation-name", "none");
+  await capture(page, "edit-membership");
+});
+
+test("help creator and all record editors retain failed changes and can save again", async ({ page }) => {
+  test.setTimeout(120_000);
+  page.setDefaultTimeout(10_000);
+  await adminFixtures(page);
+  let fail = true;
+  const requests: Array<{ path: string; body: Record<string, unknown> }> = [];
+  await page.route("**/api/**", async route => {
+    if (!["PATCH", "POST"].includes(route.request().method())) return route.fallback();
+    requests.push({ path: new URL(route.request().url()).pathname, body: route.request().postDataJSON() });
+    return route.fulfill(fail ? { status: 503, json: { message: "测试保存失败，请重试" } } : { json: { id: "saved", ...route.request().postDataJSON() } });
+  });
+  const editors = [
+    { module: "平台公告", trigger: /^编辑公告 /, title: "编辑平台公告", field: "标题", value: "更新公告标题", save: "保存", key: "title" },
+    { module: "平台公告", help: true, trigger: /^编辑文章 /, title: "编辑帮助文章", field: "标题", value: "更新帮助标题", save: "保存", key: "title" },
+    { module: "套餐会员", trigger: /^编辑$/, title: "编辑充值套餐", field: "套餐名称", value: "新的充值套餐", save: "保存修改", key: "name" },
+    { module: "订阅会员", trigger: /^编辑方案$/, title: "编辑订阅方案", field: "方案名称", value: "新的订阅方案", save: "保存方案", key: "name" },
+    { module: "模型路由", trigger: /展开文字创作渠道/, title: "编辑文字创作渠道", field: "渠道名称", value: "更新文字渠道", save: "保存渠道", key: "name" },
+    { module: "价格策略", trigger: /^编辑价格$/, title: "编辑价格策略", field: /^积分 \//, value: "25", save: "保存价格", key: "unitCredits" },
+    { module: "兑换码", trigger: /^编辑$/, title: "编辑兑换码", field: "活动名称", value: "更新兑换活动", save: "保存兑换码", key: "name" }
+  ];
+  for (const editor of editors) {
+    await page.goto(`/admin#${encodeURIComponent(editor.module)}`);
+    if (editor.help) await page.getByRole("button", { name: /帮助中心/ }).last().click();
+    if (editor.module === "价格策略") await page.getByRole("button", { name: "展开价格", exact: true }).first().click();
+    if (editor.module === "兑换码" && await page.getByRole("button", { name: "展开批次", exact: true }).first().isVisible()) await page.getByRole("button", { name: "展开批次", exact: true }).first().click();
+    await page.getByRole("button", { name: editor.trigger }).first().click();
+    const dialog = page.getByRole("dialog", { name: editor.title, exact: true });
+    await dialog.getByLabel(editor.field, { exact: typeof editor.field === "string" }).fill(editor.value);
+    fail = true;
+    const count = requests.length;
+    await dialog.getByRole("button", { name: editor.save, exact: true }).click();
+    await expect(dialog.getByText("测试保存失败，请重试", { exact: false }).first()).toBeVisible();
+    await expect(dialog.getByLabel(editor.field, { exact: typeof editor.field === "string" })).toHaveValue(editor.value);
+    expect(requests.length).toBe(count + 1);
+    expect(String(requests.at(-1)!.body[editor.key])).toBe(editor.value);
+    fail = false;
+    await dialog.getByRole("button", { name: editor.save, exact: true }).click();
+    await expect.poll(() => requests.length).toBe(count + 2);
+    await expect(page.locator('[role="dialog"][aria-busy="true"]')).toHaveCount(0);
+    await capture(page, `saved-${editor.module}${editor.help ? "-help" : ""}`);
+    // The fixture read remains immutable; dismiss retained editors before the next route.
+    if (await dialog.isVisible()) {
+      await page.keyboard.press("Escape");
+      const discard = page.getByRole("alertdialog").getByRole("button", { name: "放弃修改", exact: true });
+      if (await discard.isVisible()) await discard.click();
+    }
+  }
+  await page.goto("/admin#平台公告");
+  await page.getByRole("button", { name: /帮助中心/ }).last().click();
+  await page.getByRole("button", { name: "新增帮助", exact: true }).click();
+  const help = page.getByRole("dialog");
+  await help.getByLabel("标题", { exact: true }).fill("界面验证帮助");
+  await help.getByLabel("正文", { exact: true }).fill("这是隔离的帮助文章提交验证。");
+  await capture(page, "create-help");
+  const before = requests.length;
+  await help.locator(".admin-modal-footer .admin-primary-btn").click();
+  await expect.poll(() => requests.length).toBe(before + 1);
+  expect(requests.at(-1)!.path).toBe("/api/admin/help-articles");
 });

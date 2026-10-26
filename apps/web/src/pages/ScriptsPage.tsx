@@ -1,9 +1,10 @@
-import { BookOpen, Clapperboard, LoaderCircle, Plus, Trash2 } from "lucide-react";
+import { LoaderCircle, Plus, Trash2 } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import type { ContentProjectSummary, Project } from "@aifilm/shared";
 import { contentMatchesFilter, contentWorkState, createWorkDeletionRunner, productionMatchesFilter, productionWorkState, worksFilterTabs, type WorksFilter } from "./scriptsPageModel";
 import "./scripts-page.css";
 import { ConfirmDialog, InlineNotice, PageHeader, StatePanel } from "../design-system/ui";
+import { StudioIcon } from "../design-system/StudioIcon";
 import "./creator-pages.css";
 
 export function ScriptsPage({
@@ -57,7 +58,7 @@ export function ScriptsPage({
     <div className="page-stack scripts-page creator-page">
       <PageHeader title="我的作品" description={`共 ${totalCount} 部作品 · 从故事到成片，继续上次创作。`} actions={<>
           <button className="ghost-button" type="button" onClick={onNewContent}>
-            <BookOpen size={16} /> 写新故事
+            <StudioIcon stage="content" size={18} /> 写新故事
           </button>
           <button className="primary-button" type="button" onClick={onNew}>
             <Plus size={16} /> 新建漫剧
@@ -78,7 +79,7 @@ export function ScriptsPage({
       {sectionOrder.map(kind => kind === "content" ? (
       <section key="content" className={`panel works-section${!visibleContent.length && visibleProjects.length ? " is-compact-empty" : ""}`} aria-labelledby="works-content-heading">
         <header className="works-section-head">
-          <BookOpen size={17} />
+          <StudioIcon stage="content" size={20} />
           <div>
             <h2 id="works-content-heading">内容创作</h2>
             <small>小说 / 大纲 / 章节，从这里开始，可交接进入漫剧制作</small>
@@ -92,6 +93,7 @@ export function ScriptsPage({
               const status = contentWorkState(item);
               return (
                 <article className="project-card content-work-card" key={item.id} aria-labelledby={`content-work-${item.id}`}>
+                  <div className="studio-work-kind"><StudioIcon stage="content" size={18} /><span>故事手稿</span><small>{item.chapterCount} 章</small></div>
                   <div className="works-card-heading">
                     <h3 id={`content-work-${item.id}`}><button className="works-card-open" type="button" aria-label={`打开内容创作 ${item.title}`} onClick={() => onOpenContent(item.id)}>{item.title}</button></h3>
                     <span className={`work-status is-${status.tone}`}>{status.label}</span>
@@ -117,7 +119,7 @@ export function ScriptsPage({
       ) : (
       <section key="production" className={`panel works-section${!visibleProjects.length && visibleContent.length ? " is-compact-empty" : ""}`} data-tour-id="project-list" aria-labelledby="works-production-heading">
         <header className="works-section-head">
-          <Clapperboard size={17} />
+          <StudioIcon stage="shots" size={20} />
           <div>
             <h2 id="works-production-heading">漫剧作品</h2>
             <small>分镜、图片、视频与成片都在作品生产台里</small>
@@ -132,6 +134,7 @@ export function ScriptsPage({
               const opening = openingId === project.id;
               const deleting = deletingIds.has(project.id);
               return <article className={`project-card ${opening ? "is-opening" : ""}`} key={project.id} aria-labelledby={`production-work-${project.id}`} aria-busy={opening || deleting}>
+                <div className="studio-work-kind"><StudioIcon stage="shots" size={18} /><span>漫剧项目</span><small>{project.videoRatio}</small></div>
                 <div className="works-card-heading">
                   <h3 id={`production-work-${project.id}`}><button className="works-card-open" type="button" disabled={opening || deleting} aria-label={`打开漫剧作品 ${project.name}`} onClick={() => onOpen(project.id)}>{project.name}</button></h3>
                   <span className={`work-status is-${status.tone}`}>{status.label}</span>

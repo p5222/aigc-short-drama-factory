@@ -10,6 +10,7 @@ import { buildEstimateInput, buildGenerationInput, creationBillingSignature, cre
 import { CREATION_ATTEMPT_KEY, getCreationRequestId } from "./creationAttemptStorage";
 import { BEFORE_CREATOR_NAVIGATION } from "../lib/creatorNavigation";
 import { InlineNotice, PageHeader } from "../design-system/ui";
+import { StudioIcon, studioStages } from "../design-system/StudioIcon";
 import "./creator-pages.css";
 
 interface WizardPageProps {
@@ -351,8 +352,8 @@ export function WizardPage({ providers, canManageModels = false, onCreated, onCr
     return <div className="page-stack creation-entry-page creator-page" data-tour-id="creation-entry">
       <PageHeader title="让一个新故事，从这里开始" description="选择你的创作起点，逐步完成从文字到画面的制作。" />
       <div className="creation-entry-grid">
-        <button type="button" onClick={onCreateContent}><span className="creation-entry-icon"><Sparkles size={25} /></span><small>从灵感出发</small><strong>先写一个故事</strong><span>把一句灵感发展为大纲、章节和剧本，再进入漫剧制作。</span><b>开始内容创作 <ChevronRight size={18} /></b></button>
-        <button type="button" onClick={openBlankEditor}><span className="creation-entry-icon"><BookOpenCheck size={25} /></span><small>从原稿出发</small><strong>导入小说或剧本</strong><span>导入你准备好的文本，确认视觉风格与制作范围，建立新项目。</span><b>导入我的原稿 <ChevronRight size={18} /></b></button>
+        <button type="button" onClick={onCreateContent}><span className="creation-entry-icon"><StudioIcon stage="content" size={24} /></span><small>01 / 从灵感出发</small><strong>先写一个故事</strong><span>把一句灵感发展为大纲、章节和剧本，再进入漫剧制作。</span><b>开始内容创作 <ChevronRight size={18} /></b></button>
+        <button type="button" onClick={openBlankEditor}><span className="creation-entry-icon"><FileUp size={24} /></span><small>02 / 从原稿出发</small><strong>导入小说或剧本</strong><span>导入你准备好的文本，确认视觉风格与制作范围，建立新项目。</span><b>导入我的原稿 <ChevronRight size={18} /></b></button>
       </div>
       {recoverableDraft?.content.trim() ? <section className="creation-draft-recovery" aria-label="可恢复的草稿">
         <FileText size={22} /><div><strong>{recoverableDraft.title || "未命名草稿"}</strong><span>此浏览器有一份未完成草稿 · {recoverableDraft.content.trim().length.toLocaleString()} 字</span></div>
@@ -360,7 +361,7 @@ export function WizardPage({ providers, canManageModels = false, onCreated, onCr
       </section> : null}
       <section className="creation-journey" aria-label="漫剧制作流程">
         <div><span className="section-kicker">你的制作路线</span><h2>每一步，都有自己的工作空间</h2></div>
-        <ol>{[["剧本", "梳理剧情与场次"], ["资产", "统一角色与场景"], ["分镜", "逐镜生成画面"], ["成片", "配音、合成与导出"]].map(([title, hint], index) => <li key={title}><span>0{index + 1}</span><strong>{title}</strong><small>{hint}</small></li>)}</ol>
+        <ol>{studioStages.map(stage => <li key={stage.id}><span><StudioIcon stage={stage.id} size={20} /></span><strong>{stage.label}</strong><small>{stage.detail}</small></li>)}</ol>
       </section>
       <p className="creator-page-footnote">新项目从空白开始。已有作品可在“我的作品”继续编辑；每次生成前都会单独确认费用。</p>
     </div>;

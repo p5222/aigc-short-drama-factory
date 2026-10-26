@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef } from "react";
-import { canLeaveAdminEditor } from "./adminDirtyState";
+import { confirmAdminAction } from "./AdminConfirm";
 import { dialogStackForDocument } from "../design-system/dialogStack";
 
 export function useAdminDialog(open: boolean, onClose: () => void, busy = false) {
@@ -7,8 +7,12 @@ export function useAdminDialog(open: boolean, onClose: () => void, busy = false)
   const titleId = useId();
   const options = useRef({ onClose, busy });
   options.current = { onClose, busy };
-  const requestClose = () => {
-    if (!options.current.busy && (!dialogRef.current || canLeaveAdminEditor(dialogRef.current))) options.current.onClose();
+  const requestClose = async () => {
+    if (options.current.busy) return;
+    const dialog = dialogRef.current;
+    const dirty = dialog?.matches('[data-admin-dirty="true"]') || dialog?.querySelector('[data-admin-dirty="true"]');
+    if (dirty && !await confirmAdminAction("当前有尚未保存的修改，关闭后将放弃这些修改。", { title: "放弃未保存的修改？", confirmLabel: "放弃修改" })) return;
+    if (!options.current.busy) options.current.onClose();
   };
   useEffect(() => {
     const dialog = dialogRef.current;

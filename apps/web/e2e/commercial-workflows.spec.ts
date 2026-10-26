@@ -202,13 +202,16 @@ test("admin users create, validate, edit, delete and restore with recoverable fa
   await expect(dialog.getByLabel("用户名", { exact: true })).toHaveValue("修改后用户");
   await dialog.getByRole("button", { name: "保存账号资料" }).click();
   await expect(dialog.getByRole("button", { name: "保存账号资料" })).toBeDisabled();
+  await dialog.getByRole("button", { name: "账号安全", exact: true }).click();
   await expect(dialog.getByRole("button", { name: "删除用户", exact: true })).toBeDisabled();
+  await dialog.getByRole("button", { name: "资料与权限", exact: true }).click();
   await dialog.getByRole("combobox", { name: "账号状态", exact: true }).selectOption("disabled");
   await dialog.getByRole("button", { name: "保存账号资料" }).click();
+  await dialog.getByRole("button", { name: "账号安全", exact: true }).click();
   await expect(dialog.getByRole("button", { name: "删除用户", exact: true })).toBeEnabled();
   await noOverflow(page);
-  page.once("dialog", prompt => prompt.accept());
   await dialog.getByRole("button", { name: "删除用户", exact: true }).click();
+  await page.getByRole("alertdialog", { name: "删除用户" }).getByRole("button", { name: "移入回收站", exact: true }).click();
   await expect(dialog).toHaveCount(0);
   await expect(page.getByRole("cell").filter({ hasText: "修改后用户" })).toHaveCount(0);
   await page.getByRole("button", { name: /回收站/ }).click();

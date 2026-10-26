@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ChevronLeft, ChevronRight, Menu, PanelLeftClose, PanelLeftOpen, Search, ShieldCheck, SunMoon, X } from "lucide-react";
 import { dialogStackForDocument } from "../design-system/dialogStack";
+import { AdminConfirmHost } from "./AdminConfirm";
 import "./admin-navigation.css";
 
 export interface AdminNavItem { id: string; label: string; group?: string; icon?: ReactNode; badge?: string | number; }
@@ -59,5 +60,6 @@ export function AdminShell({ title, description, items, activeId, onNavigate, on
     </aside>
     {compact && mobileOpen ? <button className="adm-scrim" tabIndex={-1} aria-label="关闭导航" onClick={() => onMobileOpenChange?.(false)} /> : null}
     <section className="adm-main" inert={compact && Boolean(mobileOpen)}><header className="adm-topbar"><button ref={trigger} className="adm-icon-btn adm-menu-trigger" type="button" aria-label="打开导航" aria-controls="admin-sidebar" aria-expanded={Boolean(mobileOpen)} onClick={() => onMobileOpenChange?.(true)}><Menu /></button><div className="adm-location" aria-label={description || title}><span>{activeItem?.group || "工作空间"}</span><ChevronRight size={14} aria-hidden="true" /><strong>{activeItem?.label || title}</strong></div><div className="adm-topbar-actions">{actions}{onThemeToggle ? <button className="adm-icon-btn" type="button" aria-label="切换主题" onClick={onThemeToggle}><SunMoon /></button> : null}</div></header><main className="adm-content" id="admin-main-content" tabIndex={-1}>{children}</main></section>
+    <AdminConfirmHost />
   </div>;
 }

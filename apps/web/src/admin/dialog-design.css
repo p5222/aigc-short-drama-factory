@@ -1,0 +1,148 @@
+/* Modal dimensions/spacing follow Sub2API BaseDialog + style.css (2026-10-26).
+   This owns all admin overlays; no body portal depends on creator theme tokens. */
+.admin-product :is(.admin-modal-backdrop, .adm-detail-layer, .admin-confirm-backdrop) {
+  position: fixed; inset: 0; z-index: 1200; display: flex; align-items: center; justify-content: center;
+  padding: 16px; background: rgb(0 0 0 / 50%); backdrop-filter: blur(4px);
+}
+.admin-product .admin-confirm-backdrop { z-index: 1300; }
+.admin-product :is(.admin-modal, .adm-detail, .admin-confirm) {
+  display: flex; flex-direction: column; width: min(512px,100%); min-width: 0; height: auto;
+  max-height: 90dvh; overflow: hidden; border: 1px solid var(--adm-border); border-radius: 16px;
+  background: var(--adm-surface); color: var(--adm-text); box-shadow: 0 25px 50px -12px rgb(0 0 0 / 25%);
+  animation: none;
+  white-space: normal; text-align: left; font: 400 14px/1.6 var(--ds-font-body);
+}
+.admin-product .admin-modal.wide { width: min(768px,100%); }
+.admin-product .admin-modal:has(.admin-user-create-strip) { width: min(576px,100%); }
+.admin-product .admin-modal:has(.admin-channel-create-layout) { width: min(896px,100%); }
+.admin-product .adm-detail { width: min(768px,100%); }
+.admin-product .admin-detail-actions { display: contents; }
+.admin-product :is(.admin-modal-head, .adm-detail > header) {
+  flex: none; display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
+  position: static; padding: 16px 24px; background: var(--adm-surface); border-bottom: 1px solid var(--adm-border);
+}
+.admin-product :is(.admin-modal-head, .adm-detail > header) > div { min-width: 0; }
+.admin-product :is(.admin-modal-head h2, .adm-detail h2) { margin: 0; font-size: 18px; line-height: 28px; font-weight: 600; letter-spacing: 0; color: var(--adm-text); }
+.admin-product :is(.admin-modal-head p, .adm-detail > header p) { margin: 4px 0 0; color: var(--adm-muted); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.admin-product :is(.admin-modal-head, .adm-detail > header, .admin-confirm header) :is(.admin-icon-btn,.adm-icon-btn) {
+  flex: 0 0 36px; width: 36px; min-height: 36px; padding: 8px; margin-right: -8px; border: 0; background: transparent; color: var(--adm-muted);
+}
+.admin-product :is(.admin-modal-body, .adm-detail-body) {
+  min-height: 0; flex: 1; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; padding: 24px;
+}
+.admin-product .admin-modal-body > .ui-notice { margin-bottom: 16px; }
+.admin-product :is(.admin-modal-footer, .adm-detail > footer) {
+  flex: none; display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 12px; padding: 16px 24px;
+  border-top: 1px solid var(--adm-border); background: var(--adm-surface-2); border-radius: 0 0 16px 16px;
+}
+.admin-product .admin-modal-footer > div { display: contents; }
+.admin-product .admin-modal-form {
+  display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 20px; margin: 0; padding: 0 !important;
+  background: transparent; border: 0; box-shadow: none;
+}
+.admin-product .admin-modal-form > div:first-child:not(.admin-password-field) {
+  grid-column: 1/-1; display: grid; gap: 4px; padding: 14px 16px; border: 1px solid var(--adm-border);
+  border-radius: 12px; background: var(--adm-surface-2); color: var(--adm-text);
+}
+.admin-product .admin-modal-form > div:first-child strong { font-size: 14px; font-weight: 500; }
+.admin-product .admin-modal-form > div:first-child span { font-size: 12px; color: var(--adm-muted); }
+.admin-product .admin-modal-form .wide { grid-column: 1/-1; }
+.admin-product :is(.admin-create-field,.admin-channel-field-grid label) { display: grid; gap: 6px; align-content: start; min-width: 0; }
+.admin-product :is(.admin-create-field,.admin-channel-field-grid label) > span { color: var(--adm-text) !important; font-size: 14px !important; font-weight: 500 !important; }
+.admin-product :is(.admin-create-field,.admin-channel-field-grid label) small { font-size: 12px; color: var(--adm-muted); line-height: 1.6; }
+.admin-product :is(.admin-modal,.adm-detail) :is(input:not([type=checkbox]):not([type=radio]),select,textarea) {
+  width: 100%; max-width: 100%; box-sizing: border-box; min-height: 42px; border: 1px solid var(--adm-border);
+  border-radius: 12px; padding: 10px 14px; background: var(--adm-surface); color: var(--adm-text); font: 400 14px/20px var(--ds-font-body);
+}
+.admin-product :is(.admin-modal,.adm-detail) textarea { min-height: 120px; resize: vertical; }
+.admin-product :is(.admin-modal,.adm-detail) :is(input,select,textarea):focus { border-color: var(--adm-accent); outline: 2px solid color-mix(in srgb,var(--adm-accent) 24%,transparent); outline-offset: 0; }
+.admin-product :is(.admin-modal,.adm-detail) [aria-invalid=true] { border-color: var(--adm-danger); }
+.admin-product .checkbox-field { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; border: 1px solid var(--adm-border); border-radius: 12px; }
+.admin-product input[type=checkbox] { accent-color: var(--adm-accent); }
+.admin-product .checkbox-field input { width: 18px; height: 18px; min-height: 18px; }
+.admin-product .admin-form-section-title { display: flex; align-items: baseline; flex-wrap: wrap; gap: 12px; padding-top: 16px; margin: 0; border-top: 1px solid var(--adm-border); font-size: 14px; font-weight: 600; }
+.admin-product .admin-form-section-title:first-child { padding-top: 0; border: 0; }
+.admin-product .admin-form-section-title small { font-size: 12px; font-weight: 400; color: var(--adm-muted); }
+.admin-product .admin-password-field { position: relative; min-width: 0; }
+.admin-product .admin-password-field input { padding-right: 64px !important; }
+.admin-product .admin-password-field button { position: absolute; right: 8px; top: 5px; color: var(--adm-accent) !important; background: transparent !important; border: 0 !important; min-height: 32px !important; padding: 4px 8px !important; }
+.admin-product .admin-channel-create-layout { display: grid !important; grid-template-columns: 172px minmax(0,1fr) !important; gap: 24px !important; padding: 0 !important; }
+.admin-product .admin-channel-presets { padding: 0 16px 0 0 !important; background: transparent !important; border: 0 !important; border-right: 1px solid var(--adm-border) !important; border-radius: 0 !important; }
+.admin-product .admin-channel-presets > span { font-size: 12px; }
+.admin-product .admin-channel-presets > strong { color: var(--adm-text) !important; }
+.admin-product .admin-channel-presets button { padding: 12px !important; border-radius: 10px !important; background: var(--adm-surface) !important; border: 1px solid var(--adm-border) !important; color: var(--adm-text) !important; }
+.admin-product .admin-channel-presets button.active { background: var(--adm-accent-soft) !important; border-color: var(--adm-accent) !important; }
+.admin-product .admin-channel-presets button b { font-size: 13px; font-weight: 500; color: inherit !important; }
+.admin-product .admin-channel-presets button small { font-size: 11px; color: var(--adm-muted) !important; overflow-wrap: anywhere; }
+.admin-product .admin-channel-create-main { min-width: 0; gap: 20px !important; }
+.admin-product .admin-channel-create-note { display: none !important; }
+.admin-product .admin-channel-create-card { border: 0 !important; border-radius: 0 !important; padding: 0 !important; background: transparent !important; box-shadow: none !important; }
+.admin-product .admin-channel-create-card + .admin-channel-create-card { padding-top: 20px !important; border-top: 1px solid var(--adm-border) !important; }
+.admin-product .admin-channel-create-card h3 { font-size: 14px !important; font-weight: 600 !important; color: var(--adm-text) !important; margin: 0 0 16px !important; }
+.admin-product .admin-channel-field-grid { gap: 16px !important; }
+.admin-product .admin-confirm { width: min(448px,100%); padding: 24px; }
+.admin-product .admin-confirm header { display: flex; justify-content: space-between; align-items: flex-start; }
+.admin-product .admin-confirm-icon { display: grid; place-items: center; width: 48px; height: 48px; border-radius: 50%; background: var(--adm-accent-soft); color: var(--adm-accent); }
+.admin-product .admin-confirm-icon.danger { background: color-mix(in srgb,var(--adm-danger) 10%,var(--adm-surface)); color: var(--adm-danger); }
+.admin-product .admin-confirm h2 { font-size: 18px; font-weight: 600; margin: 16px 0 8px; }
+.admin-product .admin-confirm p { margin: 0; font-size: 14px; line-height: 1.8; color: var(--adm-muted); overflow-wrap: anywhere; }
+.admin-product .admin-confirm footer { display: flex; justify-content: flex-end; gap: 12px; margin-top: 24px; }
+.admin-product .admin-danger-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 42px; padding: 10px 16px; border: 1px solid var(--adm-danger); border-radius: 12px; color: #fff; background: var(--adm-danger); font: 500 14px/20px var(--ds-font-body); cursor: pointer; }
+.admin-product .admin-user-tabs { display: flex; gap: 4px; padding: 4px; border-radius: 12px; background: var(--ds-bg-muted); }
+.admin-product .admin-user-tabs button { display: flex; align-items: center; justify-content: center; gap: 8px; flex: 1; border: 0; padding: 10px 8px; border-radius: 9px; background: transparent; color: var(--adm-muted); font: 500 13px/1.4 var(--ds-font-body); cursor: pointer; }
+.admin-product .admin-user-tabs button[aria-pressed=true] { background: var(--adm-surface); color: var(--adm-accent); box-shadow: 0 1px 3px rgb(0 0 0 / 8%); }
+.admin-product .adm-user-profile > [hidden] { display: none !important; }
+.admin-product .adm-user-form-section[hidden] { display: none !important; }
+.admin-product .adm-user-profile > .adm-user-form-section { border: 0; padding: 0; }
+.admin-product .adm-user-form-section button { width: fit-content; justify-self: end; padding-inline: 18px; }
+.admin-product .adm-user-stat-grid { grid-template-columns: repeat(3,minmax(0,1fr)); }
+.admin-product .adm-user-stat-grid > div { border: 0; }
+.admin-product .adm-user-stat-grid dd { font-size: 22px; }
+.admin-product .adm-user-contact { padding-bottom: 4px; }
+.admin-product .adm-user-dates { padding: 16px 0; }
+.admin-product .admin-record-open { display: flex; width: 100%; justify-content: space-between; align-items: center; gap: 20px; padding: 20px 24px; border: 0; border-radius: 16px; background: transparent; color: var(--adm-text); text-align: left; font: inherit; cursor: pointer; }
+.admin-product .admin-record-open:hover { background: var(--adm-surface-2); }
+.admin-product .admin-record-open > div:first-child { min-width: 0; }
+.admin-product .admin-record-open strong { font-size: 14px; font-weight: 600; }
+.admin-product .admin-record-open p { margin: 6px 0 0; color: var(--adm-muted); font-size: 13px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; }
+.admin-product .admin-modal .admin-announcement-card-head { padding: 0 0 16px; }
+.admin-product .admin-modal :is(.admin-announcement-form-grid,.admin-help-form-grid,.admin-provider-expanded) { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 20px; padding: 0; border: 0; background: transparent; }
+.admin-product .admin-modal :is(.admin-announcement-form-grid,.admin-help-form-grid,.admin-provider-expanded) > label { display: grid; align-content: start; gap: 6px; min-width: 0; }
+.admin-product .admin-modal :is(.admin-announcement-form-grid,.admin-help-form-grid,.admin-provider-expanded) > .wide { grid-column: 1/-1; }
+.admin-product .admin-modal label > span { color: var(--adm-text); font-weight: 500; }
+.admin-product .admin-user-danger-zone { border: 1px solid color-mix(in srgb,var(--adm-danger) 25%,var(--adm-border)) !important; border-radius: 12px; padding: 16px !important; }
+.admin-product .admin-user-danger-zone h3 { color: var(--adm-danger); }
+.admin-product .admin-modal-body .admin-editor-actions { position: static; }
+.admin-product .admin-modal-footer .admin-text-btn.danger { margin-right: auto; }
+.admin-product .admin-modal-footer:has(.admin-text-btn.danger) > .admin-secondary-btn:first-child { order: 1; }
+.admin-product .admin-modal-footer .admin-primary-btn { order: 2; }
+.admin-product .admin-provider-expanded { color: var(--adm-text); }
+.admin-product .admin-provider-expanded :is(label > span,h3,strong) { color: var(--adm-text) !important; }
+.admin-product .admin-provider-compact > span { color: var(--adm-muted) !important; background: var(--adm-surface-2) !important; border-color: var(--adm-border) !important; }
+.admin-product .admin-provider-title strong { color: var(--adm-text) !important; }
+.admin-product .admin-provider-model-chips span { color: var(--adm-accent) !important; background: var(--adm-accent-soft) !important; border-color: var(--adm-border) !important; }
+.admin-product .admin-provider-card .admin-text-btn { background: transparent !important; color: var(--adm-accent) !important; border-color: var(--adm-border) !important; }
+.admin-product .admin-provider-card .admin-secondary-btn { background: var(--adm-surface) !important; color: var(--adm-text) !important; border-color: var(--adm-border) !important; }
+@keyframes admin-dialog-enter { from { opacity: 0; transform: translateY(6px) scale(.98); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: no-preference) {
+  .admin-product :is(.admin-modal,.adm-detail,.admin-confirm) { animation: admin-dialog-enter 180ms ease-out; }
+}
+@media (max-width: 600px) {
+  .admin-product :is(.admin-modal-backdrop,.adm-detail-layer,.admin-confirm-backdrop) { padding: 8px !important; }
+  .admin-product :is(.admin-modal,.adm-detail,.admin-confirm) { max-height: 95dvh; }
+  .admin-product :is(.admin-modal-head,.adm-detail > header,.admin-modal-footer,.adm-detail > footer) { padding: 12px 16px; }
+  .admin-product :is(.admin-modal-body,.adm-detail-body) { padding: 16px; }
+  .admin-product .admin-modal-form { grid-template-columns: minmax(0,1fr); gap: 16px; }
+  .admin-product .admin-channel-create-layout { grid-template-columns: minmax(0,1fr) !important; gap: 16px !important; }
+  .admin-product .admin-channel-presets { display: grid !important; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px; border: 0 !important; padding: 0 !important; }
+  .admin-product .admin-channel-presets > :is(strong,span) { grid-column: 1/-1; }
+  .admin-product .admin-channel-field-grid { grid-template-columns: minmax(0,1fr) !important; }
+  .admin-product .admin-modal :is(.admin-announcement-form-grid,.admin-help-form-grid,.admin-provider-expanded,.admin-editor-grid) { grid-template-columns: minmax(0,1fr); }
+  .admin-product .admin-record-open { flex-wrap: wrap; padding: 16px; gap: 12px; }
+  .admin-product .admin-user-tabs button { font-size: 12px; gap: 5px; }
+  .admin-product .admin-user-tabs svg { width: 15px; }
+  .admin-product .adm-user-stat-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .admin-product :is(.admin-modal,.adm-detail,.admin-confirm) { animation: none; }
+}
