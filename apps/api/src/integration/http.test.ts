@@ -54,6 +54,7 @@ test("HTTP business boundaries: sessions, administrator writes, private media an
     cwd: resolve(import.meta.dirname, "../.."), stdio: ["ignore", "pipe", "pipe"], env: {
       ...process.env, AIFILM_LOAD_ENV_FILES: "false", NODE_ENV: "test", DATABASE_URL: databaseUrl!,
       DEEPSEEK_API_KEY: "", WECHAT_PAY_ENABLED: "false",
+      REGISTRATION_SMTP_USER: "", REGISTRATION_SMTP_PASSWORD: "",
       REDIS_URL: redisUrl.toString(), API_PORT: String(port), PUBLIC_API_BASE_URL: base,
       OBJECT_STORAGE_LOCAL_DIR: root, MEDIA_SIGNING_KEY: "http-review-test-signing-key-at-least-32-bytes",
       SEED_DEFAULT_USERS: "false", SEED_DEMO_USER: "false", SEED_DEMO_DATA: "false", API_RATE_LIMIT_MAX: "1000"
@@ -83,17 +84,16 @@ test("HTTP business boundaries: sessions, administrator writes, private media an
       sessions.push({ token: body.token, cookie: response.headers.get("set-cookie")!.split(";")[0]! });
     }
     const [owner, other, admin] = sessions as [typeof sessions[number], typeof sessions[number], typeof sessions[number]];
-    await t.test("concurrent registration creates exactly one user with its credit account", async () => {
+    await t.test("registration cannot bypass QQ email verification when SMTP is unavailable", async () => {
       const email = `registration_${run}@example.test`;
-      try {
-        const results = await Promise.all(Array.from({ length: 3 }, () => request("/api/auth/register", undefined, "POST", { email, password, name: "Registration test" })));
-        assert.deepEqual(results.map(response => response.status).sort(), [201, 409, 409]);
-        const users = await db.user.findMany({ where: { email }, include: { credit: true } });
-        assert.equal(users.length, 1);
-        assert.ok(users[0]!.credit);
-        assert.equal(users[0]!.credit!.balance, users[0]!.credit!.totalRecharge);
-        assert.equal(users[0]!.credit!.frozenBalance, 0);
-      } finally { await db.user.deleteMany({ where: { email } }); }
+      const policy = await (await request("/api/auth/registration-policy")).json();
+      assert.equal(policy.mailAvailable, false);
+      assert.equal(policy.phoneRequired, true);
+      assert.equal(policy.smsRequired, false);
+      assert.equal((await request("/api/auth/email/send", undefined, "POST", { email: "12345678@qq.com" })).status, 503);
+      assert.equal((await request("/api/auth/register", undefined, "POST", { email, password })).status, 400);
+      assert.equal((await request("/api/auth/register", undefined, "POST", { email: "12345678@qq.com", phone: "13900000001", password, verificationToken: "a".repeat(64) })).status, 400);
+      assert.equal(await db.user.count({ where: { email } }), 0);
     });
     await t.test("workbench counts cover old work beyond recent slices and do not count another user", async () => {
       const prefix = `summary_${run}_`;

@@ -82,6 +82,15 @@ export interface AuthResult {
   token: string;
   user: AuthUser;
 }
+export interface RegistrationPolicy {
+  emailDomain: "qq.com";
+  phoneRequired: true;
+  smsRequired: false;
+  emailVerificationRequired: true;
+  mailAvailable: boolean;
+  codeTtlSeconds: number;
+  resendAfterSeconds: number;
+}
 
 export interface AdminContentProject {
   id: string;
@@ -114,7 +123,16 @@ export const api = {
       method: "POST",
       body: JSON.stringify(input)
     }),
-  register: (input: { phone?: string; email: string; password: string }) =>
+  registrationPolicy: () => request<RegistrationPolicy>("/auth/registration-policy"),
+  sendRegistrationCode: (email: string) =>
+    request<{ sent: true; expiresInSeconds: number; resendAfterSeconds: number }>("/auth/email/send", {
+      method: "POST", body: JSON.stringify({ email })
+    }),
+  verifyRegistrationCode: (email: string, code: string) =>
+    request<{ verificationToken: string; expiresInSeconds: number }>("/auth/email/verify", {
+      method: "POST", body: JSON.stringify({ email, code })
+    }),
+  register: (input: { phone: string; email: string; password: string; verificationToken: string }) =>
     request<AuthResult>("/auth/register", {
       method: "POST",
       body: JSON.stringify(input)

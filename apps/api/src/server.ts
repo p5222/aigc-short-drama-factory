@@ -12,6 +12,7 @@ import { createCharacterConsistencyPlan, createRelayGatewayPolicy, createWebNove
 import { getLingGuoAdapterMetadata } from "./agents/lingguoAdapter.js";
 import { getToonflowAdapterMetadata } from "./agents/toonflowAdapter.js";
 import { hashPassword, verifyPassword } from "./auth/password.js";
+import { EmailVerificationError, EmailVerificationService, QQ_EMAIL_PATTERN } from "./auth/emailVerification.js";
 import { mockCheckoutEnabled } from "./billing/checkoutPolicy.js";
 import { acceptWechatTransaction, getMembership, paymentAvailability, prepareCheckout, reconcilePayment, recoverPayments, startCheckout } from "./billing/payments.js";
 import { decryptWechatNotification, PaymentError, wechatConfig } from "./billing/wechat.js";
@@ -162,6 +163,9 @@ const rateLimiter = new RequestRateLimiter(rateLimitWindowMs, positiveInteger(pr
 setInterval(() => rateLimiter.sweep(), Math.min(rateLimitWindowMs, 60_000)).unref();
 const isProduction = process.env.NODE_ENV === "production";
 const mockPaymentEnabled = mockCheckoutEnabled(process.env);
+const registrationRedis = new RedisClient({ ...queueConnection, maxRetriesPerRequest: 1, enableOfflineQueue: false, commandTimeout: 5000 });
+registrationRedis.on("error", () => { /* Requests fail closed; do not log credentials. */ });
+const emailVerification = new EmailVerificationService(registrationRedis);
 
 app.disable("x-powered-by");
 app.use((req, res, next) => {
@@ -271,12 +275,14 @@ const projectRouteUpdateSchema = z.object({
 });
 
 const registerSchema = z.object({
-  name: z.string().optional(),
-  // 手机号改为选填：支持 QQ 邮箱等纯邮箱注册；填了就必须是合法手机号。
-  phone: z.union([z.string().regex(/^1[3-9]\d{9}$/, "请输入 11 位中国大陆手机号"), z.literal("")]).optional(),
-  email: z.string().email(),
+  name: z.string().trim().max(40).optional(),
+  phone: z.string().trim().regex(/^1[3-9]\d{9}$/, "请输入 11 位中国大陆手机号，无需短信验证"),
+  email: z.string().trim().toLowerCase().regex(QQ_EMAIL_PATTERN, "请使用 qq.com 邮箱注册"),
+  verificationToken: z.string().regex(/^[a-f0-9]{64}$/, "请先验证 QQ 邮箱"),
   password: z.string().min(8).max(1024)
 });
+const registrationEmailSchema = registerSchema.pick({ email: true });
+const registrationCodeSchema = registrationEmailSchema.extend({ code: z.string().trim().regex(/^\d{6}$/, "请输入 6 位邮箱验证码") });
 
 const loginSchema = z.object({
   account: z.string().min(1),
@@ -971,6 +977,23 @@ app.get(
   })
 );
 
+app.get("/api/auth/registration-policy", (_req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.json(emailVerification.policy());
+});
+app.post("/api/auth/email/send", asyncRoute(async (req, res) => {
+  const parsed = registrationEmailSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json(parsed.error.flatten());
+  res.setHeader("Cache-Control", "no-store");
+  res.json(await emailVerification.send(parsed.data.email, req.ip || "unknown"));
+}));
+app.post("/api/auth/email/verify", asyncRoute(async (req, res) => {
+  const parsed = registrationCodeSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json(parsed.error.flatten());
+  res.setHeader("Cache-Control", "no-store");
+  res.json(await emailVerification.verify(parsed.data.email, parsed.data.code));
+}));
+
 app.post(
   "/api/auth/register",
   asyncRoute(async (req, res) => {
@@ -978,23 +1001,31 @@ app.post(
     if (!parsed.success) return res.status(400).json(parsed.error.flatten());
 
     const email = parsed.data.email.trim().toLowerCase();
-    const phone = parsed.data.phone?.trim() || null;
-    const existing = await prisma.user.findFirst({ where: { OR: [{ email }, ...(phone ? [{ phone }] : [])] } });
+    const phone = parsed.data.phone;
+    const existing = await prisma.user.findFirst({ where: { OR: [{ email }, { phone }] } });
     if (existing?.email === email) return res.status(409).json({ message: "该邮箱已注册，请直接登录。" });
-    if (phone && existing?.phone === phone) return res.status(409).json({ message: "该手机号已注册，请直接登录。" });
+    if (existing?.phone === phone) return res.status(409).json({ message: "该手机号已注册，请直接登录。" });
 
+    const grantTtl = await emailVerification.consume(email, parsed.data.verificationToken);
+    const grantExpiresAt = Date.now() + grantTtl * 1000;
     const userId = `user_${crypto.randomUUID()}`;
-    const user = await prisma.user.create({
-      data: {
-        id: userId,
-        name: parsed.data.name?.trim() || (phone ? `用户${phone.slice(-4)}` : email.split("@")[0].slice(0, 20) || "创作者"),
-        email,
-        phone,
-        passwordHash: await hashPassword(parsed.data.password),
-        role: "creator",
-        status: "active",
-        credit: { create: initialUserCredit(userId) }
-      }
+    const user = await (async () => {
+      const passwordHash = await hashPassword(parsed.data.password);
+      return prisma.user.create({
+        data: {
+          id: userId,
+          name: parsed.data.name?.trim() || `用户${phone.slice(-4)}`,
+          email,
+          phone,
+          passwordHash,
+          role: "creator",
+          status: "active",
+          credit: { create: initialUserCredit(userId) }
+        }
+      });
+    })().catch(async error => {
+      await emailVerification.restore(email, parsed.data.verificationToken, grantExpiresAt);
+      throw error;
     });
 
     const token = await issueToken(user.id, req, user.passwordHash ?? undefined);
@@ -2751,6 +2782,10 @@ app.post(
 );
 
 app.use((error: unknown, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  if (error instanceof EmailVerificationError) {
+    if (error.retryAfter) res.setHeader("Retry-After", String(error.retryAfter));
+    return res.status(error.status).json({ message: error.message, retryAfterSeconds: error.retryAfter });
+  }
   if (error instanceof ProjectRequestError || error instanceof MediaSourceConflict || error instanceof AnnouncementScheduleError || error instanceof SupportTicketError) return res.status(error.status).json({ message: error.message });
   const message = error instanceof Error ? error.message : "服务器异常";
   const cause = error instanceof Error && "cause" in error ? (error as Error & { cause?: unknown }).cause : undefined;
