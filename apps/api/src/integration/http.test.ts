@@ -84,6 +84,31 @@ test("HTTP business boundaries: sessions, administrator writes, private media an
       sessions.push({ token: body.token, cookie: response.headers.get("set-cookie")!.split(";")[0]! });
     }
     const [owner, other, admin] = sessions as [typeof sessions[number], typeof sessions[number], typeof sessions[number]];
+    await t.test("content edit and deletion return ownership and conflict errors without replacing old versions", async () => {
+      const id = `api_content_edit_${run}`;
+      const chapterId = `api_chapter_edit_${run}`;
+      const taskId = `api_content_operation_${run}`;
+      await db.contentProject.create({ data: { id, userId: ids[0]!, title: "HTTP content protection", mode: "original" } });
+      await db.storyChapter.create({ data: { id: chapterId, contentProjectId: id, chapterNo: 1, title: "Original", content: "原章节中的人物在书店寻找旧信，并逐步核对有关母亲的线索。", status: "confirmed", result: {}, promptSnapshot: {} } });
+      const input = { content: "手动修改后的正文让人物留在书店，先完整阅读旧信，再考虑下一步。", expectedChapterId: chapterId };
+      try {
+        assert.equal((await request(`/api/content/projects/${id}/chapters/1`, other.token, "PATCH", input)).status, 404);
+        assert.equal((await request(`/api/content/projects/${id}/chapters/1`, owner.token, "PATCH", input)).status, 200);
+        assert.equal(await db.storyChapter.count({ where: { contentProjectId: id } }), 2);
+        const stale = await request(`/api/content/projects/${id}/chapters/1`, owner.token, "PATCH", { ...input, content: "另一个窗口基于旧版本尝试修改正文，这次保存需要拒绝以免覆盖新内容。" });
+        assert.equal(stale.status, 409);
+        await db.generationTask.create({ data: { id: taskId, userId: ids[0]!, type: "text", title: "Active content fixture", provider: "fixture", model: "fixture", status: "running", estimatedCredits: 0, jobId: `content:${id}:operation:${taskId}` } });
+        assert.equal((await request(`/api/content/projects/${id}`, other.token, "DELETE")).status, 404);
+        assert.equal((await request(`/api/content/projects/${id}`, owner.token, "DELETE")).status, 409);
+        assert.ok(await db.contentProject.findUnique({ where: { id } }));
+        await db.generationTask.update({ where: { id: taskId }, data: { status: "succeeded", progress: 100, finalCredits: 0 } });
+        assert.equal((await request(`/api/content/projects/${id}`, owner.token, "DELETE")).status, 204);
+        assert.equal(await db.contentProject.findUnique({ where: { id } }), null);
+      } finally {
+        await db.generationTask.deleteMany({ where: { id: taskId } });
+        await db.contentProject.deleteMany({ where: { id } });
+      }
+    });
     await t.test("registration cannot bypass QQ email verification when SMTP is unavailable", async () => {
       const email = `registration_${run}@example.test`;
       const policy = await (await request("/api/auth/registration-policy")).json();

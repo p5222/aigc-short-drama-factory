@@ -503,7 +503,7 @@ function taskStatusText(status: GenerationTask["status"]) {
     succeeded: "已完成",
     failed: "失败",
     canceled: "已取消",
-    refunded: "已退款"
+    refunded: "已解冻"
   };
   return labels[status] ?? status;
 }

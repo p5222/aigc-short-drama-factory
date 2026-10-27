@@ -4,7 +4,7 @@ import type { GenerationTask, TaskStatus, TaskType } from "@aifilm/shared";
 import { Dialog, InlineNotice, StatePanel } from "../../design-system/ui";
 import { canCancelTask, canRetryTask, createTaskActionRunner, taskRecoveryHint, type PendingTaskActions, type TaskAction } from "../../pages/taskActionModel";
 
-const statusLabel: Record<TaskStatus, string> = { pending: "待处理", running: "进行中", succeeded: "已完成", failed: "失败", canceled: "已取消", refunded: "已退款" };
+const statusLabel: Record<TaskStatus, string> = { pending: "待处理", running: "进行中", succeeded: "已完成", failed: "失败", canceled: "已取消", refunded: "已解冻" };
 const typeLabel: Record<TaskType, string> = { text: "文本", storyboard: "分镜拆解", character: "角色", image: "镜头图片", video: "视频", tts: "配音", export: "成片导出" };
 
 export interface TaskDrawerProps {

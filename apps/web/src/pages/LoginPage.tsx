@@ -60,8 +60,8 @@ const copy = {
     createAccount: "创建账号",
     loginIntro: "登录后继续进入 AI 漫剧创作工作台。",
     registerIntro: "填写11位手机号，验证 QQ 邮箱后即可创建账号。",
-    accountLabel: "手机 / 邮箱 / 用户名",
-    accountPlaceholder: "请输入手机号、邮箱或用户名",
+    accountLabel: "手机号 / 邮箱",
+    accountPlaceholder: "请输入手机号或邮箱",
     adminAccountPlaceholder: "请输入管理员邮箱",
     password: "密码",
     passwordPlaceholder: "请输入密码",
@@ -119,8 +119,8 @@ const copy = {
     createAccount: "Create account",
     loginIntro: "Log in to continue your AI comic-drama workspace.",
     registerIntro: "Enter your 11-digit phone number and verify your QQ email to create an account.",
-    accountLabel: "Phone / Email / Username",
-    accountPlaceholder: "Enter phone, email or username",
+    accountLabel: "Phone / Email",
+    accountPlaceholder: "Enter phone or email",
     adminAccountPlaceholder: "Enter admin email",
     password: "Password",
     passwordPlaceholder: "Enter password",
@@ -713,7 +713,7 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
     const cleanCaptcha = captchaInput.trim().toUpperCase();
 
     if (activeMode === "login" && !cleanAccount) {
-      setMessage(locale === "cn" ? "请输入手机号、邮箱或用户名。" : "Please enter phone, email or username.");
+      setMessage(locale === "cn" ? "请输入手机号或邮箱。" : "Please enter phone or email.");
       return;
     }
     if (activeMode === "register" && !phonePattern.test(cleanPhone)) {
@@ -819,13 +819,14 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
 
   function captchaField(name: string) {
     return (
-      <label className="cine-auth-field">
+      <div className="cine-auth-field">
         <span>{t.captcha}</span>
         <div className="cine-captcha-row">
           <div className="cine-auth-input">
             <ShieldCheck size={18} />
             <input
               autoComplete="off"
+              aria-label={t.captcha}
               data-lpignore="true"
               name={name}
               value={captchaInput}
@@ -844,13 +845,14 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
               clearMessage();
             }}
             title={t.refreshCaptcha}
+            aria-label={t.refreshCaptcha}
             type="button"
           >
             <span>{captcha}</span>
             <RefreshCw size={14} />
           </button>
         </div>
-      </label>
+      </div>
     );
   }
 

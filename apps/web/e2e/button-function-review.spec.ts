@@ -120,9 +120,10 @@ test("accepted task retry with failed refresh stays blocked across closing and r
 test("task rejection preserves retry and queue exposes refunded records and safe refresh recovery", async ({ page }) => {
   const state = await fixtures(page);
   await page.goto("/#/tasks");
-  await page.getByRole("button", { name: "已退款", exact: true }).click();
+  await page.getByRole("button", { name: "已解冻", exact: true }).click();
   await expect(page.locator(".queue-task-select")).toHaveCount(1);
   await expect(page.locator(".queue-task-select")).toContainText("任务 refunded");
+  await capture(page, "after-tasks-release");
   await page.getByRole("button", { name: "失败", exact: true }).click();
   state.rejectMutation = true;
   await page.getByRole("button", { name: "重试任务", exact: true }).click();

@@ -4,6 +4,8 @@
 
 全流程产品与迭代设计见 [全视角评审方案](./docs/product/project-iteration-20261026.html)，实现与验收状态见 [实施矩阵](./docs/operations/project-review-implementation-20261026.md)。已发布基线见 [前后台重构发布记录](./outputs/ui-redesign-release-20261025.md)。历史文档中的“当前”仅代表记录日期；UI、数据库机制、公开部署、供应商质量和真实支付分别验收。
 
+2026-10-27 全范围审查见 [交互汇总页](./docs/product/project-audit-20261027.html)、[功能状态与证据报告](./docs/product/project-audit-20261027.md)、[需求细化 PRD](./docs/product/project-refinement-20261027.md) 和 [执行矩阵](./docs/operations/project-audit-implementation-20261027.md)。七组修复已通过本地回归，GitHub同步及生产发布待写连接恢复；[验收与发布记录](./outputs/project-audit-20261027/发布记录.md)明确区分未开发、外部配置与真实业务验收。
+
 - `apps/web`：用户端与后台管理 SPA，页面结构参考 U 漫剧工作台，但使用独立命名和自有视觉。
 - `apps/api`：Express TypeScript API，已接 PostgreSQL、Redis + BullMQ、积分流水、模型供应商、模型计费表和真实文本生成。
 - `packages/shared`：前后端共享业务类型。

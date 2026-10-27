@@ -10,6 +10,7 @@ import { normalizeDevelopmentAnalysis, normalizeDevelopmentOutline } from "./nor
 import { generateEpisodes } from "../production/episodeService.js";
 import { markContentOperationFailed, runBilledContentGeneration, saveContentOperationOutput, withContentGenerationOperation } from "./generationBilling.js";
 import { collectHandoffEntities, handoffEntityId } from "./productionHandoff.js";
+import { ContentMutationError, withIdleContentProject } from "./contentMutation.js";
 
 const generatedChapterSchema = z.object({
   title: z.string().min(1), content: z.string().min(100), factUpdates: z.array(z.unknown()).default([]),
@@ -47,8 +48,9 @@ export async function listContentProjects(userId: string) {
 }
 
 export async function deleteContentProject(userId: string, contentProjectId: string) {
-  const result = await prisma.contentProject.deleteMany({ where: { id: contentProjectId, userId } });
-  if (!result.count) throw new Error("内容项目不存在");
+  return withIdleContentProject(userId, contentProjectId, async tx => {
+    await tx.contentProject.delete({ where: { id: contentProjectId } });
+  });
 }
 
 export interface ContentVersionHistory {
@@ -247,16 +249,26 @@ async function generateContentChapterBatchUnlocked(userId: string, contentProjec
   }
 }
 
-// R3：手动编辑章节正文/标题（改最新版本，状态置为 confirmed）。
-export async function updateContentChapter(userId: string, contentProjectId: string, chapterNo: number, input: { title?: string; content: string }) {
-  const project = await prisma.contentProject.findFirst({ where: { id: contentProjectId, userId }, select: { id: true } });
-  if (!project) throw new Error("内容项目不存在");
-  const latest = await prisma.storyChapter.findFirst({ where: { contentProjectId, chapterNo }, orderBy: { version: "desc" } });
-  if (!latest) throw new Error("章节不存在或尚未生成");
-  await prisma.$transaction([
-    prisma.storyChapter.update({ where: { id: latest.id }, data: { content: input.content, ...(input.title?.trim() ? { title: input.title.trim() } : {}), status: "confirmed" } }),
-    prisma.productionEpisode.updateMany({ where: { contentProjectId }, data: { status: "stale" } })
-  ]);
+// Manual edits create a new version and preserve the original generated text.
+export async function updateContentChapter(userId: string, contentProjectId: string, chapterNo: number, input: { title?: string; content: string; expectedChapterId?: string }) {
+  await withIdleContentProject(userId, contentProjectId, async tx => {
+    const latest = await tx.storyChapter.findFirst({ where: { contentProjectId, chapterNo }, orderBy: { version: "desc" } });
+    if (!latest) throw new ContentMutationError(404, "章节不存在或尚未生成。");
+    const title = input.title?.trim() || latest.title;
+    // The response may have been lost after commit. An exact retry is safe even
+    // though the caller's base ID now refers to the preceding version.
+    if (latest.content === input.content && latest.title === title) return;
+    if (input.expectedChapterId && input.expectedChapterId !== latest.id) {
+      throw new ContentMutationError(409, "本章已有更新版本。你的修改已保留，请先复制草稿并刷新核对后再编辑。");
+    }
+    await tx.storyChapter.create({ data: {
+      id: `chapter_${crypto.randomUUID()}`, contentProjectId, chapterNo, title, content: input.content,
+      status: "confirmed", version: latest.version + 1, promptSnapshot: latest.promptSnapshot as Prisma.InputJsonValue,
+      result: { manualEdit: { baseChapterId: latest.id }, handoff: { source: "manual_edit", note: "前章已由作者修改，以以下正文为连续性依据。", content: input.content } }
+    } });
+    await tx.productionEpisode.updateMany({ where: { contentProjectId }, data: { status: "stale" } });
+    await tx.contentProject.update({ where: { id: contentProjectId }, data: { updatedAt: new Date() } });
+  });
   return getContentProductionPackage(userId, contentProjectId);
 }
 

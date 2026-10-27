@@ -14,6 +14,7 @@ import { getToonflowAdapterMetadata } from "./agents/toonflowAdapter.js";
 import { hashPassword, verifyPassword } from "./auth/password.js";
 import { EmailVerificationError, EmailVerificationService, QQ_EMAIL_PATTERN } from "./auth/emailVerification.js";
 import { mockCheckoutEnabled } from "./billing/checkoutPolicy.js";
+import { ContentMutationError } from "./content/contentMutation.js";
 import { acceptWechatTransaction, getMembership, paymentAvailability, prepareCheckout, reconcilePayment, recoverPayments, startCheckout } from "./billing/payments.js";
 import { decryptWechatNotification, PaymentError, wechatConfig } from "./billing/wechat.js";
 import { createRateLimitMiddleware, positiveInteger, RequestRateLimiter } from "./security/rateLimit.js";
@@ -2827,7 +2828,7 @@ app.use((error: unknown, req: express.Request, res: express.Response, _next: exp
     if (error.retryAfter) res.setHeader("Retry-After", String(error.retryAfter));
     return res.status(error.status).json({ message: error.message, retryAfterSeconds: error.retryAfter });
   }
-  if (error instanceof CreditQueryError || error instanceof ProjectRequestError || error instanceof MediaSourceConflict || error instanceof AnnouncementScheduleError || error instanceof SupportTicketError) return res.status(error.status).json({ message: error.message });
+  if (error instanceof CreditQueryError || error instanceof ProjectRequestError || error instanceof MediaSourceConflict || error instanceof AnnouncementScheduleError || error instanceof SupportTicketError || error instanceof ContentMutationError) return res.status(error.status).json({ message: error.message });
   const message = error instanceof Error ? error.message : "服务器异常";
   const cause = error instanceof Error && "cause" in error ? (error as Error & { cause?: unknown }).cause : undefined;
   const causeMessage = cause instanceof Error ? `${cause.name}: ${cause.message}` : typeof cause === "object" && cause ? JSON.stringify(cause).slice(0, 240) : "";

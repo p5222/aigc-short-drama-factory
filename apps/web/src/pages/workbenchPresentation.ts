@@ -18,7 +18,7 @@ const taskStatusLabels: Record<TaskStatus, string> = {
   succeeded: "已完成",
   failed: "失败待处理",
   canceled: "已取消",
-  refunded: "已退款"
+  refunded: "已解冻"
 };
 
 export function projectStatusLabel(status: ProjectStatus) {

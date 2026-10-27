@@ -39,6 +39,7 @@ import { WorkbenchPage } from "./pages/WorkbenchPage";
 import { resolveThemePreference, type WorkbenchTheme } from "./workbench/model";
 import { AUTH_SESSION_EXPIRED_EVENT, HttpError } from "./lib/httpClient";
 import { clearAuthToken, readAuthToken } from "./lib/authStorage";
+import { authResumeStorage } from "./lib/authResumeStorage";
 import { clearWizardDraft } from "./pages/wizardDraftStorage";
 import { BEFORE_CREATOR_NAVIGATION, createRequestEpoch, refreshResources } from "./lib/creatorNavigation";
 import { useCreatorNavigation } from "./lib/useCreatorNavigation";
@@ -60,9 +61,6 @@ const ProfilePage = lazy(routePageLoader(() => import("./pages/StaticPages").the
 const SettingsPage = lazy(routePageLoader(() => import("./pages/StaticPages").then(module => ({ default: module.SettingsPage }))));
 
 const THEME_STORAGE_KEY = "manjiao-theme";
-const AUTH_RESUME_PAGE_KEY = "manjiao-auth-resume-page";
-const AUTH_RESUME_PROJECT_KEY = "manjiao-auth-resume-project";
-const AUTH_RESUME_USER_KEY = "manjiao-auth-resume-user";
 
 const creatorPageResources: Partial<Record<PageKey, string[]>> = {
   models: ["模型渠道", "模型价格"],
@@ -248,9 +246,8 @@ export function App() {
 
   useEffect(() => {
     const handleSessionExpired = () => {
-      sessionStorage.setItem(AUTH_RESUME_PAGE_KEY, activePage);
-      if (user?.id) sessionStorage.setItem(AUTH_RESUME_USER_KEY, user.id);
-      if (activePage === "project" && workflow?.project.id) sessionStorage.setItem(AUTH_RESUME_PROJECT_KEY, workflow.project.id);
+      authResumeStorage.write({ userId: user?.id ?? "", page: activePage,
+        ...(activePage === "project" && workflow?.project.id ? { projectId: workflow.project.id } : {}) });
       refreshEpoch.invalidate();
       projectEpoch.invalidate();
       userRef.current = null;
@@ -393,9 +390,7 @@ export function App() {
   function clearAuthState(preserveToken = false) {
     if (!preserveToken) clearAuthToken();
     clearWizardDraft();
-    sessionStorage.removeItem(AUTH_RESUME_PAGE_KEY);
-    sessionStorage.removeItem(AUTH_RESUME_PROJECT_KEY);
-    sessionStorage.removeItem(AUTH_RESUME_USER_KEY);
+    authResumeStorage.clear();
     refreshEpoch.invalidate();
     projectEpoch.invalidate();
     userRef.current = null;
@@ -584,16 +579,15 @@ export function App() {
       initialAuthOpen={sessionExpired || Boolean(error)}
       sessionMessage={sessionExpired ? "登录已过期，请重新登录。未保存的修改可能需要重新填写；新建项目输入会在当前标签页临时保留。" : error}
       onAuthed={(_token, nextUser) => {
-        const resumePage = sessionStorage.getItem(AUTH_RESUME_PAGE_KEY) as PageKey | null;
-        const resumeProjectId = sessionStorage.getItem(AUTH_RESUME_PROJECT_KEY);
-        const resumeUserId = sessionStorage.getItem(AUTH_RESUME_USER_KEY);
+        const resume = authResumeStorage.read();
+        const resumePage = resume?.page as PageKey | undefined;
+        const resumeProjectId = resume?.projectId;
+        const resumeUserId = resume?.userId;
         const canResume = resumeUserId === nextUser.id;
-        if (resumeUserId && !canResume) clearAuthState(true);
+        if ((sessionExpired || resumeUserId) && !canResume) clearAuthState(true);
         setUser(nextUser);
         setSessionExpired(false);
-        sessionStorage.removeItem(AUTH_RESUME_PAGE_KEY);
-        sessionStorage.removeItem(AUTH_RESUME_PROJECT_KEY);
-        sessionStorage.removeItem(AUTH_RESUME_USER_KEY);
+        authResumeStorage.clear();
         if (canResume && resumePage === "project" && resumeProjectId) {
           void openProject(resumeProjectId);
         } else if (canResume && resumePage) {

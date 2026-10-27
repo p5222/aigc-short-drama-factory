@@ -132,7 +132,7 @@ export function TaskCenterPage({
           ["failed", "失败"],
           ["succeeded", "已完成"],
           ["canceled", "已取消"],
-          ["refunded", "已退款"]
+          ["refunded", "已解冻"]
         ].map(([value, label]) => (
           <button
             type="button"
@@ -448,7 +448,7 @@ function taskStatusText(status: TaskStatus) {
     succeeded: "已完成",
     failed: "失败",
     canceled: "已取消",
-    refunded: "已退款"
+    refunded: "已解冻"
   };
   return labels[status] ?? status;
 }
@@ -463,7 +463,7 @@ function emptyListText(filter: QueueFilter, stage: TaskType | "all", totalTasks:
     failed: `${stagePrefix}没有失败任务，一切正常。`,
     succeeded: `${stagePrefix}还没有已完成的任务。`,
     canceled: `${stagePrefix}没有已取消的任务。`,
-    refunded: `${stagePrefix}没有已退款的任务。`
+    refunded: `${stagePrefix}没有已解冻的任务。`
   };
   return `${filterTexts[filter]} 切回「全部」可查看完整历史。`;
 }
@@ -475,7 +475,7 @@ function progressHint(status: TaskStatus) {
     succeeded: "任务已完成",
     failed: "请查看失败原因后重试",
     canceled: "任务已取消",
-    refunded: "积分已退款"
+    refunded: "冻结积分已释放，不代表现金退款"
   };
   return hints[status] ?? "状态已更新";
 }

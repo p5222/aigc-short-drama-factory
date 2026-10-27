@@ -148,7 +148,7 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
   const generationPlan = chapterGenerationPlan(outline.map((item, index) => ({ chapterNo: Number(item.chapterNo ?? index + 1) })), chapters, batchSize);
   const serverBusy = !busy && selected?.status === "running";
   const working = Boolean(busy) || serverBusy;
-  const [editingChapter, setEditingChapter] = useState<{ chapterNo: number; title: string; content: string; originalTitle: string; originalContent: string } | null>(null);
+  const [editingChapter, setEditingChapter] = useState<{ chapterNo: number; title: string; content: string; originalTitle: string; originalContent: string; expectedChapterId: string } | null>(null);
   const handoffSource = selected ? savedSources[selected.id] : undefined;
   const handoffContent = productionPackage?.script?.content.trim() || "";
   const handoffEpisode = productionPackage?.episodes?.find((episode) => episode.episodeNo === handoffEpisodeNo) ?? productionPackage?.episodes?.[0];
@@ -219,9 +219,15 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
     if (!selected || !editingChapter || busy) return;
     setBusy("save"); setError("");
     try {
-      const result = await contentApi.updateChapter(selected.id, editingChapter.chapterNo, { title: editingChapter.title, content: editingChapter.content });
+      const result = await contentApi.updateChapter(selected.id, editingChapter.chapterNo, { title: editingChapter.title, content: editingChapter.content, expectedChapterId: editingChapter.expectedChapterId });
       setPackages((current) => ({ ...current, [selected.id]: result }));
-      setEditingChapter(null); setMessage(`第 ${editingChapter.chapterNo} 章已保存`);
+      setEditingChapter(null); setMessage(`第 ${editingChapter.chapterNo} 章已另存新版本，原正文已保留。`);
+      try {
+        const history = await contentApi.versions(selected.id);
+        setVersions(current => ({ ...current, [selected.id]: history }));
+      } catch {
+        setMessage(`第 ${editingChapter.chapterNo} 章已保存，原正文已保留。版本列表暂未刷新，请稍后刷新核对，无需重复保存。`);
+      }
     } catch (reason) { setError(reason instanceof Error ? reason.message : "保存失败"); }
     finally { setBusy(""); }
   }
@@ -577,7 +583,7 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
           <input aria-label="章节标题" disabled={working} value={editingChapter.title} onChange={(event) => setEditingChapter((current) => current ? { ...current, title: event.target.value } : current)} maxLength={160} />
           <textarea aria-label={`第 ${editingChapter.chapterNo} 章正文`} disabled={working} value={editingChapter.content} onChange={(event) => setEditingChapter((current) => current ? { ...current, content: event.target.value } : current)} />
         </div></article>
-        <div className="cw2-actionbar"><span className="cw2-hint">修改会保存到当前版本并标记为已确认。</span>
+        <div className="cw2-actionbar"><span className="cw2-hint">保存为新版本并保留原正文；制作内容需要重新生成后同步。</span>
           <button type="button" className="content-secondary-button" disabled={busy === "save"} onClick={() => changeView(() => setEditingChapter(null))}>取消编辑</button>
           <button type="button" className="content-primary-button" disabled={busy === "save" || editingChapter.content.trim().length < 20} onClick={() => void saveChapterEdit()}>{busy === "save" ? <LoaderCircle size={15} /> : <Check size={15} />}保存修改</button>
         </div>
@@ -590,7 +596,7 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
       </>}
       {editingChapter ? null : <div className="cw2-actionbar">
         <span className="cw2-hint">{serverBusy ? "服务器正在生成中，离开此页也会继续，完成后自动刷新…" : generationPlan.remainingCount ? `每批完成后自动保存 · 还剩 ${generationPlan.remainingCount} 章 · 中断可随时续生成` : "全部章节已生成，可在右侧进入制作交接"}</span>
-        {selectedGenerated ? <button type="button" className="content-secondary-button" disabled={working} onClick={() => setEditingChapter({ chapterNo: selectedGenerated.chapterNo, title: selectedGenerated.title, content: selectedGenerated.content, originalTitle: selectedGenerated.title, originalContent: selectedGenerated.content })}><FileText size={14} />编辑本章</button> : null}
+        {selectedGenerated ? <button type="button" className="content-secondary-button" disabled={working} onClick={() => setEditingChapter({ chapterNo: selectedGenerated.chapterNo, title: selectedGenerated.title, content: selectedGenerated.content, originalTitle: selectedGenerated.title, originalContent: selectedGenerated.content, expectedChapterId: selectedGenerated.id })}><FileText size={14} />编辑本章</button> : null}
         {selectedGenerated ? <button type="button" className="content-secondary-button" disabled={working} onClick={() => void regenerateChapter(selectedChapterNo)}><RefreshCw size={14} />重新生成本章</button> : null}
         <button type="button" className="content-secondary-button" disabled={working || !generationPlan.remainingCount} onClick={() => void generateNextChapters()}>{working ? <LoaderCircle size={15} /> : <Sparkles size={15} />}继续生成下一批（{Math.max(2, generationPlan.nextBatchSize) || 2} 章）</button>
         <button type="button" className="content-primary-button" disabled={working || !generationPlan.remainingCount} onClick={() => void generateAllChapters()}><ArrowRight size={15} />一键生成全部剩余 {generationPlan.remainingCount} 章</button>

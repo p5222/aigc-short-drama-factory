@@ -9,7 +9,7 @@ export const developInput = z.object({ intentType: z.enum(["title", "genre", "re
 export const chapterBatchInput = z.object({ startChapter: z.number().int().positive(), batchSize: z.number().int().min(2).max(3).default(2), regenerate: z.boolean().optional() });
 export const contentRouteInput = z.object({ textProvider: z.string().min(1), textModel: z.string().min(1) });
 export const outlineConfirmInput = z.object({ result: z.record(z.string(), z.unknown()).optional() });
-export const chapterEditInput = z.object({ title: z.string().trim().max(160).optional(), content: z.string().min(20).max(200000) });
+export const chapterEditInput = z.object({ title: z.string().trim().max(160).optional(), content: z.string().trim().min(20).max(200000), expectedChapterId: z.string().trim().min(1).max(160).optional() });
 export const episodeGenerateInput = z.object({ scope: z.union([z.literal("all"), z.coerce.number().int().positive()]).default("all") });
 export async function handleListContentProjects(userId: string) { return listContentProjects(userId); }
 export async function handleCreateContentProject(userId: string, input: unknown) {
