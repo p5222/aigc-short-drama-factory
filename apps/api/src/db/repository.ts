@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import type { ExportJob as ExportJobRow, Prisma, PrismaClient } from "@prisma/client";
 import { adminUserQuery, type AdminUserPageOptions } from "./adminUserQuery.js";
+import { adminCommercialSummary } from "./adminCommercial.js";
 import { lockCreditAccount } from "../billing/accountCredits.js";
 import { ensureFunding, grantFunding, spendFunding } from "../billing/funding.js";
 import { creditPolicy, quotePrice, readCostRule } from "../billing/pricing.js";
@@ -538,7 +539,8 @@ export async function listAdminUsers(): Promise<AdminUserRow[]> {
 export async function listAdminUsersPage(options: AdminUserPageOptions = {}) {
   const page = Math.max(1, Math.floor(Number(options.page) || 1));
   const pageSize = Math.max(1, Math.min(100, Math.floor(Number(options.pageSize) || 20)));
-  const { where, orderBy } = adminUserQuery(options);
+  const now = new Date();
+  const { where, orderBy } = adminUserQuery(options, now);
   const skip = (page - 1) * pageSize;
   const include = { credit: true, _count: { select: { projects: true } } } as const;
   async function findPage() {
@@ -556,6 +558,7 @@ export async function listAdminUsersPage(options: AdminUserPageOptions = {}) {
     findPage(),
     prisma.user.count({ where })
   ]);
+  const commercial = await adminCommercialSummary(prisma, users.map(user => user.id), now);
   const items = users.map((user) => ({
     id: user.id,
     name: user.name,
@@ -571,7 +574,8 @@ export async function listAdminUsersPage(options: AdminUserPageOptions = {}) {
     hasPassword: Boolean(user.passwordHash),
     createdAt: user.createdAt.toISOString(),
     updatedAt: user.updatedAt.toISOString(),
-    lastLoginAt: user.lastLoginAt?.toISOString()
+    lastLoginAt: user.lastLoginAt?.toISOString(),
+    commercial: commercial.get(user.id)
   }));
   return { items, total, page, pageSize };
 }

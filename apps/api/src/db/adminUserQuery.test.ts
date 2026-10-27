@@ -7,6 +7,9 @@ test("admin account filters reject invalid ranges, arbitrary sort fields and ove
   assert.equal(adminUserPageQuery.safeParse({ registeredFrom: "not-a-date" }).success, false);
   assert.equal(adminUserPageQuery.safeParse({ sort: "passwordHash" }).success, false);
   assert.equal(adminUserPageQuery.safeParse({ pageSize: "101" }).success, false);
+  assert.equal(adminUserPageQuery.safeParse({ membership: "vip" }).success, false);
+  assert.equal(adminUserPageQuery.safeParse({ commercial: "free" }).success, false);
+  assert.equal(adminUserPageQuery.parse({ membership: "expired", commercial: "online_paid" }).membership, "expired");
   const query = adminUserPageQuery.parse({ pageSize: "50", registeredFrom: "2026-10-25T00:00:00+08:00", registeredTo: "2026-10-25T23:59:59+08:00", sort: "login_desc" });
   assert.equal(query.pageSize, 50);
   assert.equal(query.page, 1);

@@ -358,10 +358,22 @@ export interface MembershipPlan {
   enabled: boolean;
 }
 
+export interface MembershipTerm {
+  planId: string;
+  planName: string;
+  startsAt: string;
+  endsAt: string;
+  discountPercent: number;
+  priorityLevel: number;
+}
+
 export interface MembershipStatus {
-  active: { planId: string; planName: string; startsAt: string; endsAt: string; discountPercent: number; priorityLevel: number } | null;
+  active: MembershipTerm | null;
   paidThrough: string | null;
   autoRenew: false;
+  scheduled?: MembershipTerm[];
+  scheduledCount?: number;
+  lastExpired?: MembershipTerm | null;
 }
 
 export interface RedeemCode {
@@ -395,6 +407,14 @@ export interface AdminUserRow {
   createdAt: string;
   updatedAt: string;
   lastLoginAt?: string;
+  commercial?: {
+    membership: "active" | "scheduled" | "expired" | "none";
+    planName?: string;
+    currentEndsAt?: string;
+    paidThrough?: string;
+    onlinePaidOrders: number;
+    onlinePaidCny: number;
+  };
 }
 
 export interface ProviderCapability {

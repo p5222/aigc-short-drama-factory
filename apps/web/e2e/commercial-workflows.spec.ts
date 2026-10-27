@@ -153,6 +153,7 @@ test("membership checkout exposes current benefits, same-tier renewal and no aut
   await page.goto("/#/recharge");
   await expect(page.getByRole("button", { name: "同档续费一个月" })).toBeEnabled();
   await expect(page.getByRole("button", { name: "购买一个月", exact: true })).toBeDisabled();
+  await page.getByText("会员购买与计费规则", { exact: true }).click();
   await expect(page.getByText(/每次购买一个自然月，不自动扣款/)).toBeVisible();
   await noOverflow(page);
 });

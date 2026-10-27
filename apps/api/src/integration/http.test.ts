@@ -160,7 +160,8 @@ test("HTTP business boundaries: sessions, administrator writes, private media an
       const count = await db.rechargeOrder.count({ where: { userId: ids[0] } });
       assert.equal(count, 0);
       const membership = await (await request("/api/billing/membership", owner.token)).json();
-      assert.deepEqual(membership, { active: null, paidThrough: null, autoRenew: false });
+      assert.deepEqual(membership, { active: null, paidThrough: null, autoRenew: false,
+        scheduled: [], scheduledCount: 0, lastExpired: null });
     });
     type AuditPage = { total: number; items: Array<{ actorId: string; action: string; target: string; status: string; statusCode: number | null; details: unknown }> };
     async function waitForAudit(keyword: string, complete: (page: AuditPage) => boolean) {
@@ -190,6 +191,11 @@ test("HTTP business boundaries: sessions, administrator writes, private media an
       assert.equal(response.status, 200);
       const page = await response.json() as { items: Array<{ id: string; createdAt: string; updatedAt: string }>; total: number; pageSize: number };
       assert.equal(page.total, 1); assert.equal(page.pageSize, 10);
+      const filtered = await (await request(`/api/admin/users/page?keyword=${ids[0]}&membership=none&commercial=no_online_record`, admin.token)).json();
+      assert.equal(filtered.total, 1); assert.equal(filtered.items[0]?.commercial.membership, "none");
+      assert.equal(filtered.items[0]?.commercial.onlinePaidOrders, 0);
+      assert.equal((await request("/api/admin/users/page?membership=vip", admin.token)).status, 400);
+      assert.equal((await request("/api/admin/users/page?commercial=free", admin.token)).status, 400);
       assert.equal(page.items[0]?.createdAt, stored.createdAt.toISOString());
       assert.equal(page.items[0]?.updatedAt, stored.updatedAt.toISOString());
       for (const query of ["sort=passwordHash", "pageSize=101", "registeredFrom=invalid", "registeredFrom=2026-10-26T00:00:00Z&registeredTo=2026-10-25T00:00:00Z"]) {

@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>漫角｜会员与用户商业化方案</title>
+<style>
+:root{--bg:#f6f5ef;--paper:#fffef9;--ink:#183b32;--muted:#60746d;--line:#dbe3d9;--green:#246f5a;--soft:#eaf2e8;--amber:#855727}*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:24px}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.85 "Microsoft YaHei",system-ui,sans-serif}a{color:var(--green)}button,input,select{font:inherit}button{cursor:pointer;background:var(--paper);border:1px solid var(--line);border-radius:9px;padding:8px 14px;color:var(--ink)}button[aria-pressed=true],.primary{background:var(--green);color:white;border-color:var(--green)}button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible{outline:3px solid #75a38a;outline-offset:3px}button:disabled{opacity:.55;cursor:default}aside{position:fixed;inset:0 auto 0 0;width:224px;padding:38px 24px;background:var(--paper);border-right:1px solid var(--line);overflow:auto}.wordmark{font-size:28px;font-weight:800;letter-spacing:3px}.submark{font-size:11px;letter-spacing:2px;color:var(--muted)}aside nav{display:grid;gap:7px;margin-top:36px}aside nav a{color:var(--muted);text-decoration:none;padding:4px 0;font-size:13px}main{margin-left:224px;padding:52px clamp(24px,5vw,80px);max-width:1500px}.hero{padding:28px 0 42px;border-bottom:1px solid var(--line)}.eyebrow{font-size:12px;color:var(--green);letter-spacing:2px}h1{font-size:clamp(32px,4vw,54px);line-height:1.3;letter-spacing:-1px;margin:16px 0 24px}h2{font-size:27px;line-height:1.4;margin:0 0 20px}h3{font-size:19px;line-height:1.5;margin:18px 0 12px}p{margin:10px 0}.lead{font-size:18px;max-width:760px}.muted,small{color:var(--muted)}section{padding:42px 0;border-bottom:1px solid var(--line)}.tag{display:inline-block;border:1px solid var(--line);border-radius:100px;padding:3px 12px;font-size:12px;margin:4px 6px 4px 0}.fact{background:var(--soft)}.decision{background:#faf0dc;color:var(--amber)}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.card,.demo{background:var(--paper);border:1px solid var(--line);border-radius:16px;padding:22px;min-width:0}.card .big{display:block;font-size:29px;line-height:1.4;font-weight:700}.twocol{display:grid;grid-template-columns:1fr 1fr;gap:20px}.callout{padding:18px 22px;border-left:3px solid var(--green);background:var(--soft);margin:20px 0}.scroll{overflow-x:auto}table{border-collapse:collapse;width:100%;font-size:14px}th,td{text-align:left;vertical-align:top;padding:14px 12px;border-bottom:1px solid var(--line);min-width:95px}th{background:var(--soft);font-weight:600}ul,ol{padding-left:23px;margin:10px 0}li{margin:5px 0}.demo{margin:22px 0}.controls{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0 20px}.preview{background:var(--bg);border:1px solid var(--line);padding:20px;border-radius:12px}.preview dl{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:14px 0}.preview dt{font-size:12px;color:var(--muted)}.preview dd{margin:0}.timeline{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.timeline>div{background:var(--soft);padding:16px;border-radius:10px}.timeline b{display:block;font-size:17px}.timeline span{font-size:13px}.fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}.fields label{display:grid;gap:6px;font-size:13px}.fields input,.fields select{min-width:0;width:100%;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink)}.results{margin-top:20px;display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.results div{padding:16px;background:var(--soft);border-radius:10px}.results strong{display:block;font-size:24px}.source{font-size:12px;color:var(--muted)}dialog{border:1px solid var(--line);border-radius:16px;color:var(--ink);background:var(--paper);max-width:480px;width:calc(100% - 32px);padding:28px}dialog::backdrop{background:#132d2777}.steps{counter-reset:item;display:grid;gap:12px}.steps>div{padding:18px 20px;border:1px solid var(--line);border-radius:12px;background:var(--paper)}.steps b{color:var(--green)}footer{padding:35px 0;font-size:13px;color:var(--muted)}@media(max-width:1000px){aside{width:180px;padding:30px 20px}main{margin-left:180px;padding:35px 24px}.grid,.fields{grid-template-columns:1fr 1fr}.timeline{grid-template-columns:1fr 1fr}}@media(max-width:700px){aside{position:static;width:auto;padding:20px 24px;border-bottom:1px solid var(--line);border-right:0}aside nav{display:flex;overflow:auto;margin:15px 0 0;gap:18px}aside nav a{white-space:nowrap}main{margin:0;padding:24px 18px}.grid,.twocol,.fields,.results{grid-template-columns:1fr}section{padding:32px 0}.preview dl{grid-template-columns:1fr}h1{font-size:34px}.card,.demo{padding:18px}}@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}@media print{aside,.controls,dialog{display:none}main{margin:0;padding:0}.demo{break-inside:avoid}section{break-inside:auto}body{background:white}a{color:inherit}}
+</style></head><body>
+<aside><div class="wordmark">漫角</div><div class="submark">MEMBERSHIP / 2026.10</div><nav aria-label="方案目录">
+<a href="#contract">01 产品定位</a><a href="#users">02 用户与权限</a><a href="#tiers">03 会员与定价</a><a href="#economics">04 成本与毛利</a><a href="#journey">05 用户购买闭环</a><a href="#rights">06 权益与异常</a><a href="#admin">07 后台运营</a><a href="#growth">08 生命周期与指标</a><a href="#iteration">09 迭代路线</a><a href="#acceptance">10 验收与上线</a><a href="#decisions">11 待决策事项</a></nav></aside>
+<main><header class="hero"><div class="eyebrow">产品方案 · 商业化迭代 · V1.0</div><h1>让会员权益清楚，<br>让每次购买可核对。</h1><p class="lead">采用「普通创作者 + 按量积分 + 两档月度会员」的组合。用户按创作频率选择权益，运营按真实订单识别付费与会员状态，价格由成本与毛利测算约束。</p>
+<p class="muted">范围：个人创作者与平台运营。2026 年 10 月 27 日。本文是产品行为方案；接口和开发验证见 <a href="membership-commercialization-technical-20261027.md">技术与实施矩阵</a>。</p>
+<span class="tag fact">现有契约：手动续费</span><span class="tag fact">现有契约：积分永久有效</span><span class="tag">首批已进入开发</span><span class="tag decision">新售价与预算待决策</span></header>
+
+<section id="contract"><span class="eyebrow">01 / 产品契约</span><h2>先完成个人创作者的收费闭环</h2>
+<div class="grid"><div class="card"><span class="big">按量创作</span><p>普通用户拥有现有可用功能，通过充值或已有积分创作。会员是周期权益与积分组合，首批不新增功能封锁。</p></div><div class="card"><span class="big">手动月付</span><p>看套餐 → 确认权益 → 核对订单 → 扫码付款 → 自动到账 → 查看本期与续费安排。</p></div><div class="card"><span class="big">真实核对</span><p>会员以已支付订单对应的权益期为准。后台积分入账、商业会员身份、账号权限各自独立。</p></div></div>
+<p>主要触发：用户进入积分充值页查看会员，或者现有会员临近到期主动续费。完成条件：支付已确认、积分仅入账一次、权益期限可见、订单可恢复；管理员可按会员状态准确查找账号。</p>
+<div class="callout"><b>第一批产品判断：</b>复用现有积分充值页承载会员中心。支付未开放时仍展示真实套餐与已购权益，购买按钮说明暂停状态。保留既有卡密充值入口；普通积分兑换码不等同会员开通。</div>
+<p class="source">事实来源：现有会员授予、支付恢复、任务计费、启动配置保护代码。本文没有引用外部竞品价格或未经验证的用户数据。</p></section>
+
+<section id="users"><span class="eyebrow">02 / 用户方案</span><h2>把账号、安全权限、商业权益分开管理</h2>
+<div class="scroll"><table><thead><tr><th>维度</th><th>状态或类型</th><th>判断依据</th><th>产品行为</th></tr></thead><tbody>
+<tr><td>访问身份</td><td>访客 / 登录创作者</td><td>是否有有效登录会话</td><td>访客浏览公开内容；登录后查看自己的余额、项目、会员及订单。</td></tr>
+<tr><td>账号状态</td><td>正常 / 停用 / 已删除</td><td>账号状态记录</td><td>停用与删除限制登录与操作，保留原有订单、资金和作品记录。首批不因停用自动退费或延长权益。</td></tr>
+<tr><td>后台权限</td><td>创作者 / 管理员</td><td>独立角色权限</td><td>购买会员不能取得后台权限。管理员对本人或最后一个有效管理员的修改仍受既有保护。</td></tr>
+<tr><td>会员状态</td><td>普通 / 有效 / 待生效 / 已到期</td><td>已付会员订单的生效时间</td><td>有效时使用本期权益；未来续费按对应期生效；到期后积分保留，恢复普通计价。</td></tr>
+<tr><td>在线付费证据</td><td>有记录 / 暂无记录</td><td>已确认且金额大于零的微信订单</td><td>卡密、赠送和管理员调整不自动归为在线付费。暂无在线记录不能推断用户从未花钱。</td></tr>
+<tr><td>运营生命周期</td><td>注册 → 激活 → 首付 → 复购 → 续费 / 流失</td><td>未来按成功任务和真实支付计算</td><td>本轮方案定义口径；自动标签、召回通知与全站漏斗聚合安排后续实现。</td></tr>
+</tbody></table></div>
+<h3>注册与首次创作</h3><p>沿用现有注册、登录和会话恢复；手机号明确为 11 位格式。进入工作台后优先引导完成一个作品和一次成功生成，首次充值与会员购买不作为登录前置。免费体验若启用，须使用已有配置并明确次数、积分与渠道；新赠送预算为 [TBD]。</p>
+<p>邮箱发送服务和真实送达需独立验收。邮箱未配置时，不能把验证码、到期提醒或营销邮件描述成已可用。首批不发送任何真实运营消息。</p>
+<div class="demo"><span class="tag">交互示例 · 虚构账号</span><h3>同一个账号的三个维度</h3><div class="fields"><label>账号状态<select id="demoAccount"><option value="active">正常</option><option value="disabled">停用</option><option value="deleted">已删除</option></select></label><label>安全角色<select id="demoRole"><option value="creator">创作者</option><option value="admin">管理员</option></select></label><label>商业会员<select id="demoMember"><option value="none">普通创作者</option><option value="active">有效会员</option><option value="expired">会员已到期</option></select></label></div><div class="preview" id="identityPreview" aria-live="polite"></div><small>这里演示维度分离，不修改任何真实账号；付费状态不会改变安全角色。</small></div></section>
+
+<section id="tiers"><span class="eyebrow">03 / 会员产品</span><h2>保留两档会员，先把权益说准确</h2>
+<p>普通创作者服务低频和探索需求；创作者会员面向连续个人创作；专业会员面向更高用量的个人创作者。这是产品定位判断，尚无用户访谈或转化数据支持。团队工作空间与企业版待后续需求验证。</p>
+<div class="scroll"><table><thead><tr><th>产品</th><th>积分与购买</th><th>周期权益</th><th>金额事实边界</th></tr></thead><tbody>
+<tr><td>普通创作者</td><td>没有会员费。使用现有余额，积分充值按实际配置购买。</td><td>标准队列；生成按实际报价。现有功能不新增会员门槛。</td><td>首次体验额度、活动赠送不在本轮新增。</td></tr>
+<tr><td>创作者会员</td><td>本次支付即获得该档配置积分，永久有效。</td><td>一个自然月；符合规则的任务结算减免；平台队列优先。</td><td>仓库初始值：¥39.90 / 4,000 积分 / 10% / 等级 1。不是已核验的线上售价。</td></tr>
+<tr><td>专业会员</td><td>本次支付即获得该档配置积分，永久有效。</td><td>一个自然月；较高的配置减免和队列等级。</td><td>仓库初始值：¥129.90 / 14,000 积分 / 20% / 等级 2。不是已核验的线上售价。</td></tr>
+</tbody></table></div>
+<p>前台以运营后台的当前配置展示价格、积分、减免比例和队列等级；已付订单保留购买时的权益。避免使用“每月自动发放”“所有模型九折”“无限生成”“保证更快完成”等不符合现有能力的承诺。</p>
+<h3>套餐编辑规则</h3><p>运营可沿用既有套餐编辑和启停功能。调整仅影响之后的购买；旧订单金额、积分和权益期不改写。停售后原权益仍有效，同档续费按钮停用。默认启动流程保留运营改价和停用状态，首批只修改新建套餐的描述文本。</p></section>
+
+<section id="economics"><span class="eyebrow">04 / 定价方案</span><h2>用实际现金收入检验 40% 毛利目标</h2>
+<p>保留项目既有的成本计价与 40% 毛利目标。目标毛利下，服务收入应至少覆盖「可归属成本 ÷ 0.6」。支付手续费、算力、存储、失败重试与赠分带来的真实成本必须纳入核算；下方演示不代替供应商账单和实际现金验收。</p>
+<div class="twocol"><div class="card"><h3>任务层</h3><p>以官方成本计价的任务按已配置规则报价。启用毛利保护时，会员减免可能被限制；会员不必然比非会员扣分更少。实际积分以生成前报价为准。</p><p>生成冻结、失败退款、实测用量差额及资金批次折算沿用积分系统，不在本轮重写。</p></div><div class="card"><h3>会员包层</h3><p>一笔会员收入附带永久积分负债。续费积分立即发放，不能把尚未消耗的积分当作无成本收入。需测算全部积分使用、常用模型组合、失败重试和提前续费场景。</p><p>低价充值、赠分与会员积分的现金单价不同；仅对标称积分做 40% 加价，不能证明真实现金毛利达标。</p></div></div>
+<div class="demo"><span class="tag">测算示例 · 可改参数 · 不写入配置</span><h3>会员现金毛利测算器</h3>
+<div class="fields"><label>实际收入（元）<input id="revenue" type="number" min="0" step="0.01" value="39.9"></label><label>本次积分数量<input id="credits" type="number" min="1" step="1" value="4000"></label><label>预计消耗比例（%）<input id="utilization" type="number" min="0" max="100" step="1" value="100"></label><label>每 1,000 积分实际生成成本（元）<input id="costPerK" type="number" min="0" step="0.01" value="5"></label><label>支付费率（%）<input id="fee" type="number" min="0" max="100" step="0.01" value="0"></label><label>其他可归属成本（元）<input id="other" type="number" min="0" step="0.01" value="0"></label></div>
+<div class="results" aria-live="polite"><div><span>当前参数毛利率</span><strong id="margin">—</strong></div><div><span>达到 40% 的最低收入</span><strong id="floor">—</strong></div><div><span>标称收入 / 1,000 积分</span><strong id="creditValue">—</strong></div></div>
+<p id="economicNote" class="muted"></p><small>成本参数均为虚构示例，支付费率默认 0 不是服务商报价。永久积分需另外按 100% 最终使用进行压力测算；仅看本月消耗会低估长期成本。</small></div>
+<p>新售价上线前需取得真实成本样本和模型质量样片，核对充值与会员积分的现金折算，并记录在售档位的保守成本区间与安全余量。涨价、积分数量、促销折扣和新增赠送预算都列为明确商业决策。</p></section>
+
+<section id="journey"><span class="eyebrow">05 / 完整用户流程</span><h2>购买之前明确承诺，支付之后能够恢复</h2>
+<div class="timeline"><div><b>看清权益</b><span>当前身份、档位、积分数量、价格和暂停状态</span></div><div><b>确认购买</b><span>手动月付、续费起点、本次权益和最终金额</span></div><div><b>核对付款</b><span>订单与二维码、刷新状态、未知结果恢复</span></div><div><b>到账与续费</b><span>积分余额、本期期限、已购到期及未来权益</span></div></div>
+<div class="steps">
+<div><b>FR-01 会员中心</b><p>登录用户从现有积分充值页进入。加载前显示读取状态；失败显示重试，不把失败当作普通用户。支付暂停也展示真实在售配置和现有权益。套餐均停用时说明暂无套餐，保留原订单权益展示。</p></div>
+<div><b>FR-02 套餐比较</b><p>每档显示名称、每自然月价格、本次积分、永久有效、减免适用边界、队列等级与手动续费。展示当前档位；有效期内或有待确认异档订单时仅能选择同档。选择卡片不产生订单。</p></div>
+<div><b>FR-03 购买确认</b><p>点击购买打开确认窗口；取消不创建订单。确认内容包括本次价格、即时积分、自然月、续费起点、权益比例、无自动扣款和付款前核对金额。确认后创建或恢复订单，成功进入现有收银区；请求失败保留确认和错误，支持核对重试。</p></div>
+<div><b>FR-04 收银与恢复</b><p>扫码前显示最终订单金额、状态与截止时间。同一请求重试复用订单；待支付同套餐订单优先恢复。支付确认仅由服务端判断，浏览器不自行宣布到账。状态未知时提示继续核对，不引导重复付款。</p></div>
+<div><b>FR-05 支付成功</b><p>确认后积分仅入账一次，刷新余额与会员。首购立即开始权益期；同档续费从已购末尾顺延，积分仍立即发放。长期任务按开始时的权益与计价规则结算。</p></div>
+<div><b>FR-06 到期与续费</b><p>本期权益截止与已购到期分别显示。未来续费列出生效时间和对应权益，避免新权益提前作用。本轮增加到期状态和手动续费入口；主动提醒和自动续费尚未实现。</p></div>
+</div>
+<div class="demo"><span class="tag">会员中心示例 · 固定演示日期与积分</span><h3>切换状态，查看页面怎样回应</h3><div class="controls" id="scenarioButtons">
+<button type="button" data-state="ordinary" aria-pressed="true">普通</button><button type="button" data-state="active" aria-pressed="false">有效</button><button type="button" data-state="renewed" aria-pressed="false">已续费</button><button type="button" data-state="expired" aria-pressed="false">已到期</button><button type="button" data-state="paused" aria-pressed="false">支付暂停</button></div>
+<div class="preview" id="memberPreview" aria-live="polite"></div><div class="controls"><button type="button" class="primary" id="demoBuy">查看购买确认</button></div><small>演示不会生成订单或发起付款。生产页面读取当前配置；这里用仓库初始档位说明信息层级。</small></div></section>
+
+<section id="rights"><span class="eyebrow">06 / 权益契约与异常</span><h2>本期权益和未来权益分别生效</h2>
+<div class="scroll"><table><thead><tr><th>情况</th><th>确定规则</th><th>用户反馈与恢复</th></tr></thead><tbody>
+<tr><td>首次购买</td><td>服务端确认支付后开始一个自然月，积分立即发放。</td><td>显示已到账和本期起止日期，不承诺后续自动发放。</td></tr>
+<tr><td>同档连续续费</td><td>从已购到期顺延。每次支付即发本次积分。未来权益保留购买时的配置。</td><td>显示本期截止、已购到期、待生效期与未来减免；不重复累加当前权益。</td></tr>
+<tr><td>自然月边界</td><td>按 UTC 日历月增加，月末不足同一天取月末。开始时刻保留。不是固定 30 天。</td><td>页面日期按用户设备时区显示，月末规则写入说明。</td></tr>
+<tr><td>有效期内跨档</td><td>当前不支持；待确认异档订单同样阻止冲突购买。</td><td>按钮说明仅能同档续费。升级差额、剩余积分和生效时点为 [TBD]。</td></tr>
+<tr><td>二维码过期 / 迟到回调</td><td>二维码失效不代表未付款。未解决订单继续保留档位保护，先核对或关闭供应商订单。</td><td>刷新原订单查看结果；不能直接换档后重复支付。</td></tr>
+<tr><td>套餐配置变化</td><td>已创建订单和已付权益保留快照，新订单按新配置。</td><td>付款前看最终订单金额。旧权益与新续费权益分别显示。</td></tr>
+<tr><td>停售 / 支付暂停</td><td>不能新购，原已付权益仍按期限展示。</td><td>明确暂停原因的公开可用状态，不隐藏历史订单。</td></tr>
+<tr><td>到期</td><td>无当前权益时使用普通计价；账户积分不因到期清零。</td><td>展示到期状态、原期截止，允许开放档位重新购买。</td></tr>
+<tr><td>账号停用</td><td>不自动冻结会员时间、不自动退款、不删除资金记录。</td><td>运营联系支持处理争议。停用延期与补偿规则待决策。</td></tr>
+<tr><td>退款 / 争议</td><td>退款记录不能作为当前有效权益来源。本轮不新增一键现金退款。</td><td>通过既有工单核对。已用积分、手续费、会员期回滚和已续费期调整须先定义并开发完整规则。</td></tr>
+</tbody></table></div>
+<p>当前权益期为开始时间包含、结束时间不包含。任务排队优先与供应商处理速度是不同阶段，不承诺固定响应 SLA。对于未来续费，页面只展开最近 12 期，同时显示总期数和最终已购到期，避免无限增长。</p></section>
+
+<section id="admin"><span class="eyebrow">07 / 运营工作台</span><h2>能找到会员，也能辨认收入证据</h2>
+<div class="steps"><div><b>FR-07 用户列表</b><p>增加商业身份列，显示有效、待生效、已到期或普通创作者，以及在线已付订单数量。会员状态筛选支持组合搜索、注册日期、角色、账号状态和分页。</p></div>
+<div><b>FR-08 用户详情</b><p>只读显示当前档位、本期截止、已购到期和在线已付订单金额。明确不含卡密、赠送和人工调整；这个金额是已付订单汇总，不等同财务净收入或利润。</p></div>
+<div><b>FR-09 运营视角</b><p>快捷入口提供有效会员、到期会员和在线付费用户。保持用户状态、密码、积分调整与草稿保护现有流程；首批不增加可手工篡改会员状态的开关。</p></div>
+<div><b>FR-10 套餐治理</b><p>沿用现有套餐配置、启停与操作记录。新改价仅影响新订单；启动默认不覆盖运营配置。进一步增加收益测算、配置历史和档位变更预览安排后续。</p></div></div>
+<h3>客服闭环</h3><p>订单未知、重复扣分疑问、到期与新权益疑问应带平台订单号或任务号进入既有支持工单。客服先查原记录，确认是否真实支付、是否已到账、是否是未来权益，再确定处理。禁止以“赠积分”代替对原付费状态的核对。</p></section>
+
+<section id="growth"><span class="eyebrow">08 / 生命周期与运营</span><h2>先建立口径，再做转化和召回</h2>
+<div class="scroll"><table><thead><tr><th>阶段</th><th>运营方案</th><th>统计口径</th><th>状态</th></tr></thead><tbody>
+<tr><td>注册</td><td>清楚说明首次创作、积分与会员选择；保留低摩擦登录恢复。</td><td>指定期间新注册的有效账号数。</td><td>账号功能已有；漏斗聚合待做。</td></tr>
+<tr><td>激活</td><td>引导完成第一个成功任务，并展示下一步作品动作。</td><td>注册群体中在观察期内至少一条成功生成的占比。观察期 [TBD]。</td><td>作品工作台已有；商业化激活分析待做。</td></tr>
+<tr><td>首付</td><td>需要积分时展示按量充值与月度会员，说明用途和真实报价。</td><td>注册群体中首次已确认现金订单的占比。卡密需单独打通支付证据。</td><td>在线支付链路已有，真实验收待完成。</td></tr>
+<tr><td>续费</td><td>本期与已购到期可见，主动同档续费；提醒须用户同意并独立配置。</td><td>在固定观察窗口到期且可续费的会员中，窗口内有同档确认续费的占比。窗口 [TBD]。</td><td>首批完成查看与操作；提醒待做。</td></tr>
+<tr><td>流失召回</td><td>按曾付费、成功作品与距上次创作时间排序，客服帮助恢复作品。</td><td>长期未创作定义与触达频率 [TBD]；区分已续费未开始和真实流失。</td><td>手工查询可用；自动分群和消息待做。</td></tr>
+<tr><td>经营健康</td><td>看真实收入、成本、异常付款、退款和未消耗积分负债。</td><td>净现金收入 − 可归属成本；按档位、模型和资金批次分析。毛利目标 40%。</td><td>积分成本体系已有；会员分档经营报表待做。</td></tr>
+</tbody></table></div>
+<p>不预设“转化率 10%”或“续费率 80%”等无依据目标。先采集基线、定义观察群体与时间窗口，后续再设目标。避免把全部访问者、当月新增账号和当月到期会员混在同一分母。</p></section>
+
+<section id="iteration"><span class="eyebrow">09 / 迭代开发路线</span><h2>每一批交付一个可验收的闭环</h2>
+<div class="scroll"><table><thead><tr><th>批次</th><th>交付范围</th><th>完成证据</th><th>前置条件</th></tr></thead><tbody>
+<tr><td>P0-A · 本次</td><td>真实会员概览、暂停展示、未来权益、购买确认与恢复、后台会员与在线付费筛选，非金额文案修正。</td><td>类型与构建、订单并发和新状态数据库验证、电脑/手机浏览器、公开发布状态记录。</td><td>沿用现有配置。无需新增预算。</td></tr>
+<tr><td>P0-B · 收费上线</td><td>真实微信收款、到账核对、成本与质量样片、失败退款与财务核对、明确商业售后规则。</td><td>真实订单和资金账一致，真实供应商样片与可归属成本有证据。</td><td>支付商户配置、真实验收金额、上线规则 [TBD]。</td></tr>
+<tr><td>P1-A · 留存运营</td><td>全站漏斗、到期与余额提示、用户同意的提醒、分群和套餐经营报表。</td><td>统计口径与真实数据一致；触达送达、退订和去重验收。</td><td>邮箱真实送达、触达同意与频率策略。</td></tr>
+<tr><td>P1-B · 套餐迁移</td><td>升级/降级、退款、暂停与补偿、卡密商业证据对接。</td><td>金额与权益原子变更、冲突恢复、补偿审计和异常订单演练。</td><td>差价、积分、权益迁移和售后规则先决策。</td></tr>
+<tr><td>P2 · 扩展</td><td>年费、团队工作空间、成员席位、组织权限、企业合同或 API 商业套餐。</td><td>相应完整业务闭环和成本验收。</td><td>需求证据与收益模型；年费不能直接乘月费上线。</td></tr>
+</tbody></table></div>
+<p>团队充值套餐的名称不意味着多人协作已经实现；“团队会员”需要组织、作品归属、协作权限、成员退出和预算独立设计。自动续费还需要授权扣款、取消、失败重试、撤销和账单通知完整规则。</p></section>
+
+<section id="acceptance"><span class="eyebrow">10 / 验收与商业上线</span><h2>界面完成、代码验证与真实收费分别验收</h2>
+<div class="grid"><div class="card"><h3>产品与代码</h3><p>普通、有效、续费、到期、暂停、失败、停售与待确认订单均有清楚反馈。旧套餐配置与旧订单保护保留。</p></div><div class="card"><h3>隔离数据库</h3><p>确认并发支付只入账一次、未来快照正确、缓存不误报权益、用户之间隔离、筛选准确；不使用生产数据或真实支付。</p></div><div class="card"><h3>真实商业验收</h3><p>支付商户、到账、成本、质量、售后、邮件送达及上线规则逐项核实。前两项不能替代真实商业验收。</p></div></div>
+<p>生产发布还需 GitHub main、服务器 main 和部署 revision 一致，公开 readiness 和关键页面浏览器检查通过。当前与后续具体结果以 <a href="../../outputs/membership-commercialization-20261027/验收记录.md">验收记录</a> 为准。本文不宣称真实支付、收费模型或邮箱送达已经完成。</p></section>
+
+<section id="decisions"><span class="eyebrow">11 / 商业决策清单</span><h2>把影响钱与承诺的事项留在明确决策点</h2>
+<div class="scroll"><table><thead><tr><th>待决策</th><th>需要的数据或规则</th><th>未决策时的实施边界</th></tr></thead><tbody>
+<tr><td>新售价与权益量</td><td>真实成本、积分最终使用成本、竞争定位与收入目标。</td><td>使用当前运营配置；仓库初始值仅供理解。</td></tr>
+<tr><td>真实收费验收</td><td>商户配置、验收账号与可用的真实支付金额 [TBD]。</td><td>只做隔离与 UI 验证，不自动真实购买。</td></tr>
+<tr><td>免费体验和活动</td><td>积分预算、反重复领取、发放渠道、成本上限。</td><td>不新增赠分和营销承诺。</td></tr>
+<tr><td>跨档变更</td><td>立刻或下期生效、剩余期限、差价、积分与已购未来期处理。</td><td>仅同档续费，保留未解决订单保护。</td></tr>
+<tr><td>退款与补偿</td><td>已用积分、原资金来源、部分退款、失败生成、续费期回滚。</td><td>既有工单处理；不新增直接现金退款按钮。</td></tr>
+<tr><td>提醒和自动续费</td><td>用户同意、触达频率、退订、签约扣款、取消与账单。</td><td>手动续费；不发真实通知，不开自动扣款。</td></tr>
+<tr><td>年费与团队</td><td>长期积分负债、收入确认、席位、权限、作品所有权、成员退出。</td><td>保持后续迭代，不在本轮前台许诺可用。</td></tr>
+</tbody></table></div>
+<p class="source">事实索引：<a href="../../apps/api/src/billing/membership.ts">会员期与快照</a> · <a href="../../apps/api/src/billing/payments.ts">支付与恢复</a> · <a href="../../apps/api/src/billing/taskCredits.ts">任务计价</a> · <a href="../../apps/api/src/seed/catalogData.ts">仓库初始套餐</a> · <a href="../../apps/api/src/db/seed.ts">启动配置保护</a></p></section>
+<footer>漫角 Studio · 会员与用户商业化方案 · 2026-10-27<br>本文件含交互示例，全部本地运行，无外部依赖，不采集、不发送数据。</footer></main>
+<dialog id="buyDialog" aria-labelledby="buyTitle"><h2 id="buyTitle">购买确认示例</h2><p>创作者会员 · ¥39.90</p><p>本次支付即获得 4,000 积分，永久有效。一个自然月，手动续费，不自动扣款。</p><p>符合计价规则的任务结算减免 10%，实际扣分以生成前报价为准。付款前核对最终订单金额。</p><p id="dialogTerm"></p><button type="button" class="primary" id="demoConfirm">模拟确认</button> <button type="button" id="demoCancel">取消</button><p id="dialogResult" aria-live="polite"></p></dialog>
+<script>
+const names={none:"普通创作者",active:"有效会员",expired:"会员已到期"};function identity(){const state=document.querySelector("#demoAccount").value;document.querySelector("#identityPreview").textContent=`安全角色：${document.querySelector("#demoRole").value==="admin"?"管理员":"创作者"} · 商业身份：${names[document.querySelector("#demoMember").value]}。${state==="active"?"账号正常，可按所属权限操作。":"账号限制登录与操作；原积分与订单仍保留，会员时间不自动暂停。"}`;}["demoAccount","demoRole","demoMember"].forEach(id=>document.getElementById(id).addEventListener("change",identity));identity();
+let scenario="ordinary";const scenarios={ordinary:{title:"普通创作者",copy:"账户积分按实际报价使用。可选择现有充值或购买月度会员。",end:"没有生效中的会员",total:"没有已购会员期"},active:{title:"创作者会员",copy:"本期结算减免配置 10%，队列等级 1，以实际报价为准。",end:"2026-11-27 12:00",total:"2026-11-27 12:00"},renewed:{title:"创作者会员 · 已续费",copy:"本期仍为 10%；2026-11-27 开始的续费期使用该次订单中的 20%。续费积分已立即入账。",end:"2026-11-27 12:00",total:"2026-12-27 12:00"},expired:{title:"会员已到期",copy:"上期已结束；余额仍有效，当前按普通用户计价。",end:"2026-10-20 12:00（已结束）",total:"2026-10-20 12:00"},paused:{title:"会员购买暂未开放",copy:"现有套餐和原权益可见。购买开放后手动续费，不能创建新付款码。",end:"普通创作者",total:"暂无"}};
+function renderScenario(){const s=scenarios[scenario];document.querySelector("#memberPreview").innerHTML=`<strong>${s.title}</strong><p>${s.copy}</p><dl><div><dt>本期权益截止</dt><dd>${s.end}</dd></div><div><dt>已购会员到期</dt><dd>${s.total}</dd></div></dl>`;document.querySelector("#demoBuy").disabled=scenario==="paused";document.querySelectorAll("[data-state]").forEach(b=>b.setAttribute("aria-pressed",String(b.dataset.state===scenario)));}document.querySelectorAll("[data-state]").forEach(b=>b.addEventListener("click",()=>{scenario=b.dataset.state;renderScenario();}));renderScenario();
+const dialog=document.querySelector("#buyDialog");document.querySelector("#demoBuy").addEventListener("click",()=>{document.querySelector("#dialogResult").textContent="";document.querySelector("#dialogTerm").textContent=scenario==="active"||scenario==="renewed"?"从演示已购到期起顺延一个自然月。":"支付确认后开始一个自然月。";dialog.showModal();});document.querySelector("#demoCancel").addEventListener("click",()=>dialog.close());document.querySelector("#demoConfirm").addEventListener("click",()=>document.querySelector("#dialogResult").textContent="模拟订单已确认。此处没有创建真实订单，也没有扣款。");
+function calculate(){const get=id=>Number(document.getElementById(id).value);const revenue=get("revenue"),credits=get("credits"),use=get("utilization"),cost=get("costPerK"),fee=get("fee"),other=get("other");const valid=[revenue,credits,use,cost,fee,other].every(Number.isFinite)&&revenue>0&&credits>0&&use>=0&&use<=100&&cost>=0&&fee>=0&&fee<=100&&other>=0;if(!valid){["margin","floor","creditValue"].forEach(id=>document.getElementById(id).textContent="—");document.querySelector("#economicNote").textContent="请输入有效的非负参数，收入和积分必须大于零。";return;}const base=credits/1000*use/100*cost+other;const margin=(revenue-base-revenue*fee/100)/revenue;document.querySelector("#margin").textContent=(margin*100).toFixed(1)+"%";document.querySelector("#floor").textContent=fee<60?(base===0?"任意正收入":"¥"+(Math.ceil(base/(.6-fee/100)*100-1e-8)/100).toFixed(2)):(fee===60&&base===0?"任意正收入":"无法达到");document.querySelector("#creditValue").textContent="¥"+(revenue/credits*1000).toFixed(2);document.querySelector("#economicNote").textContent=margin>=.4?"该组示例参数达到 40% 目标；仍需真实账单和最终积分使用压力测算。":"该组示例参数低于 40% 目标；需调整售价、积分或成本，不能直接宣称已达标。";}["revenue","credits","utilization","costPerK","fee","other"].forEach(id=>document.getElementById(id).addEventListener("input",calculate));calculate();
+</script></body></html>

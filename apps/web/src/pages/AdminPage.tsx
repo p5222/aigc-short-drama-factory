@@ -89,6 +89,7 @@ import { ModelRoutePicker } from "../components/ModelRoutePicker";
 import { ModelIdentity } from "../components/ModelIdentity";
 import { ModelLibrary } from "../components/ModelLibrary";
 import { CreditCenter } from "../admin/CreditCenter";
+import { AdminCommercialIdentity, membershipLabels } from "../admin/AdminCommercialIdentity";
 
 const AdminActionContext = createContext({ pending: false, message: "", error: "", version: 0 });
 type ProviderTestResult = ModelTestResult | ImageModelTestResult | VideoModelTestResult;
@@ -2311,12 +2312,14 @@ function UsersSection({
   const [status, setStatus] = useState("all");
   const [segment, setSegment] = useState("all");
   const [users, setUsers] = useState<AdminUserRow[]>([]);
+  const [membershipFilter, setMembershipFilter] = useState("all");
+  const [commercialFilter, setCommercialFilter] = useState("all");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
   const [sort, setSort] = useState("created_desc");
   const [registeredFrom, setRegisteredFrom] = useState("");
   const [registeredTo, setRegisteredTo] = useState("");
-  const [visibleColumns, setVisibleColumns] = useState(["role", "credits", "projects", "status", "login", "created"]);
+  const [visibleColumns, setVisibleColumns] = useState(["role", "commercial", "credits", "projects", "status", "login", "created"]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
@@ -2339,7 +2342,7 @@ function UsersSection({
       return () => { controller.abort(); };
     }
     const timer = window.setTimeout(() => {
-      void fetchAdminUserPage({ page, pageSize, keyword: keyword.trim(), role, status, sort, registeredFrom, registeredTo }, controller.signal).then((result) => {
+      void fetchAdminUserPage({ page, pageSize, keyword: keyword.trim(), role, status, sort, registeredFrom, registeredTo, membership: membershipFilter, commercial: commercialFilter }, controller.signal).then((result) => {
         if (!current) return;
         const lastPage = Math.max(1, Math.ceil(result.total / result.pageSize));
         if (page > lastPage) { setPage(lastPage); return; }
@@ -2347,14 +2350,14 @@ function UsersSection({
         setTotal(result.total);
         setSelectedUser(current => {
           const latest = result.items.find(item => item.id === current?.id);
-          return current && latest ? { ...current, credits: latest.credits, frozenCredits: latest.frozenCredits, totalRecharge: latest.totalRecharge, totalConsume: latest.totalConsume, projects: latest.projects, hasPassword: latest.hasPassword, lastLoginAt: latest.lastLoginAt, createdAt: latest.createdAt, updatedAt: latest.updatedAt } : current;
+          return current && latest ? { ...current, credits: latest.credits, frozenCredits: latest.frozenCredits, totalRecharge: latest.totalRecharge, totalConsume: latest.totalConsume, projects: latest.projects, hasPassword: latest.hasPassword, lastLoginAt: latest.lastLoginAt, createdAt: latest.createdAt, updatedAt: latest.updatedAt, commercial: latest.commercial } : current;
         });
       }).catch((reason) => {
         if (current) setLoadError(reason instanceof Error ? reason.message : "用户列表读取失败");
       }).finally(() => { if (current) setLoading(false); });
     }, 200);
     return () => { current = false; controller.abort(); window.clearTimeout(timer); };
-  }, [page, pageSize, keyword, role, status, sort, registeredFrom, registeredTo, reloadKey, refreshSnapshot]);
+  }, [page, pageSize, keyword, role, status, sort, registeredFrom, registeredTo, membershipFilter, commercialFilter, reloadKey, refreshSnapshot]);
   const rows = users;
   const activeUsers = users.filter((user) => user.status === "active").length;
   const paidUsers = users.filter((user) => user.totalRecharge > 0).length;
@@ -2365,6 +2368,9 @@ function UsersSection({
     { id: "all", label: "全部用户", meta: "完整账号池", tone: "blue" },
     { id: "creator", label: "创作者", meta: "前台账号" },
     { id: "admin", label: "后台成员", meta: "后台管理员", tone: "violet" },
+    { id: "member", label: "有效会员", meta: "已付权益生效中", tone: "green" },
+    { id: "expired-member", label: "到期会员", meta: "查看手动续费机会" },
+    { id: "online-paid", label: "在线付费用户", meta: "已确认微信付费" },
     { id: "active", label: "正常", meta: "可登录账号", tone: "green" },
     { id: "disabled", label: "停用", meta: "不可登录", tone: "danger" },
     { id: "deleted", label: "回收站", meta: "保留记录，可恢复", tone: "danger" }
@@ -2396,9 +2402,10 @@ function UsersSection({
   }
   function resetQuery() {
     if (!canLeaveAdminEditor()) return;
-    setKeyword(""); setRole("all"); setStatus("all"); setSegment("all"); setRegisteredFrom(""); setRegisteredTo(""); setSort("created_desc"); setPage(1); setSelectedUserIds([]);
+    setKeyword(""); setRole("all"); setStatus("all"); setSegment("all"); setMembershipFilter("all"); setCommercialFilter("all"); setRegisteredFrom(""); setRegisteredTo(""); setSort("created_desc"); setPage(1); setSelectedUserIds([]);
   }
   const optionalColumns: AdminColumn<AdminUserRow>[] = [
+    { key: "commercial", label: "商业身份", render: user => <AdminCommercialIdentity user={user} /> },
     { key: "phone", label: "手机号", render: user => user.phone || "未绑定" },
     { key: "role", label: "角色", render: user => <span className="adm-role" data-role={user.role}>{adminRoleLabels[user.role] ?? user.role}</span> },
     { key: "credits", label: "可用 / 冻结积分", align: "right", render: user => <div className="adm-balance"><strong>{user.credits.toLocaleString()}</strong><small>冻结 {user.frozenCredits.toLocaleString()}</small></div> },
@@ -2423,7 +2430,7 @@ function UsersSection({
         railDescription="先选运营视角，再用搜索和筛选精确定位账号。"
         railItems={railItems}
         activeRail={segment}
-        onRailChange={(next) => { setSegment(next); setPage(1); setRole(next === "admin" || next === "creator" ? next : "all"); setStatus(["active", "disabled", "deleted"].includes(next) ? next : "all"); setSelectedUserIds([]); }}
+        onRailChange={(next) => { setSegment(next); setPage(1); setRole(next === "admin" || next === "creator" ? next : "all"); setStatus(["active", "disabled", "deleted"].includes(next) ? next : "all"); setMembershipFilter(next === "member" ? "active" : next === "expired-member" ? "expired" : "all"); setCommercialFilter(next === "online-paid" ? "online_paid" : "all"); setSelectedUserIds([]); }}
         railFooter={<span>账号状态与权限管理</span>}
       >
         <div className="adm-users-overview" aria-label="用户列表统计" aria-busy={loading}>
@@ -2444,6 +2451,8 @@ function UsersSection({
           <SearchField value={keyword} onChange={(value) => { setKeyword(value); setPage(1); setSelectedUserIds([]); }} placeholder="搜索姓名、邮箱、手机号或完整 ID..." />
           <SelectFilter value={role} onChange={(value) => { setRole(value); setSegment("all"); setPage(1); setSelectedUserIds([]); }} options={["all", "creator", "admin"]} labels={{ all: "全部角色", creator: "创作者", admin: "后台管理员" }} />
           <SelectFilter value={status} onChange={(value) => { setStatus(value); setSegment("all"); setPage(1); setSelectedUserIds([]); }} options={["all", "active", "disabled", "deleted"]} labels={{ all: "未删除用户", active: "正常", disabled: "停用", deleted: "已删除" }} />
+          <label>会员状态<select aria-label="会员状态筛选" value={membershipFilter} onChange={event => { setMembershipFilter(event.target.value); setSegment("all"); setPage(1); setSelectedUserIds([]); }}><option value="all">全部会员状态</option>{Object.entries(membershipLabels).map(([value, text]) => <option key={value} value={value}>{text}</option>)}</select></label>
+          <label>在线付费<select aria-label="在线付费筛选" value={commercialFilter} onChange={event => { setCommercialFilter(event.target.value); setSegment("all"); setPage(1); setSelectedUserIds([]); }}><option value="all">全部付费记录</option><option value="online_paid">有在线付费记录</option><option value="no_online_record">暂无在线付费记录</option></select></label>
         </AdminToolbar>
         <details className="adm-user-filters" open={registeredFrom || registeredTo ? true : undefined}>
           <summary><SlidersHorizontal size={15} />注册日期与排序{registeredFrom || registeredTo ? <span>已设置日期范围</span> : null}</summary>
@@ -4429,6 +4438,7 @@ function UserRow({
         <span>邮箱：{user.email || "未绑定"}</span><span>手机号：{user.phone || "未绑定"}</span>
         <small className="adm-user-id">账号 ID：{user.id}</small>
       </div>
+      <AdminCommercialIdentity user={user} detail />
       {user.status !== "deleted" ? <nav className="admin-user-tabs" aria-label="用户管理操作"><button type="button" aria-pressed={tab === "profile"} onClick={() => onTabChange("profile")}><UserRound size={16} />资料与权限</button><button type="button" aria-pressed={tab === "credits"} onClick={() => onTabChange("credits")}><WalletCards size={16} />积分调整</button><button type="button" aria-pressed={tab === "security"} onClick={() => onTabChange("security")}><ShieldCheck size={16} />账号安全</button></nav> : null}
       <dl className="adm-user-dates" aria-label="账号时间记录" hidden={tab !== "profile" && user.status !== "deleted"}>
         <div><dt>注册时间</dt><dd><AdminDate value={user.createdAt} /></dd></div>

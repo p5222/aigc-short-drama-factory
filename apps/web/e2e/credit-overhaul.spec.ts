@@ -119,7 +119,7 @@ test("creator ledger distinguishes frozen credits and exports the same server pa
 test("model pricing describes the narration reference as per ten thousand characters", async ({ page }) => {
   await fixture(page);
   await page.goto("/#/recharge");
-  await page.locator(".creator-price-details summary").click();
+  await page.locator(".creator-price-details summary").filter({ hasText: "查看全部模型价格" }).click();
   await expect(page.getByText("每万字符", { exact: true })).toBeVisible();
   await expect(page.getByText("每字符", { exact: true })).toHaveCount(0);
   await capture(page, "recharge");
