@@ -48,6 +48,25 @@ export function productionMatchesFilter(project: Project, filter: WorksFilter) {
   return filter === "all" || productionWorkState(project).filter === filter;
 }
 
+export type WorksSort = "updated" | "title";
+export function sortWorks<T extends { id: string; updatedAt: string; title?: string; name?: string }>(items: T[], order: WorksSort = "updated"): T[] {
+  const time = (value: string) => Number.isFinite(Date.parse(value)) ? Date.parse(value) : 0;
+  return [...items].sort((a, b) => {
+    const result = order === "title"
+      ? (a.title ?? a.name ?? "").localeCompare(b.title ?? b.name ?? "", "zh-CN", { numeric: true })
+      : time(b.updatedAt) - time(a.updatedAt);
+    return result || a.id.localeCompare(b.id, "en", { numeric: true });
+  });
+}
+
+export function contentNextAction(project: Pick<ContentProjectSummary, "status" | "scriptCount" | "activeStep">): string {
+  const state = contentWorkState(project);
+  if (state.filter === "attention") return "检查内容与生成结果";
+  if (project.status === "running") return "查看生成进度";
+  if (state.filter === "done") return "检查剧本并交接制作";
+  return `继续${contentStepLabels[project.activeStep] || "内容创作"}`;
+}
+
 export function createWorkDeletionRunner(notify: (state: { projectId: string; pending: boolean; error: string; deleted: boolean }) => void) {
   const pending = new Set<string>();
   return {

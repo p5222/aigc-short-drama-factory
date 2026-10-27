@@ -4,6 +4,13 @@ export const supportCategories: Record<SupportTicketCategory, string> = { accoun
 export const supportStatuses: Record<SupportTicketStatus, string> = { open: "待处理", answered: "已回复", closed: "已关闭" };
 export type SupportCreateDraft = { subject: string; category: SupportTicketCategory; body: string };
 export const emptySupportDraft = (): SupportCreateDraft => ({ subject: "", category: "other", body: "" });
+export function attachSupportContext(draft: SupportCreateDraft, context: SupportCreateDraft): SupportCreateDraft {
+  if (draft.body.includes(context.body)) return draft;
+  const body = [draft.body.trimEnd(), context.body].filter(Boolean).join("\n\n");
+  if (body.length > 5000) throw new Error("已有说明加上任务信息超过 5000 字，请先精简说明，再补充任务信息。原草稿已保留。");
+  const hasDraft = Boolean(draft.subject.trim() || draft.body.trim());
+  return { subject: draft.subject.trim() ? draft.subject : context.subject, category: hasDraft ? draft.category : context.category, body };
+}
 type Store = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
 export function supportStorageKey(userId: string, mode: "user" | "staff", action: string) {

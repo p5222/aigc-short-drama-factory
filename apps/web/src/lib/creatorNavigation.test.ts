@@ -2,6 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { creatorRouteHash, readCreatorRoute, createRequestEpoch, refreshResources } from "./creatorNavigation.ts";
 
+test("task shortcuts preserve status and exact selection through reload while invalid query values are discarded", () => {
+  const route = { page: "tasks", taskFilter: "failed", taskId: "task:42" } as const;
+  assert.deepEqual(readCreatorRoute(creatorRouteHash(route)), route);
+  assert.deepEqual(readCreatorRoute("#/tasks?status=unknown&task=bad%2Fid"), { page: "tasks" });
+  assert.deepEqual(readCreatorRoute("#/tasks?status=all&task="), { page: "tasks" });
+  assert.deepEqual(readCreatorRoute("#/tasks?status=active"), { page: "tasks", taskFilter: "active" });
+});
+
 test("creator links preserve project identity across reloads, and reject invalid or admin destinations", () => {
   for (const route of [{ page: "project", projectId: "project-2" }, { page: "content", contentId: "story-4" }, { page: "tasks" }] as const) {
     assert.deepEqual(readCreatorRoute(creatorRouteHash(route)), route);

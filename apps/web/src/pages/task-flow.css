@@ -1,0 +1,11 @@
+.queue-detail-region { min-width: 0; scroll-margin-top: 88px; border-radius: 12px; }
+.queue-detail-region:focus-visible { outline: 2px solid var(--ds-focus-ring); outline-offset: 4px; }
+.queue-detail-region .queue-detail-card { position: static; }
+:root .app-shell.product-shell .queue-detail-region .queue-return-list { display: none; }
+:root .app-shell.product-shell .queue-detail-region .queue-detail-head h2 { overflow-wrap: anywhere; }
+.queue-detail-region .queue-task-id code { overflow-wrap: anywhere; }
+@media (max-width: 900px) {
+  .app-shell .creator-page .queue-workspace { grid-template-columns: minmax(0, 1fr); }
+  :root .app-shell.product-shell .queue-detail-region .queue-return-list { display: inline-flex; margin-bottom: 12px; min-height: 44px; }
+  .app-shell .creator-page .queue-task-select { min-height: 76px; }
+}

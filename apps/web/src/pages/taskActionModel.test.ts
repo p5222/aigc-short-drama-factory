@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { GenerationTask } from "@aifilm/shared";
-import { canRetryTask, canCancelTask, createTaskActionRunner, taskRecoveryHint, taskSupportDiagnostic, type PendingTaskActions } from "./taskActionModel.ts";
+import { canRetryTask, canCancelTask, createTaskActionRunner, taskRecoveryHint, taskSupportDiagnostic, taskSupportDraft, type PendingTaskActions } from "./taskActionModel.ts";
 
 test("blocked recovery does not invite another charge and diagnostics exclude private payloads", () => {
   const task = { id: "platform-id", jobId: "private-queue-id", type: "video", status: "failed", retryable: false,
@@ -13,6 +13,10 @@ test("blocked recovery does not invite another charge and diagnostics exclude pr
   const diagnostic = taskSupportDiagnostic(task);
   assert.match(diagnostic, /platform-id/);
   assert.doesNotMatch(diagnostic, /secret|private/);
+  const draft = taskSupportDraft(task);
+  assert.equal(draft.category, "generation");
+  assert.doesNotMatch(JSON.stringify(draft), /secret|private/);
+  assert.equal(taskSupportDraft({ ...task, type: "export" }).category, "export");
 });
 
 test("accepted mutation with failed refresh blocks another charge until an explicit refresh succeeds", async () => {

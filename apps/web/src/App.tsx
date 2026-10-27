@@ -44,6 +44,8 @@ import { clearWizardDraft } from "./pages/wizardDraftStorage";
 import { BEFORE_CREATOR_NAVIGATION, createRequestEpoch, refreshResources } from "./lib/creatorNavigation";
 import { useCreatorNavigation } from "./lib/useCreatorNavigation";
 import { InlineNotice, StatePanel } from "./design-system/ui";
+import type { SupportTicketIntent } from "./support/SupportTicketPanel";
+import { taskSupportDraft } from "./pages/taskActionModel";
 
 const AdminPage = lazy(routePageLoader(() => import("./pages/AdminPage").then(module => ({ default: module.AdminPage }))));
 const ProjectWorkbenchPage = lazy(routePageLoader(() => import("./pages/ProjectWorkbenchPage").then(module => ({ default: module.ProjectWorkbenchPage }))));
@@ -154,6 +156,8 @@ export function App() {
   const contentFocusId = route.contentId ?? "";
   const [openingProjectId, setOpeningProjectId] = useState("");
   const [tasks, setTasks] = useState<GenerationTask[]>([]);
+  const [supportIntent, setSupportIntent] = useState<(SupportTicketIntent & { userId: string })>();
+  const consumeSupportIntent = useCallback(() => setSupportIntent(undefined), []);
   const [account, setAccount] = useState<CreditAccount>();
   const [transactions, setTransactions] = useState<CreditTransaction[]>([]);
   const [orders, setOrders] = useState<RechargeOrder[]>([]);
@@ -465,7 +469,7 @@ export function App() {
     };
     switch (activePage) {
       case "workbench":
-        return <WorkbenchPage summary={summary} onStart={openFreshWizard} onStartContent={openFreshContent} onOpenWorks={() => setActivePage("scripts")} onOpen={(projectId) => void openProject(projectId)} onOpenTasks={() => setActivePage("tasks")} onRecharge={() => setActivePage("recharge")} />;
+        return <WorkbenchPage summary={summary} contentProjects={readResources.has("内容作品") ? contentProjects : undefined} onOpenContent={id => navigate({ page: "content", contentId: id })} onRefresh={() => void load().catch(() => undefined)} onStart={openFreshWizard} onStartContent={openFreshContent} onOpenWorks={() => setActivePage("scripts")} onOpen={(projectId) => void openProject(projectId)} onOpenTasks={(taskFilter, taskId) => navigate({ page: "tasks", taskFilter, taskId })} onRecharge={() => setActivePage("recharge")} />;
       case "content":
         return <ContentCreatorPage key={`${user?.id ?? "anonymous"}:${contentFocusId || "default"}`} providers={providers} modelPrices={modelPrices} initialSelectedId={contentFocusId} onProjectsChange={setContentProjects} onBack={() => setActivePage("scripts")} onEnterProduction={async (projectId) => {
                 await openProject(projectId);
@@ -518,9 +522,16 @@ export function App() {
       case "tasks":
         return (
           <TaskCenterPage
+            key={`${user?.id}:${route.taskFilter ?? "all"}:${route.taskId ?? ""}`}
             tasks={tasks}
+            initialFilter={route.taskFilter}
+            initialTaskId={route.taskId}
             onOpenProject={(id) => void openProject(id)}
-            onOpenSupport={() => setActivePage("help")}
+            onOpenSupport={task => {
+              if (!user) return;
+              setSupportIntent({ userId: user.id, view: "new", key: Date.now(), prefill: taskSupportDraft(task) });
+              setActivePage("help");
+            }}
             onRetry={(taskId) => applyTaskAction(() => api.retryTask(taskId))}
             onCancel={(taskId) => applyTaskAction(() => api.cancelTask(taskId))}
             onRefresh={() => load()}
@@ -535,7 +546,7 @@ export function App() {
       case "settings":
         return <SettingsPage theme={theme} onThemeChange={handleThemeChange} onNavigate={setActivePage} />;
       case "help":
-        return user ? <HelpPage articles={helpArticles} userId={user.id} /> : null;
+        return user ? <HelpPage key={user.id} articles={helpArticles} userId={user.id} initialSupportIntent={supportIntent?.userId === user.id ? supportIntent : undefined} onSupportIntentConsumed={consumeSupportIntent} /> : null;
       case "admin":
         return (
           <AdminPage
@@ -558,7 +569,7 @@ export function App() {
       default:
         return null;
     }
-  }, [navigate, setActivePage, creationSession, openProject, projectError, route.projectId, account, activePage, adminPlans, adminSummary, adminUsers, announcements, contentFocusId, contentProjects, handleThemeChange, helpArticles, membershipPlans, modelPrices, openingProjectId, orders, plans, projects, providers, redeemCodes, summary, tasks, templates, theme, transactions, workflow, load, user]);
+  }, [navigate, setActivePage, creationSession, openProject, projectError, route.projectId, route.taskFilter, route.taskId, readResources, supportIntent, consumeSupportIntent, account, activePage, adminPlans, adminSummary, adminUsers, announcements, contentFocusId, contentProjects, handleThemeChange, helpArticles, membershipPlans, modelPrices, openingProjectId, orders, plans, projects, providers, redeemCodes, summary, tasks, templates, theme, transactions, workflow, load, user]);
 
   const unreadResources = (isAdminRoute ? adminPageResources[adminHash] ?? [] : creatorPageResources[activePage] ?? []).filter((label) => !readResources.has(label));
   const initialReadState = !dataReady || unreadResources.length ? <div className="page-stack"><StatePanel

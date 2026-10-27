@@ -2,6 +2,14 @@
   flex-wrap: wrap;
 }
 
+.scripts-page .works-filter-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+.scripts-page .works-result-count { color: var(--ds-text-secondary); font-size: 13px; font-variant-numeric: tabular-nums; }
+.scripts-page .works-section > .list-pagination { margin: 0 16px 16px; }
+:root .app-shell.product-shell .scripts-page .project-card { transition: border-color .18s ease, box-shadow .18s ease; }
+:root .app-shell.product-shell .scripts-page .project-card:hover,
+:root .app-shell.product-shell .scripts-page .project-card:focus-within { border-color: var(--ds-action-primary); box-shadow: 0 4px 16px color-mix(in srgb, var(--ds-action-primary) 7%, transparent); }
+.scripts-page .works-card-footer > span { color: var(--ds-action-primary); font-weight: 550; }
+
 .scripts-page .tabs button {
   min-height: 40px;
 }

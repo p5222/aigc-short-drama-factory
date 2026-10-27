@@ -570,13 +570,18 @@ const fallbackHelpArticles: HelpArticle[] = [
   }
 ];
 
-export function HelpPage({ articles = [], userId }: { articles?: HelpArticle[]; userId: string }) {
+export function HelpPage({ articles = [], userId, initialSupportIntent, onSupportIntentConsumed }: { articles?: HelpArticle[]; userId: string; initialSupportIntent?: SupportTicketIntent; onSupportIntentConsumed?: () => void }) {
   const [keyword, setKeyword] = useState("");
   const [category, setCategory] = useState<HelpArticle["category"] | "all">("all");
   const sourceArticles = articles.length ? articles : fallbackHelpArticles;
   const [openArticleId, setOpenArticleId] = useState(sourceArticles[0]?.id ?? "");
-  const [supportIntent, setSupportIntent] = useState<SupportTicketIntent>();
-  const [helpView, setHelpView] = useState<"articles" | "tickets">("articles");
+  const [supportIntent, setSupportIntent] = useState<SupportTicketIntent>(initialSupportIntent ?? { view: "list", key: 0 });
+  const [helpView, setHelpView] = useState<"articles" | "tickets">(initialSupportIntent ? "tickets" : "articles");
+  useEffect(() => {
+    if (!initialSupportIntent) return;
+    setSupportIntent(initialSupportIntent); setHelpView("tickets");
+    onSupportIntentConsumed?.();
+  }, [initialSupportIntent, onSupportIntentConsumed]);
   useEffect(() => {
     if (openArticleId && !sourceArticles.some((article) => article.id === openArticleId)) {
       setOpenArticleId(sourceArticles[0]?.id ?? "");

@@ -3,11 +3,11 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { SupportTicketCategory, SupportTicketDetail, SupportTicketMutationResult, SupportTicketStatus, SupportTicketSummary } from "@aifilm/shared";
 import { api } from "../lib/api";
 import { HttpError } from "../lib/httpClient";
-import { captureSupportAttempt, claimSupportDraft, completeSupportAttempt, createSupportReadGate, emptySupportDraft, mergeSupportSummary, readSupportDraft, supportCategories, supportRequestId, supportStatuses, supportStorageKey, validateSupportCreate, validateSupportMessage, writeSupportDraft } from "./supportTicketModel";
+import { attachSupportContext, captureSupportAttempt, claimSupportDraft, completeSupportAttempt, createSupportReadGate, emptySupportDraft, mergeSupportSummary, readSupportDraft, supportCategories, supportRequestId, supportStatuses, supportStorageKey, validateSupportCreate, validateSupportMessage, writeSupportDraft, type SupportCreateDraft } from "./supportTicketModel";
 import "./supportTickets.css";
 import { InlineNotice } from "../design-system/ui";
 
-export interface SupportTicketIntent { view: "list" | "new"; key: number }
+export interface SupportTicketIntent { view: "list" | "new"; key: number; prefill?: SupportCreateDraft }
 interface SupportTicketPanelProps { userId: string; intent?: SupportTicketIntent }
 
 export function SupportTicketPanel(props: SupportTicketPanelProps) {
@@ -26,6 +26,8 @@ function TicketPanel({ userId, intent, mode }: SupportTicketPanelProps & { mode:
   const store = useMemo(sessionStore, []);
   const createKey = supportStorageKey(userId, mode, "create");
   const [draft, setDraft] = useState(() => readSupportDraft(store, createKey));
+  const [taskContext, setTaskContext] = useState<SupportCreateDraft>();
+  const appliedIntent = useRef<number | undefined>(undefined);
   const [items, setItems] = useState<SupportTicketSummary[]>([]);
   const [status, setStatus] = useState<SupportTicketStatus | "all">(staff ? "open" : "all");
   const [page, setPage] = useState(1);
@@ -80,6 +82,15 @@ function TicketPanel({ userId, intent, mode }: SupportTicketPanelProps & { mode:
   useEffect(() => {
     if (!intent || pendingRef.current) return;
     changeView(intent.view);
+    if (intent.prefill && intent.key !== appliedIntent.current) {
+      appliedIntent.current = intent.key;
+      if (!draft.subject.trim() && !draft.body.trim()) {
+        setDraft(intent.prefill);
+        setNotice("已带入任务诊断信息，请补充问题说明并检查后提交。");
+      } else if (!draft.body.includes(intent.prefill.body)) {
+        setTaskContext(intent.prefill);
+      }
+    }
   }, [intent?.key, intent?.view]);
 
   useEffect(() => {
@@ -138,7 +149,7 @@ function TicketPanel({ userId, intent, mode }: SupportTicketPanelProps & { mode:
       const result = await api.createSupportTicket({ ...input, requestId });
       completeSupportAttempt(store, createKey, attempt);
       if (!alive.current) return;
-      setDraft(emptySupportDraft()); setReply("");
+      setDraft(emptySupportDraft()); setReply(""); setTaskContext(undefined);
       applySaved(result, result.replayed ? "已找到此前成功提交的工单，没有重复创建。" : "工单已提交，编号和对话记录见下方。可在“我的工单”查看回复。");
     } catch (reason) {
       if (alive.current) setActionError(reason instanceof Error ? reason.message : "未能确认提交结果，请保留当前内容重试。");
@@ -185,9 +196,16 @@ function TicketPanel({ userId, intent, mode }: SupportTicketPanelProps & { mode:
   }
 
   const disabled = Boolean(pending);
-  return <section className="support-panel" id={staff ? "support-admin-tickets" : "support-tickets"} aria-labelledby={titleId}>
+  return <section className="support-panel" data-view={view} id={staff ? "support-admin-tickets" : "support-tickets"} aria-labelledby={titleId}>
     <header className="support-heading"><div><h2 ref={heading} id={titleId} tabIndex={-1}>{staff ? "支持工单" : "工单记录"}</h2><p>{staff ? "查看用户问题并留下可追溯的站内回复。" : "选择工单查看对话，未解决的问题可以继续补充。"}</p></div><div className="support-actions">{!staff ? <button className="support-primary" type="button" disabled={disabled} onClick={() => changeView("new")}><Plus size={16} />新建工单</button> : null}<button type="button" disabled={disabled || listLoading} onClick={() => setListReload(value => value + 1)}><RefreshCw size={16} />刷新列表</button></div></header>
     {notice ? <InlineNotice tone="success" onDismiss={() => setNotice("")}>{notice}</InlineNotice> : null}
+    {view === "new" && taskContext ? <div className="support-context-review" role="region" aria-label="待补充的任务信息">
+      <div><strong>已有未提交的草稿</strong><p>原有内容已保留，可将本次任务信息补充到说明末尾。</p></div>
+      <div className="support-actions"><button type="button" disabled={disabled} onClick={() => {
+        try { setDraft(attachSupportContext(draft, taskContext)); setTaskContext(undefined); setActionError(""); setNotice("任务信息已补充，请检查说明后提交。"); }
+        catch (reason) { setActionError(reason instanceof Error ? reason.message : "任务信息未能补充，原草稿已保留。"); }
+      }}>补充任务信息</button><button type="button" disabled={disabled} onClick={() => setTaskContext(undefined)}>保留原草稿</button></div>
+    </div> : null}
     <div className="support-layout">
       <aside className="support-list" aria-label="工单列表"><div className="support-list-filter"><label>状态<select value={status} disabled={disabled} onChange={event => { setStatus(event.target.value as SupportTicketStatus | "all"); setPage(1); }}><option value="all">全部工单</option>{Object.entries(supportStatuses).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><span>{listError ? "统计待刷新" : listLoading ? "同步中" : `共 ${total} 条`}</span></div>
         {listError ? <p className="support-error" role="alert">列表未能刷新：{listError}<button type="button" disabled={disabled || listLoading} onClick={() => setListReload(value => value + 1)}>重试读取列表</button></p> : null}
