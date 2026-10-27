@@ -1,0 +1,25 @@
+{
+  "date": "2026-10-27",
+  "sourceBaseRevision": "8c7ab174bee06cbeee6bf581744c364ad991f300",
+  "githubPublicReadSucceeded": true,
+  "githubMain": "5df3bb0be91ac52296b89337dd7926e1a3aec3e2",
+  "publicReadiness": {
+    "url": "https://manjiao.cloud/ready",
+    "ok": true,
+    "checks": {
+      "database": true,
+      "redis": true,
+      "worker": true,
+      "catalog": true
+    },
+    "revision": "5df3bb0be91ac52296b89337dd7926e1a3aec3e2"
+  },
+  "availableGithubWriteTool": false,
+  "independentWriteCredentialConfigured": false,
+  "knownCredentialBrokerRetried": false,
+  "pushed": false,
+  "deployed": false,
+  "productionDatabaseMigrationApplied": false,
+  "serverRevisionAlignmentVerified": false,
+  "paidProviderOrLivePaymentAcceptance": false
+}

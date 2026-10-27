@@ -107,6 +107,7 @@ model Project {
   tasks        GenerationTask[]
   transactions CreditTransaction[]
   exportJobs   ExportJob[]
+  deliveryEdits DeliveryEdit[]
   qualityReports QualityReport[]
   evaluationRuns EvaluationRun[]
   feedbacks    UserFeedback[]
@@ -116,6 +117,17 @@ model Project {
   createdAt    DateTime         @default(now())
   updatedAt    DateTime         @updatedAt
   @@index([userId])
+}
+
+model DeliveryEdit {
+  id        String   @id
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  episodeNo Int
+  revision  Int      @default(1)
+  clips     Json
+  updatedAt DateTime @updatedAt
+  @@unique([projectId, episodeNo])
 }
 
 model ScriptDraft {

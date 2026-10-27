@@ -26,6 +26,7 @@ import type {
   AssetItem,
   CharacterProfile,
   ExportJob,
+  DeliveryEditReference,
   ModelPrice,
   ModelProvider,
   Project,
@@ -289,12 +290,12 @@ function LoadedProjectWorkbenchPage({ workflow, providers, modelPrices, theme, o
     }
   }
 
-  async function createExport(type: "tts" | "subtitle" | "video_export", storyboardIds?: string[], maxCredits?: number) {
+  async function createExport(type: "tts" | "subtitle" | "video_export", storyboardIds?: string[], maxCredits?: number, deliveryEdit?: DeliveryEditReference) {
     setIsBusy(true);
     setError("");
     beginOperation("export", type === "video_export" ? "MP4 合成中" : type === "tts" ? "配音生成中" : "字幕生成中", "正在整理镜头、台词、时长和素材。");
     try {
-      const job = await createExportJob(project.id, { type, storyboardIds, maxCredits });
+      const job = await createExportJob(project.id, { type, storyboardIds, maxCredits, deliveryEdit });
       setExportJobs(current => [job, ...current.filter(item => item.id !== job.id)]);
       if (job.status === "failed") {
         setMessage("");
@@ -403,6 +404,7 @@ function LoadedProjectWorkbenchPage({ workflow, providers, modelPrices, theme, o
         onPublish={(candidate) => { setPublishCandidate(candidate); setPublishOpen(true); }}
         exportJobs={exportJobs}
         onExport={createExport}
+        onSaveStateChange={setSaveState}
         isBusy={isBusy}
         activeShotId={workbenchState.activeShotId}
         activeEpisodeNo={workbenchState.activeEpisodeNo}

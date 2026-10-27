@@ -1,0 +1,19 @@
+{
+  "date": "2026-10-27",
+  "scope": "本地视频剪辑、成片展示与商业化交付迭代",
+  "sourceBaseRevision": "8c7ab174bee06cbeee6bf581744c364ad991f300",
+  "typecheck": "passed",
+  "workspaceProductionBuild": "passed",
+  "finalWebProductionBuild": "passed",
+  "webUnitTests": { "passed": 256, "failed": 0 },
+  "webTransportTests": { "passed": 5, "failed": 0 },
+  "isolatedApiTests": { "passed": 301, "failed": 0, "skipped": 0 },
+  "browserTests": { "total": 94, "passed": 92, "failed": 0, "flaky": 0, "skipped": 2 },
+  "newVideoEditorBrowserTests": { "passed": 12, "failed": 0 },
+  "report": { "widths": [360, 390, 768, 1024, 1440], "passed": true, "brokenImages": 0, "pageErrors": 0, "citationsNavigable": true },
+  "databaseIsolationCleanedUp": true,
+  "productionDeploymentCompleted": false,
+  "paidProviderAcceptance": false,
+  "livePaymentAcceptance": false,
+  "evidence": ["isolated-verification.json", "ui-verification.json", "report-verification.json", "publication-preflight.json", "screenshots/"]
+}

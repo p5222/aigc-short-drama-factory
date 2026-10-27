@@ -259,6 +259,7 @@ export function mapExportJob(row: any, sourceStatus: NonNullable<ExportJob["sour
     type: row.type,
     status: row.status,
     sourceStatus,
+    deliveryEdit: diagnostics.deliveryEdit,
     outputUrl: row.outputUrl ?? undefined,
     downloadUrl: row.outputUrl ? `/api/projects/${row.projectId}/export/jobs/${row.id}/download` : undefined,
     previewUrl: diagnostics.previewUrl ?? (row.outputUrl?.endsWith(".mp4") ? row.outputUrl : undefined),
@@ -288,12 +289,18 @@ function parseExportDiagnostics(value?: string | null) {
     clipCount?: number;
     storyboardIds?: string[];
     warnings?: string[];
+    deliveryEdit?: ExportJob["deliveryEdit"];
   };
   try {
     const parsed = JSON.parse(value) as Record<string, unknown>;
     if (parsed.kind !== "export_diagnostics") return { message: value };
     return {
       message: typeof parsed.message === "string" ? parsed.message : undefined,
+      deliveryEdit: (() => {
+        const source = parsed.sourceSnapshot as { deliveryEdit?: ExportJob["deliveryEdit"] } | undefined;
+        const edit = source?.deliveryEdit;
+        return edit && Number.isSafeInteger(edit.episodeNo) && edit.episodeNo > 0 && Number.isSafeInteger(edit.revision) && edit.revision > 0 ? edit : undefined;
+      })(),
       outputKind: isExportOutputKind(parsed.outputKind) ? parsed.outputKind : undefined,
       manifestUrl: typeof parsed.manifestUrl === "string" ? parsed.manifestUrl : undefined,
       subtitleUrl: typeof parsed.subtitleUrl === "string" ? parsed.subtitleUrl : undefined,

@@ -4,6 +4,7 @@ export * from "./episodePlanning.js";
 export * from "./modelPricing.js";
 export * from "./creditPricing.js";
 export * from "./creditCenter.js";
+export * from "./deliveryEdit.js";
 
 export type ProjectStatus = "draft" | "planning" | "scripting" | "storyboarding" | "asseting" | "rendering" | "completed";
 
@@ -149,6 +150,8 @@ export interface StoryboardShot {
   sceneNo: number;
   shotNo: number;
   duration: number;
+  /** Export-only trim offset; never persisted on the original storyboard. */
+  videoTrimStart?: number;
   shotSize: string;
   cameraAngle: string;
   cameraMovement: string;
@@ -219,6 +222,9 @@ export interface ProjectWorkflow {
   tasks: GenerationTask[];
   qualityReports?: QualityReport[];
   feedbacks?: UserFeedback[];
+  deliveryEdits?: import("./deliveryEdit.js").DeliveryEdit[];
+  /** Present only on a materialized export workflow. */
+  exportEdit?: import("./deliveryEdit.js").DeliveryEditReference;
 }
 
 export interface GenerationTask {
@@ -318,6 +324,7 @@ export interface ExportJob {
   status: ExportJobStatus;
   /** Missing on older clients/records; treat it as unknown until the API verifies a saved source snapshot. */
   sourceStatus?: "current" | "stale" | "unknown";
+  deliveryEdit?: import("./deliveryEdit.js").DeliveryEditReference;
   outputUrl?: string;
   downloadUrl?: string;
   previewUrl?: string;

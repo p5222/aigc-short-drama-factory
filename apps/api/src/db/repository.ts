@@ -16,6 +16,8 @@ import { calculateOfficialCredits, officialSampleUsage, estimateImageCredits, in
 import { hashPassword } from "../auth/password.js";
 import { buildDirectorStoryboardRow, createDirectorStoryboardPackage } from "../export/directorStoryboard.js";
 import { selectExportWorkflow } from "../export/exportSelection.js";
+import { mapDeliveryEdit } from "./deliveryEdit.js";
+import { applyDeliveryEdit, type DeliveryEditReference } from "@aifilm/shared";
 import { assessVideoExportCompletion, captureVideoExportSnapshot, readVideoExportSnapshot, type VideoExportSnapshot } from "../export/exportCompletion.js";
 import { captureExportSource, createExportSourceContext, exportSourceFromDiagnostics, exportSourceStatus, type ExportSourceSnapshot } from "../export/exportSource.js";
 import { lockTaskCredits, reserveTaskCredits, releaseTaskCredits } from "../billing/taskCredits.js";
@@ -314,7 +316,7 @@ export async function updateProjectModelRoutes(
 }
 
 export async function getProjectWorkflow(projectId: string, userId = DEMO_USER_ID, db: PrismaClient | Prisma.TransactionClient = prisma) {
-  const [project, script, characters, assets, storyboards, tasks, qualityReports, feedbacks] = await Promise.all([
+  const [project, script, characters, assets, storyboards, tasks, qualityReports, feedbacks, deliveryEdits] = await Promise.all([
     db.project.findFirst({ where: { id: projectId, userId } }),
     db.scriptDraft.findFirst({ where: { projectId }, orderBy: { createdAt: "desc" } }),
     db.character.findMany({ where: { projectId }, orderBy: { createdAt: "asc" } }),
@@ -322,7 +324,8 @@ export async function getProjectWorkflow(projectId: string, userId = DEMO_USER_I
     db.storyboard.findMany({ where: { projectId }, orderBy: [{ episodeNo: "asc" }, { sceneNo: "asc" }, { shotNo: "asc" }] }),
     db.generationTask.findMany({ where: { projectId, userId }, orderBy: { createdAt: "desc" } }),
     db.qualityReport.findMany({ where: { projectId }, orderBy: { createdAt: "desc" }, take: 30 }),
-    db.userFeedback.findMany({ where: { projectId, userId }, orderBy: { createdAt: "desc" }, take: 30 })
+    db.userFeedback.findMany({ where: { projectId, userId }, orderBy: { createdAt: "desc" }, take: 30 }),
+    db.deliveryEdit.findMany({ where: { projectId }, orderBy: { episodeNo: "asc" } })
   ]);
 
   if (!project) return null;
@@ -335,7 +338,8 @@ export async function getProjectWorkflow(projectId: string, userId = DEMO_USER_I
     storyboards: storyboards.map(mapStoryboard),
     tasks: tasks.map(mapTask),
     qualityReports: qualityReports.map(mapQualityReport),
-    feedbacks: feedbacks.map(mapUserFeedback)
+    feedbacks: feedbacks.map(mapUserFeedback),
+    deliveryEdits: deliveryEdits.map(mapDeliveryEdit)
   };
 }
 
@@ -1560,10 +1564,10 @@ export async function getExportJobForDownload(projectId: string, jobId: string, 
   return job;
 }
 
-export async function quoteProjectExport(projectId: string, userId: string, type: "tts" | "subtitle" | "video_export", storyboardIds?: string[]) {
+export async function quoteProjectExport(projectId: string, userId: string, type: "tts" | "subtitle" | "video_export", storyboardIds?: string[], deliveryEdit?: DeliveryEditReference) {
   const fullWorkflow = await getProjectWorkflow(projectId, userId);
   if (!fullWorkflow) throw new Error("项目不存在");
-  const workflow = selectExportWorkflow(fullWorkflow, storyboardIds);
+  const workflow = deliveryEdit ? applyDeliveryEdit(fullWorkflow, deliveryEdit) : selectExportWorkflow(fullWorkflow, storyboardIds);
   if (type === "video_export") assertVideoExportReady(workflow);
   if (type === "subtitle") return { type, providerId: "local-subtitle", providerName: "字幕导出", model: "srt", characters: 0, estimatedCredits: 0, unitCredits: 0, unit: "tts_character" as const, cached: false, cueCount: 0 };
   return { type, ...await quoteProjectNarration(workflow, userId) };
@@ -1574,11 +1578,12 @@ export async function createProjectExportJob(
   userId = DEMO_USER_ID,
   type: "tts" | "subtitle" | "video_export",
   storyboardIds?: string[],
-  maxCredits = 0
+  maxCredits = 0,
+  deliveryEdit?: DeliveryEditReference
 ) {
   const fullWorkflow = await getProjectWorkflow(projectId, userId);
   if (!fullWorkflow) throw new Error("项目不存在");
-  const workflow = selectExportWorkflow(fullWorkflow, storyboardIds);
+  const workflow = deliveryEdit ? applyDeliveryEdit(fullWorkflow, deliveryEdit) : selectExportWorkflow(fullWorkflow, storyboardIds);
   if (!Number.isSafeInteger(maxCredits) || maxCredits < 0) throw new Error("请提供有效的导出积分上限");
   const videoSnapshot = type === "video_export" ? captureVideoExportSnapshot(workflow) : undefined;
   const sourceSnapshot = captureExportSource(workflow, type, storyboardIds === undefined ? "project" : "selection");

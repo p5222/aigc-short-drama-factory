@@ -1,11 +1,13 @@
 import { createHash } from "node:crypto";
 import type { ExportJob, ProjectWorkflow } from "@aifilm/shared";
+import { applyDeliveryEdit, type DeliveryEditReference } from "@aifilm/shared";
 import { assertVideoExportReady } from "./exportRequirements.js";
 
 export interface VideoExportSnapshot {
   projectId: string;
   storyboardIds: string[];
   inputFingerprint: string;
+  deliveryEdit?: DeliveryEditReference;
 }
 
 export function readVideoExportSnapshot(value: unknown): VideoExportSnapshot | null {
@@ -16,7 +18,10 @@ export function readVideoExportSnapshot(value: unknown): VideoExportSnapshot | n
     || !Array.isArray(candidate.storyboardIds) || !candidate.storyboardIds.length
     || candidate.storyboardIds.some(id => typeof id !== "string" || !id)
     || new Set(candidate.storyboardIds).size !== candidate.storyboardIds.length) return null;
-  return { projectId: candidate.projectId, storyboardIds: candidate.storyboardIds, inputFingerprint: candidate.inputFingerprint };
+  if (candidate.deliveryEdit && (!Number.isSafeInteger(candidate.deliveryEdit.episodeNo) || candidate.deliveryEdit.episodeNo < 1
+    || !Number.isSafeInteger(candidate.deliveryEdit.revision) || candidate.deliveryEdit.revision < 1)) return null;
+  return { projectId: candidate.projectId, storyboardIds: candidate.storyboardIds, inputFingerprint: candidate.inputFingerprint,
+    ...(candidate.deliveryEdit ? { deliveryEdit: candidate.deliveryEdit } : {}) };
 }
 
 type CompletionResult = Pick<ExportJob, "status" | "outputKind" | "outputUrl" | "ffmpegReady" | "clipCount">;
@@ -45,7 +50,8 @@ export function captureVideoExportSnapshot(workflow: ProjectWorkflow): VideoExpo
   return {
     projectId: workflow.project.id,
     storyboardIds: workflow.storyboards.map((shot) => shot.id),
-    inputFingerprint: createHash("sha256").update(JSON.stringify(stableValue(input))).digest("hex")
+    inputFingerprint: createHash("sha256").update(JSON.stringify(stableValue(input))).digest("hex"),
+    ...(workflow.exportEdit ? { deliveryEdit: workflow.exportEdit } : {})
   };
 }
 
@@ -60,7 +66,11 @@ export function assessVideoExportCompletion(snapshot: VideoExportSnapshot, curre
   const actualEpisodes = new Set(current.storyboards.map((shot) => shot.episodeNo));
   if (!Number.isSafeInteger(episodes) || episodes <= 0 || actualEpisodes.size !== episodes || [...actualEpisodes].some((episode) => !Number.isSafeInteger(episode) || episode < 1 || episode > episodes)) return incomplete("planned_episodes_incomplete");
   // Explicit creator ordering is valid, but every current shot must be included exactly once.
-  const selectedCurrent = { ...current, storyboards: snapshot.storyboardIds.map((id) => byId.get(id)!) };
+  let selectedCurrent = { ...current, storyboards: snapshot.storyboardIds.map((id) => byId.get(id)!) };
+  if (snapshot.deliveryEdit) {
+    try { selectedCurrent = applyDeliveryEdit(current, snapshot.deliveryEdit); }
+    catch { return incomplete("source_changed"); }
+  }
   try { assertVideoExportReady(selectedCurrent); } catch { return incomplete("source_changed"); }
   if (captureVideoExportSnapshot(selectedCurrent).inputFingerprint !== snapshot.inputFingerprint) return incomplete("source_changed");
   return { complete: true, reason: "complete" };

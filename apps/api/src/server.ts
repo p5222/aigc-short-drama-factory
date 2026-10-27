@@ -15,6 +15,7 @@ import { hashPassword, verifyPassword } from "./auth/password.js";
 import { EmailVerificationError, EmailVerificationService, QQ_EMAIL_PATTERN } from "./auth/emailVerification.js";
 import { mockCheckoutEnabled } from "./billing/checkoutPolicy.js";
 import { ContentMutationError } from "./content/contentMutation.js";
+import { DeliveryEditError, saveDeliveryEdit } from "./db/deliveryEdit.js";
 import { acceptWechatTransaction, getMembership, paymentAvailability, prepareCheckout, reconcilePayment, recoverPayments, startCheckout } from "./billing/payments.js";
 import { decryptWechatNotification, PaymentError, wechatConfig } from "./billing/wechat.js";
 import { createRateLimitMiddleware, positiveInteger, RequestRateLimiter } from "./security/rateLimit.js";
@@ -448,8 +449,16 @@ const invoiceRequestSchema = z.object({
 const exportJobCreateSchema = z.object({
   type: z.enum(["tts", "subtitle", "video_export"]),
   storyboardIds: z.array(z.string().min(1)).min(1).max(2000).optional(),
-  maxCredits: z.number().int().nonnegative().optional()
+  maxCredits: z.number().int().nonnegative().optional(),
+  deliveryEdit: z.object({ episodeNo: z.number().int().positive(), revision: z.number().int().positive() }).strict().optional()
 });
+
+const deliveryEditSaveSchema = z.object({
+  episodeNo: z.number().int().positive(),
+  expectedRevision: z.number().int().nonnegative(),
+  clips: z.array(z.object({ shotId: z.string().min(1).max(300), sourceAssetId: z.string().min(1).max(500),
+    inPoint: z.number().min(0).max(86400), outPoint: z.number().positive().max(86400) }).strict()).min(1).max(2000)
+}).strict();
 
 const adminUserUpdateSchema = z.object({
   name: z.string().trim().min(1).max(80).optional(),
@@ -1656,10 +1665,20 @@ app.get(
   })
 );
 
+app.put("/api/projects/:id/delivery-edit", asyncRoute(async (req, res) => {
+  const parsed = deliveryEditSaveSchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json(parsed.error.flatten());
+  try { res.json(await saveDeliveryEdit(paramId(req.params.id), requestUserId(req)!, parsed.data)); }
+  catch (reason) {
+    if (reason instanceof DeliveryEditError) return res.status(reason.statusCode).json({ message: reason.message });
+    throw reason;
+  }
+}));
+
 app.post("/api/projects/:id/exports/quote", asyncRoute(async (req, res) => {
   const parsed = exportJobCreateSchema.safeParse(req.body ?? {});
   if (!parsed.success) return res.status(400).json(parsed.error.flatten());
-  res.json(await quoteProjectExport(paramId(req.params.id), requestUserId(req)!, parsed.data.type, parsed.data.storyboardIds));
+  res.json(await quoteProjectExport(paramId(req.params.id), requestUserId(req)!, parsed.data.type, parsed.data.storyboardIds, parsed.data.deliveryEdit));
 }));
 
 app.post(
@@ -1667,7 +1686,7 @@ app.post(
   asyncRoute(async (req, res) => {
     const parsed = exportJobCreateSchema.safeParse(req.body ?? {});
     if (!parsed.success) return res.status(400).json(parsed.error.flatten());
-    res.status(201).json(await createProjectExportJob(paramId(req.params.id), requestUserId(req), parsed.data.type, parsed.data.storyboardIds, parsed.data.maxCredits));
+    res.status(201).json(await createProjectExportJob(paramId(req.params.id), requestUserId(req), parsed.data.type, parsed.data.storyboardIds, parsed.data.maxCredits, parsed.data.deliveryEdit));
   })
 );
 

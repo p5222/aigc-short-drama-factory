@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import type { ExportJob, ProjectWorkflow } from "@aifilm/shared";
+import { applyDeliveryEdit, type DeliveryEditReference } from "@aifilm/shared";
 import { buildExportSrt, buildVoiceCues } from "./videoComposer.js";
 
 export interface ExportSourceSnapshot {
@@ -9,6 +10,7 @@ export interface ExportSourceSnapshot {
   scope: "project" | "selection";
   storyboardIds: string[];
   inputFingerprint: string;
+  deliveryEdit?: DeliveryEditReference;
 }
 
 function stable(value: unknown): unknown {
@@ -34,7 +36,8 @@ function captureWithAssets(workflow: ProjectWorkflow, type: ExportJob["type"], s
     shots: workflow.storyboards.map(({ status: _status, ...shot }) => ({ shot, video: assetInput(`video_${shot.id}`), image: assetInput(`image_${shot.id}`) }))
   } : type === "tts" ? { cues } : { subtitles };
   return { version: 1, type, projectId: workflow.project.id, scope, storyboardIds: workflow.storyboards.map(shot => shot.id),
-    inputFingerprint: crypto.createHash("sha256").update(JSON.stringify(stable(input))).digest("hex") };
+    inputFingerprint: crypto.createHash("sha256").update(JSON.stringify(stable(input))).digest("hex"),
+    ...(workflow.exportEdit ? { deliveryEdit: workflow.exportEdit } : {}) };
 }
 
 export function readExportSource(value: unknown): ExportSourceSnapshot | null {
@@ -43,6 +46,8 @@ export function readExportSource(value: unknown): ExportSourceSnapshot | null {
   if (source.version !== 1 || !["tts", "subtitle", "video_export"].includes(source.type ?? "") || !["project", "selection"].includes(source.scope ?? "")
     || typeof source.projectId !== "string" || !source.projectId || typeof source.inputFingerprint !== "string" || !/^[a-f0-9]{64}$/.test(source.inputFingerprint)
     || !Array.isArray(source.storyboardIds) || source.storyboardIds.some(id => typeof id !== "string" || !id) || new Set(source.storyboardIds).size !== source.storyboardIds.length) return null;
+  if (source.deliveryEdit && (!Number.isSafeInteger(source.deliveryEdit.episodeNo) || source.deliveryEdit.episodeNo < 1
+    || !Number.isSafeInteger(source.deliveryEdit.revision) || source.deliveryEdit.revision < 1)) return null;
   return source as ExportSourceSnapshot;
 }
 
@@ -65,11 +70,16 @@ export function createExportSourceContext(current: ProjectWorkflow | null) {
     if (!current || snapshot.projectId !== current.project.id) return "stale";
     if (byId.size !== current.storyboards.length || snapshot.storyboardIds.some(id => !byId.has(id))) return "stale";
     if (snapshot.scope === "project" && current.storyboards.length !== snapshot.storyboardIds.length) return "stale";
-    const key = JSON.stringify([type, snapshot.scope, snapshot.storyboardIds]);
+    const key = JSON.stringify([type, snapshot.scope, snapshot.storyboardIds, snapshot.deliveryEdit]);
     let fingerprint = fingerprints.get(key);
     if (!fingerprint) {
-      const selected = { ...current, storyboards: snapshot.storyboardIds.map(id => byId.get(id)!) };
-      fingerprint = captureWithAssets(selected, type, snapshot.scope, assets).inputFingerprint;
+      let selected = { ...current, storyboards: snapshot.storyboardIds.map(id => byId.get(id)!) };
+      if (snapshot.deliveryEdit) {
+        try { selected = applyDeliveryEdit(current, snapshot.deliveryEdit); }
+        catch { return "stale"; }
+        if (JSON.stringify(selected.storyboards.map(shot => shot.id)) !== JSON.stringify(snapshot.storyboardIds)) return "stale";
+      }
+      fingerprint = captureWithAssets(selected, type, snapshot.scope, snapshot.deliveryEdit ? new Map(selected.assets.map(asset => [asset.id, asset])) : assets).inputFingerprint;
       fingerprints.set(key, fingerprint);
     }
     return fingerprint === snapshot.inputFingerprint ? "current" : "stale";

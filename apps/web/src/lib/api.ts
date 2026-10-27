@@ -19,6 +19,9 @@
   EvaluationRunDetail,
   FeedbackInput,
   ExportJob,
+  DeliveryEdit,
+  DeliveryEditClip,
+  DeliveryEditReference,
   GenerationTask,
   HelpArticle,
   ImageModelTestResult,
@@ -544,9 +547,11 @@ export const api = {
     request<DirectorStoryboardPackage>(`/projects/${projectId}/director-storyboard/export`, { method: "POST" }),
   exportJobs: (projectId: string) => request<ExportJob[]>(`/projects/${projectId}/export/jobs`),
   downloadExportJob: (projectId: string, jobId: string) => requestBlob(`/projects/${projectId}/export/jobs/${jobId}/download`),
-  quoteExport: (projectId: string, input: { type: "tts" | "subtitle" | "video_export"; storyboardIds?: string[] }) =>
+  saveDeliveryEdit: (projectId: string, input: { episodeNo: number; expectedRevision: number; clips: DeliveryEditClip[] }) =>
+    request<DeliveryEdit>(`/projects/${projectId}/delivery-edit`, { method: "PUT", body: JSON.stringify({ ...input, clips: input.clips.map(({ shotId, sourceAssetId, inPoint, outPoint }) => ({ shotId, sourceAssetId, inPoint, outPoint })) }) }),
+  quoteExport: (projectId: string, input: { type: "tts" | "subtitle" | "video_export"; storyboardIds?: string[]; deliveryEdit?: DeliveryEditReference }) =>
     request<{ type: string; providerId: string; providerName: string; model: string; characters: number; estimatedCredits: number; unitCredits: number; unit: string; cached: boolean; cueCount: number }>(`/projects/${projectId}/exports/quote`, { method: "POST", body: JSON.stringify(input) }),
-  createExportJob: (projectId: string, input: { type: "tts" | "subtitle" | "video_export"; storyboardIds?: string[]; maxCredits?: number }) =>
+  createExportJob: (projectId: string, input: { type: "tts" | "subtitle" | "video_export"; storyboardIds?: string[]; maxCredits?: number; deliveryEdit?: DeliveryEditReference }) =>
     request<ExportJob>(`/projects/${projectId}/export/jobs`, {
       method: "POST",
       body: JSON.stringify(input)

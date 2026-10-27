@@ -182,10 +182,11 @@ function normalizeSubtitleText(value: string) {
 }
 
 function formatSrtTime(totalSeconds: number) {
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = Math.floor(totalSeconds % 60);
-  return `${pad(hours)}:${pad(minutes)}:${pad(seconds)},000`;
+  const milliseconds = Math.max(0, Math.round(totalSeconds * 1000));
+  const hours = Math.floor(milliseconds / 3600000);
+  const minutes = Math.floor((milliseconds % 3600000) / 60000);
+  const seconds = Math.floor((milliseconds % 60000) / 1000);
+  return `${pad(hours)}:${pad(minutes)}:${pad(seconds)},${String(milliseconds % 1000).padStart(3, "0")}`;
 }
 
 function pad(value: number) {
