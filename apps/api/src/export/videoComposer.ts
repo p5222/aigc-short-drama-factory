@@ -9,6 +9,7 @@ import { generateEmbeddedMjpegVideo, writeEmbeddedExportBundle } from "./embedde
 import { buildSrt } from "./subtitleTools.js";
 import { assertRealNarration, assertVideoExportReady } from "./exportRequirements.js";
 import { downloadPublicMedia } from "../storage/remoteDownload.js";
+import { providerEnvApiKey } from "../providers/credentials.js";
 
 type ExportSize = { width: number; height: number };
 type CommandResult = { exitCode: number | null; stdout: string; stderr: string; errorMessage?: string; timedOut: boolean };
@@ -31,6 +32,7 @@ interface ClipPlan {
   order: number;
   shot: StoryboardShot;
   duration: number;
+  inPoint?: number;
   videoUrl?: string;
   imageUrl?: string;
 }
@@ -301,6 +303,7 @@ function buildClipPlans(workflow: ProjectWorkflow): ClipPlan[] {
       order: index + 1,
       shot,
       duration: normalizeDuration(shot.duration),
+      inPoint: shot.videoTrimStart,
       videoUrl: video?.status === "succeeded" && isPlayableMediaUrl(videoUrl) ? videoUrl : undefined,
       imageUrl: image?.referenceUrl
     };
@@ -319,7 +322,7 @@ async function renderClip(
   const videoInput = clip.videoUrl ? await resolveMediaInput(clip.videoUrl, warnings) : undefined;
   if (videoInput) {
     try {
-      await encodeVideoClip(ffmpegBin, encoder, videoInput, output.path, clip.duration, size);
+      await encodeVideoClip(ffmpegBin, encoder, videoInput, output.path, clip.duration, size, clip.inPoint);
       return { order: clip.order, shotId: clip.shot.id, duration: clip.duration, sourceKind: "video", sourceUrl: clip.videoUrl, outputPath: output.path, outputUrl: output.url };
     } catch (error) {
       throw new Error(`镜头 ${formatShotLabel(clip.shot)} 视频转码失败，请修复该镜头后重试：${formatError(error)}`);
@@ -329,11 +332,16 @@ async function renderClip(
   throw new Error(`镜头 ${formatShotLabel(clip.shot)} 视频文件不可读取，请重新生成或恢复素材后重试`);
 }
 
-async function encodeVideoClip(ffmpegBin: string, encoder: VideoEncoder, input: string, output: string, duration: number, size: ExportSize) {
+async function encodeVideoClip(ffmpegBin: string, encoder: VideoEncoder, input: string, output: string, duration: number, size: ExportSize, inPoint?: number) {
+  if (inPoint !== undefined) {
+    const probe = await runProcess(ffmpegBin, ["-hide_banner", "-i", input], 15000);
+    const match = /Duration:\s*(\d+):(\d+):([\d.]+)/.exec(probe.stderr);
+    const sourceSeconds = match ? Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3]) : 0;
+    if (!(sourceSeconds > 0) || inPoint + duration > sourceSeconds + 0.05) throw new Error("裁剪范围超出视频实际时长，请重新核对入出点");
+  }
   await runFfmpegOrThrow(ffmpegBin, [
     "-y",
-    "-stream_loop",
-    "-1",
+    ...(inPoint === undefined ? ["-stream_loop", "-1"] : ["-ss", String(inPoint)]),
     "-i",
     input,
     "-t",
@@ -842,12 +850,7 @@ async function createDashScopeTtsNarration(session: ExportSession, cues: ReturnT
 }
 
 function resolveDashScopeTtsRuntime(options: TtsRuntime) {
-  const apiKey =
-    options.apiKey ||
-    process.env.DASHSCOPE_TTS_API_KEY ||
-    process.env.TTS_API_KEY ||
-    process.env.DASHSCOPE_API_KEY ||
-    process.env.DASHSCOPE_TEXT_API_KEY;
+  const apiKey = options.apiKey || providerEnvApiKey("dashscope-tts");
   if (!apiKey) throw new Error("Missing DASHSCOPE_TTS_API_KEY or DASHSCOPE_API_KEY for DashScope TTS");
   const baseUrl =
     options.baseUrl ||
@@ -1397,7 +1400,7 @@ function normalizeVideoFilter(size: ExportSize) {
 }
 
 function normalizeDuration(value: number) {
-  return Math.max(1, Math.min(30, Number.isFinite(value) ? Math.round(value) : 3));
+  return Math.max(0.2, Math.min(30, Number.isFinite(value) ? value : 3));
 }
 
 function totalDuration(workflow: ProjectWorkflow) {

@@ -52,6 +52,11 @@ export function isValidCreditAdjustment(amount: string, description: string) {
   return amount.trim() !== "" && Number.isSafeInteger(value) && value !== 0 && description.trim().length > 0;
 }
 
+export function isValidModelPriceDraft(unitCredits: string, vendorCostCny: string) {
+  return unitCredits.trim() !== "" && Number.isSafeInteger(Number(unitCredits)) && Number(unitCredits) >= 0
+    && vendorCostCny.trim() !== "" && Number.isFinite(Number(vendorCostCny)) && Number(vendorCostCny) >= 0;
+}
+
 export function readAdminHash(hash: string) {
   try { return decodeURIComponent(hash.replace(/^#/, "")); } catch { return ""; }
 }

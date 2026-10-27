@@ -1,9 +1,11 @@
 ﻿import { BookOpenCheck, BrainCircuit, CheckCircle2, ChevronDown, ChevronRight, CircleDollarSign, FileText, FileUp, Image, Layers3, Loader2, Route, Save, Sparkles, UsersRound, Video, WandSparkles } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from "react";
-import type { CreateProjectInput, CreationEstimate, ModelProvider } from "@aifilm/shared";
+import type { CreateProjectInput, CreationEstimate, ModelPrice, ModelProvider } from "@aifilm/shared";
 import { imageOutputQualityOptions, imageOutputSizeOptions, imageParameterMultiplier, normalizeImageOutputQuality, normalizeImageOutputSize } from "@aifilm/shared";
 import { api } from "../lib/api";
 import { ModelRoutePicker } from "../components/ModelRoutePicker";
+import { buildModelCatalog, defaultModelRoute } from "../components/modelCatalog";
+import { modelIdentity } from "../components/modelCatalog";
 import { analyzeSourceEpisodes, episodeScopeOptions, parseSampleManifest, type SourceEpisodeAnalysis } from "./wizardSourceModel";
 import { clearWizardDraft, readWizardDraft, saveWizardDraft } from "./wizardDraftStorage";
 import { buildEstimateInput, buildGenerationInput, creationBillingSignature, createCreationQuoteGate, isConfiguredModelRoute, normalizeWizardSourceType } from "./wizardRequestModel";
@@ -15,6 +17,7 @@ import "./creator-pages.css";
 
 interface WizardPageProps {
   providers: ModelProvider[];
+  modelPrices: ModelPrice[];
   canManageModels?: boolean;
   onCreated: (projectId: string) => void;
   onCreateContent: () => void;
@@ -38,14 +41,14 @@ const defaultForm: CreateProjectInput = {
   videoRatio: "9:16",
   artStyle: "",
   targetEpisodes: 1,
-  textProvider: "dashscope-text",
-  textModel: "qwen3.7-plus",
-  imageProvider: "dashscope-image",
-  imageModel: "wan2.6-t2i",
+  textProvider: "",
+  textModel: "",
+  imageProvider: "",
+  imageModel: "",
   imageSize: "2048x1152",
   imageQuality: "medium",
-  videoProvider: "dashscope-video",
-  videoModel: "wan2.7-i2v-2026-04-25"
+  videoProvider: "",
+  videoModel: ""
 };
 
 const stylePresets = [
@@ -63,7 +66,7 @@ const stylePresets = [
   "雨夜黑色电影"
 ];
 
-export function WizardPage({ providers, canManageModels = false, onCreated, onCreateContent }: WizardPageProps) {
+export function WizardPage({ providers, modelPrices, canManageModels = false, onCreated, onCreateContent }: WizardPageProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pendingModelTests = useRef(new Set<string>());
   const [recoverableDraft] = useState(() => loadDraft());
@@ -114,15 +117,14 @@ export function WizardPage({ providers, canManageModels = false, onCreated, onCr
   const textProviders = useMemo(() => filterProviders(providers, "text", preferredTextProviderIds), [providers]);
   const imageProviders = useMemo(() => filterProviders(providers, "image", preferredImageProviderIds), [providers]);
   const videoProviders = useMemo(() => filterProviders(providers, "video", preferredVideoProviderIds), [providers]);
-  const selectedTextProvider = textProviders.find((provider) => provider.id === form.textProvider) ?? textProviders[0];
-  const selectedImageProvider = imageProviders.find((provider) => provider.id === form.imageProvider) ?? imageProviders[0];
-  const selectedVideoProvider = videoProviders.find((provider) => provider.id === form.videoProvider) ?? videoProviders[0];
-  const currentTextModels = selectedTextProvider?.models.length ? selectedTextProvider.models : ["deepseek-v4-pro"];
+  const selectedTextProvider = textProviders.find((provider) => provider.id === form.textProvider);
+  const selectedImageProvider = imageProviders.find((provider) => provider.id === form.imageProvider);
+  const selectedVideoProvider = videoProviders.find((provider) => provider.id === form.videoProvider);
+  const currentTextModels = selectedTextProvider?.models ?? [];
   const currentImageModels = useMemo(() => {
-    const models = (selectedImageProvider?.models.length ? selectedImageProvider.models : ["wan2.6-t2i"]).filter((model) => !failedImageModels.has(model));
-    return models.length ? models : ["wan2.6-t2i"];
+    return (selectedImageProvider?.models ?? []).filter((model) => !failedImageModels.has(model));
   }, [selectedImageProvider]);
-  const currentVideoModels = selectedVideoProvider?.models.length ? selectedVideoProvider.models : [form.videoModel || "wan2.7-i2v-2026-04-25"];
+  const currentVideoModels = selectedVideoProvider?.models ?? [];
   const activeStepIndex = stepOrder.indexOf(step);
 
   useEffect(() => {
@@ -132,19 +134,24 @@ export function WizardPage({ providers, canManageModels = false, onCreated, onCr
   }, [generationStartedAt]);
 
   useEffect(() => {
-    if (selectedTextProvider && form.textProvider !== selectedTextProvider.id) {
-      setForm((draft) => ({ ...draft, textProvider: selectedTextProvider.id, textModel: selectedTextProvider.models[0] ?? draft.textModel }));
-    }
-    if (selectedImageProvider && form.imageProvider !== selectedImageProvider.id) {
-      setForm((draft) => ({ ...draft, imageProvider: selectedImageProvider.id, imageModel: selectedImageProvider.models.find((model) => !failedImageModels.has(model)) ?? "wan2.6-t2i" }));
-    }
-  }, [selectedTextProvider, selectedImageProvider, form.textProvider, form.imageProvider]);
-
-  useEffect(() => {
-    if (!currentImageModels.includes(form.imageModel || "")) {
-      setForm((draft) => ({ ...draft, imageModel: currentImageModels[0] }));
-    }
-  }, [currentImageModels, form.imageModel]);
+    const defaults = {
+      text: defaultModelRoute(textProviders, "text", modelPrices),
+      image: defaultModelRoute(imageProviders.map(provider => ({ ...provider, models: provider.models.filter(model => !failedImageModels.has(model)) })), "image", modelPrices),
+      video: defaultModelRoute(videoProviders, "video", modelPrices)
+    };
+    setForm(draft => {
+      const next = { ...draft };
+      let changed = false;
+      for (const modality of ["text", "image", "video"] as const) {
+        if (!draft[`${modality}Provider`] && !draft[`${modality}Model`] && defaults[modality].providerId) {
+          next[`${modality}Provider`] = defaults[modality].providerId;
+          next[`${modality}Model`] = defaults[modality].model;
+          changed = true;
+        }
+      }
+      return changed ? next : draft;
+    });
+  }, [textProviders, imageProviders, videoProviders, modelPrices, form.textProvider, form.textModel, form.imageProvider, form.imageModel, form.videoProvider, form.videoModel]);
 
   useEffect(() => {
     const current = form.targetEpisodes ?? 1;
@@ -171,6 +178,9 @@ export function WizardPage({ providers, canManageModels = false, onCreated, onCr
 
   async function estimateCost() {
     if (pendingQuote.current || isGenerating) return null;
+    if (!buildModelCatalog(textProviders, modelPrices).some(item => item.provider.id === form.textProvider && item.model === form.textModel && item.selectable)) {
+      setError("请先选择可用的文本模型，再获取报价。"); return null;
+    }
     const signature = creationBillingSignature(normalizeDraft(form));
     const ticket = quoteGate.current.begin(signature);
     pendingQuote.current = true;
@@ -195,6 +205,9 @@ export function WizardPage({ providers, canManageModels = false, onCreated, onCr
 
   async function start() {
     if (startInFlight.current || pendingQuote.current) return;
+    if (!buildModelCatalog(textProviders, modelPrices).some(item => item.provider.id === form.textProvider && item.model === form.textModel && item.selectable)) {
+      setError("当前文本模型不可用，请重新选择后获取报价。"); return;
+    }
     const input = buildGenerationInput(normalizeDraft(form));
     if (!input.content.trim()) {
       setError("请先粘贴小说、故事大纲或已有剧本。");
@@ -423,6 +436,7 @@ export function WizardPage({ providers, canManageModels = false, onCreated, onCr
       {step === "script" ? (
         <ScriptStep
           canManageModels={canManageModels}
+          modelPrices={modelPrices}
           currentImageModels={currentImageModels}
           currentTextModels={currentTextModels}
           currentVideoModels={currentVideoModels}
@@ -645,6 +659,7 @@ function SettingsStep({
   );
 }
 function ScriptStep({
+  modelPrices,
   form,
   canManageModels,
   textProviders,
@@ -676,6 +691,7 @@ function ScriptStep({
   onStart,
   onBack
 }: {
+  modelPrices: ModelPrice[];
   form: CreateProjectInput;
   canManageModels: boolean;
   textProviders: ModelProvider[];
@@ -720,7 +736,7 @@ function ScriptStep({
   const textRouteConfigured = isConfiguredModelRoute(textProviders, "text", form.textProvider, form.textModel);
   const imageRouteConfigured = isConfiguredModelRoute(imageProviders, "image", form.imageProvider, form.imageModel);
   const videoRouteConfigured = isConfiguredModelRoute(videoProviders, "video", form.videoProvider, form.videoModel);
-  const routeReady = textRouteConfigured && imageRouteConfigured && videoRouteConfigured;
+  const routeReady = textRouteConfigured && buildModelCatalog(textProviders, modelPrices).some(item => item.provider.id === form.textProvider && item.model === form.textModel && item.selectable);
 
   return (
     <div className="u-wizard-grid wizard-balance-grid wizard-script-redesign shot-plan-workspace">
@@ -770,14 +786,14 @@ function ScriptStep({
           <div className="model-route-channels">
             <RouteChannel icon={<FileText size={17} />} title="文本推理" purpose="剧本解析、角色与场景提取" model={form.textModel || "自动选择"} active={activeRoute === "text"} onClick={() => setActiveRoute(activeRoute === "text" ? "image" : "text")} />
             {activeRoute === "text" ? <div className="route-channel-detail">
-              <label className="field"><span>文本渠道与模型</span><ModelRoutePicker modality="text" providers={textProviders} value={{ providerId: form.textProvider || "", model: form.textModel || "" }} onChange={(providerId, model) => onChange({ ...form, textProvider: providerId, textModel: model })} /></label>
+              <div className="field"><span>文本渠道与模型</span><ModelRoutePicker modality="text" providers={textProviders} modelPrices={modelPrices} value={{ providerId: form.textProvider || "", model: form.textModel || "" }} onChange={(providerId, model) => onChange({ ...form, textProvider: providerId, textModel: model })} disabled={isGenerating} /></div>
               <p>{cleanProviderHint(selectedTextProvider?.costHint, "用于剧本解析、角色卡和分镜拆解。")}</p>
               {canManageModels ? <><button className="ghost-button full-button" onClick={onTestModel} disabled={isTestingModel || !textRouteConfigured} type="button">{isTestingModel ? "测试中..." : "测试文本模型"}</button><RouteTestMessage state={textRouteTest} /></> : null}
             </div> : null}
 
             <RouteChannel icon={<Image size={17} />} title="图像生成" purpose="角色、场景与分镜首帧" model={form.imageModel || "自动选择"} active={activeRoute === "image"} onClick={() => setActiveRoute("image")} />
             {activeRoute === "image" ? <div className="route-channel-detail">
-              <label className="field"><span>生图渠道与模型</span><ModelRoutePicker modality="image" providers={imageProviders} value={{ providerId: form.imageProvider || "", model: form.imageModel || "" }} onChange={(providerId, model) => onChange({ ...form, imageProvider: providerId, imageModel: model })} /></label>
+              <div className="field"><span>生图渠道与模型</span><ModelRoutePicker modality="image" providers={imageProviders} modelPrices={modelPrices} value={{ providerId: form.imageProvider || "", model: form.imageModel || "" }} onChange={(providerId, model) => onChange({ ...form, imageProvider: providerId, imageModel: model })} disabled={isGenerating} /></div>
               <div className="route-param-grid">
                 <label className="field"><span>分辨率</span><select value={normalizeImageOutputSize(form.imageSize)} onChange={(event) => onChange({ ...form, imageSize: event.target.value })}>{imageOutputSizeOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
                 <label className="field"><span>质量</span><select value={normalizeImageOutputQuality(form.imageQuality)} onChange={(event) => onChange({ ...form, imageQuality: event.target.value })}>{imageOutputQualityOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
@@ -788,11 +804,11 @@ function ScriptStep({
 
             <RouteChannel icon={<Video size={17} />} title="视频生成" purpose="后续分镜视频与片段生成" model={form.videoModel || "自动选择"} active={activeRoute === "video"} warning={!selectedVideoProvider?.enabled} onClick={() => setActiveRoute("video")} />
             {activeRoute === "video" ? <div className="route-channel-detail">
-              <label className="field"><span>视频渠道与模型</span><ModelRoutePicker modality="video" providers={videoProviders} value={{ providerId: form.videoProvider || "", model: form.videoModel || "" }} onChange={(providerId, model) => onChange({ ...form, videoProvider: providerId, videoModel: model })} /></label>
+              <div className="field"><span>视频渠道与模型</span><ModelRoutePicker modality="video" providers={videoProviders} modelPrices={modelPrices} value={{ providerId: form.videoProvider || "", model: form.videoModel || "" }} onChange={(providerId, model) => onChange({ ...form, videoProvider: providerId, videoModel: model })} disabled={isGenerating} /></div>
               <p>{cleanProviderHint(selectedVideoProvider?.costHint, "用于项目创建后的镜头视频生成。")}</p>
             </div> : null}
           </div>
-          <p className="route-cost-note">这里只确认模型已列入平台配置，不代表连接已验证。{canManageModels ? "可测试文本与图像连接；视频会在生成时校验。" : "连接问题请联系管理员；实际可用性会在生成时校验。"}</p>
+          <p className="route-cost-note">本次只需要文本模型；图片和视频可以在后续制作步骤选择。这里只确认平台配置，不代表连接已验证。{canManageModels ? "可测试文本与图像连接；视频会在生成时校验。" : "实际可用性会在生成时校验。"}</p>
           <div className="route-cost-note"><CircleDollarSign size={15} /><span>创建前仅锁定路由，不产生扣费；实际按任务和后台价格结算。</span><strong>x{imageMultiplier}</strong></div>
         </details>
       </aside>
@@ -848,7 +864,7 @@ function OperationProgress({ title, elapsed, detail }: { title: string; elapsed:
 }
 
 function RouteChannel({ icon, title, purpose, model, active, warning, onClick }: { icon: ReactNode; title: string; purpose: string; model: string; active: boolean; warning?: boolean; onClick: () => void }) {
-  return <button className={active ? "route-channel is-active" : "route-channel"} onClick={onClick} type="button"><i>{icon}</i><span><strong>{title}<em className={warning ? "is-warning" : ""} /></strong><small>{purpose}</small></span><b>{model}</b><ChevronDown size={16} className={active ? "is-open" : ""} /></button>;
+  return <button className={active ? "route-channel is-active" : "route-channel"} onClick={onClick} type="button"><i>{icon}</i><span><strong>{title}<em className={warning ? "is-warning" : ""} /></strong><small>{purpose}</small></span><b title={model}>{modelIdentity(model).name}</b><ChevronDown size={16} className={active ? "is-open" : ""} /></button>;
 }
 
 function ChoiceCard({ active, title, desc, badge, onClick }: { active: boolean; title: string; desc: string; badge?: string; onClick: () => void }) {
@@ -892,17 +908,17 @@ function filterProviders(providers: ModelProvider[], modality: ModelProvider["mo
 }
 
 function normalizeDraft(form: CreateProjectInput): CreateProjectInput {
-  const imageProvider = form.imageProvider || "dashscope-image";
-  const imageModel = !form.imageModel || failedImageModels.has(form.imageModel) ? "wan2.6-t2i" : form.imageModel;
   return {
     ...defaultForm,
     ...form,
     sourceType: normalizeWizardSourceType(form.sourceType),
     targetEpisodes: Math.max(1, form.targetEpisodes ?? 1),
-    textProvider: form.textProvider || defaultForm.textProvider,
-    textModel: form.textModel || defaultForm.textModel,
-    imageProvider,
-    imageModel,
+    textProvider: form.textProvider || "",
+    textModel: form.textModel || "",
+    imageProvider: form.imageProvider || "",
+    imageModel: form.imageModel || "",
+    videoProvider: form.videoProvider || "",
+    videoModel: form.videoModel || "",
     imageSize: normalizeImageOutputSize(form.imageSize),
     imageQuality: normalizeImageOutputQuality(form.imageQuality)
   };

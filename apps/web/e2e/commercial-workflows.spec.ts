@@ -24,6 +24,7 @@ async function fixtureApi(page: Page, options: { admin?: boolean; tasks?: number
       "/tasks": tasks,
       "/projects/production/workflow": { project, characters: [], assets: [], storyboards: [], tasks: [] },
       "/credits/account": { userId: "fixture", balance: 100, frozenBalance: 0, totalRecharge: 100, totalConsume: 0 },
+      "/credits/ledger": { items: [], total: 0, page: 1, pageSize: 20 },
       "/admin/summary": { users: 0, projects: 0, tasksToday: 0, totalTasks: 0, completedTasks: 0, successRate: 0, creditsConsumed: 0, providerCost: null, paidRechargeCny: 0 },
       "/admin/evaluation/overview": { datasets: [], runs: [], promptVersions: [], experiments: [] },
       "/admin/users/page": { items: [], total: 0, page: 1, pageSize: 25 },
@@ -152,6 +153,7 @@ test("membership checkout exposes current benefits, same-tier renewal and no aut
   await page.goto("/#/recharge");
   await expect(page.getByRole("button", { name: "同档续费一个月" })).toBeEnabled();
   await expect(page.getByRole("button", { name: "购买一个月", exact: true })).toBeDisabled();
+  await page.getByText("会员购买与计费规则", { exact: true }).click();
   await expect(page.getByText(/每次购买一个自然月，不自动扣款/)).toBeVisible();
   await noOverflow(page);
 });

@@ -19,6 +19,9 @@
   EvaluationRunDetail,
   FeedbackInput,
   ExportJob,
+  DeliveryEdit,
+  DeliveryEditClip,
+  DeliveryEditReference,
   GenerationTask,
   HelpArticle,
   ImageModelTestResult,
@@ -67,6 +70,7 @@
   WorkbenchSummary
 } from "@aifilm/shared";
 import { requestBlob as httpRequestBlob, requestJson, requestText as httpRequestText } from "./httpClient";
+import type { CreditPricingOverview, CreditPolicy, OfficialCostRule, CreditPage, CreditAccountRow, CreditFundingRow, CreditBillingTask, CreditLedgerPage } from "@aifilm/shared";
 
 export interface AuthUser {
   id: string;
@@ -163,6 +167,16 @@ export const api = {
   tasks: () => request<GenerationTask[]>("/tasks"),
   creditAccount: () => request<CreditAccount>("/credits/account"),
   transactions: () => request<CreditTransaction[]>("/credits/transactions"),
+  creditLedger: (query: Record<string, string | number>) => request<CreditLedgerPage>(`/credits/ledger?${new URLSearchParams(Object.entries(query).map(([k, v]) => [k, String(v)]))}`),
+  exportCreditLedger: (query: Record<string, string | number>, admin = false) => requestBlob(`/${admin ? "admin/credits" : "credits"}/ledger.csv?${new URLSearchParams(Object.entries(query).map(([k, v]) => [k, String(v)]))}`),
+  creditPricing: () => request<CreditPricingOverview>("/admin/credits/pricing"),
+  saveCreditPolicy: (expectedVersion: number, policy: CreditPolicy) => request<{ version: number; policy: CreditPolicy }>("/admin/credits/policy", { method: "PATCH", body: JSON.stringify({ expectedVersion, policy }) }),
+  saveCreditCostRule: (input: { priceId: string; expectedUpdatedAt: string; expectedPolicyVersion: number; rule: OfficialCostRule | null }) => request<{ saved: boolean }>("/admin/credits/cost-rule", { method: "POST", body: JSON.stringify(input) }),
+  creditAccounts: (page: number, keyword = "") => request<CreditPage<CreditAccountRow> & { totals: { balance: number | null; frozenBalance: number | null; totalConsume: number | null } }>(`/admin/credits/accounts?page=${page}&keyword=${encodeURIComponent(keyword)}`),
+  creditFunding: (userId: string) => request<{ items: CreditFundingRow[]; limit: number }>(`/admin/credits/funding?userId=${encodeURIComponent(userId)}`),
+  adminCreditLedger: (userId: string, page: number, type = "") => request<CreditLedgerPage>(`/admin/credits/ledger?userId=${encodeURIComponent(userId)}&page=${page}&type=${encodeURIComponent(type)}`),
+  creditBillingTasks: (page: number, keyword = "", status = "") => request<CreditPage<CreditBillingTask>>(`/admin/credits/tasks?page=${page}&keyword=${encodeURIComponent(keyword)}&status=${encodeURIComponent(status)}`),
+  verifyCreditCost: (input: { taskId: string; expectedUpdatedAt: string; costMicros: number; invoiceReference: string }) => request<{ verified: boolean }>("/admin/credits/verify-cost", { method: "POST", body: JSON.stringify(input) }),
   orders: () => request<RechargeOrder[]>("/billing/orders"),
   paymentAvailability: () => request<{ wechat: boolean; membership: boolean; autoRenew: false }>("/billing/availability"),
   membership: () => request<MembershipStatus>("/billing/membership"),
@@ -533,9 +547,11 @@ export const api = {
     request<DirectorStoryboardPackage>(`/projects/${projectId}/director-storyboard/export`, { method: "POST" }),
   exportJobs: (projectId: string) => request<ExportJob[]>(`/projects/${projectId}/export/jobs`),
   downloadExportJob: (projectId: string, jobId: string) => requestBlob(`/projects/${projectId}/export/jobs/${jobId}/download`),
-  quoteExport: (projectId: string, input: { type: "tts" | "subtitle" | "video_export"; storyboardIds?: string[] }) =>
+  saveDeliveryEdit: (projectId: string, input: { episodeNo: number; expectedRevision: number; clips: DeliveryEditClip[] }) =>
+    request<DeliveryEdit>(`/projects/${projectId}/delivery-edit`, { method: "PUT", body: JSON.stringify({ ...input, clips: input.clips.map(({ shotId, sourceAssetId, inPoint, outPoint }) => ({ shotId, sourceAssetId, inPoint, outPoint })) }) }),
+  quoteExport: (projectId: string, input: { type: "tts" | "subtitle" | "video_export"; storyboardIds?: string[]; deliveryEdit?: DeliveryEditReference }) =>
     request<{ type: string; providerId: string; providerName: string; model: string; characters: number; estimatedCredits: number; unitCredits: number; unit: string; cached: boolean; cueCount: number }>(`/projects/${projectId}/exports/quote`, { method: "POST", body: JSON.stringify(input) }),
-  createExportJob: (projectId: string, input: { type: "tts" | "subtitle" | "video_export"; storyboardIds?: string[]; maxCredits?: number }) =>
+  createExportJob: (projectId: string, input: { type: "tts" | "subtitle" | "video_export"; storyboardIds?: string[]; maxCredits?: number; deliveryEdit?: DeliveryEditReference }) =>
     request<ExportJob>(`/projects/${projectId}/export/jobs`, {
       method: "POST",
       body: JSON.stringify(input)

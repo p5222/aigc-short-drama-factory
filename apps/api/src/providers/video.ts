@@ -5,6 +5,15 @@ import { generateEmbeddedMjpegVideo } from "../export/embeddedVideo.js";
 import { storageRoot } from "../storage/objectStorage.js";
 import { signProviderMediaUrl } from "../storage/mediaAccess.js";
 import { blockModelUntilNextDay, coolDownModel, getModelQuotaDecision, recordModelSubmission } from "./modelQuota.js";
+import { providerEnvApiKey } from "./credentials.js";
+import type { BillingUsage } from "@aifilm/shared";
+
+/** The quote and actual payload share the same provider normalization. */
+export function videoBillingInput(provider: string, duration: number, ratio: "9:16" | "16:9" | "1:1"): BillingUsage {
+  if (provider === "dashscope-video") return { seconds: Math.max(3, Math.min(5, duration)), resolution: dashScopeVideoResolution(ratio) };
+  if (provider === "doubao-seedance") return { seconds: Math.max(1, Math.min(15, duration)), resolution: process.env.DOUBAO_SEEDANCE_RESOLUTION || process.env.VIDEO_RESOLUTION || "1080p" };
+  return { seconds: Math.max(1, duration) };
+}
 
 interface AsyncTaskResponse {
   output?: {
@@ -492,7 +501,7 @@ function resolveVideoRuntime(input: Partial<VideoGenerationInput>, forcedProvide
   if (provider === "dashscope-video") {
     return {
       name: "通义万相 / DashScope 视频",
-      apiKey: input.apiKey || process.env.DASHSCOPE_API_KEY,
+      apiKey: input.apiKey || providerEnvApiKey(provider, "video"),
       baseUrl: input.baseUrl || process.env.DASHSCOPE_BASE_URL || "https://dashscope.aliyuncs.com/api/v1",
       model: input.model || process.env.DASHSCOPE_VIDEO_MODEL || "wan2.7-i2v-2026-04-25",
       missingKeyMessage: "缺少通义万相视频 Key，请配置 DASHSCOPE_API_KEY。"
@@ -501,7 +510,7 @@ function resolveVideoRuntime(input: Partial<VideoGenerationInput>, forcedProvide
   if (provider === "doubao-seedance") {
     return {
       name: "豆包 Seedance 视频",
-      apiKey: input.apiKey || process.env.DOUBAO_API_KEY || process.env.ARK_API_KEY || process.env.VOLCENGINE_API_KEY,
+      apiKey: input.apiKey || providerEnvApiKey(provider, "video"),
       baseUrl: input.baseUrl || process.env.DOUBAO_BASE_URL || process.env.ARK_BASE_URL || "https://ark.cn-beijing.volces.com/api/v3",
       model: input.model || process.env.DOUBAO_SEEDANCE_MODEL || "doubao-seedance-1-5-pro-251215",
       missingKeyMessage: "缺少豆包/火山方舟视频模型 Key，请配置 DOUBAO_API_KEY、ARK_API_KEY 或 VOLCENGINE_API_KEY。"
@@ -601,9 +610,10 @@ function buildDoubaoSeedancePrompt(input: VideoGenerationInput) {
 }
 
 function buildDashScopeVideoPayload(input: VideoGenerationInput, model: string, imageUrl: string) {
-  const duration = Math.max(3, Math.min(5, input.duration ?? 5));
+  const billed = videoBillingInput("dashscope-video", input.duration ?? 5, input.ratio ?? "9:16");
+  const duration = billed.seconds;
   const parameters = {
-    resolution: dashScopeVideoResolution(input.ratio ?? "9:16"),
+    resolution: billed.resolution,
     duration,
     prompt_extend: true,
     watermark: false,

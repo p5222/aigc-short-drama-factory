@@ -1,7 +1,7 @@
 import type { PageKey } from "../components/Shell";
 
 export const BEFORE_CREATOR_NAVIGATION = "manjiao:before-navigation";
-const pages = new Set<PageKey>(["workbench", "content", "wizard", "scripts", "studio", "tasks", "profile", "recharge", "ledger", "settings", "help"]);
+const pages = new Set<PageKey>(["workbench", "content", "wizard", "scripts", "studio", "tasks", "models", "profile", "recharge", "ledger", "settings", "help"]);
 export interface CreatorRoute { page: PageKey; projectId?: string; contentId?: string }
 
 export function readCreatorRoute(hash: string): CreatorRoute {

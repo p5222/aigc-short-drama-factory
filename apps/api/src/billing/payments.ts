@@ -4,7 +4,7 @@ import { prisma } from "../db/client.js";
 import { mapRechargeOrder } from "../db/mappers.js";
 import { handleRechargeCallback } from "../db/repository.js";
 import { lockCreditAccount } from "./accountCredits.js";
-import { activeMembership } from "./membership.js";
+import { membershipOverview } from "./membership.js";
 import { moneyFen, PaymentError, WechatPay, wechatConfig, type WechatTransaction } from "./wechat.js";
 
 export function paymentAvailability() {
@@ -17,8 +17,7 @@ function gateway() {
   return new WechatPay(config);
 }
 export async function getMembership(userId: string, db: PrismaClient = prisma) {
-  const [active, total] = await Promise.all([activeMembership(db, userId), db.userMembership.findUnique({ where: { userId } })]);
-  return { active, paidThrough: total?.endsAt.toISOString() ?? null, autoRenew: false as const };
+  return membershipOverview(db, userId);
 }
 
 export type CheckoutInput = { planId: string; kind: "recharge" | "membership"; requestId: string };

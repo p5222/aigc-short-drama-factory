@@ -112,6 +112,35 @@ test("PostgreSQL narration exports reserve, settle and reuse paid speech", { ski
       assert.equal((await quoteProjectNarration(f.workflow, f.userId, db)).cached, false);
       assert.equal((await f.account()).balance, 94);
     });
+    await t.test("fractional video trim exports the selected source frame and rejects source overflow", async () => {
+      const ffmpeg = await probeFfmpeg(); assert.equal(ffmpeg.ready, true);
+      const f = await fixture("");
+      f.workflow.project.videoRatio = "16:9";
+      f.workflow.storyboards[0].duration = 0.5;
+      f.workflow.storyboards[0].videoTrimStart = 1;
+      f.workflow.storyboards[0].pictureDesc = "";
+      const source = resolve(temporaryStorage, "trim-source.mp4");
+      await promisify(execFile)(ffmpeg.bin, ["-y", "-f", "lavfi", "-i", "color=c=red:s=160x90:d=1",
+        "-f", "lavfi", "-i", "color=c=blue:s=160x90:d=1", "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0[v]",
+        "-map", "[v]", "-c:v", "mpeg4", "-pix_fmt", "yuv420p", source], { timeout: 30000 });
+      const { readFile } = await import("node:fs/promises");
+      f.workflow.assets = [{ id: "video_shot-one", type: "video", status: "succeeded", referenceUrl: await persistVideoBuffer(await readFile(source), "trim-source") }] as ProjectWorkflow["assets"];
+      const narration = await createTtsAudioAsset(f.workflow);
+      const result = await composeVideoExport(f.workflow, narration);
+      assert.equal(result.mimeType, "video/mp4");
+      const output = resolve(temporaryStorage, result.outputUrl.replace(/^\/storage\//, ""));
+      const frame = resolve(temporaryStorage, "trim-frame.rgb");
+      await promisify(execFile)(ffmpeg.bin, ["-y", "-i", output, "-frames:v", "1", "-vf", "scale=1:1", "-f", "rawvideo", "-pix_fmt", "rgb24", frame], { timeout: 30000 });
+      const pixel = await readFile(frame);
+      assert.ok(pixel[2] > pixel[0] + 100, "the cut must begin in the blue second half, not the red first frame");
+      const ffprobe = isAbsolute(ffmpeg.bin) ? resolve(dirname(ffmpeg.bin), process.platform === "win32" ? "ffprobe.exe" : "ffprobe") : "ffprobe";
+      const probe = await promisify(execFile)(ffprobe, ["-v", "error", "-show_entries", "format=duration", "-of", "json", output], { timeout: 30000 });
+      assert.ok(Math.abs(Number(JSON.parse(probe.stdout).format.duration) - 0.5) < 0.1);
+      f.workflow.storyboards[0].videoTrimStart = 1.9;
+      const failed = await composeVideoExport(f.workflow, narration);
+      assert.equal(failed.mimeType, "application/json");
+      assert.ok(failed.warnings.some(warning => warning.includes("实际时长")));
+    });
     await t.test("a real MP4 contains video, speech and subtitles; failed composition retries reuse paid narration", async () => {
       const ffmpeg = await probeFfmpeg(); assert.equal(ffmpeg.ready, true, "Install FFmpeg before running export integration tests");
       const f = await fixture("你好"); f.workflow.storyboards[0]!.duration = 1;

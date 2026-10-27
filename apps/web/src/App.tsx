@@ -1,5 +1,5 @@
 ﻿import { useCallback, useEffect, useMemo, useState } from "react";
-import { Bell, ChartNoAxesCombined, ChevronDown, CircleDollarSign, FilePenLine, Gift, LayoutDashboard, Layers3, LogOut, Megaphone, Moon, ReceiptText, SlidersHorizontal, UserRound, Video } from "lucide-react";
+import { Bell, ChartNoAxesCombined, ChevronDown, CircleDollarSign, FilePenLine, Gift, LayoutDashboard, Layers3, LogOut, Megaphone, Moon, ReceiptText, SlidersHorizontal, UserRound, Video, WalletCards } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { firstAdminRefreshFailure } from "./admin/adminRefreshModel";
 import { useLayoutEffect } from "react";
@@ -39,6 +39,7 @@ import { WorkbenchPage } from "./pages/WorkbenchPage";
 import { resolveThemePreference, type WorkbenchTheme } from "./workbench/model";
 import { AUTH_SESSION_EXPIRED_EVENT, HttpError } from "./lib/httpClient";
 import { clearAuthToken, readAuthToken } from "./lib/authStorage";
+import { authResumeStorage } from "./lib/authResumeStorage";
 import { clearWizardDraft } from "./pages/wizardDraftStorage";
 import { BEFORE_CREATOR_NAVIGATION, createRequestEpoch, refreshResources } from "./lib/creatorNavigation";
 import { useCreatorNavigation } from "./lib/useCreatorNavigation";
@@ -47,6 +48,7 @@ import { InlineNotice, StatePanel } from "./design-system/ui";
 const AdminPage = lazy(routePageLoader(() => import("./pages/AdminPage").then(module => ({ default: module.AdminPage }))));
 const ProjectWorkbenchPage = lazy(routePageLoader(() => import("./pages/ProjectWorkbenchPage").then(module => ({ default: module.ProjectWorkbenchPage }))));
 const ContentCreatorPage = lazy(routePageLoader(() => import("./pages/ContentCreatorPage").then(module => ({ default: module.ContentCreatorPage }))));
+const ModelLibrary = lazy(routePageLoader(() => import("./components/ModelLibrary").then(module => ({ default: module.ModelLibrary }))));
 const WizardPage = lazy(routePageLoader(() => import("./pages/WizardPage").then(module => ({ default: module.WizardPage }))));
 const LoginPage = lazy(routePageLoader(() => import("./pages/LoginPage").then(module => ({ default: module.LoginPage }))));
 const ScriptsPage = lazy(routePageLoader(() => import("./pages/ScriptsPage").then(module => ({ default: module.ScriptsPage }))));
@@ -59,11 +61,9 @@ const ProfilePage = lazy(routePageLoader(() => import("./pages/StaticPages").the
 const SettingsPage = lazy(routePageLoader(() => import("./pages/StaticPages").then(module => ({ default: module.SettingsPage }))));
 
 const THEME_STORAGE_KEY = "manjiao-theme";
-const AUTH_RESUME_PAGE_KEY = "manjiao-auth-resume-page";
-const AUTH_RESUME_PROJECT_KEY = "manjiao-auth-resume-project";
-const AUTH_RESUME_USER_KEY = "manjiao-auth-resume-user";
 
 const creatorPageResources: Partial<Record<PageKey, string[]>> = {
+  models: ["模型渠道", "模型价格"],
   workbench: ["工作台"], scripts: ["漫剧作品", "内容作品"], studio: ["漫剧作品", "生成队列"],
   tasks: ["生成队列"], profile: ["账户积分", "工作台", "积分明细", "充值记录"],
   recharge: ["充值套餐", "会员配置", "模型价格"], ledger: ["账户积分", "积分明细"],
@@ -117,6 +117,7 @@ export function App() {
     {
       label: "商业化",
       items: [
+        { name: "积分中心", icon: WalletCards },
         { name: "兑换码", icon: Gift },
         { name: "套餐会员", icon: CircleDollarSign },
         { name: "订阅会员", icon: ReceiptText }
@@ -245,9 +246,8 @@ export function App() {
 
   useEffect(() => {
     const handleSessionExpired = () => {
-      sessionStorage.setItem(AUTH_RESUME_PAGE_KEY, activePage);
-      if (user?.id) sessionStorage.setItem(AUTH_RESUME_USER_KEY, user.id);
-      if (activePage === "project" && workflow?.project.id) sessionStorage.setItem(AUTH_RESUME_PROJECT_KEY, workflow.project.id);
+      authResumeStorage.write({ userId: user?.id ?? "", page: activePage,
+        ...(activePage === "project" && workflow?.project.id ? { projectId: workflow.project.id } : {}) });
       refreshEpoch.invalidate();
       projectEpoch.invalidate();
       userRef.current = null;
@@ -381,18 +381,16 @@ export function App() {
     return nextWorkflow;
   }
 
-  async function refreshTaskAction(action: () => Promise<GenerationTask>) {
-    await action();
-    try { await load(); }
-    catch { throw new Error("操作已受理，但最新状态读取失败。请刷新队列核对，不要重复提交操作。"); }
+  async function applyTaskAction(action: () => Promise<GenerationTask>) {
+    const updated = await action();
+    setTasks(current => current.map(task => task.id === updated.id ? updated : task));
+    setWorkflow(current => current ? { ...current, tasks: current.tasks.map(task => task.id === updated.id ? updated : task) } : current);
   }
 
   function clearAuthState(preserveToken = false) {
     if (!preserveToken) clearAuthToken();
     clearWizardDraft();
-    sessionStorage.removeItem(AUTH_RESUME_PAGE_KEY);
-    sessionStorage.removeItem(AUTH_RESUME_PROJECT_KEY);
-    sessionStorage.removeItem(AUTH_RESUME_USER_KEY);
+    authResumeStorage.clear();
     refreshEpoch.invalidate();
     projectEpoch.invalidate();
     userRef.current = null;
@@ -469,7 +467,7 @@ export function App() {
       case "workbench":
         return <WorkbenchPage summary={summary} onStart={openFreshWizard} onStartContent={openFreshContent} onOpenWorks={() => setActivePage("scripts")} onOpen={(projectId) => void openProject(projectId)} onOpenTasks={() => setActivePage("tasks")} onRecharge={() => setActivePage("recharge")} />;
       case "content":
-        return <ContentCreatorPage key={`${user?.id ?? "anonymous"}:${contentFocusId || "default"}`} providers={providers} initialSelectedId={contentFocusId} onBack={() => setActivePage("scripts")} onEnterProduction={async (projectId) => {
+        return <ContentCreatorPage key={`${user?.id ?? "anonymous"}:${contentFocusId || "default"}`} providers={providers} modelPrices={modelPrices} initialSelectedId={contentFocusId} onProjectsChange={setContentProjects} onBack={() => setActivePage("scripts")} onEnterProduction={async (projectId) => {
                 await openProject(projectId);
           void load().catch(() => undefined);
         }} />;
@@ -478,6 +476,7 @@ export function App() {
           <WizardPage
             key={`${user?.id ?? "anonymous"}:${creationSession}`}
             providers={providers}
+            modelPrices={modelPrices}
             canManageModels={canManageModelTests(user?.role)}
             onCreateContent={openFreshContent}
             onCreated={(projectId) => {
@@ -491,6 +490,10 @@ export function App() {
           await api.deleteProject(projectId);
           setProjects((current) => current.filter((project) => project.id !== projectId));
           try { await load(); } catch { setError("作品已删除，部分统计未能刷新。请稍后重新加载。"); }
+        }} onDeleteContent={async projectId => {
+          await contentApi.deleteProject(projectId);
+          setContentProjects(current => current.filter(project => project.id !== projectId));
+          try { await load(); } catch { setError("故事已删除，部分统计未能刷新。请稍后重新加载。"); }
         }} />;
       case "project":
         return (
@@ -510,14 +513,16 @@ export function App() {
         );
       case "studio":
         return <StudioPage projects={projects} tasks={tasks} onOpenProject={(projectId) => void openProject(projectId)} onRefresh={() => load()} />;
+      case "models":
+        return <ModelLibrary providers={providers} modelPrices={modelPrices} onCreate={openFreshWizard} />;
       case "tasks":
         return (
           <TaskCenterPage
             tasks={tasks}
             onOpenProject={(id) => void openProject(id)}
             onOpenSupport={() => setActivePage("help")}
-            onRetry={(taskId) => refreshTaskAction(() => api.retryTask(taskId))}
-            onCancel={(taskId) => refreshTaskAction(() => api.cancelTask(taskId))}
+            onRetry={(taskId) => applyTaskAction(() => api.retryTask(taskId))}
+            onCancel={(taskId) => applyTaskAction(() => api.cancelTask(taskId))}
             onRefresh={() => load()}
           />
         );
@@ -574,16 +579,15 @@ export function App() {
       initialAuthOpen={sessionExpired || Boolean(error)}
       sessionMessage={sessionExpired ? "登录已过期，请重新登录。未保存的修改可能需要重新填写；新建项目输入会在当前标签页临时保留。" : error}
       onAuthed={(_token, nextUser) => {
-        const resumePage = sessionStorage.getItem(AUTH_RESUME_PAGE_KEY) as PageKey | null;
-        const resumeProjectId = sessionStorage.getItem(AUTH_RESUME_PROJECT_KEY);
-        const resumeUserId = sessionStorage.getItem(AUTH_RESUME_USER_KEY);
+        const resume = authResumeStorage.read();
+        const resumePage = resume?.page as PageKey | undefined;
+        const resumeProjectId = resume?.projectId;
+        const resumeUserId = resume?.userId;
         const canResume = resumeUserId === nextUser.id;
-        if (resumeUserId && !canResume) clearAuthState(true);
+        if ((sessionExpired || resumeUserId) && !canResume) clearAuthState(true);
         setUser(nextUser);
         setSessionExpired(false);
-        sessionStorage.removeItem(AUTH_RESUME_PAGE_KEY);
-        sessionStorage.removeItem(AUTH_RESUME_PROJECT_KEY);
-        sessionStorage.removeItem(AUTH_RESUME_USER_KEY);
+        authResumeStorage.clear();
         if (canResume && resumePage === "project" && resumeProjectId) {
           void openProject(resumeProjectId);
         } else if (canResume && resumePage) {
@@ -670,7 +674,7 @@ export function App() {
         setTourIndex(0);
         setTourOpen(true);
       }}
-      credits={account?.balance ?? summary?.credits}
+      credits={account ? account.balance - account.frozenBalance : summary?.credits}
       theme={theme}
       onToggleTheme={handleToggleTheme}
       userName={user.name}

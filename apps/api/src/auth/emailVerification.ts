@@ -36,7 +36,7 @@ export async function sendRegistrationEmail(email: string, code: string) {
       from: { name: "漫角", address: config.auth.user }, to: email,
       subject: "漫角注册邮箱验证码",
       textEncoding: "quoted-printable",
-      text: `${code}\n\n以上是你的漫角注册验证码，10 分钟内有效，仅用于验证 QQ 邮箱。手机号只用于账号资料收集，无需短信验证。\n如非本人操作，请忽略此邮件。请勿向他人透露验证码。`
+      text: `${code}\n\n以上是你的漫角注册验证码，10 分钟内有效，用于验证 QQ 邮箱。\n如非本人操作，请忽略此邮件。请勿向他人透露验证码。`
     });
     if (!result.accepted.some((recipient: string | { address: string }) => (typeof recipient === "string" ? recipient : recipient.address).toLowerCase() === email)) {
       throw new Error("Recipient not accepted");

@@ -31,7 +31,7 @@ test("creation request replay and project deletion preserve tasks and ledger", {
   });
   try {
     await db.modelProvider.create({ data: { id: providerId, name: "Creation fixture", modality: "text", models: ["fixture-text"], costHint: "isolated", enabled: true, capability: {} } });
-    await db.modelPrice.create({ data: { id: priceId, providerId, providerName: "Creation fixture", model: "fixture-text", modality: "text", unit: "text_episode", unitCredits: 37 } });
+    await db.modelPrice.create({ data: { id: priceId, providerId, providerName: "Creation fixture", model: "fixture-text", modality: "text", unit: "text_run", unitCredits: 37 } });
 
     await t.test("concurrent identical requests and reordered JSON create and freeze once", async () => {
       const userId = await user(), value = input();
@@ -71,6 +71,23 @@ test("creation request replay and project deletion preserve tasks and ledger", {
       const a = await create(value, first), b = await create(value, second);
       assert.notEqual(a.projectId, b.projectId); assert.notEqual(a.taskId, b.taskId);
       assert.equal((await snapshot(first)).account.frozenBalance, 37); assert.equal((await snapshot(second)).account.frozenBalance, 37);
+    });
+
+    await t.test("invalid units and conflicting route prices cannot create a project or freeze credits", async () => {
+      const userId = await user(), value = input(), before = await snapshot(userId);
+      const duplicateId = `${priceId}_conflict`;
+      try {
+        await db.modelPrice.update({ where: { id: priceId }, data: { unit: "video_second" } });
+        await assert.rejects(create(value, userId), /价格配置无效/);
+        assert.deepEqual(await snapshot(userId), before);
+        await db.modelPrice.update({ where: { id: priceId }, data: { unit: "text_run" } });
+        await db.modelPrice.create({ data: { id: duplicateId, providerId, providerName: "Creation fixture", model: "fixture-text", modality: "text", unit: "text_run", unitCredits: 5 } });
+        await assert.rejects(create(value, userId), /多条启用价格/);
+        assert.deepEqual(await snapshot(userId), before);
+      } finally {
+        await db.modelPrice.deleteMany({ where: { id: duplicateId } });
+        await db.modelPrice.update({ where: { id: priceId }, data: { unit: "text_run" } });
+      }
     });
 
     await t.test("missing key, rejected quote and insufficient balance leave no partial creation", async () => {

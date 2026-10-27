@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { DelayedError, type Job } from "bullmq";
 import type { CreateProjectInput } from "@aifilm/shared";
 import { generateProjectScriptContent, hasTextModelConfig, textModelName, textProviderName } from "../agents/generator.js";
+import { withTaskMeter } from "../billing/metering.js";
 import { lockTaskCredits, releaseTaskCredits, reserveTaskCredits, settleTaskCredits } from "../billing/taskCredits.js";
 import { prisma } from "../db/client.js";
 import { assertProductionMediaProvider } from "../billing/mediaTask.js";
@@ -113,20 +114,20 @@ export async function processCreationJob(
       if (creationLeaseId(task.errorReason) !== leaseId) throw new CreationLeaseBusyError();
       await tx.generationTask.update({ where: { id: taskId }, data: {
         progress: 20,
-        provider: realConfig ? textProviderName(runtimeInput) : "Local Generator",
+        provider: realConfig ? runtimeInput.textProvider || textProviderName(runtimeInput) : "Local Generator",
         model: realConfig ? textModelName(runtimeInput) : "generation-pipeline"
       } });
       return true;
     });
     if (!canGenerate) return { mode: "local" };
 
-    const generated = await dependencies.generate(projectId, runtimeInput);
+    const generated = await withTaskMeter(taskId, () => dependencies.generate(projectId, runtimeInput), db, leaseId);
     if (process.env.NODE_ENV === "production" && generated.mode !== "real") throw new Error("正式文本任务未返回真实模型结果，未接受本地占位输出。");
     await db.$transaction(async (tx) => {
       const { task } = await lockTaskCredits(tx, taskId, userId);
       if (isInactive(task.status) || (task.jobId && job.id && task.jobId !== job.id)) return;
       if (creationLeaseId(task.errorReason) !== leaseId) throw new CreationLeaseBusyError();
-      const settlement = await settleTaskCredits(tx, { taskId, userId });
+      const settlement = await settleTaskCredits(tx, { taskId, userId, attemptId: leaseId });
       if (!settlement.applied) return;
       await tx.scriptDraft.create({ data: {
         id: generated.script.id, projectId, name: generated.script.name,

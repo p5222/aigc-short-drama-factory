@@ -1,18 +1,23 @@
 import crypto from "node:crypto";
 import type { ExportJob as ExportJobRow, Prisma, PrismaClient } from "@prisma/client";
 import { adminUserQuery, type AdminUserPageOptions } from "./adminUserQuery.js";
+import { adminCommercialSummary } from "./adminCommercial.js";
 import { lockCreditAccount } from "../billing/accountCredits.js";
+import { ensureFunding, grantFunding, spendFunding } from "../billing/funding.js";
+import { creditPolicy, quotePrice, readCostRule } from "../billing/pricing.js";
 import { grantMembership } from "../billing/membership.js";
 import { assertProductionMediaProvider, mediaCheckpoint, runMediaTask } from "../billing/mediaTask.js";
 import sharp from "sharp";
-import type { AdminSummary, AdminUserRow, AssetItem, BatchGenerationResult, CreateProjectInput, CreationEstimate, GenerationTask, HelpArticle, PlatformAnnouncement, ProjectWorkflow, SegmentProfile, StoryboardExportRow, StoryboardShot, WorkbenchSummary } from "@aifilm/shared";
+import type { AdminSummary, AdminUserRow, AssetItem, BatchGenerationResult, CreateProjectInput, CreationEstimate, GenerationTask, HelpArticle, ModelModality, PlatformAnnouncement, ProjectWorkflow, SegmentProfile, StoryboardExportRow, StoryboardShot, WorkbenchSummary } from "@aifilm/shared";
 import { textModelName, textProviderName } from "../agents/generator.js";
 import { buildSeedanceVideoPrompt, buildStoryboardFirstFramePrompt, createStoryboardProductionPackage, resolveStoryboardReferenceAssets } from "../agents/storyboardProduction.js";
 import { estimateCreation } from "../agents/workflow.js";
-import { estimateImageCredits, isPersistedPlayableVideoReference, normalizeImageOutputQuality, normalizeImageOutputSize, normalizeImageProviderId, resolveImageUnitCredits } from "@aifilm/shared";
+import { calculateOfficialCredits, officialSampleUsage, estimateImageCredits, inspectModelPrice, isPersistedPlayableVideoReference, normalizeImageOutputQuality, normalizeImageOutputSize, normalizeImageProviderId, resolveImageUnitCredits } from "@aifilm/shared";
 import { hashPassword } from "../auth/password.js";
 import { buildDirectorStoryboardRow, createDirectorStoryboardPackage } from "../export/directorStoryboard.js";
 import { selectExportWorkflow } from "../export/exportSelection.js";
+import { mapDeliveryEdit } from "./deliveryEdit.js";
+import { applyDeliveryEdit, type DeliveryEditReference } from "@aifilm/shared";
 import { assessVideoExportCompletion, captureVideoExportSnapshot, readVideoExportSnapshot, type VideoExportSnapshot } from "../export/exportCompletion.js";
 import { captureExportSource, createExportSourceContext, exportSourceFromDiagnostics, exportSourceStatus, type ExportSourceSnapshot } from "../export/exportSource.js";
 import { lockTaskCredits, reserveTaskCredits, releaseTaskCredits } from "../billing/taskCredits.js";
@@ -22,7 +27,7 @@ import { assertVideoExportReady } from "../export/exportRequirements.js";
 import { probeFfmpeg } from "../export/videoComposer.js";
 import { generateImage } from "../providers/dashscopeImage.js";
 import type { ImageGenerationResult, VideoGenerationResult } from "../providers/types.js";
-import { generateVideo, queryVideoTaskResult } from "../providers/video.js";
+import { generateVideo, queryVideoTaskResult, videoBillingInput } from "../providers/video.js";
 import { persistImageBuffer, persistImageReference, persistVideoReference, readStoredAsset } from "../storage/objectStorage.js";
 import { prisma } from "./client.js";
 import { AnnouncementScheduleError, assertAnnouncementSchedule } from "./announcementSafety.js";
@@ -77,7 +82,7 @@ export async function getWorkbenchSummary(userId = DEMO_USER_ID): Promise<Workbe
     projects: projectCount,
     storyboards: storyboardCount,
     runningTasks: runningTaskCount,
-    credits: account.balance,
+    credits: account.balance - account.frozenBalance,
     actionCounts: { waiting: waitingCount, active: runningTaskCount, failed: failedCount },
     actionProjects: actionProjects.map(mapProject),
     updatedAt: new Date().toISOString(),
@@ -311,7 +316,7 @@ export async function updateProjectModelRoutes(
 }
 
 export async function getProjectWorkflow(projectId: string, userId = DEMO_USER_ID, db: PrismaClient | Prisma.TransactionClient = prisma) {
-  const [project, script, characters, assets, storyboards, tasks, qualityReports, feedbacks] = await Promise.all([
+  const [project, script, characters, assets, storyboards, tasks, qualityReports, feedbacks, deliveryEdits] = await Promise.all([
     db.project.findFirst({ where: { id: projectId, userId } }),
     db.scriptDraft.findFirst({ where: { projectId }, orderBy: { createdAt: "desc" } }),
     db.character.findMany({ where: { projectId }, orderBy: { createdAt: "asc" } }),
@@ -319,7 +324,8 @@ export async function getProjectWorkflow(projectId: string, userId = DEMO_USER_I
     db.storyboard.findMany({ where: { projectId }, orderBy: [{ episodeNo: "asc" }, { sceneNo: "asc" }, { shotNo: "asc" }] }),
     db.generationTask.findMany({ where: { projectId, userId }, orderBy: { createdAt: "desc" } }),
     db.qualityReport.findMany({ where: { projectId }, orderBy: { createdAt: "desc" }, take: 30 }),
-    db.userFeedback.findMany({ where: { projectId, userId }, orderBy: { createdAt: "desc" }, take: 30 })
+    db.userFeedback.findMany({ where: { projectId, userId }, orderBy: { createdAt: "desc" }, take: 30 }),
+    db.deliveryEdit.findMany({ where: { projectId }, orderBy: { episodeNo: "asc" } })
   ]);
 
   if (!project) return null;
@@ -332,7 +338,8 @@ export async function getProjectWorkflow(projectId: string, userId = DEMO_USER_I
     storyboards: storyboards.map(mapStoryboard),
     tasks: tasks.map(mapTask),
     qualityReports: qualityReports.map(mapQualityReport),
-    feedbacks: feedbacks.map(mapUserFeedback)
+    feedbacks: feedbacks.map(mapUserFeedback),
+    deliveryEdits: deliveryEdits.map(mapDeliveryEdit)
   };
 }
 
@@ -354,7 +361,7 @@ export async function getCreditAccount(userId = DEMO_USER_ID) {
 }
 
 export async function listCreditTransactions(userId = DEMO_USER_ID) {
-  return (await prisma.creditTransaction.findMany({ where: { userId }, orderBy: { createdAt: "desc" } })).map(mapCreditTransaction);
+  return (await prisma.creditTransaction.findMany({ where: { userId }, orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: 100 })).map(mapCreditTransaction);
 }
 
 export async function listRechargeOrders(userId = DEMO_USER_ID) {
@@ -423,6 +430,9 @@ export async function handleRechargeCallback(input: {
     const credits = order.credits + order.bonusCredits;
     if (!Number.isSafeInteger(credits) || credits < 0) throw new Error("订单积分配置无效");
     const account = await lockCreditAccount(tx, order.userId);
+    await ensureFunding(tx, order.userId, account.balance);
+    await grantFunding(tx, { userId: order.userId, credits, source: input.amountFen === undefined ? "checkout_unverified" : "paid",
+      ...(input.amountFen === undefined ? {} : { cashMicros: input.amountFen * 10000 }), referenceId: order.id });
     const updated = await tx.creditAccount.update({ where: { userId: order.userId }, data: { balance: { increment: credits }, totalRecharge: { increment: credits } } });
     const payment = await tx.paymentRecord.create({ data: {
       id: `pay_${crypto.randomUUID()}`, orderId: order.id, channel: order.channel, providerTradeNo: tradeNo,
@@ -533,7 +543,8 @@ export async function listAdminUsers(): Promise<AdminUserRow[]> {
 export async function listAdminUsersPage(options: AdminUserPageOptions = {}) {
   const page = Math.max(1, Math.floor(Number(options.page) || 1));
   const pageSize = Math.max(1, Math.min(100, Math.floor(Number(options.pageSize) || 20)));
-  const { where, orderBy } = adminUserQuery(options);
+  const now = new Date();
+  const { where, orderBy } = adminUserQuery(options, now);
   const skip = (page - 1) * pageSize;
   const include = { credit: true, _count: { select: { projects: true } } } as const;
   async function findPage() {
@@ -551,6 +562,7 @@ export async function listAdminUsersPage(options: AdminUserPageOptions = {}) {
     findPage(),
     prisma.user.count({ where })
   ]);
+  const commercial = await adminCommercialSummary(prisma, users.map(user => user.id), now);
   const items = users.map((user) => ({
     id: user.id,
     name: user.name,
@@ -566,7 +578,8 @@ export async function listAdminUsersPage(options: AdminUserPageOptions = {}) {
     hasPassword: Boolean(user.passwordHash),
     createdAt: user.createdAt.toISOString(),
     updatedAt: user.updatedAt.toISOString(),
-    lastLoginAt: user.lastLoginAt?.toISOString()
+    lastLoginAt: user.lastLoginAt?.toISOString(),
+    commercial: commercial.get(user.id)
   }));
   return { items, total, page, pageSize };
 }
@@ -737,7 +750,12 @@ export async function listProviders(includeAdminMetadata = false) {
 }
 
 export async function listModelPrices() {
-  return (await prisma.modelPrice.findMany({ orderBy: [{ modality: "asc" }, { providerName: "asc" }, { model: "asc" }] })).map(mapModelPrice);
+  const rows = await prisma.modelPrice.findMany({ orderBy: [{ modality: "asc" }, { providerName: "asc" }, { model: "asc" }] });
+  const policy = await creditPolicy();
+  return rows.map(row => {
+    const rule = readCostRule(row.billing);
+    return mapModelPrice({ ...row, unitCredits: rule ? calculateOfficialCredits(rule, officialSampleUsage(rule), policy).payableCredits : row.unitCredits });
+  });
 }
 
 export async function listTemplates() {
@@ -767,6 +785,7 @@ export async function updateModelPrice(
   validateModelPriceAmounts(data.unitCredits, data.vendorCostCny);
   return mapModelPrice(await prisma.$transaction(async (tx) => {
     const current = await tx.modelPrice.findUniqueOrThrow({ where: { id } });
+    if (current.billing && data.unitCredits !== undefined && data.unitCredits !== current.unitCredits) throw new Error("该模型正在按官方成本自动计价，请在积分中心修改规则或切回手工计价。");
     await tx.$queryRaw`SELECT true AS locked FROM pg_advisory_xact_lock(hashtext(${`price:${current.providerId ?? current.providerName}:${current.model}`}))`;
     if (data.enabled === true && await tx.modelPrice.findFirst({ where: { id: { not: id }, providerId: current.providerId, model: current.model, enabled: true } })) throw new Error("同一渠道与模型只能启用一条价格配置");
     return tx.modelPrice.update({ where: { id }, data });
@@ -1100,10 +1119,12 @@ export async function adjustUserCredits({
       data: {
         balance: { increment: amount },
         ...(amount > 0 && type === "recharge" ? { totalRecharge: { increment: amount } } : {}),
-        ...(amount < 0 ? { totalConsume: { increment: Math.abs(amount) } } : {})
       }
     });
 
+    await ensureFunding(tx, userId, account.balance);
+    if (amount > 0) await grantFunding(tx, { userId, credits: amount, source: "admin_unknown", referenceId: transactionId });
+    else await spendFunding(tx, userId, -amount);
     await tx.creditTransaction.create({
       data: {
         id: transactionId,
@@ -1138,6 +1159,8 @@ export async function redeemExperienceCode(userId = DEMO_USER_ID, rawCode: strin
     if (existing) throw new Error("该兑换码已使用过");
 
     const account = await lockCreditAccount(tx, userId);
+    await ensureFunding(tx, userId, account.balance);
+    await grantFunding(tx, { userId, credits: redeemCode.credits, source: "redeem_unknown", referenceId: redeemCode.id });
 
     const updated = await tx.creditAccount.update({
       where: { userId },
@@ -1376,10 +1399,13 @@ export async function runProjectVideoTasks(
   for (const shot of shots) {
     try {
       if (!pendingShots.has(shot.id)) assertProductionMediaProvider(config, provider, model, "video");
+      const billingInput = videoBillingInput(provider, shot.duration, workflow.project.videoRatio as "9:16" | "16:9" | "1:1");
+      const price = await readGenerationPrice(prisma, provider, model, "video");
+      const estimatedCredits = price?.billing ? await quotePrice(price, billingInput) : billingInput.seconds! * unitCredits;
       const result = await runMediaTask({
         userId, projectId, projectName: workflow.project.name, type: "video", scope: `video:${shot.id}`,
         title: `镜头 ${shot.episodeNo}-${shot.shotNo} 视频生成`, provider, model,
-        estimatedCredits: Math.max(1, shot.duration) * unitCredits, resume: true,
+        estimatedCredits, billingInput, resume: true,
         source: captureMediaSource(workflow, "video", [shot.id])
       }, async (billing) => {
         let checkpoint = mediaCheckpoint(billing.task);
@@ -1434,15 +1460,8 @@ export async function runProjectVideoTasks(
 }
 
 async function resolveVideoCreditPerSecond(provider: string, model: string) {
-  const price = await prisma.modelPrice.findFirst({
-    where: {
-      providerId: videoProviderId(provider),
-      model,
-      enabled: true
-    }
-  });
-  if (!price && process.env.NODE_ENV === "production") throw new Error("该视频模型尚未配置价格，请联系管理员。");
-  return price?.unitCredits ?? videoCreditPerSecond(provider);
+  const price = await readGenerationPrice(prisma, videoProviderId(provider), model, "video");
+  return price ? await quotePrice(price) : videoCreditPerSecond(provider);
 }
 
 function buildVideoTaskErrorReason(
@@ -1545,10 +1564,10 @@ export async function getExportJobForDownload(projectId: string, jobId: string, 
   return job;
 }
 
-export async function quoteProjectExport(projectId: string, userId: string, type: "tts" | "subtitle" | "video_export", storyboardIds?: string[]) {
+export async function quoteProjectExport(projectId: string, userId: string, type: "tts" | "subtitle" | "video_export", storyboardIds?: string[], deliveryEdit?: DeliveryEditReference) {
   const fullWorkflow = await getProjectWorkflow(projectId, userId);
   if (!fullWorkflow) throw new Error("项目不存在");
-  const workflow = selectExportWorkflow(fullWorkflow, storyboardIds);
+  const workflow = deliveryEdit ? applyDeliveryEdit(fullWorkflow, deliveryEdit) : selectExportWorkflow(fullWorkflow, storyboardIds);
   if (type === "video_export") assertVideoExportReady(workflow);
   if (type === "subtitle") return { type, providerId: "local-subtitle", providerName: "字幕导出", model: "srt", characters: 0, estimatedCredits: 0, unitCredits: 0, unit: "tts_character" as const, cached: false, cueCount: 0 };
   return { type, ...await quoteProjectNarration(workflow, userId) };
@@ -1559,11 +1578,12 @@ export async function createProjectExportJob(
   userId = DEMO_USER_ID,
   type: "tts" | "subtitle" | "video_export",
   storyboardIds?: string[],
-  maxCredits = 0
+  maxCredits = 0,
+  deliveryEdit?: DeliveryEditReference
 ) {
   const fullWorkflow = await getProjectWorkflow(projectId, userId);
   if (!fullWorkflow) throw new Error("项目不存在");
-  const workflow = selectExportWorkflow(fullWorkflow, storyboardIds);
+  const workflow = deliveryEdit ? applyDeliveryEdit(fullWorkflow, deliveryEdit) : selectExportWorkflow(fullWorkflow, storyboardIds);
   if (!Number.isSafeInteger(maxCredits) || maxCredits < 0) throw new Error("请提供有效的导出积分上限");
   const videoSnapshot = type === "video_export" ? captureVideoExportSnapshot(workflow) : undefined;
   const sourceSnapshot = captureExportSource(workflow, type, storyboardIds === undefined ? "project" : "selection");
@@ -2094,28 +2114,29 @@ function defaultVendorCost(modality: string) {
 
 async function resolveTextRunCredits(input: CreationQuoteInput, suggestedEpisodes: number, db: Pick<Prisma.TransactionClient, "modelPrice"> = prisma) {
   const model = textModelName(input);
-  const price = await db.modelPrice.findFirst({ where: {
-    modality: "text", model, providerId: input.textProvider || process.env.TEXT_PROVIDER || null, enabled: true
-  } });
-  if (!price && process.env.NODE_ENV === "production") throw new Error("该文本渠道与模型尚未配置启用价格，请联系管理员。");
+  const price = await readGenerationPrice(db, input.textProvider || process.env.TEXT_PROVIDER || null, model, "text");
   const defaultUnit = estimateCreation(input).breakdown?.[0]?.unitCredits ?? 50;
-  return (price?.unitCredits ?? defaultUnit) * Math.max(1, suggestedEpisodes);
+  return (price ? await quotePrice(price, { inputTokens: 8000 + input.content.length * 4, outputTokens: 16000 }) : defaultUnit) * Math.max(1, suggestedEpisodes);
+}
+
+async function readGenerationPrice(db: Pick<Prisma.TransactionClient, "modelPrice">, providerId: string | null, model: string, modality: ModelModality) {
+  const rows = await db.modelPrice.findMany({ where: { providerId, model, modality, enabled: true }, take: 2 });
+  const result = inspectModelPrice(rows, { providerId, model, modality });
+  if (result.state === "conflict") throw new Error("该渠道与模型存在多条启用价格，请联系管理员核对。");
+  if (result.state === "invalid") throw new Error("该模型价格配置无效，请核对计费单位和积分单价。");
+  if (result.state === "missing" && process.env.NODE_ENV === "production") throw new Error("该渠道与模型尚未配置启用价格，请联系管理员。");
+  return result.price;
 }
 
 async function resolveImageBaseCreditPerShot(provider: string, model: string) {
   const providerId = normalizeImageProviderId(provider);
-  const price = await prisma.modelPrice.findFirst({
-    where: {
-      providerId,
-      model,
-      enabled: true
-    }
-  });
-  if (!price && process.env.NODE_ENV === "production") throw new Error("该图片模型尚未配置价格，请联系管理员。");
+  const price = await readGenerationPrice(prisma, providerId, model, "image");
   return resolveImageUnitCredits(price ? [price] : [], provider, model);
 }
 
 async function resolveImageCreditPerShot(provider: string, model: string, size?: string, quality?: string) {
+  const price = await readGenerationPrice(prisma, normalizeImageProviderId(provider), model, "image");
+  if (price?.billing) return quotePrice(price, { images: 1 });
   const baseCredits = await resolveImageBaseCreditPerShot(provider, model);
   return estimateImageCredits(baseCredits, size, quality);
 }

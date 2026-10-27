@@ -55,7 +55,7 @@ export const membershipPlans: MembershipPlan[] = [
     badge: "月度额度",
     enabled: true,
     shopUrl: defaultShopUrl,
-    features: ["每月发放 4,000 积分", "模型单价 9 折", "普通优先队列"]
+    features: ["本次支付后立即发放 4,000 积分，永久有效", "符合计价规则的任务结算减免 10%，以生成前报价为准", "创作任务队列优先等级 1", "一个自然月，手动续费"]
   },
   {
     id: "member_pro",
@@ -67,7 +67,7 @@ export const membershipPlans: MembershipPlan[] = [
     badge: "专业模式",
     enabled: true,
     shopUrl: defaultShopUrl,
-    features: ["每月发放 14,000 积分", "模型单价 8 折", "专业队列优先"]
+    features: ["本次支付后立即发放 14,000 积分，永久有效", "符合计价规则的任务结算减免 20%，以生成前报价为准", "创作任务队列优先等级 2", "一个自然月，手动续费"]
   }
 ];
 

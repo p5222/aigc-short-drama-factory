@@ -27,6 +27,10 @@ interface PublicShowcaseProps {
 }
 
 const categories = ["全部", "官方精选", "AI短剧", "动画短片", "电商广告", "品牌广告", "概念片", "电影感", "科幻风"];
+const englishCategories: Record<string, string> = {
+  "全部": "All", "官方精选": "Featured", "AI短剧": "AI drama", "动画短片": "Animation",
+  "电商广告": "Product ads", "品牌广告": "Brand ads", "概念片": "Concept films", "电影感": "Cinematic", "科幻风": "Sci-fi"
+};
 
 function StudioPage({ locale, scenes, onStart }: Omit<PublicShowcaseProps, "view">) {
   const [keyword, setKeyword] = useState("");
@@ -119,7 +123,7 @@ function StudioPage({ locale, scenes, onStart }: Omit<PublicShowcaseProps, "view
       </div>
 
       <div className="public-studio-filters">
-        {categories.map((item) => <button className={category === item ? "active" : ""} aria-pressed={category === item} key={item} type="button" onClick={() => setCategory(item)}>{item}</button>)}
+        {categories.map((item) => <button className={category === item ? "active" : ""} aria-pressed={category === item} key={item} type="button" onClick={() => setCategory(item)}>{cn ? item : englishCategories[item]}</button>)}
       </div>
 
       {loading ? <StatePanel kind="loading" title={cn ? "正在读取作品" : "Loading work"} description={cn ? "请稍候，作品列表即将就绪。" : "The showcase will be ready shortly."} /> : null}
@@ -129,16 +133,16 @@ function StudioPage({ locale, scenes, onStart }: Omit<PublicShowcaseProps, "view
           {works.map((work) => (
             <article key={work.id}>
               <button className="public-work-cover" type="button" aria-label={`${cn ? "播放" : "Play"} ${work.title}`} onClick={() => setPreview(work)}>
-                <ShowcaseCover url={work.coverUrl} title={work.title} />
-                {work.featured ? <span className="public-work-badge"><Check size={12} />官方精选</span> : null}
+                <ShowcaseCover url={work.coverUrl} title={work.title} locale={locale} />
+                {work.featured ? <span className="public-work-badge"><Check size={12} />{cn ? "官方精选" : "Featured"}</span> : null}
                 <span className="public-work-duration">{work.durationLabel}</span>
                 <i><Play size={22} fill="currentColor" /></i>
               </button>
               <div className="public-work-copy">
                 <strong>{work.title}</strong>
                 <span>{work.creatorName}</span>
-                <p>{work.description || "创作者公开作品"}</p>
-                <div><small>{work.category}</small><span><Clock3 size={13} />{work.durationLabel}</span></div>
+                <p>{work.description || (cn ? "创作者公开作品" : "A creator's published film")}</p>
+                <div><small>{cn ? work.category : englishCategories[work.category] ?? work.category}</small><span><Clock3 size={13} />{work.durationLabel}</span></div>
                 <button type="button" onClick={() => setPreview(work)}><Play size={14} />{cn ? "观看作品" : "Watch film"}</button>
               </div>
             </article>
@@ -150,21 +154,21 @@ function StudioPage({ locale, scenes, onStart }: Omit<PublicShowcaseProps, "view
 
       {!loading && !error && totalPages > 1 ? (
         <div className="public-studio-pagination">
-          <button type="button" aria-label="上一页" disabled={page <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))}><ChevronLeft size={18} /></button>
+          <button type="button" aria-label={cn ? "上一页" : "Previous page"} disabled={page <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))}><ChevronLeft size={18} /></button>
           <span>{page} / {totalPages}</span>
-          <button type="button" aria-label="下一页" disabled={page >= totalPages} onClick={() => setPage((current) => Math.min(totalPages, current + 1))}><ChevronRight size={18} /></button>
+          <button type="button" aria-label={cn ? "下一页" : "Next page"} disabled={page >= totalPages} onClick={() => setPage((current) => Math.min(totalPages, current + 1))}><ChevronRight size={18} /></button>
         </div>
       ) : null}
 
       {preview ? (
         <div className="public-preview-modal" data-appearance="dark" role="dialog" aria-modal="true" aria-labelledby={previewTitleId}>
-          <button className="public-preview-backdrop" type="button" tabIndex={-1} onClick={() => setPreview(null)} aria-label="关闭预览" />
+          <button className="public-preview-backdrop" type="button" tabIndex={-1} onClick={() => setPreview(null)} aria-label={cn ? "关闭预览" : "Close preview"} />
           <section ref={previewDialog} tabIndex={-1}>
-            <button className="public-preview-close" type="button" onClick={() => setPreview(null)} aria-label="关闭"><X size={19} /></button>
+            <button className="public-preview-close" type="button" onClick={() => setPreview(null)} aria-label={cn ? "关闭" : "Close"}><X size={19} /></button>
             <video key={`${preview.id}:${mediaAttempt}`} src={preview.videoUrl} poster={preview.coverUrl} controls autoPlay playsInline preload="metadata" aria-label={preview.title} tabIndex={0} onCanPlay={() => setMediaState("ready")} onError={() => setMediaState("error")} />
             {mediaState === "loading" ? <p className="public-media-status" role="status">{cn ? "正在加载视频…" : "Loading video…"}</p> : null}
             {mediaState === "error" ? <div className="public-media-error"><InlineNotice tone="error">{cn ? "视频暂时无法播放，请重新加载。" : "The video could not be played. Please try again."}<button type="button" onClick={() => { setMediaState("loading"); setMediaAttempt(value => value + 1); }}>{cn ? "重新加载视频" : "Reload video"}</button></InlineNotice></div> : null}
-            <div className="public-preview-information"><div className="public-preview-copy"><span>{preview.category}</span><h3 id={previewTitleId}>{preview.title}</h3><p>{preview.creatorName} · {preview.durationLabel}</p></div><button type="button" onClick={() => { setPreview(null); onStart(); }}><Copy size={16} />{cn ? "开始创作" : "Start creating"}</button></div>
+            <div className="public-preview-information"><div className="public-preview-copy"><span>{cn ? preview.category : englishCategories[preview.category] ?? preview.category}</span><h3 id={previewTitleId}>{preview.title}</h3><p>{preview.creatorName} · {preview.durationLabel}</p></div><button type="button" onClick={() => { setPreview(null); onStart(); }}><Copy size={16} />{cn ? "开始创作" : "Start creating"}</button></div>
           </section>
         </div>
       ) : null}
@@ -176,8 +180,8 @@ export function PublicShowcase({ locale, scenes, onStart }: PublicShowcaseProps)
   return <StudioPage locale={locale} scenes={scenes} onStart={onStart} />;
 }
 
-function ShowcaseCover({ url, title }: { url: string; title: string }) {
+function ShowcaseCover({ url, title, locale }: { url: string; title: string; locale: PublicLocale }) {
   const [failed, setFailed] = useState(false);
   useEffect(() => setFailed(false), [url]);
-  return failed || !url ? <span className="public-cover-unavailable"><Play size={25} /><span>点击播放作品</span></span> : <img src={url} alt={title} loading="lazy" decoding="async" onError={() => setFailed(true)} />;
+  return failed || !url ? <span className="public-cover-unavailable"><Play size={25} /><span>{locale === "cn" ? "点击播放作品" : "Play this film"}</span></span> : <img src={url} alt={title} loading="lazy" decoding="async" onError={() => setFailed(true)} />;
 }

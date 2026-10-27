@@ -1,0 +1,25 @@
+{
+  "time": "2026-10-27T02:11:04.999Z",
+  "containerExitCode": 0,
+  "oomKilled": false,
+  "scriptExitCode": 0,
+  "sourceArchiveSha256": "3ed60c1ff43b23261e5983304e7bafcb0eb5376ccbeb205b8a56e493ec15dedf",
+  "isolation": {
+    "databases": 3,
+    "redisDedicated": true,
+    "usesProductionDatabase": false,
+    "productionProviderKeysPassed": false,
+    "publishedPorts": 0,
+    "cleanedUp": true
+  },
+  "apiTests": {
+    "tests": 301,
+    "suites": 0,
+    "pass": 301,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0,
+    "todo": 0
+  },
+  "failedTestNames": []
+}

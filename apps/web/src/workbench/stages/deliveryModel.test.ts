@@ -225,6 +225,16 @@ test("getRemainingVideoShots mirrors server eligibility: no playable video and a
   assert.deepEqual(getRemainingVideoShots(shots, assets).map((item) => item.id), ["b"]);
 });
 
+test("remaining submissions exclude failed, missing or temporary frames and videos still generating", () => {
+  const shots = ["failed-frame", "no-url", "blob", "running", "ready"].map(id => shot(id, 2));
+  const frames = shots.map(item => rawAsset({ id: `image_${item.id}`, type: "image", status: "succeeded", referenceUrl: "/storage/frame.png" }));
+  frames[0].status = "failed";
+  frames[1].referenceUrl = undefined;
+  frames[2].referenceUrl = "blob:temporary";
+  const assets = [...frames, rawAsset({ id: "video_running", type: "video", status: "running" })];
+  assert.deepEqual(getRemainingVideoShots(shots, assets).map(item => item.id), ["ready"]);
+});
+
 test("getShotFailureMessage prefers provider error on the asset, then task errorReason, then a safe default", () => {
   const failed = rawAsset({ id: "video_a", type: "video", status: "failed", description: "余额不足：视频渠道拒绝任务" });
   assert.equal(getShotFailureMessage(failed, []), "余额不足：视频渠道拒绝任务");
@@ -237,15 +247,16 @@ test("getShotFailureMessage prefers provider error on the asset, then task error
   assert.equal(getShotFailureMessage(undefined, []), "生成失败，可重试");
 });
 
-test("videoUnitCredits matches provider+model first, falls back to model, hides when unknown", () => {
+test("videoUnitCredits displays only an exact unambiguous route price", () => {
   const prices = [
     { id: "1", providerId: "dashscope-video", providerName: "百炼", modality: "video", model: "wan", unit: "video_second", unitCredits: 16, vendorCostCny: 0.2, enabled: true },
     { id: "2", providerId: "other", providerName: "其他", modality: "video", model: "wan-turbo", unit: "video_second", unitCredits: 9, vendorCostCny: 0.1, enabled: true },
     { id: "3", providerId: "off", providerName: "禁用", modality: "video", model: "off-model", unit: "video_second", unitCredits: 99, vendorCostCny: 1, enabled: false }
   ] as never[];
   assert.equal(videoUnitCredits(prices, "dashscope-video", "wan"), 16);
-  assert.equal(videoUnitCredits(prices, "unknown-provider", "wan-turbo"), 9);
+  assert.equal(videoUnitCredits(prices, "unknown-provider", "wan-turbo"), undefined);
   assert.equal(videoUnitCredits(prices, "off", "off-model"), undefined);
+  assert.equal(videoUnitCredits([...prices, prices[0]!], "dashscope-video", "wan"), undefined);
 });
 
 test("collectDeliveryEpisodes dedupes episode numbers with a fallback range", () => {

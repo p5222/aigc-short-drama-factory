@@ -1,0 +1,41 @@
+.dlv2-frame { grid-template-rows: minmax(48px, auto) auto auto minmax(0, 1fr) 210px; }
+body:has(.wb-shell.project-workbench) { min-width: 0; }
+.dlv2-topbar { flex-wrap: wrap; padding-block: 8px; }
+.wb-shell .dlv2-stage { display: flex; flex-direction: column; align-items: stretch; overflow-y: auto; gap: 12px; padding: 20px; }
+.wb-shell .dlv2-stage > * { flex-shrink: 0; }
+.dlv3-preview-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.dlv3-preview-head > div:first-child { display: grid; gap: 4px; }
+.dlv3-preview-head span { font-size: 11px; color: var(--text-3); }
+.dlv3-preview-head strong { font-size: 16px; }
+.dlv3-preview-tabs { display: flex; gap: 6px; }
+.wb-shell .dlv2-stage .dlv2-player { flex: none; height: clamp(180px, 20vh, 300px); min-height: 180px; border-radius: 12px; background: var(--media-bg); }
+.wb-shell .dlv2-shot-actions { order: 1; }
+.dlv3-cut-tools { border-top: 1px solid var(--border-1); padding-top: 12px; }
+.dlv3-cut-title, .dlv3-cut-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.dlv3-cut-title { margin-bottom: 10px; font-size: 12px; }
+.dlv3-cut-title span { margin-left: auto; color: var(--text-3); font-size: 11px; }
+.dlv3-cut-fields { display: grid; grid-template-columns: minmax(120px, 1.6fr) repeat(2, minmax(64px, 1fr)) auto; gap: 8px; align-items: end; }
+.dlv3-cut-fields label { display: grid; gap: 6px; color: var(--text-2); font-size: 11px; }
+.dlv3-cut-fields input, .dlv3-cut-fields select { width: 100%; min-width: 0; height: 34px; border: 1px solid var(--border-1); border-radius: 6px; color: var(--text-1); background: var(--surface-1); padding: 6px 8px; font: inherit; }
+.dlv3-cut-length { padding-bottom: 9px; color: var(--accent); font-size: 12px; white-space: nowrap; }
+.dlv3-cut-actions { margin-top: 10px; }
+.dlv3-cut-tools p, .dlv3-media-error, .dlv3-output-error { color: var(--danger); font-size: 12px; }
+.dlv3-final-note { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--text-2); font-size: 12px; }
+.dlv3-output-library { color: var(--text-1); padding: 16px; border-top: 1px solid var(--border-1); }
+.dlv3-output-library header { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 13px; }
+.dlv3-output-library header span { margin-left: auto; color: var(--text-3); font-size: 11px; }
+.dlv3-output-library article { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; padding: 12px 0; border-bottom: 1px solid var(--border-1); }
+.dlv3-output-library article > div { display: flex; gap: 6px; }
+.dlv3-output-library article > div:first-child { display: grid; }
+.dlv3-output-library article strong { font-size: 12px; }
+.dlv3-output-library small, .dlv3-output-library p { color: var(--text-3); font-size: 11px; line-height: 1.7; }
+.dlv3-output-library .dlv3-output-error { color: var(--danger); }
+.studio-preview-switch { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+@media (max-width: 767px) {
+  .wb-shell .dlv2-stage { padding: 12px; }
+  .dlv3-preview-head { flex-wrap: wrap; }
+  .dlv3-cut-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dlv3-cut-title span { margin-left: 0; width: 100%; }
+  .dlv3-cut-actions .dlv2-btn { min-height: 36px; }
+  .dlv3-cut-length { align-self: center; padding: 0; }
+}

@@ -146,7 +146,7 @@ export function ProfilePage({
     if (pending || avatarReading) return;
     const name = profileName.trim();
     if (!name) {
-      setProfileError("用户名不能为空。");
+      setProfileError("昵称不能为空。");
       return;
     }
 
@@ -251,7 +251,7 @@ export function ProfilePage({
     }
   }
 
-  const creditBalance = account?.balance ?? summary?.credits ?? 0;
+  const creditBalance = account ? account.balance - account.frozenBalance : summary?.credits ?? 0;
   const recentTransactions = transactions.slice(0, 4);
   const recentOrders = orders.slice(0, 3);
 
@@ -316,7 +316,7 @@ export function ProfilePage({
                 <span className="profile-v2-binding-icon"><UserRound size={17} /></span>
                 <div>
                   <strong>手机号</strong>
-                  <small>{user.phone ? maskContact(user.phone) : "未绑定（注册时选填）"}</small>
+                  <small>{user.phone ? maskContact(user.phone) : "未绑定手机号"}</small>
                 </div>
                 <em className={user.phone ? "bound" : ""}>{user.phone ? "已绑定" : "未绑定"}</em>
               </div>
@@ -544,9 +544,9 @@ const fallbackHelpArticles: HelpArticle[] = [
   },
   {
     id: "fallback-billing",
-    title: "积分的冻结、扣费和退还是怎么运作的？",
-    summary: "先冻结预估积分，成功扣实际消耗，失败自动退回。",
-    content: "积分用于生成与导出，购买价格以充值页面的具体套餐为准。生成前请核对所选模型、范围和预估积分。\n提交生成任务时先冻结预估积分；结束后按已交付结果结算，多余部分退回。已提交供应商但结果尚未确认的任务，需要先核对远端状态，不能把取消当作立即退款。每一笔都可以在「积分明细」按类型筛选核对。",
+    title: "积分如何冻结、扣费和释放？",
+    summary: "先冻结预估额度，再按已交付结果结算；解冻不代表现金退款。",
+    content: "积分用于生成与导出，购买价格以充值页面的具体套餐为准。生成前请核对所选模型、范围和预估积分。\n提交任务时先冻结预估积分；结束后按已交付结果结算，释放多余冻结额度。冻结不计入消费，释放不计入充值，也不代表现金退款。已提交供应商但结果尚未确认的任务，需要先核对远端状态，不能把取消当作立即解冻。每一笔都可以在「积分明细」按类型筛选核对。",
     category: "billing",
     tags: ["积分", "账单"],
     enabled: true,
@@ -610,7 +610,7 @@ export function HelpPage({ articles = [], userId }: { articles?: HelpArticle[]; 
       <div className="help-grid help-action-grid">
         <HelpCard title="新手入门" desc="了解第一集的制作流程" icon={<MonitorPlay size={30} />} onClick={() => focusCategory("getting_started")} />
         <HelpCard title="详细文档" desc="每个功能讲解" icon={<FileText size={30} />} onClick={() => focusCategory("workflow")} />
-        <HelpCard title="积分与工单" desc="账单、退款、失败处理" icon={<LifeBuoy size={30} />} onClick={() => focusCategory("billing")} />
+        <HelpCard title="积分与工单" desc="账单、积分解冻、失败处理" icon={<LifeBuoy size={30} />} onClick={() => focusCategory("billing")} />
       </div>
       <section className="panel help-browser-panel">
         <div className="help-toolbar">
@@ -760,7 +760,7 @@ function transactionTypeLabel(value: CreditTransaction["type"]) {
     recharge: "充值入账",
     freeze: "冻结积分",
     consume: "消费扣费",
-    refund: "退款退回",
+    refund: "释放冻结",
     adjust: "后台调整"
   };
   return labels[value] ?? value;

@@ -1,8 +1,9 @@
 import { ArrowLeft, ArrowRight, BookOpen, Check, CheckCircle2, CircleAlert, Clapperboard, FileText, LoaderCircle, Map, Plus, RefreshCw, Sparkles, Trash2, UsersRound } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ReactElement } from "react";
-import { analyzeProductionEpisodes, episodeGenerationOptions, type ContentProductionPackage, type ContentProjectSummary, type ModelProvider, type StyleProfile } from "@aifilm/shared";
+import { useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from "react";
+import { analyzeProductionEpisodes, episodeGenerationOptions, type ContentProductionPackage, type ContentProjectSummary, type ModelPrice, type ModelProvider, type StyleProfile } from "@aifilm/shared";
 import { contentApi, type ContentVersionHistory, type SourceDocumentInput } from "../lib/contentApi";
 import { ModelRoutePicker } from "../components/ModelRoutePicker";
+import { buildModelCatalog, defaultModelRoute, modelIdentity } from "../components/modelCatalog";
 import { chapterGenerationPlan, chapterNavigationStage, cleanModelText, contentEditorDirty, contentNavigationDecision, contentSourceForProject, reconcileContentEditor, isCurrentRequest, modeLabel, reconcileProjectId, sourceKindForMode, statusLabel, type ContentEditorDraft, type RequestToken } from "./model";
 import { BEFORE_CREATOR_NAVIGATION } from "../lib/creatorNavigation";
 import { InlineNotice, StatePanel } from "../design-system/ui";
@@ -52,16 +53,24 @@ interface ContentWorkspaceProps {
   initialSelectedId?: string;
   startBlank?: boolean;
   providers: ModelProvider[];
+  modelPrices: ModelPrice[];
   onReload: () => Promise<ContentProjectSummary[]>;
+  onProjectsChange?: (projects: ContentProjectSummary[]) => void;
   onBack?: () => void;
   onEnterProduction: (projectId: string) => void | Promise<void>;
 }
 
-export function ContentWorkspace({ initialProjects, initialSelectedId, startBlank = false, providers, onReload, onBack, onEnterProduction }: ContentWorkspaceProps) {
+export function ContentWorkspace({ initialProjects, initialSelectedId, startBlank = false, providers, modelPrices, onReload, onProjectsChange, onBack, onEnterProduction }: ContentWorkspaceProps) {
   const [projects, setProjects] = useState(initialProjects);
+  useEffect(() => { onProjectsChange?.(projects); }, [projects, onProjectsChange]);
+  const deleting = useRef(false);
   const [selectedId, setSelectedId] = useState(() => startBlank ? "" : reconcileProjectId(initialProjects, initialSelectedId));
   const [creating, setCreating] = useState(startBlank || initialProjects.length === 0);
   const [createTitle, setCreateTitle] = useState("");
+  const [createRoute, setCreateRoute] = useState(() => defaultModelRoute(providers, "text", modelPrices));
+  const createInFlight = useRef(false);
+  const createRouteReady = buildModelCatalog(providers, modelPrices).some(item => item.provider.modality === "text" && item.provider.id === createRoute.providerId && item.model === createRoute.model && item.selectable);
+  useEffect(() => { if (!createRoute.providerId && !createRoute.model) setCreateRoute(defaultModelRoute(providers, "text", modelPrices)); }, [providers, modelPrices, createRoute.providerId, createRoute.model]);
   const [createStyle, setCreateStyle] = useState(styleOptions[0]);
   const [intentType, setIntentType] = useState<"title" | "genre" | "references">("title");
   const [targetWords, setTargetWords] = useState(20000);
@@ -74,15 +83,17 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
   const [sourceOpen, setSourceOpen] = useState(false);
   const [focusStage, setFocusStage] = useState<StageId | "">("");
   const [selectedChapterNo, setSelectedChapterNo] = useState(1);
-  const [busy, setBusy] = useState<"create" | "save" | "generate" | "refresh" | "handoff" | "">("");
+  const [busy, setBusy] = useState<"create" | "save" | "generate" | "refresh" | "handoff" | "delete" | "">("");
   const handoffPending = useRef(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const preserveCreationFeedback = useRef(false);
   const [detailLoading, setDetailLoading] = useState(Boolean(selectedId));
   const [detailError, setDetailError] = useState("");
   const [detailReload, setDetailReload] = useState(0);
   const [outlineDraft, setOutlineDraft] = useState<ContentEditorDraft<Record<string, unknown>> | null>(null);
   const [failedProjectId, setFailedProjectId] = useState("");
+  const failedCreationInput = useRef<Parameters<typeof contentApi.analyze>[1] | null>(null);
   const [savedSources, setSavedSources] = useState<Record<string, { title: string; content: string }>>({});
   const [packages, setPackages] = useState<Record<string, ContentProductionPackage>>({});
   const [versions, setVersions] = useState<Record<string, ContentVersionHistory>>({});
@@ -94,7 +105,8 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
   useEffect(() => {
     activeRequest.current = null;
     setBusy((current) => current === "save" ? "" : current);
-    if (!creating) { setMessage(""); setError(""); }
+    if (!creating && !preserveCreationFeedback.current) { setMessage(""); setError(""); }
+    preserveCreationFeedback.current = false;
     const source = contentSourceForProject(savedSources, selectedId);
     setSourceTitle(source.title); setSourceContent(source.content); setSourceOpen(false); setFocusStage("");
   }, [selectedId]);
@@ -136,7 +148,7 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
   const generationPlan = chapterGenerationPlan(outline.map((item, index) => ({ chapterNo: Number(item.chapterNo ?? index + 1) })), chapters, batchSize);
   const serverBusy = !busy && selected?.status === "running";
   const working = Boolean(busy) || serverBusy;
-  const [editingChapter, setEditingChapter] = useState<{ chapterNo: number; title: string; content: string; originalTitle: string; originalContent: string } | null>(null);
+  const [editingChapter, setEditingChapter] = useState<{ chapterNo: number; title: string; content: string; originalTitle: string; originalContent: string; expectedChapterId: string } | null>(null);
   const handoffSource = selected ? savedSources[selected.id] : undefined;
   const handoffContent = productionPackage?.script?.content.trim() || "";
   const handoffEpisode = productionPackage?.episodes?.find((episode) => episode.episodeNo === handoffEpisodeNo) ?? productionPackage?.episodes?.[0];
@@ -207,9 +219,15 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
     if (!selected || !editingChapter || busy) return;
     setBusy("save"); setError("");
     try {
-      const result = await contentApi.updateChapter(selected.id, editingChapter.chapterNo, { title: editingChapter.title, content: editingChapter.content });
+      const result = await contentApi.updateChapter(selected.id, editingChapter.chapterNo, { title: editingChapter.title, content: editingChapter.content, expectedChapterId: editingChapter.expectedChapterId });
       setPackages((current) => ({ ...current, [selected.id]: result }));
-      setEditingChapter(null); setMessage(`第 ${editingChapter.chapterNo} 章已保存`);
+      setEditingChapter(null); setMessage(`第 ${editingChapter.chapterNo} 章已另存新版本，原正文已保留。`);
+      try {
+        const history = await contentApi.versions(selected.id);
+        setVersions(current => ({ ...current, [selected.id]: history }));
+      } catch {
+        setMessage(`第 ${editingChapter.chapterNo} 章已保存，原正文已保留。版本列表暂未刷新，请稍后刷新核对，无需重复保存。`);
+      }
     } catch (reason) { setError(reason instanceof Error ? reason.message : "保存失败"); }
     finally { setBusy(""); }
   }
@@ -223,46 +241,70 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
   }
 
   async function createProject() {
-    if (!createTitle.trim() || busy) return;
+    if (!createTitle.trim() || busy || createInFlight.current || failedProjectId) return;
+    if (!createRouteReady) { setError("请先选择配置完整的文本模型。"); return; }
+    createInFlight.current = true;
     setBusy("create"); setError("");
     let createdId = "";
+    const analysisInput = { intentType, intent: createTitle.trim(), targetWords, chapterCount, batchSize };
     try {
       const intent = createTitle.trim();
-      const created = await contentApi.createProject({ title: intent.slice(0, 80), mode: "same_genre", styleProfile: { ...emptyStyle, ...createStyle }, textProvider: "manjiao", textModel: "gpt-5.5" });
+      const created = await contentApi.createProject({ title: intent.slice(0, 80), mode: "same_genre", styleProfile: { ...emptyStyle, ...createStyle }, textProvider: createRoute.providerId, textModel: createRoute.model });
       createdId = created.id;
-      const result = await contentApi.analyze(created.id, { intentType, intent, targetWords, chapterCount, batchSize });
+      setProjects(current => [created, ...current.filter(project => project.id !== created.id)]);
+      failedCreationInput.current = analysisInput;
+      const result = await contentApi.analyze(created.id, analysisInput);
       setPackages((current) => ({ ...current, [created.id]: result }));
-      setSelectedId(created.id); setProjects(await onReload()); setCreating(false); setFocusStage(""); setMessage("结构拆解已完成，请继续生成大纲");
+      preserveCreationFeedback.current = selectedId !== created.id;
+      setSelectedId(created.id); setCreating(false); setFocusStage(""); setFailedProjectId(""); failedCreationInput.current = null;
+      setMessage("结构拆解已完成，请继续生成大纲");
+      try { setProjects(await onReload()); } catch { setMessage("结构拆解已完成。作品列表暂未刷新，可点击刷新重新同步，不必重复创建。"); }
     } catch (reason) {
-      setProjects(await onReload().catch(() => projects));
+      try { setProjects(await onReload()); } catch { /* Preserve a confirmed project when the list cannot refresh. */ }
       if (createdId) { setFailedProjectId(createdId); setSelectedId(createdId); }
       setError(reason instanceof Error ? reason.message : "创建失败");
     }
-    finally { setBusy(""); }
+    finally { createInFlight.current = false; setBusy(""); }
   }
 
   async function retryDevelop() {
-    if (!failedProjectId || busy) return;
+    if (!failedProjectId || busy || createInFlight.current || !failedCreationInput.current) return;
+    createInFlight.current = true;
     setBusy("create"); setError(""); setMessage("正在重试当前创作阶段...");
     try {
-      const result = await contentApi.analyze(failedProjectId, { intentType, intent: createTitle.trim(), targetWords, chapterCount, batchSize });
+      const result = await contentApi.analyze(failedProjectId, failedCreationInput.current);
       setPackages((current) => ({ ...current, [failedProjectId]: result }));
-      setProjects(await onReload()); setSelectedId(failedProjectId); setFailedProjectId(""); setCreating(false); setFocusStage(""); setMessage("结构拆解已完成");
+      setSelectedId(failedProjectId); setFailedProjectId(""); failedCreationInput.current = null; setCreating(false); setFocusStage(""); setMessage("结构拆解已完成");
+      try { setProjects(await onReload()); } catch { setMessage("结构拆解已完成。作品列表暂未刷新，请刷新同步，不必重复生成。"); }
     } catch (reason) { setError(reason instanceof Error ? reason.message : "重试失败"); }
-    finally { setBusy(""); }
+    finally { createInFlight.current = false; setBusy(""); }
   }
 
   async function removeContentProject(projectId: string) {
+    if (deleting.current || busy) return;
     const project = projects.find((item) => item.id === projectId);
     if (!project || !window.confirm(`确认删除“${project.title}”？分析、大纲、章节和版本都会删除。`)) return;
+    deleting.current = true; setBusy("delete"); setError(""); setMessage("");
+    let deleted = false;
     try {
       await contentApi.deleteProject(projectId);
+      deleted = true;
+      activeRequest.current = null;
+      if (failedProjectId === projectId) { setFailedProjectId(""); failedCreationInput.current = null; setError(""); }
       setPackages((current) => { const next = { ...current }; delete next[projectId]; return next; });
       setSavedSources((current) => { const next = { ...current }; delete next[projectId]; return next; });
+      setVersions(current => { const next = { ...current }; delete next[projectId]; return next; });
+      const remaining = projects.filter(item => item.id !== projectId);
+      setProjects(remaining);
+      setOutlineDraft(null); setEditingChapter(null);
+      preserveCreationFeedback.current = true;
+      if (selectedId === projectId) { setSelectedId(remaining[0]?.id ?? ""); setCreating(!remaining.length); }
+      setMessage("内容项目已删除；已交接的漫剧项目保留。");
       setProjects(await onReload());
-      if (selectedId === projectId) setSelectedId("");
-      setMessage("内容项目已删除");
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "删除失败"); }
+    } catch (reason) {
+      if (deleted) setMessage("内容项目已删除；作品列表暂未刷新，请点击刷新重新同步，不必重复删除。");
+      else setError(reason instanceof Error ? reason.message : "删除失败，内容项目仍保留。");
+    } finally { deleting.current = false; setBusy(""); }
   }
 
   async function saveSource() {
@@ -397,11 +439,11 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
   }
 
   async function changeModelRoute(textProvider: string, textModel: string) {
-    if (!selected || busy) return;
+    if (!selected || working) return;
     setBusy("save"); setError("");
     try {
       await contentApi.updateModelRoute(selected.id, { textProvider, textModel });
-      setProjects(await onReload()); setMessage(`模型已切换为 ${textModel}`);
+      setProjects(await onReload()); setMessage(`模型已切换为 ${modelIdentity(textModel).name}`);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "模型切换失败"); }
     finally { setBusy(""); }
   }
@@ -459,7 +501,7 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
       })}
     </nav>
     <div className="cw2-top-actions">
-      {selected && !creating ? <ModelRoutePicker modality="text" compact providers={providers} value={{ providerId: selected.textProvider, model: selected.textModel }} onChange={(providerId, model) => { void changeModelRoute(providerId, model); }} /> : null}
+      {selected && !creating ? <ModelRoutePicker modality="text" compact providers={providers} modelPrices={modelPrices} value={{ providerId: selected.textProvider, model: selected.textModel }} onChange={(providerId, model) => { void changeModelRoute(providerId, model); }} disabled={working} /> : null}
       <button type="button" className="cw2-icon-button" disabled={working} onClick={startNewContent} title="新建内容创作" aria-label="新建内容创作"><Plus size={16} /></button>
       <button type="button" className="cw2-icon-button" disabled={working} onClick={() => void refresh()} title="刷新" aria-label="刷新"><RefreshCw size={15} /></button>
       {selected && !creating ? <button type="button" className="cw2-icon-button danger" disabled={working} onClick={() => { if (canChangeView()) void removeContentProject(selected.id); }} title="删除作品" aria-label="删除作品"><Trash2 size={15} /></button> : null}
@@ -469,8 +511,15 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
   // ---------- 中央区 ----------
   let stageView: ReactElement;
   if (creating) {
-    stageView = <div className="cw2-stage-scroll"><ContentCreationIntent intent={createTitle} intentType={intentType} targetWords={targetWords} chapterCount={chapterCount} batchSize={batchSize} busy={busy === "create"} canCancel={Boolean(projects.length)} onIntentChange={setCreateTitle} onIntentTypeChange={setIntentType} onTargetWordsChange={setTargetWords} onChapterCountChange={setChapterCount} onBatchSizeChange={setBatchSize} onCancel={() => changeView(() => setCreating(false))} onSubmit={() => void createProject()} styleKey={createStyle.key} onStyleChange={(key) => setCreateStyle(styleOptions.find((item) => item.key === key) ?? styleOptions[0])} />
-      {error ? <div className="content-creation-error" role="alert"><CircleAlert size={17} /><div><strong>创作流程中断，项目已保留</strong><p>{error}</p><div className="content-inline-actions"><button type="button" className="content-secondary-button" onClick={() => void retryDevelop()} disabled={!failedProjectId || Boolean(busy)}><RefreshCw size={15} />重试当前阶段</button><button type="button" className="content-secondary-button" onClick={() => failedProjectId && void removeContentProject(failedProjectId)} disabled={!failedProjectId || Boolean(busy)}><Trash2 size={15} />删除失败项目</button></div></div></div> : null}
+    stageView = <div className="cw2-stage-scroll"><ContentCreationIntent
+      intent={createTitle} intentType={intentType} targetWords={targetWords} chapterCount={chapterCount} batchSize={batchSize}
+      busy={busy === "create"} locked={Boolean(failedProjectId)} canSubmit={createRouteReady && !failedProjectId}
+      modelSelection={<div className="content-create-model"><span>文本创作模型</span><ModelRoutePicker modality="text" label="选择文本创作模型" providers={providers} modelPrices={modelPrices} value={createRoute} onChange={(providerId, model) => setCreateRoute({ providerId, model })} disabled={Boolean(busy) || Boolean(failedProjectId)} /><small>{failedProjectId ? "保留的项目沿用首次提交的意图、参数与模型。请重试当前阶段，或删除后重新创建。" : "结构拆解与后续内容生成使用此模型，费用按当前渠道价格及生成阶段计算。"}</small></div>}
+      canCancel={Boolean(projects.length)} onIntentChange={setCreateTitle} onIntentTypeChange={setIntentType}
+      onTargetWordsChange={setTargetWords} onChapterCountChange={setChapterCount} onBatchSizeChange={setBatchSize}
+      onCancel={() => changeView(() => setCreating(false))} onSubmit={() => void createProject()}
+      styleKey={createStyle.key} onStyleChange={key => setCreateStyle(styleOptions.find(item => item.key === key) ?? styleOptions[0])} />
+      {error ? <div className="content-creation-error" role="alert"><CircleAlert size={17} /><div><strong>{failedProjectId ? "结构拆解中断，项目已保留" : "暂时无法确认项目创建结果"}</strong><p>{error}</p>{failedProjectId ? <div className="content-inline-actions"><button type="button" className="content-secondary-button" onClick={() => void retryDevelop()} disabled={Boolean(busy)}><RefreshCw size={15} />重试当前阶段</button><button type="button" className="content-secondary-button" onClick={() => void removeContentProject(failedProjectId)} disabled={Boolean(busy)}><Trash2 size={15} />删除失败项目</button></div> : <p>输入内容仍在当前页面。请刷新作品列表核对后再重试。</p>}</div></div> : null}
     </div>;
   } else if (!selected) {
     stageView = <section className="content-unavailable"><BookOpen size={30} /><h2>创建第一个内容项目</h2><p>从一个标题、题材方向或参考作品开始。</p><button type="button" className="content-primary-button" onClick={() => setCreating(true)}><Plus size={16} />新建内容创作</button></section>;
@@ -534,7 +583,7 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
           <input aria-label="章节标题" disabled={working} value={editingChapter.title} onChange={(event) => setEditingChapter((current) => current ? { ...current, title: event.target.value } : current)} maxLength={160} />
           <textarea aria-label={`第 ${editingChapter.chapterNo} 章正文`} disabled={working} value={editingChapter.content} onChange={(event) => setEditingChapter((current) => current ? { ...current, content: event.target.value } : current)} />
         </div></article>
-        <div className="cw2-actionbar"><span className="cw2-hint">修改会保存到当前版本并标记为已确认。</span>
+        <div className="cw2-actionbar"><span className="cw2-hint">保存为新版本并保留原正文；制作内容需要重新生成后同步。</span>
           <button type="button" className="content-secondary-button" disabled={busy === "save"} onClick={() => changeView(() => setEditingChapter(null))}>取消编辑</button>
           <button type="button" className="content-primary-button" disabled={busy === "save" || editingChapter.content.trim().length < 20} onClick={() => void saveChapterEdit()}>{busy === "save" ? <LoaderCircle size={15} /> : <Check size={15} />}保存修改</button>
         </div>
@@ -547,7 +596,7 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
       </>}
       {editingChapter ? null : <div className="cw2-actionbar">
         <span className="cw2-hint">{serverBusy ? "服务器正在生成中，离开此页也会继续，完成后自动刷新…" : generationPlan.remainingCount ? `每批完成后自动保存 · 还剩 ${generationPlan.remainingCount} 章 · 中断可随时续生成` : "全部章节已生成，可在右侧进入制作交接"}</span>
-        {selectedGenerated ? <button type="button" className="content-secondary-button" disabled={working} onClick={() => setEditingChapter({ chapterNo: selectedGenerated.chapterNo, title: selectedGenerated.title, content: selectedGenerated.content, originalTitle: selectedGenerated.title, originalContent: selectedGenerated.content })}><FileText size={14} />编辑本章</button> : null}
+        {selectedGenerated ? <button type="button" className="content-secondary-button" disabled={working} onClick={() => setEditingChapter({ chapterNo: selectedGenerated.chapterNo, title: selectedGenerated.title, content: selectedGenerated.content, originalTitle: selectedGenerated.title, originalContent: selectedGenerated.content, expectedChapterId: selectedGenerated.id })}><FileText size={14} />编辑本章</button> : null}
         {selectedGenerated ? <button type="button" className="content-secondary-button" disabled={working} onClick={() => void regenerateChapter(selectedChapterNo)}><RefreshCw size={14} />重新生成本章</button> : null}
         <button type="button" className="content-secondary-button" disabled={working || !generationPlan.remainingCount} onClick={() => void generateNextChapters()}>{working ? <LoaderCircle size={15} /> : <Sparkles size={15} />}继续生成下一批（{Math.max(2, generationPlan.nextBatchSize) || 2} 章）</button>
         <button type="button" className="content-primary-button" disabled={working || !generationPlan.remainingCount} onClick={() => void generateAllChapters()}><ArrowRight size={15} />一键生成全部剩余 {generationPlan.remainingCount} 章</button>
@@ -634,7 +683,7 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
         <p className="cw2-rail-meta">素材 {selected?.sourceCount ?? 0} · 大纲 v{productionPackage?.outline?.version ?? "-"} · 剧本 {selected?.scriptCount ?? 0}</p>
       </aside> : null}
       <main className="cw2-stage">
-        {(message || error || serverBusy) && !creating ? <div className="cw2-feedback"><InlineNotice tone={error ? "error" : busy || serverBusy ? "info" : "success"}>{error || (serverBusy ? "服务器正在生成，已完成内容会自动同步。" : message)}</InlineNotice></div> : null}
+        {(message || error || serverBusy) && (!creating || !error) ? <div className="cw2-feedback"><InlineNotice tone={error ? "error" : busy || serverBusy ? "info" : "success"}>{error || (serverBusy ? "服务器正在生成，已完成内容会自动同步。" : message)}</InlineNotice></div> : null}
         {detailError && productionPackage ? <div className="cw2-feedback"><InlineNotice tone="warning">{detailError} 已保留上次读取的内容。<button type="button" className="cw2-link-button" onClick={() => setDetailReload(value => value + 1)}>重新读取</button></InlineNotice></div> : null}
         {stageView}
       </main>
@@ -664,14 +713,17 @@ function OutlineStage({ pkg, value: outlineDraft, onChange, busy, selectedChapte
   </section>;
 }
 
-function ContentCreationIntent({ intent, intentType, targetWords, chapterCount, batchSize, busy, canCancel, styleKey, onIntentChange, onIntentTypeChange, onTargetWordsChange, onChapterCountChange, onBatchSizeChange, onStyleChange, onCancel, onSubmit }: {
+function ContentCreationIntent({ intent, intentType, targetWords, chapterCount, batchSize, busy, locked = false, canCancel, canSubmit, modelSelection, styleKey, onIntentChange, onIntentTypeChange, onTargetWordsChange, onChapterCountChange, onBatchSizeChange, onStyleChange, onCancel, onSubmit }: {
   intent: string;
   intentType: "title" | "genre" | "references";
   targetWords: number;
   chapterCount: number;
   batchSize: number;
   busy: boolean;
+  locked?: boolean;
   canCancel: boolean;
+  canSubmit: boolean;
+  modelSelection: ReactNode;
   styleKey: string;
   onIntentChange: (value: string) => void;
   onIntentTypeChange: (value: "title" | "genre" | "references") => void;
@@ -691,18 +743,19 @@ function ContentCreationIntent({ intent, intentType, targetWords, chapterCount, 
   return <section className="content-intent-workspace">
     <header><span className="content-eyebrow">STEP 1 · 创作意图</span><h2>一个想法，就是故事的起点</h2><p>写下标题、题材或参考作品，先梳理故事结构，再逐章完善正文。</p></header>
     <div className="content-intent-layout"><div className="content-intent-editor">
-    <div className="content-intent-modes">{options.map((option) => <button type="button" key={option.id} disabled={busy} aria-pressed={intentType === option.id} className={intentType === option.id ? "is-active" : ""} onClick={() => onIntentTypeChange(option.id)}><strong>{option.label}</strong><span>{option.hint}</span></button>)}</div>
-    <label className="content-intent-input"><span>{options.find((item) => item.id === intentType)?.label}</span><textarea aria-label={options.find((item) => item.id === intentType)?.label} disabled={busy} value={intent} onChange={(event) => onIntentChange(event.target.value)} maxLength={2000} placeholder={placeholder} autoFocus /><small>{intent.length}/2000</small></label>
+    <div className="content-intent-modes">{options.map((option) => <button type="button" key={option.id} disabled={busy || locked} aria-pressed={intentType === option.id} className={intentType === option.id ? "is-active" : ""} onClick={() => onIntentTypeChange(option.id)}><strong>{option.label}</strong><span>{option.hint}</span></button>)}</div>
+    <label className="content-intent-input"><span>{options.find((item) => item.id === intentType)?.label}</span><textarea aria-label={options.find((item) => item.id === intentType)?.label} disabled={busy || locked} value={intent} onChange={(event) => onIntentChange(event.target.value)} maxLength={2000} placeholder={placeholder} autoFocus /><small>{intent.length}/2000</small></label>
     <p className="content-intent-help">可以补充主角、核心冲突、故事背景和期待的结局，帮助系统理解你的方向。</p>
     </div><aside className="content-intent-plan"><h3>本次创作计划</h3>
     <div className="content-plan-controls">
-      <label><span>目标字数</span><select disabled={busy} value={targetWords} onChange={(event) => onTargetWordsChange(Number(event.target.value))}><option value={10000}>10000 字</option><option value={20000}>20000 字</option><option value={30000}>30000 字</option><option value={50000}>50000 字</option></select></label>
-      <label><span>章节数量</span><select disabled={busy} value={chapterCount} onChange={(event) => onChapterCountChange(Number(event.target.value))}><option value={5}>5 章</option><option value={10}>10 章</option><option value={15}>15 章</option><option value={20}>20 章</option></select></label>
-      <label><span>每批生成</span><select disabled={busy} value={batchSize} onChange={(event) => onBatchSizeChange(Number(event.target.value))}><option value={2}>2 章</option><option value={3}>3 章</option></select></label>
-      <label><span>视觉风格</span><select disabled={busy} value={styleKey} onChange={(event) => onStyleChange(event.target.value)}>{styleOptions.map((style) => <option key={style.key} value={style.key}>{style.name}</option>)}</select></label>
+      <label><span>目标字数</span><select disabled={busy || locked} value={targetWords} onChange={(event) => onTargetWordsChange(Number(event.target.value))}><option value={10000}>10000 字</option><option value={20000}>20000 字</option><option value={30000}>30000 字</option><option value={50000}>50000 字</option></select></label>
+      <label><span>章节数量</span><select disabled={busy || locked} value={chapterCount} onChange={(event) => onChapterCountChange(Number(event.target.value))}><option value={5}>5 章</option><option value={10}>10 章</option><option value={15}>15 章</option><option value={20}>20 章</option></select></label>
+      <label><span>每批生成</span><select disabled={busy || locked} value={batchSize} onChange={(event) => onBatchSizeChange(Number(event.target.value))}><option value={2}>2 章</option><option value={3}>3 章</option></select></label>
+      <label><span>视觉风格</span><select disabled={busy || locked} value={styleKey} onChange={(event) => onStyleChange(event.target.value)}>{styleOptions.map((style) => <option key={style.key} value={style.key}>{style.name}</option>)}</select></label>
     </div>
+    {modelSelection}
     <div className="content-flow-preview"><b>接下来</b><span>爆款结构拆解</span><ChevronRight14 /><span>{chapterCount} 章大纲</span><ChevronRight14 /><span>每批 {batchSize} 章正文</span><ChevronRight14 /><span>制作交接</span></div>
-    <div className="content-inline-actions"><button type="button" className="content-secondary-button" onClick={onCancel} disabled={!canCancel || busy}>取消</button><button type="button" className="content-primary-button" disabled={intent.trim().length < 2 || busy} onClick={onSubmit}>{busy ? <LoaderCircle size={16} /> : <Sparkles size={16} />}{busy ? "正在进行结构拆解" : "开始结构拆解"}</button></div>
+    <div className="content-inline-actions"><button type="button" className="content-secondary-button" onClick={onCancel} disabled={!canCancel || busy}>取消</button><button type="button" className="content-primary-button" disabled={intent.trim().length < 2 || busy || !canSubmit} onClick={onSubmit}>{busy ? <LoaderCircle size={16} /> : <Sparkles size={16} />}{busy ? "正在进行结构拆解" : "开始结构拆解"}</button></div>
     </aside></div>
   </section>;
 }

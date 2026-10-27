@@ -7,6 +7,9 @@ import { DeliveryExportQuoteDialog } from "../workbench/stages/DeliveryExportQuo
 import { confirmedDeliveryCredits, deliveryQuoteScopeKey, type DeliveryExportQuote, type DeliveryExportType } from "../workbench/stages/deliveryQuoteModel";
 import { getDeliveryExportState, partitionDeliveryExportJobs } from "../workbench/stages/deliveryModel";
 import { buildStudioExportIntent, createScopedRequestGate, submitStudioExport, type StudioExportIntent } from "./studioExportModel";
+import { DeliveryOutputLibrary } from "../workbench/stages/DeliveryOutputLibrary";
+import "../workbench/stages/delivery-editor.css";
+import { workbenchPageSession } from "./workbenchPageModel";
 
 interface StudioPageProps {
   projects: Project[];
@@ -32,6 +35,9 @@ export function StudioPage({ projects, tasks, onOpenProject, onRefresh }: Studio
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [clipIndex, setClipIndex] = useState(0);
+  const [previewMode, setPreviewMode] = useState<"final" | "clips">("final");
+  const [viewedOutputId, setViewedOutputId] = useState("");
+  const [playbackError, setPlaybackError] = useState("");
   const [autoPlayNext, setAutoPlayNext] = useState(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const projectRef = useRef(selectedProjectId);
@@ -82,6 +88,7 @@ export function StudioPage({ projects, tasks, onOpenProject, onRefresh }: Studio
 
   useEffect(() => {
     setClipIndex(0);
+    setPreviewMode("final"); setViewedOutputId(""); setPlaybackError("");
     setAutoPlayNext(false);
     setMessage("");
     setError("");
@@ -129,7 +136,8 @@ export function StudioPage({ projects, tasks, onOpenProject, onRefresh }: Studio
   const imageAssetByShotId = useMemo(() => buildShotAssetMap(assets, "image"), [assets]);
   const videoAssetByShotId = useMemo(() => buildShotAssetMap(assets, "video"), [assets]);
   const latestFinalExport = scopedJobs.find((job) => isMp4Export(job));
-  const finalUrl = latestFinalExport?.previewUrl || latestFinalExport?.outputUrl;
+  const viewedOutput = currentExportJobs.find(job => job.id === viewedOutputId && isMp4Export(job)) ?? latestFinalExport;
+  const finalUrl = previewMode === "final" ? viewedOutput?.previewUrl || viewedOutput?.outputUrl : undefined;
 
   const shotClips = useMemo<StudioClip[]>(() => {
     const clips: StudioClip[] = [];
@@ -176,6 +184,7 @@ export function StudioPage({ projects, tasks, onOpenProject, onRefresh }: Studio
   }
 
   function selectClip(index: number) {
+    setPlaybackError("");
     setAutoPlayNext(true);
     setClipIndex(index);
   }
@@ -191,6 +200,15 @@ export function StudioPage({ projects, tasks, onOpenProject, onRefresh }: Studio
     } catch (reason) {
       if (projectRef.current === projectId) setError(reason instanceof Error ? reason.message : "数据刷新失败，请稍后重试。");
     } finally { setBusyAction(null); }
+  }
+
+  function openDeliveryEditor() {
+    if (!project) return;
+    if (currentWorkflow) {
+      const state = workbenchPageSession.load(currentWorkflow);
+      workbenchPageSession.save(project.id, { ...state, activeStage: "delivery" });
+    }
+    onOpenProject(project.id);
   }
 
   async function openExportQuote(type: DeliveryExportType) {
@@ -325,6 +343,10 @@ export function StudioPage({ projects, tasks, onOpenProject, onRefresh }: Studio
             </div>
           </div>
 
+          <div className="studio-preview-switch" aria-label="视频预览模式">
+            <button type="button" className="ghost-button" aria-pressed={previewMode === "final"} disabled={!currentExportJobs.some(isMp4Export)} onClick={() => { setPreviewMode("final"); setAutoPlayNext(false); setPlaybackError(""); }}><Film size={15} />成片版本</button>
+            <button type="button" className="ghost-button" aria-pressed={previewMode === "clips"} disabled={!shotClips.length} onClick={() => { setPreviewMode("clips"); setClipIndex(0); setAutoPlayNext(false); setPlaybackError(""); }}><Scissors size={15} />生成片段 · {shotClips.length}</button>
+          </div>
           <div className={`studio-player ${project ? ratioClass(project.videoRatio) : ""}`}>
             {currentClip ? (
               <video
@@ -332,9 +354,12 @@ export function StudioPage({ projects, tasks, onOpenProject, onRefresh }: Studio
                 ref={videoRef}
                 src={currentClip.url}
                 controls
+                playsInline
+                poster={coverImage}
                 autoPlay={autoPlayNext}
                 preload="metadata"
                 onEnded={handleClipEnded}
+                onError={() => { setPlaybackError("视频暂时无法播放，请刷新核对或下载文件后查看。"); setAutoPlayNext(false); }}
               />
             ) : coverImage ? (
               <img src={coverImage} alt="镜头首帧" />
@@ -349,6 +374,7 @@ export function StudioPage({ projects, tasks, onOpenProject, onRefresh }: Studio
               </div>
             )}
           </div>
+          {playbackError ? <p role="alert" className="danger-text">{playbackError}</p> : null}
 
           {!finalUrl && shotClips.length ? (
             <div className="studio-playlist-strip" role="tablist" aria-label="片段连播列表">
@@ -372,6 +398,7 @@ export function StudioPage({ projects, tasks, onOpenProject, onRefresh }: Studio
               ? "当前播放的是合成后的最终 MP4。要调整镜头顺序、时长或替换片段，请进入生产台的成片时间线。"
               : "连播使用各镜头的图生视频结果，仅用于快速检查；镜头级剪辑、配音对轨请到生产台成片阶段完成。"}
           </p>
+          <DeliveryOutputLibrary jobs={currentExportJobs} onPreview={job => { setViewedOutputId(job.id); setPreviewMode("final"); setAutoPlayNext(false); setPlaybackError(""); }} onDownload={job => void downloadExport(job)} />
         </section>
 
         <section className="studio-panel studio-inspector">
@@ -402,8 +429,8 @@ export function StudioPage({ projects, tasks, onOpenProject, onRefresh }: Studio
               {busyAction === "subtitle" ? <Loader2 size={17} className="spin-icon" /> : <Subtitles size={17} />}
               生成字幕轨{subtitleJob ? `（${exportJobStatusText(subtitleJob.status)}）` : ""}
             </button>
-            <button className="ghost-button" onClick={() => project && onOpenProject(project.id)} disabled={!project}>
-              <FolderOpen size={17} />打开漫剧生产台
+            <button className="ghost-button" onClick={openDeliveryEditor} disabled={!currentWorkflow}>
+              <Scissors size={17} />继续剪辑
             </button>
           </div>
 
@@ -503,7 +530,7 @@ function taskStatusText(status: GenerationTask["status"]) {
     succeeded: "已完成",
     failed: "失败",
     canceled: "已取消",
-    refunded: "已退款"
+    refunded: "已解冻"
   };
   return labels[status] ?? status;
 }

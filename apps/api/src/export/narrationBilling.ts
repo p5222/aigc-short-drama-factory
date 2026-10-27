@@ -3,7 +3,9 @@ import type { PrismaClient } from "@prisma/client";
 import type { ProjectWorkflow } from "@aifilm/shared";
 import { prisma } from "../db/client.js";
 import { readProviderRoutingState } from "../db/mappers.js";
+import { providerEnvApiKey } from "../providers/credentials.js";
 import { runMediaTask } from "../billing/mediaTask.js";
+import { quotePrice } from "../billing/pricing.js";
 import { readStoredAsset } from "../storage/objectStorage.js";
 import { buildVoiceCues, createTtsAudioAsset, type TtsAudioAsset, type TtsRuntime } from "./videoComposer.js";
 
@@ -26,6 +28,7 @@ async function narrationPlan(workflow: ProjectWorkflow, userId: string, db: Pris
   let unitCredits = 0;
   let providerName = "无对白静音音轨";
   let configurationError: string | undefined;
+  let exactCredits: number | undefined;
   if (characters) {
     const provider = await db.modelProvider.findUnique({ where: { id: "dashscope-tts" } });
     if (!provider || provider.modality !== "tts" || !provider.models.length) throw new Error("请管理员启用并配置 dashscope-tts 配音渠道");
@@ -34,11 +37,12 @@ async function narrationPlan(workflow: ProjectWorkflow, userId: string, db: Pris
     if (!model || !provider.models.includes(model)) throw new Error("配音模型未配置");
     const price = await db.modelPrice.findFirst({ where: { providerId: provider.id, model, modality: "tts", enabled: true } });
     if (!price || price.unit !== "tts_character" || !Number.isSafeInteger(price.unitCredits) || price.unitCredits < 0) configurationError = "配音模型尚未配置有效的按字符积分价格";
-    const apiKey = provider.apiKey || process.env.DASHSCOPE_TTS_API_KEY || process.env.TTS_API_KEY || process.env.DASHSCOPE_API_KEY || process.env.DASHSCOPE_TEXT_API_KEY;
+    const apiKey = provider.apiKey || providerEnvApiKey("dashscope-tts");
     if (!apiKey) configurationError = "配音渠道缺少 API Key，请管理员完成配置";
     const baseUrl = provider.baseUrl || "https://dashscope.aliyuncs.com/api/v1";
     runtime = { providerId: "dashscope-tts", apiKey: apiKey ?? "", baseUrl, model, defaultVoice: process.env.DASHSCOPE_TTS_DEFAULT_VOICE || process.env.TTS_VOICE || "Cherry" };
     unitCredits = price?.unitCredits ?? 0;
+    if (price?.billing) exactCredits = await quotePrice(price, { characters }, db);
     providerName = provider.name;
   }
   const fingerprint = crypto.createHash("sha256").update(JSON.stringify({ version: 1, projectId: workflow.project.id,
@@ -48,7 +52,7 @@ async function narrationPlan(workflow: ProjectWorkflow, userId: string, db: Pris
   const assetId = `audio_tts_${fingerprint}`;
   const cached = await readCachedNarration(assetId, workflow.project.id, db);
   if (!cached && configurationError) throw new Error(configurationError);
-  const credits = characters * unitCredits;
+  const credits = exactCredits ?? characters * unitCredits;
   if (!Number.isSafeInteger(credits) || credits > 2147483647) throw new Error("配音预算过大，请按集或选择部分镜头导出");
   const quote: NarrationQuote = { providerId: runtime?.providerId ?? "silence", providerName, model: runtime?.model ?? "silence", characters,
     estimatedCredits: cached ? 0 : credits, unitCredits, unit: "tts_character", cached: Boolean(cached), cueCount: cues.filter(cue => cue.text).length };
@@ -81,7 +85,7 @@ export async function getOrCreatePaidNarration(workflow: ProjectWorkflow, userId
   }
   return runMediaTask({ userId, projectId: workflow.project.id, projectName: workflow.project.name, type: "tts",
     scope: `tts:${plan.fingerprint}`, provider: plan.quote.providerId, model: plan.quote.model,
-    estimatedCredits: plan.quote.estimatedCredits, title: "生成项目配音" }, async context => {
+    estimatedCredits: plan.quote.estimatedCredits, billingInput: { characters: plan.quote.characters }, title: "生成项目配音" }, async context => {
     // The previous request may have committed while this request acquired its lease.
     const cached = await readCachedNarration(plan.assetId, workflow.project.id, db);
     if (cached) { await verifyAudio(cached.audioUrl); return (await context.complete(0, async () => ({ audio: cached }))).audio; }

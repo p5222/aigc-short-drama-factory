@@ -1,6 +1,10 @@
 export * from "./imageGeneration.js";
 export * from "./videoMedia.js";
 export * from "./episodePlanning.js";
+export * from "./modelPricing.js";
+export * from "./creditPricing.js";
+export * from "./creditCenter.js";
+export * from "./deliveryEdit.js";
 
 export type ProjectStatus = "draft" | "planning" | "scripting" | "storyboarding" | "asseting" | "rendering" | "completed";
 
@@ -146,6 +150,8 @@ export interface StoryboardShot {
   sceneNo: number;
   shotNo: number;
   duration: number;
+  /** Export-only trim offset; never persisted on the original storyboard. */
+  videoTrimStart?: number;
   shotSize: string;
   cameraAngle: string;
   cameraMovement: string;
@@ -216,6 +222,9 @@ export interface ProjectWorkflow {
   tasks: GenerationTask[];
   qualityReports?: QualityReport[];
   feedbacks?: UserFeedback[];
+  deliveryEdits?: import("./deliveryEdit.js").DeliveryEdit[];
+  /** Present only on a materialized export workflow. */
+  exportEdit?: import("./deliveryEdit.js").DeliveryEditReference;
 }
 
 export interface GenerationTask {
@@ -231,6 +240,7 @@ export interface GenerationTask {
   progress: number;
   estimatedCredits: number;
   finalCredits?: number;
+  billing?: { mode: string; listCredits: number; payableCredits: number; maximumCredits: number; discountPercent: number; policyVersion: number; usage?: import("./creditPricing.js").BillingUsage; releasedCredits?: number; costStatus?: string };
   errorReason?: string;
   estimatedSeconds?: number;
   refundPolicy?: string;
@@ -314,6 +324,7 @@ export interface ExportJob {
   status: ExportJobStatus;
   /** Missing on older clients/records; treat it as unknown until the API verifies a saved source snapshot. */
   sourceStatus?: "current" | "stale" | "unknown";
+  deliveryEdit?: import("./deliveryEdit.js").DeliveryEditReference;
   outputUrl?: string;
   downloadUrl?: string;
   previewUrl?: string;
@@ -354,10 +365,22 @@ export interface MembershipPlan {
   enabled: boolean;
 }
 
+export interface MembershipTerm {
+  planId: string;
+  planName: string;
+  startsAt: string;
+  endsAt: string;
+  discountPercent: number;
+  priorityLevel: number;
+}
+
 export interface MembershipStatus {
-  active: { planId: string; planName: string; startsAt: string; endsAt: string; discountPercent: number; priorityLevel: number } | null;
+  active: MembershipTerm | null;
   paidThrough: string | null;
   autoRenew: false;
+  scheduled?: MembershipTerm[];
+  scheduledCount?: number;
+  lastExpired?: MembershipTerm | null;
 }
 
 export interface RedeemCode {
@@ -391,6 +414,14 @@ export interface AdminUserRow {
   createdAt: string;
   updatedAt: string;
   lastLoginAt?: string;
+  commercial?: {
+    membership: "active" | "scheduled" | "expired" | "none";
+    planName?: string;
+    currentEndsAt?: string;
+    paidThrough?: string;
+    onlinePaidOrders: number;
+    onlinePaidCny: number;
+  };
 }
 
 export interface ProviderCapability {
@@ -447,6 +478,7 @@ export interface ModelPrice {
   unit: "text_run" | "image" | "image2" | "video_second" | "tts_character" | "export";
   unitCredits: number;
   vendorCostCny: number;
+  billing?: import("./creditPricing.js").OfficialCostRule;
   enabled: boolean;
 }
 

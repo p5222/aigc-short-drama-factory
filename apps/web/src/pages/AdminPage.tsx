@@ -64,10 +64,11 @@ import type {
   VisualPipelineDescriptor,
   VisualPipelineTestResult
 } from "@aifilm/shared";
+import { creditPriceUnit } from "@aifilm/shared";
 import { api, type AdminContentProject } from "../lib/api";
 import { HttpError } from "../lib/httpClient";
 import { AdminEvaluationPage, AdminMasterDetail, AdminTablePage } from "../admin";
-import { closeAfterAdminSuccess, createAdminActionRunner, createCreditAdjustmentAttempt, isValidCreditAdjustment, runAdminBatch, type AdminActionResult } from "../admin/adminActionModel";
+import { closeAfterAdminSuccess, createAdminActionRunner, createCreditAdjustmentAttempt, isValidCreditAdjustment, isValidModelPriceDraft, runAdminBatch, type AdminActionResult } from "../admin/adminActionModel";
 import { AdminDialog, AdminDialogActions } from "../admin/AdminDialog";
 import { confirmAdminAction } from "../admin/AdminConfirm";
 import { fetchAdminUserPage } from "../admin/adminApi";
@@ -84,6 +85,11 @@ import { BEFORE_CREATOR_NAVIGATION } from "../lib/creatorNavigation";
 import { canLeaveAdminEditor } from "../admin/adminDirtyState";
 import { navigateAdminHash, readAcceptedAdminHash, subscribeAdminNavigation } from "../admin/adminNavigation";
 import { hasFeedbackDraftChanges, hasShowcaseDraftChanges } from "../admin/adminEditorDraftModel";
+import { ModelRoutePicker } from "../components/ModelRoutePicker";
+import { ModelIdentity } from "../components/ModelIdentity";
+import { ModelLibrary } from "../components/ModelLibrary";
+import { CreditCenter } from "../admin/CreditCenter";
+import { AdminCommercialIdentity, membershipLabels } from "../admin/AdminCommercialIdentity";
 
 const AdminActionContext = createContext({ pending: false, message: "", error: "", version: 0 });
 type ProviderTestResult = ModelTestResult | ImageModelTestResult | VideoModelTestResult;
@@ -96,9 +102,10 @@ type PipelineTestState = {
   result?: VisualPipelineTestResult;
 };
 
-const adminModules = ["运营总览", "用户管理", "平台公告", "支持工单", "创作现场管理", "创作质量中心", "提示词评分", "兑换码", "套餐会员", "订阅会员", "模型路由", "价格策略", "操作记录"];
+const adminModules = ["运营总览", "用户管理", "平台公告", "支持工单", "创作现场管理", "创作质量中心", "提示词评分", "兑换码", "套餐会员", "订阅会员", "积分中心", "模型路由", "价格策略", "操作记录"];
 
 const moduleCopy: Record<string, { title: string; subtitle: string }> = {
+  积分中心: { title: "积分中心", subtitle: "核对官方成本、40%毛利、账户资金和每一次任务结算。" },
   操作记录: { title: "操作记录", subtitle: "查看管理员配置和运营操作的执行记录，用于核对变更、排查失败。" },
   运营总览: { title: "运营总览", subtitle: "查看用户、积分、模型成本和任务健康度。" },
   用户管理: { title: "用户管理", subtitle: "管理账号状态、身份权限、积分余额、密码重置和运营入账。" },
@@ -346,6 +353,7 @@ export function AdminPage({
 
       <fieldset className="admin-action-scope" disabled={actionPending}>
       {activeModule === "操作记录" ? <AdminAuditLogPage /> : null}
+      {activeModule === "积分中心" ? <CreditCenter /> : null}
       {activeModule === "支持工单" ? <SupportAdminPanel userId={userId} /> : null}
       {activeModule === "运营总览" ? <DashboardSection summary={summary} providers={providers} modelPrices={modelPrices} /> : null}
       {activeModule === "创作现场管理" ? <ContentOperationsSection /> : null}
@@ -408,6 +416,7 @@ export function AdminPage({
       {activeModule === "模型路由" ? (
         <ProvidersSection
           providers={providers}
+          modelPrices={modelPrices}
           relayPolicy={relayPolicy}
           testResult={testResult}
           imageTestResult={imageTestResult}
@@ -539,7 +548,7 @@ function ContentProjectsAdminSection() {
   const filtered = rows.filter(row => `${row.title} ${row.user?.name || ""} ${row.user?.email || ""} ${row.id}`.toLowerCase().includes(keyword.toLowerCase()));
   const pagination = useAdminPagination(filtered, keyword);
   const steps: Record<string, string> = { source: "创作意图", analysis: "内容分析", strategy: "创作策略", outline: "章节大纲", chapter: "正文", script: "剧本", entity: "人物与场景" };
-  const statuses: Record<string, string> = { draft: "草稿", active: "进行中", planning: "策划中", generating: "生成中", completed: "已完成", failed: "生成失败", archived: "已归档" };
+  const statuses: Record<string, string> = { draft: "草稿", active: "进行中", planning: "策划中", generating: "生成中", running: "生成中", succeeded: "已生成", confirmed: "已确认", stale: "内容待更新", completed: "已完成", failed: "生成失败", archived: "已归档" };
   return <><AdminTablePage title="内容创作进度" summary={`在已读取项目中匹配 ${filtered.length} 条。此处只读查看创作进度，作品发布请进入审核队列。`} filters={<SearchField value={keyword} onChange={setKeyword} placeholder="搜索项目、创作者或项目编号" />} actions={<button className="admin-secondary-btn" disabled={loading} type="button" onClick={() => setReload(value => value + 1)}><RefreshCw size={16} />刷新</button>} columns={[
     { key: "title", label: "项目", render: row => <div><strong>{row.title}</strong><small>{row.id}</small></div> },
     { key: "owner", label: "创作者", render: row => row.user?.name || row.user?.email || "未记录" },
@@ -1750,8 +1759,8 @@ function EvaluationSection({
                     </div>
                     <div className="evaluation-model-chip-grid">
                       {group.models.map((item) => (
-                        <button type="button" key={item.key} className={selectedModels.includes(item.key) ? "active" : ""} onClick={() => toggleString(selectedModels, item.key, setSelectedModels)} disabled={mode === "rules"}>
-                          {item.model}
+                        <button type="button" key={item.key} aria-pressed={selectedModels.includes(item.key)} className={selectedModels.includes(item.key) ? "active" : ""} onClick={() => toggleString(selectedModels, item.key, setSelectedModels)} disabled={mode === "rules"}>
+                          <ModelIdentity model={item.model} modality="text" compact />
                         </button>
                       ))}
                     </div>
@@ -2303,12 +2312,14 @@ function UsersSection({
   const [status, setStatus] = useState("all");
   const [segment, setSegment] = useState("all");
   const [users, setUsers] = useState<AdminUserRow[]>([]);
+  const [membershipFilter, setMembershipFilter] = useState("all");
+  const [commercialFilter, setCommercialFilter] = useState("all");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
   const [sort, setSort] = useState("created_desc");
   const [registeredFrom, setRegisteredFrom] = useState("");
   const [registeredTo, setRegisteredTo] = useState("");
-  const [visibleColumns, setVisibleColumns] = useState(["role", "credits", "projects", "status", "login", "created"]);
+  const [visibleColumns, setVisibleColumns] = useState(["role", "commercial", "credits", "projects", "status", "login", "created"]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
@@ -2331,7 +2342,7 @@ function UsersSection({
       return () => { controller.abort(); };
     }
     const timer = window.setTimeout(() => {
-      void fetchAdminUserPage({ page, pageSize, keyword: keyword.trim(), role, status, sort, registeredFrom, registeredTo }, controller.signal).then((result) => {
+      void fetchAdminUserPage({ page, pageSize, keyword: keyword.trim(), role, status, sort, registeredFrom, registeredTo, membership: membershipFilter, commercial: commercialFilter }, controller.signal).then((result) => {
         if (!current) return;
         const lastPage = Math.max(1, Math.ceil(result.total / result.pageSize));
         if (page > lastPage) { setPage(lastPage); return; }
@@ -2339,14 +2350,14 @@ function UsersSection({
         setTotal(result.total);
         setSelectedUser(current => {
           const latest = result.items.find(item => item.id === current?.id);
-          return current && latest ? { ...current, credits: latest.credits, frozenCredits: latest.frozenCredits, totalRecharge: latest.totalRecharge, totalConsume: latest.totalConsume, projects: latest.projects, hasPassword: latest.hasPassword, lastLoginAt: latest.lastLoginAt, createdAt: latest.createdAt, updatedAt: latest.updatedAt } : current;
+          return current && latest ? { ...current, credits: latest.credits, frozenCredits: latest.frozenCredits, totalRecharge: latest.totalRecharge, totalConsume: latest.totalConsume, projects: latest.projects, hasPassword: latest.hasPassword, lastLoginAt: latest.lastLoginAt, createdAt: latest.createdAt, updatedAt: latest.updatedAt, commercial: latest.commercial } : current;
         });
       }).catch((reason) => {
         if (current) setLoadError(reason instanceof Error ? reason.message : "用户列表读取失败");
       }).finally(() => { if (current) setLoading(false); });
     }, 200);
     return () => { current = false; controller.abort(); window.clearTimeout(timer); };
-  }, [page, pageSize, keyword, role, status, sort, registeredFrom, registeredTo, reloadKey, refreshSnapshot]);
+  }, [page, pageSize, keyword, role, status, sort, registeredFrom, registeredTo, membershipFilter, commercialFilter, reloadKey, refreshSnapshot]);
   const rows = users;
   const activeUsers = users.filter((user) => user.status === "active").length;
   const paidUsers = users.filter((user) => user.totalRecharge > 0).length;
@@ -2357,6 +2368,9 @@ function UsersSection({
     { id: "all", label: "全部用户", meta: "完整账号池", tone: "blue" },
     { id: "creator", label: "创作者", meta: "前台账号" },
     { id: "admin", label: "后台成员", meta: "后台管理员", tone: "violet" },
+    { id: "member", label: "有效会员", meta: "已付权益生效中", tone: "green" },
+    { id: "expired-member", label: "到期会员", meta: "查看手动续费机会" },
+    { id: "online-paid", label: "在线付费用户", meta: "已确认微信付费" },
     { id: "active", label: "正常", meta: "可登录账号", tone: "green" },
     { id: "disabled", label: "停用", meta: "不可登录", tone: "danger" },
     { id: "deleted", label: "回收站", meta: "保留记录，可恢复", tone: "danger" }
@@ -2388,9 +2402,10 @@ function UsersSection({
   }
   function resetQuery() {
     if (!canLeaveAdminEditor()) return;
-    setKeyword(""); setRole("all"); setStatus("all"); setSegment("all"); setRegisteredFrom(""); setRegisteredTo(""); setSort("created_desc"); setPage(1); setSelectedUserIds([]);
+    setKeyword(""); setRole("all"); setStatus("all"); setSegment("all"); setMembershipFilter("all"); setCommercialFilter("all"); setRegisteredFrom(""); setRegisteredTo(""); setSort("created_desc"); setPage(1); setSelectedUserIds([]);
   }
   const optionalColumns: AdminColumn<AdminUserRow>[] = [
+    { key: "commercial", label: "商业身份", render: user => <AdminCommercialIdentity user={user} /> },
     { key: "phone", label: "手机号", render: user => user.phone || "未绑定" },
     { key: "role", label: "角色", render: user => <span className="adm-role" data-role={user.role}>{adminRoleLabels[user.role] ?? user.role}</span> },
     { key: "credits", label: "可用 / 冻结积分", align: "right", render: user => <div className="adm-balance"><strong>{user.credits.toLocaleString()}</strong><small>冻结 {user.frozenCredits.toLocaleString()}</small></div> },
@@ -2415,7 +2430,7 @@ function UsersSection({
         railDescription="先选运营视角，再用搜索和筛选精确定位账号。"
         railItems={railItems}
         activeRail={segment}
-        onRailChange={(next) => { setSegment(next); setPage(1); setRole(next === "admin" || next === "creator" ? next : "all"); setStatus(["active", "disabled", "deleted"].includes(next) ? next : "all"); setSelectedUserIds([]); }}
+        onRailChange={(next) => { setSegment(next); setPage(1); setRole(next === "admin" || next === "creator" ? next : "all"); setStatus(["active", "disabled", "deleted"].includes(next) ? next : "all"); setMembershipFilter(next === "member" ? "active" : next === "expired-member" ? "expired" : "all"); setCommercialFilter(next === "online-paid" ? "online_paid" : "all"); setSelectedUserIds([]); }}
         railFooter={<span>账号状态与权限管理</span>}
       >
         <div className="adm-users-overview" aria-label="用户列表统计" aria-busy={loading}>
@@ -2436,6 +2451,8 @@ function UsersSection({
           <SearchField value={keyword} onChange={(value) => { setKeyword(value); setPage(1); setSelectedUserIds([]); }} placeholder="搜索姓名、邮箱、手机号或完整 ID..." />
           <SelectFilter value={role} onChange={(value) => { setRole(value); setSegment("all"); setPage(1); setSelectedUserIds([]); }} options={["all", "creator", "admin"]} labels={{ all: "全部角色", creator: "创作者", admin: "后台管理员" }} />
           <SelectFilter value={status} onChange={(value) => { setStatus(value); setSegment("all"); setPage(1); setSelectedUserIds([]); }} options={["all", "active", "disabled", "deleted"]} labels={{ all: "未删除用户", active: "正常", disabled: "停用", deleted: "已删除" }} />
+          <label>会员状态<select aria-label="会员状态筛选" value={membershipFilter} onChange={event => { setMembershipFilter(event.target.value); setSegment("all"); setPage(1); setSelectedUserIds([]); }}><option value="all">全部会员状态</option>{Object.entries(membershipLabels).map(([value, text]) => <option key={value} value={value}>{text}</option>)}</select></label>
+          <label>在线付费<select aria-label="在线付费筛选" value={commercialFilter} onChange={event => { setCommercialFilter(event.target.value); setSegment("all"); setPage(1); setSelectedUserIds([]); }}><option value="all">全部付费记录</option><option value="online_paid">有在线付费记录</option><option value="no_online_record">暂无在线付费记录</option></select></label>
         </AdminToolbar>
         <details className="adm-user-filters" open={registeredFrom || registeredTo ? true : undefined}>
           <summary><SlidersHorizontal size={15} />注册日期与排序{registeredFrom || registeredTo ? <span>已设置日期范围</span> : null}</summary>
@@ -3565,6 +3582,7 @@ function MembershipSection({
 
 function ProvidersSection({
   providers,
+  modelPrices,
   relayPolicy,
   testResult,
   imageTestResult,
@@ -3582,6 +3600,7 @@ function ProvidersSection({
   onTest
 }: {
   providers: ModelProvider[];
+  modelPrices: ModelPrice[];
   relayPolicy: RelayGatewayPolicy | null;
   testResult: ModelTestResult | null;
   imageTestResult: ImageModelTestResult | null;
@@ -3603,6 +3622,8 @@ function ProvidersSection({
   const [status, setStatus] = useState("all");
   const [segment, setSegment] = useState("all");
   const [createOpen, setCreateOpen] = useState(false);
+  const [view, setView] = useState<"channels" | "catalog">("channels");
+  const [editingProvider, setEditingProvider] = useState("");
   const rows = providers.filter((provider) => {
     const matchedKeyword = `${provider.name} ${provider.id} ${provider.models.join(" ")}`.toLowerCase().includes(keyword.toLowerCase());
     const matchedModality = modality === "all" || provider.modality === modality;
@@ -3637,7 +3658,14 @@ function ProvidersSection({
 
   return (
     <section className="admin-v2-section">
-      <AdminModuleWorkbench
+      <div className="model-filter-tabs admin-model-view-tabs" aria-label="模型管理视图">
+        <button type="button" aria-pressed={view === "channels"} onClick={() => { if (canLeaveAdminEditor()) setView("channels"); }}>渠道管理</button>
+        <button type="button" aria-pressed={view === "catalog"} onClick={() => { if (canLeaveAdminEditor()) setView("catalog"); }}>模型目录与配置检查</button>
+      </div>
+      {view === "catalog" ? <ModelLibrary admin providers={providers} modelPrices={modelPrices} onPrice={() => navigateAdminHash("价格策略")} onConfigure={providerId => {
+        setKeyword(providerId); setModality("all"); setStatus("all"); setSegment("all"); pagination.setPage(1);
+        setEditingProvider(providerId); setView("channels");
+      }} /> : <AdminModuleWorkbench
         railTitle="模型能力"
         railDescription="按能力、密钥和路由模式管理生产渠道。"
         railItems={railItems}
@@ -3674,12 +3702,12 @@ function ProvidersSection({
         {relayPolicy ? <RelayGatewayPreview policy={relayPolicy} /> : null}
         <div className="admin-provider-card-list">
           {pagination.items.map((provider) => (
-            <ProviderRow key={provider.id} provider={provider} testStates={providerTests} onSave={onSave} onDelete={onDelete} onTest={onTest} />
+            <ProviderRow key={provider.id} provider={provider} modelPrices={modelPrices} autoOpen={editingProvider === provider.id} onEditorClose={() => setEditingProvider("")} testStates={providerTests} onSave={onSave} onDelete={onDelete} onTest={onTest} />
           ))}
           {!rows.length ? <EmptyHint text="没有匹配的模型渠道。可以切换左侧能力分类，或新增一个渠道。" /> : null}
         </div>
         <TableFooter total={rows.length} page={pagination.page} pageSize={pagination.pageSize} onPageChange={pagination.setPage} />
-      </AdminModuleWorkbench>
+      </AdminModuleWorkbench>}
       <AdminModal open={createOpen} title="新增模型渠道" description="密钥只写入服务端，后台列表只展示是否已配置和 Key 预览。" onClose={() => setCreateOpen(false)} wide>
         <ProviderCreator onCreate={(input) => closeAfterAdminSuccess(() => onCreate(input), () => setCreateOpen(false))} />
       </AdminModal>
@@ -4410,6 +4438,7 @@ function UserRow({
         <span>邮箱：{user.email || "未绑定"}</span><span>手机号：{user.phone || "未绑定"}</span>
         <small className="adm-user-id">账号 ID：{user.id}</small>
       </div>
+      <AdminCommercialIdentity user={user} detail />
       {user.status !== "deleted" ? <nav className="admin-user-tabs" aria-label="用户管理操作"><button type="button" aria-pressed={tab === "profile"} onClick={() => onTabChange("profile")}><UserRound size={16} />资料与权限</button><button type="button" aria-pressed={tab === "credits"} onClick={() => onTabChange("credits")}><WalletCards size={16} />积分调整</button><button type="button" aria-pressed={tab === "security"} onClick={() => onTabChange("security")}><ShieldCheck size={16} />账号安全</button></nav> : null}
       <dl className="adm-user-dates" aria-label="账号时间记录" hidden={tab !== "profile" && user.status !== "deleted"}>
         <div><dt>注册时间</dt><dd><AdminDate value={user.createdAt} /></dd></div>
@@ -4719,18 +4748,25 @@ function MembershipRow({
 
 function ProviderRow({
   provider,
+  modelPrices,
+  autoOpen = false,
+  onEditorClose,
   testStates,
   onSave,
   onDelete,
   onTest
 }: {
   provider: ModelProvider;
+  modelPrices: ModelPrice[];
+  autoOpen?: boolean;
+  onEditorClose?: () => void;
   testStates: Record<string, ProviderTestState>;
   onSave: (id: string, input: Partial<Pick<ModelProvider, "name" | "modality" | "enabled" | "baseUrl" | "iconUrl" | "models" | "costHint">> & { apiKey?: string | null; routing?: { mode?: "auto" | "manual"; preferredModel?: string; modelPool?: string[] } }) => void;
   onDelete: (id: string) => void;
   onTest: (provider: ModelProvider, model: string, dirty?: boolean) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  useEffect(() => { if (autoOpen) setExpanded(true); }, [autoOpen]);
   const detailsId = useId();
   const testHintId = useId();
   const [draft, setDraft] = useState({
@@ -4761,6 +4797,7 @@ function ProviderRow({
     setSelectedModel(provider.models[0] ?? "");
   }, [expanded, provider.id, provider.name, provider.modality, provider.enabled, provider.baseUrl, provider.iconUrl, provider.costHint, provider.models.join(" | "), provider.routing?.mode, provider.routing?.preferredModel]);
   const models = splitModelText(draft.models);
+  const draftProvider: ModelProvider = { ...provider, name: draft.name, modality: draft.modality, enabled: draft.enabled, models, routing: { ...provider.routing, mode: draft.routingMode, preferredModel: draft.preferredModel, modelPool: models, quotaStatus: provider.routing?.quotaStatus ?? [] } };
   const [selectedModel, setSelectedModel] = useState(models[0] ?? "");
   const testKey = `${provider.id}:${selectedModel}`;
   const testState = testStates[testKey];
@@ -4815,7 +4852,7 @@ function ProviderRow({
         <span className="admin-chip">{modalityLabel(draft.modality)}</span>
         <StatusChip active={provider.enabled} /><DraftIndicator dirty={dirty} />
         <div className="admin-provider-model-chips">
-          {models.slice(0, 4).map((model) => <span key={model}>{model}</span>)}
+          {models.slice(0, 4).map((model) => <span key={model}><ModelIdentity model={model} modality={provider.modality} compact /></span>)}
           {models.length > 4 ? <span>+{models.length - 4}</span> : null}
         </div>
         <div className="admin-row-actions">
@@ -4838,7 +4875,7 @@ function ProviderRow({
       <p id={testHintId} className={`admin-provider-test-hint${dirty ? " unsaved" : ""}`}>{testReadiness.reason}</p>
       <ProviderInlineTestResult state={dirty ? undefined : testState} />
 
-      <AdminModal open={expanded} title={`编辑${provider.name}渠道`} description="修改模型连接、路由和状态，保存后生效。" onClose={() => setExpanded(false)} wide>
+      <AdminModal open={expanded} title={`编辑${provider.name}渠道`} description="修改模型连接、路由和状态，保存后生效。" onClose={() => { setExpanded(false); onEditorClose?.(); }} wide>
         <div id={detailsId} className="admin-provider-expanded admin-editor-grid" data-admin-dirty={dirty || undefined}>
           <label>
             <span>渠道名称</span>
@@ -4877,12 +4914,10 @@ function ProviderRow({
             <span>模型列表</span>
             <textarea value={draft.models} onChange={(event) => setDraft({ ...draft, models: event.target.value })} placeholder="每行或逗号一个模型" />
           </label>
-          <label>
+          <div className="admin-model-field">
             <span>待测试模型</span>
-            <select value={selectedModel} onChange={(event) => setSelectedModel(event.target.value)}>
-              {models.map((model) => <option key={model} value={model}>{model}</option>)}
-            </select>
-          </label>
+            <ModelRoutePicker label="选择待测试模型" modality={draft.modality} providers={[draftProvider]} modelPrices={modelPrices} value={{ providerId: provider.id, model: selectedModel }} onChange={(_, model) => setSelectedModel(model)} allowUnavailable disabled={providerTesting} />
+          </div>
           <div className="admin-provider-routing-panel wide">
             <div className="admin-provider-routing-head">
               <div>
@@ -4899,17 +4934,15 @@ function ProviderRow({
               <button type="button" className={draft.routingMode === "auto" ? "active" : ""} onClick={() => setDraft({ ...draft, routingMode: "auto" })}>自动轮换</button>
               <button type="button" className={draft.routingMode === "manual" ? "active" : ""} onClick={() => setDraft({ ...draft, routingMode: "manual" })}>手动固定</button>
             </div>
-            <label className="admin-provider-routing-select">
+            <div className="admin-provider-routing-select admin-model-field">
               <span>固定模型</span>
-              <select value={draft.preferredModel} onChange={(event) => setDraft({ ...draft, preferredModel: event.target.value })}>
-                {models.map((model) => <option key={model} value={model}>{model}</option>)}
-              </select>
-            </label>
+              <ModelRoutePicker label="选择固定模型" modality={draft.modality} providers={[draftProvider]} modelPrices={modelPrices} value={{ providerId: provider.id, model: draft.preferredModel }} onChange={(_, model) => setDraft({ ...draft, preferredModel: model })} allowUnavailable disabled={providerTesting} />
+            </div>
             <div className="admin-provider-quota-grid">
               {quotaStatus.length ? quotaStatus.map((item) => (
                 <article className={`admin-provider-quota-card ${item.available ? "ready" : item.coolingDown ? "cooling" : "limited"}`} key={item.model}>
                   <div>
-                    <strong>{item.model}</strong>
+                    <ModelIdentity model={item.model} modality={provider.modality} compact />
                     <small>{item.available ? "可提交" : item.coolingDown ? "冷却中" : "额度已满"}</small>
                   </div>
                   <span>{item.submissions}{item.dailyLimit ? ` / ${item.dailyLimit}` : ""}</span>
@@ -5067,20 +5100,19 @@ function PriceCreator({
         {providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}
       </select></label>
       <label className="admin-create-field"><span>渠道名称</span><input value={draft.providerName} onChange={(event) => setDraft({ ...draft, providerName: event.target.value })} placeholder="渠道名称" /></label>
-      <label className="admin-create-field"><span>模型类型</span><select value={draft.modality} onChange={(event) => setDraft({ ...draft, modality: event.target.value as ModelPrice["modality"], unit: defaultUnitLabelValue(event.target.value) })}>
+      <label className="admin-create-field"><span>模型类型</span><select disabled={Boolean(selectedProvider)} value={draft.modality} onChange={(event) => setDraft({ ...draft, modality: event.target.value as ModelPrice["modality"], unit: defaultUnitLabelValue(event.target.value) })}>
         <option value="text">文本</option>
         <option value="image">生图</option>
         <option value="video">视频</option>
         <option value="tts">配音</option>
         <option value="embedding">向量</option>
       </select></label>
-      <label className="admin-create-field"><span>模型 ID</span><input value={draft.model} onChange={(event) => setDraft({ ...draft, model: event.target.value })} placeholder="模型 ID" list="admin-price-models" /></label>
-      <datalist id="admin-price-models">
-        {selectedProvider?.models.map((model) => <option key={model} value={model} />)}
-      </datalist>
+      {selectedProvider ? <div className="admin-create-field admin-model-field"><span>从渠道选择模型</span><ModelRoutePicker label="选择价格策略模型" modality={selectedProvider.modality} providers={[selectedProvider]} value={{ providerId: selectedProvider.id, model: draft.model }} onChange={(_, model) => setDraft({ ...draft, model })} allowUnavailable /></div> : null}
+      <label className="admin-create-field"><span>模型 ID（支持特殊模型）</span><input value={draft.model} onChange={(event) => setDraft({ ...draft, model: event.target.value })} placeholder="填写准确的模型 ID" /></label>
       <label className="admin-create-field"><span>积分 / {unitLabel(draft.unit)}</span><input type="number" min={0} value={draft.unitCredits} onChange={(event) => setDraft({ ...draft, unitCredits: event.target.value })} placeholder="积分单价" /></label>
       <label className="admin-create-field"><span>成本（元 / {unitLabel(draft.unit)}）</span><input type="number" min={0} step="0.001" value={draft.vendorCostCny} onChange={(event) => setDraft({ ...draft, vendorCostCny: event.target.value })} placeholder="成本" /></label>
-      <AdminDialogActions><button className="admin-primary-btn" disabled={!draft.providerName.trim() || !draft.model.trim()} onClick={() => onCreate({ providerId: draft.providerId || undefined, providerName: draft.providerName, modality: draft.modality as ModelPrice["modality"], model: draft.model, unit: draft.unit as ModelPrice["unit"], unitCredits: Number(draft.unitCredits), vendorCostCny: Number(draft.vendorCostCny), enabled: true })}>
+      {!isValidModelPriceDraft(draft.unitCredits, draft.vendorCostCny) ? <p className="admin-validation-hint" role="status">积分单价需填写非负整数，配置成本需填写非负数；免费价格请明确填 0。</p> : null}
+      <AdminDialogActions><button className="admin-primary-btn" disabled={!draft.providerName.trim() || !draft.model.trim() || !isValidModelPriceDraft(draft.unitCredits, draft.vendorCostCny)} onClick={() => onCreate({ providerId: draft.providerId || undefined, providerName: draft.providerName.trim(), modality: draft.modality as ModelPrice["modality"], model: draft.model.trim(), unit: draft.unit as ModelPrice["unit"], unitCredits: Number(draft.unitCredits), vendorCostCny: Number(draft.vendorCostCny), enabled: true })}>
         <Layers3 size={18} />新增价格
       </button></AdminDialogActions>
     </div>
@@ -5138,16 +5170,17 @@ function PriceRow({ price, onSave, onDelete }: { price: ModelPrice; onSave: (id:
   const [editing, setEditing] = useState(false), [draft, setDraft] = useState(initial);
   useEffect(() => { if (!editing) setDraft(initial()); }, [price, editing]);
   const dirty = editing && JSON.stringify(draft) !== JSON.stringify(initial());
-  const valid = [draft.unitCredits, draft.vendorCostCny].every(value => value.trim() && Number.isFinite(Number(value)) && Number(value) >= 0);
+  const valid = isValidModelPriceDraft(draft.unitCredits, draft.vendorCostCny);
   function closeEditor() { setDraft(initial()); setEditing(false); }
   return <section className="admin-price-record" data-admin-dirty={dirty || undefined}>
-    <div className="admin-price-summary"><div><strong>{price.model}</strong><small>{price.providerName} · {modalityLabel(price.modality)}</small></div><div><strong>{price.unitCredits} 积分</strong><small>{unitLabel(price.unit)}</small></div><StatusChip active={price.enabled} /><DraftIndicator dirty={dirty} /><button type="button" className="admin-text-btn primary" aria-haspopup="dialog" onClick={() => setEditing(true)}>编辑价格</button></div>
+    <div className="admin-price-summary"><ModelIdentity model={price.model} providerName={price.providerName} modality={price.modality} /><div><strong>{price.unitCredits} 积分</strong><small>每{creditPriceUnit(price)}{price.billing ? " · 自动计价" : ""}</small></div><StatusChip active={price.enabled} /><DraftIndicator dirty={dirty} /><button type="button" className="admin-text-btn primary" aria-haspopup="dialog" onClick={() => setEditing(true)}>编辑价格</button></div>
     <AdminModal open={editing} title="编辑价格策略" description={`${price.model} · 保存后用于新的生成报价，配置成本不代表实际账单。`} onClose={closeEditor}>
       <div className="admin-editor-grid" data-admin-dirty={dirty || undefined}>
-        <label><span>积分 / {unitLabel(price.unit)}</span><input type="number" min="0" value={draft.unitCredits} onChange={event => setDraft({ ...draft, unitCredits: event.target.value })} /></label>
+        <label><span>积分 / {creditPriceUnit(price)}</span><input type="number" min="0" disabled={Boolean(price.billing)} value={draft.unitCredits} onChange={event => setDraft({ ...draft, unitCredits: event.target.value })} />{price.billing ? <small>自动价格请在积分中心预览和修改成本规则。</small> : null}</label>
         <label><span>配置成本（元 / {unitLabel(price.unit)}）</span><input type="number" min="0" step="0.001" value={draft.vendorCostCny} onChange={event => setDraft({ ...draft, vendorCostCny: event.target.value })} /></label>
         <label><span>保存后的状态</span><select value={draft.enabled ? "enabled" : "disabled"} onChange={event => setDraft({ ...draft, enabled: event.target.value === "enabled" })}><option value="enabled">启用</option><option value="disabled">停用</option></select></label>
       </div>
+      {!valid ? <p className="admin-validation-hint" role="status">积分单价需填写非负整数，配置成本需填写非负数；免费价格请明确填 0。</p> : null}
       <AdminDialogActions><button type="button" className="admin-text-btn danger" onClick={async () => { if (await confirmAdminAction(`确认删除「${price.model}」的价格？新的生成将不能使用这条报价。`, { title: "删除价格策略", confirmLabel: "删除策略" })) void closeAfterAdminSuccess(() => onDelete(price.id), closeEditor); }}>删除策略</button><button type="button" className="admin-primary-btn" disabled={!dirty || !valid} onClick={() => void closeAfterAdminSuccess(() => onSave(price.id, { unitCredits: Number(draft.unitCredits), vendorCostCny: Number(draft.vendorCostCny), enabled: draft.enabled }), () => setEditing(false))}>保存价格</button></AdminDialogActions>
     </AdminModal>
   </section>;

@@ -1,5 +1,7 @@
 import {
   AlertTriangle,
+  ArrowLeft,
+  ArrowRight,
   Check,
   Download,
   FileAudio,
@@ -10,6 +12,7 @@ import {
   RefreshCw,
   RotateCcw,
   Save,
+  Scissors,
   SlidersHorizontal,
   Subtitles,
   Upload,
@@ -17,10 +20,16 @@ import {
   X
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type DragEvent, type ReactElement, type SyntheticEvent } from "react";
-import type { ExportJob, ModelPrice, ModelProvider, ProjectWorkflow } from "@aifilm/shared";
-import { isPersistedPlayableVideoReference } from "@aifilm/shared";
+import type { DeliveryEditReference, ExportJob, ModelPrice, ModelProvider, ProjectWorkflow } from "@aifilm/shared";
+import { isPersistedPlayableVideoReference, shotVideoVersions } from "@aifilm/shared";
+import type { WorkbenchSaveState } from "../WorkbenchContext";
+import { useDeliveryEdit } from "./useDeliveryEdit";
+import { DeliveryOutputLibrary } from "./DeliveryOutputLibrary";
+import "./delivery-editor.css";
 import { api } from "../../lib/api";
 import { ModelRoutePicker } from "../../components/ModelRoutePicker";
+import { buildModelCatalog, defaultModelRoute, modelIdentity } from "../../components/modelCatalog";
+import { commitMutationThenSync } from "../model";
 import { useResponsiveDrawer } from "../components/useResponsiveDrawer";
 import { generateVideos } from "../workbenchActions";
 import { DeliveryExportQuoteDialog } from "./DeliveryExportQuoteDialog";
@@ -78,7 +87,7 @@ const JOB_TYPE_LABEL: Record<ExportJob["type"], string> = {
 /** 与服务端 videoGenerateSchema 的 storyboardIds max(20) 对齐。 */
 const VIDEO_SELECTED_MAX = 20;
 
-type DeliveryPendingAction = "" | "batch" | "retry" | "selected" | "regenerate";
+type DeliveryPendingAction = "" | "batch" | "retry" | "selected" | "regenerate" | "refresh";
 
 export interface DeliveryStageProps {
   workflow: ProjectWorkflow;
@@ -91,7 +100,8 @@ export interface DeliveryStageProps {
   onRefresh: (projectId: string) => Promise<ProjectWorkflow>;
   onPublish: (candidate: DeliveryCandidate) => void;
   exportJobs: ExportJob[];
-  onExport: (type: "tts" | "subtitle" | "video_export", storyboardIds?: string[], maxCredits?: number) => void | Promise<void>;
+  onExport: (type: "tts" | "subtitle" | "video_export", storyboardIds?: string[], maxCredits?: number, deliveryEdit?: DeliveryEditReference) => void | Promise<void>;
+  onSaveStateChange: (state: WorkbenchSaveState) => void;
   isBusy: boolean;
   activeShotId: string | null;
   activeEpisodeNo?: number | null;
@@ -115,6 +125,7 @@ export function DeliveryStage({
   onPublish,
   exportJobs,
   onExport,
+  onSaveStateChange,
   isBusy,
   activeShotId,
   activeEpisodeNo,
@@ -127,11 +138,13 @@ export function DeliveryStage({
 }: DeliveryStageProps): ReactElement {
   const { project, storyboards, assets, tasks } = workflow;
   const videoProviders = useMemo(() => providers.filter((provider) => provider.modality === "video" && provider.enabled), [providers]);
+  const fallbackRoute = defaultModelRoute(providers, "video", modelPrices);
 
   const [episodeNo, setEpisodeNo] = useState<number | null>(null);
   const [localShotId, setLocalShotId] = useState<string | null>(activeShotId);
   /** 每次导出提交当前集的有序镜头；刷新后仍回到服务端顺序。 */
-  const [orderByEpisode, setOrderByEpisode] = useState<Record<number, string[]>>({});
+  const [previewJobId, setPreviewJobId] = useState("");
+  const [mediaError, setMediaError] = useState("");
   const [timelineViewportWidth, setTimelineViewportWidth] = useState(0);
   const [pxPerSecond, setPxPerSecond] = useState(DELIVERY_DEFAULT_PX_PER_SECOND);
   const [compactTimeline, setCompactTimeline] = useState(() => window.matchMedia("(max-width: 767px)").matches);
@@ -140,12 +153,14 @@ export function DeliveryStage({
   const [durationByShotId, setDurationByShotId] = useState<Map<string, number>>(() => new Map());
   const [expandedFailureId, setExpandedFailureId] = useState<string | null>(null);
   const [usableShotIds, setUsableShotIds] = useState<string[]>([]);
-  const [providerId, setProviderId] = useState(() => project.videoProvider ?? videoProviders[0]?.id ?? "");
-  const [routeModel, setRouteModel] = useState(() => project.videoModel ?? videoProviders[0]?.models[0] ?? "");
+  const [providerId, setProviderId] = useState(() => project.videoProvider || fallbackRoute.providerId);
+  const [routeModel, setRouteModel] = useState(() => project.videoModel || (!project.videoProvider ? fallbackRoute.model : ""));
   const [routeSaving, setRouteSaving] = useState(false);
   const [pendingAction, setPendingAction] = useState<DeliveryPendingAction>("");
   const [actionMessage, setActionMessage] = useState("");
   const [actionError, setActionError] = useState("");
+  const [refreshRequired, setRefreshRequired] = useState(false);
+  const generationInFlight = useRef(false);
   const [downloadingJobId, setDownloadingJobId] = useState("");
   const downloadingRef = useRef(false);
   const [quoteIntent, setQuoteIntent] = useState<{ type: DeliveryExportType; episode: number; storyboardIds: string[]; scopeKey: string } | null>(null);
@@ -193,43 +208,62 @@ export function DeliveryStage({
     () => storyboards.filter((shot) => Math.max(1, shot.episodeNo || 1) === activeEpisode),
     [storyboards, activeEpisode]
   );
+  const cut = useDeliveryEdit(workflow, activeEpisode, onRefresh, onSaveStateChange);
   const shots = useMemo(
-    () => applyShotOrder(episodeShots, orderByEpisode[activeEpisode] ?? []),
-    [episodeShots, orderByEpisode, activeEpisode]
+    () => cut.draft.clips.flatMap(clip => { const shot = episodeShots.find(item => item.id === clip.shotId); return shot ? [shot] : []; }),
+    [episodeShots, cut.draft.clips]
   );
 
-  const videoByShot = useMemo(() => buildShotMediaIndex(shots, assets, "video"), [shots, assets]);
+  const videoByShot = useMemo(() => new Map(cut.draft.clips.flatMap(clip => {
+    const source = assets.find(asset => asset.id === clip.sourceAssetId);
+    return source ? [[clip.shotId, source] as const] : [];
+  })), [cut.draft.clips, assets]);
+  const editAssets = useMemo(() => [...assets.filter(asset => !shots.some(shot => asset.id === `video_${shot.id}`)),
+    ...shots.flatMap(shot => { const source = videoByShot.get(shot.id); return source ? [{ ...source, id: `video_${shot.id}` }] : []; })], [assets, shots, videoByShot]);
   const imageByShot = useMemo(() => buildShotMediaIndex(shots, assets, "image"), [shots, assets]);
   const audioByShot = useMemo(() => buildShotMediaIndex(shots, assets, "audio"), [shots, assets]);
 
   const activeShot = shots.find((shot) => shot.id === localShotId) ?? shots[0];
   const activeVideo = activeShot ? videoByShot.get(activeShot.id) : undefined;
-  const activeUrl = activeShot && isPersistedPlayableVideoReference(activeVideo?.referenceUrl) ? activeVideo!.referenceUrl! : "";
+  const changedSourceIds = cut.draft.clips.filter(clip => clip.sourceUrl && clip.sourceUrl !== videoByShot.get(clip.shotId)?.referenceUrl).map(clip => clip.shotId);
+  const activeUrl = activeShot && !changedSourceIds.includes(activeShot.id) && isPersistedPlayableVideoReference(activeVideo?.referenceUrl) ? activeVideo!.referenceUrl! : "";
   const activeStatus = resolveShotVideoStatus(activeVideo);
+  const activeClip = cut.draft.clips.find(clip => clip.shotId === activeShot?.id);
+  const activeVersions = activeShot ? shotVideoVersions(assets, activeShot.id) : [];
+  const trimmedDurations = useMemo(() => new Map(cut.draft.clips.map(clip => [clip.shotId, clip.outPoint - clip.inPoint])), [cut.draft.clips]);
+  const viewedJob = exportJobs.find(job => job.id === previewJobId && job.status === "succeeded");
+  const viewedUrl = viewedJob?.previewUrl || viewedJob?.outputUrl;
 
   // Mobile uses a larger visual time scale; clips, ruler and playhead share it.
   const timelinePixelsPerSecond = compactTimeline ? Math.max(DELIVERY_DEFAULT_PX_PER_SECOND, pxPerSecond) * 4 : pxPerSecond;
-  const layout = useMemo(() => clipLayout(shots, timelinePixelsPerSecond, durationByShotId), [shots, timelinePixelsPerSecond, durationByShotId]);
+  const layout = useMemo(() => clipLayout(shots, timelinePixelsPerSecond, trimmedDurations), [shots, timelinePixelsPerSecond, trimmedDurations]);
   const totalDuration = layout.reduce((sum, clip) => sum + clip.duration, 0);
   const totalWidth = layout.reduce((sum, clip) => sum + clip.width, 0);
   const timelineCanvas = deliveryTimelineCanvas(timelineViewportWidth, totalWidth);
   const ticks = rulerTicks(Math.max(totalDuration, timelineCanvas.laneWidth / timelinePixelsPerSecond));
-  const playheadLeft = playheadOffset(layout, activeShot?.id ?? "", progress, timelinePixelsPerSecond);
-  const absoluteSeconds = (layout.find((clip) => clip.id === activeShot?.id)?.start ?? 0) + progress;
+  const relativeProgress = Math.max(0, progress - (activeClip?.inPoint ?? 0));
+  const playheadLeft = playheadOffset(layout, activeShot?.id ?? "", relativeProgress, timelinePixelsPerSecond);
+  const absoluteSeconds = (layout.find((clip) => clip.id === activeShot?.id)?.start ?? 0) + relativeProgress;
 
-  const exportsByScope = partitionDeliveryExportJobs(exportJobs, shots.map((shot) => shot.id));
+  const compatibleJobs = exportJobs.filter(job => cut.reference
+    ? job.deliveryEdit?.episodeNo === cut.reference.episodeNo && job.deliveryEdit?.revision === cut.reference.revision
+    : !job.deliveryEdit);
+  const exportsByScope = partitionDeliveryExportJobs(compatibleJobs, shots.map((shot) => shot.id));
   const episodeExportJobs = exportsByScope.current;
-  const stats = getDeliveryStats(shots, assets, episodeExportJobs);
-  const exportState = getDeliveryExportState(shots, assets);
-  const quoteScopeKey = deliveryQuoteScopeKey(project.id, activeEpisode, shots);
+  const stats = getDeliveryStats(shots, editAssets, episodeExportJobs);
+  const exportState = getDeliveryExportState(shots, editAssets);
+  const quoteScopeKey = JSON.stringify([deliveryQuoteScopeKey(project.id, activeEpisode, shots), cut.draft.clips, cut.draft.revision, cut.draft.dirty]);
   const confirmedCredits = quoteIntent ? confirmedDeliveryCredits(exportQuote, quoteIntent.type, quoteIntent.scopeKey, quoteScopeKey) : null;
   const remaining = useMemo(() => getRemainingVideoShots(shots, assets), [shots, assets]);
   const remainingSeconds = remaining.reduce((sum, shot) => sum + normalizeShotDuration(shot.duration), 0);
   const failedShots = shots.filter((shot) => resolveShotVideoStatus(videoByShot.get(shot.id)) === "failed");
   const exportSummary = getExportSummary(episodeExportJobs);
-  const publishableCandidate = getDeliveryCandidates(shots, assets, episodeExportJobs)[0];
+  const publishableCandidate = !cut.draft.dirty && !changedSourceIds.length ? getDeliveryCandidates(shots, editAssets, episodeExportJobs)[0] : undefined;
 
   const unitCredits = videoUnitCredits(modelPrices, providerId, routeModel);
+  const selectedRoute = buildModelCatalog(videoProviders, modelPrices).find(item => item.provider.id === providerId && item.model === routeModel);
+  const routeReady = Boolean(selectedRoute?.selectable);
+  const generationBlocked = !routeReady || refreshRequired;
   const routeUnchanged = providerId === (project.videoProvider ?? "") && routeModel === (project.videoModel ?? "");
   const latestTts = latestJobOfType(episodeExportJobs, "tts");
   const latestSubtitle = latestJobOfType(episodeExportJobs, "subtitle");
@@ -239,19 +273,28 @@ export function DeliveryStage({
   }).length;
   const trackAudioUrl = latestTts?.status === "succeeded" ? latestTts.audioUrl || latestTts.outputUrl : undefined;
 
-  const busyAll = isBusy || localBusy || routeSaving || quoteLoading || exportSubmitting;
+  const busyAll = isBusy || localBusy || routeSaving || quoteLoading || exportSubmitting || cut.saving;
   const allIds = shots.map((shot) => shot.id);
   const allSelected = allIds.length > 0 && allIds.every((id) => selectedShotIds.includes(id));
   const selectedCount = allIds.filter((id) => selectedShotIds.includes(id)).length;
 
-  useEffect(() => { setProgress(0); setPlaying(false); videoRef.current?.pause(); }, [activeShot?.id, activeUrl]);
+  useEffect(() => {
+    setProgress(activeClip?.inPoint ?? 0); setPlaying(false); setMediaError("");
+    const video = videoRef.current;
+    video?.pause();
+    if (video && !viewedUrl && video.readyState > 0) video.currentTime = activeClip?.inPoint ?? 0;
+  }, [activeShot?.id, activeUrl, viewedUrl, activeClip?.inPoint, activeClip?.outPoint]);
+  useEffect(() => { setPreviewJobId(""); }, [activeEpisode]);
 
   useEffect(() => {
-    const fallbackProvider = videoProviders[0]?.id ?? "";
-    const nextProvider = project.videoProvider ?? fallbackProvider;
-    setProviderId(nextProvider);
-    setRouteModel(project.videoModel ?? videoProviders.find((provider) => provider.id === nextProvider)?.models[0] ?? "");
-  }, [project.id, project.videoProvider, project.videoModel, videoProviders]);
+    setProviderId(project.videoProvider || fallbackRoute.providerId);
+    setRouteModel(project.videoModel || (!project.videoProvider ? fallbackRoute.model : ""));
+  }, [project.id, project.videoProvider, project.videoModel]);
+  useEffect(() => {
+    if (!providerId && !routeModel && fallbackRoute.providerId) {
+      setProviderId(fallbackRoute.providerId); setRouteModel(fallbackRoute.model);
+    }
+  }, [providerId, routeModel, fallbackRoute.providerId, fallbackRoute.model]);
 
   // 生成中的镜头靠外部 workflow 数据驱动：仅在有 running 任务时低频轮询（8s，页面隐藏时跳过）。
   const hasRunningWork = shots.some((shot) => resolveShotVideoStatus(videoByShot.get(shot.id)) === "running")
@@ -268,6 +311,7 @@ export function DeliveryStage({
 
   function selectShot(shotId: string) {
     pendingAutoPlay.current = null;
+    setPreviewJobId("");
     setLocalShotId(shotId);
     onSelectShot(shotId);
   }
@@ -275,7 +319,7 @@ export function DeliveryStage({
   function togglePlayback() {
     const video = videoRef.current;
     if (!video || !activeUrl) return;
-    if (video.paused) void video.play().then(() => setPlaying(true)).catch(() => setPlaying(false));
+    if (video.paused) { if (activeClip && (video.currentTime < activeClip.inPoint || video.currentTime >= activeClip.outPoint - 0.05)) video.currentTime = activeClip.inPoint; void video.play().then(() => setPlaying(true)).catch(() => setPlaying(false)); }
     else { video.pause(); setPlaying(false); }
   }
 
@@ -285,7 +329,7 @@ export function DeliveryStage({
   }
 
   function onEnded() {
-    const next = getNextPlayableShotId(shots, assets, activeShot?.id ?? "");
+    const next = getNextPlayableShotId(shots, editAssets, activeShot?.id ?? "");
     const nextUrl = next ? videoByShot.get(next)?.referenceUrl : undefined;
     if (next && isPersistedPlayableVideoReference(nextUrl)) {
       pendingAutoPlay.current = { shotId: next, url: nextUrl };
@@ -317,20 +361,37 @@ export function DeliveryStage({
     setUsableShotIds((current) => current.includes(shotId) ? current.filter((id) => id !== shotId) : [...current, shotId]);
   }
 
-  async function runBatchVideos() {
-    if (busyAll) return;
-    setPendingAction("batch");
-    setActionMessage("");
-    setActionError("");
+  async function submitVideoShots(action: DeliveryPendingAction, ids: string[], regenerate = false) {
+    if (busyAll || generationInFlight.current || generationBlocked || !ids.length) return;
+    const seconds = shots.filter(shot => ids.includes(shot.id)).reduce((sum, shot) => sum + normalizeShotDuration(shot.duration), 0);
+    const estimate = unitCredits === undefined ? "费用以服务端结算为准" : `参考估算 ${Math.ceil(seconds * unitCredits)} 积分`;
+    if (!window.confirm(`生成第 ${activeEpisode} 集的 ${ids.length} 个镜头视频。\n${modelIdentity(routeModel).name} · ${selectedRoute?.provider.name}\n${estimate}；服务端按批次接收，最终数量和费用以任务结算为准。${regenerate ? "\n已生成镜头将产生新版本，旧视频保留为历史资产。" : ""}${!routeUnchanged ? "\n本次选择将先保存为项目默认模型。" : ""}\n确认继续？`)) return;
+    generationInFlight.current = true;
+    setPendingAction(action);
+    setActionMessage(""); setActionError("");
     try {
-      const result = await generateVideos(project.id);
-      setActionMessage(`视频任务已提交：本批次接收 ${result.assetsCreated ?? 0} 个镜头，实际扣费以任务结算为准。`);
-      await onRefresh(project.id);
-    } catch (error) {
-      setActionError(error instanceof Error ? error.message : "视频生成任务提交失败");
+      const result = await commitMutationThenSync(async () => {
+        if (!routeUnchanged) await onSaveModelRoutes({ videoProvider: providerId, videoModel: routeModel });
+        return generateVideos(project.id, { storyboardIds: ids, ...(regenerate ? { regenerate: true } : {}) });
+      }, () => onRefresh(project.id));
+      if (result.status === "mutation-failed") {
+        setRefreshRequired(true);
+        setActionError(`${result.error instanceof Error ? result.error.message : "视频生成结果暂无法确认。"} 请先重新核对成片数据，再决定是否重试。`);
+        return;
+      }
+      const summary = `第 ${activeEpisode} 集 ${ids.length} 个镜头请求已处理，新增 ${result.value.assetsCreated ?? 0} 个视频资产。${result.value.message || ""}`;
+      setActionMessage(summary);
+      if (result.status === "sync-required") {
+        setRefreshRequired(true);
+        setActionError("生成请求已处理，但成片数据刷新失败。请重新核对数据后继续；刷新不会重复生成。");
+      }
     } finally {
-      setPendingAction("");
+      generationInFlight.current = false; setPendingAction("");
     }
+  }
+
+  async function runBatchVideos() {
+    await submitVideoShots("batch", remaining.slice(0, VIDEO_SELECTED_MAX).map(shot => shot.id));
   }
 
   async function runSelectedVideos() {
@@ -341,67 +402,32 @@ export function DeliveryStage({
       setActionError(`一次最多提交 ${VIDEO_SELECTED_MAX} 个镜头（当前选中 ${ids.length} 个），请减少选择后重试。`);
       return;
     }
-    const generatedCount = ids.filter((id) => resolveShotVideoStatus(videoByShot.get(id)) === "succeeded").length;
-    const regenerate = generatedCount > 0;
-    if (regenerate && !window.confirm(`选中包含 ${generatedCount} 个已生成镜头，将重新生成并产生新版本（旧视频保留为历史资产）。是否继续？`)) return;
-    setPendingAction("selected");
-    setActionMessage("");
-    setActionError("");
-    try {
-      const result = await generateVideos(project.id, { storyboardIds: ids, ...(regenerate ? { regenerate: true } : {}) });
-      const base = `已提交 ${result.assetsCreated ?? 0} 个选中镜头的视频生成，实际扣费以任务结算为准。`;
-      setActionMessage(result.message ? `${base}${result.message}。` : base);
-      await onRefresh(project.id);
-    } catch (error) {
-      setActionError(error instanceof Error ? error.message : "视频生成任务提交失败");
-    } finally {
-      setPendingAction("");
+    if (ids.some(id => resolveShotVideoStatus(videoByShot.get(id)) === "running" || !hasUsableFrame(id))) {
+      setActionError("选中镜头包含生成中的视频或未完成的首帧，请取消这些镜头后再提交。");
+      return;
     }
+    await submitVideoShots("selected", ids, ids.some(id => resolveShotVideoStatus(videoByShot.get(id)) === "succeeded"));
+  }
+
+  function hasUsableFrame(id: string) {
+    const frame = imageByShot.get(id);
+    return frame?.status === "succeeded" && Boolean(frame.referenceUrl && /^(?:https?:\/\/|\/storage\/|data:image\/)/i.test(frame.referenceUrl));
   }
 
   async function regenerateActiveShot() {
-    if (busyAll || !activeShot) return;
-    if (!window.confirm(`将重新生成本镜头视频并产生新版本${activeStatus === "succeeded" ? "（旧视频保留为历史资产）" : ""}。是否继续？`)) return;
-    setPendingAction("regenerate");
-    setActionMessage("");
-    setActionError("");
-    try {
-      const result = await generateVideos(project.id, { storyboardIds: [activeShot.id], regenerate: true });
-      setActionMessage(result.message ? `本镜头视频生成任务已提交。${result.message}。` : "本镜头视频生成任务已提交，实际扣费以任务结算为准。");
-      await onRefresh(project.id);
-    } catch (error) {
-      setActionError(error instanceof Error ? error.message : "视频生成任务提交失败");
-    } finally {
-      setPendingAction("");
-    }
+    if (!activeShot || activeStatus === "running" || !hasUsableFrame(activeShot.id)) return;
+    await submitVideoShots("regenerate", [activeShot.id], true);
   }
 
   async function retryFailedVideos() {
-    if (busyAll) return;
-    setPendingAction("retry");
-    setActionMessage("");
-    setActionError("");
-    try {
-      const retryable = [...tasks]
-        .filter((task) => task.type === "video" && task.status === "failed" && task.retryable)
-        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
-      if (retryable) {
-        await api.retryTask(retryable.id);
-        setActionMessage("已重试最近失败的视频任务。");
-      } else {
-        const result = await generateVideos(project.id);
-        setActionMessage(`已重新提交批量生成（本批次接收 ${result.assetsCreated ?? 0} 个镜头）。`);
-      }
-      await onRefresh(project.id);
-    } catch (error) {
-      setActionError(error instanceof Error ? error.message : "重试失败");
-    } finally {
-      setPendingAction("");
-    }
+    const eligible = new Set(remaining.map(shot => shot.id));
+    const ids = failedShots.filter(shot => eligible.has(shot.id)).slice(0, VIDEO_SELECTED_MAX).map(shot => shot.id);
+    if (!ids.length) { setActionError("本集失败镜头尚无可用首帧，请先在分镜阶段补齐。"); return; }
+    await submitVideoShots("retry", ids);
   }
 
   async function saveVideoRoute() {
-    if (routeSaving) return;
+    if (busyAll || !routeReady) return;
     setRouteSaving(true);
     setActionError("");
     try {
@@ -425,7 +451,7 @@ export function DeliveryStage({
     dragFromIndex.current = null;
     if (from === null || from === targetIndex) return;
     const currentIds = shots.map((shot) => shot.id);
-    setOrderByEpisode((current) => ({ ...current, [activeEpisode]: reorder(currentIds, from, targetIndex) }));
+    cut.edit(reorder(cut.draft.clips, from, targetIndex));
   }
 
   function fitZoom() {
@@ -459,7 +485,7 @@ export function DeliveryStage({
   }
 
   async function openExportQuote(type: DeliveryExportType) {
-    if (quoteLoadingRef.current || exportSubmittingRef.current || !shots.length) return;
+    if (quoteLoadingRef.current || exportSubmittingRef.current || !shots.length || cut.draft.dirty || changedSourceIds.length) return;
     if (type === "video_export" && !exportState.canExportVideo) return;
     const intent = { type, episode: activeEpisode, storyboardIds: [...exportState.storyboardIds], scopeKey: quoteScopeKey };
     const requestId = ++quoteRequest.current;
@@ -469,7 +495,7 @@ export function DeliveryStage({
     setQuoteError("");
     setQuoteLoading(true);
     try {
-      const result = await api.quoteExport(project.id, { type, storyboardIds: intent.storyboardIds });
+      const result = await api.quoteExport(project.id, { type, storyboardIds: intent.storyboardIds, deliveryEdit: cut.reference });
       if (requestId !== quoteRequest.current) return;
       if (result.type !== type || result.unit !== "tts_character") throw new Error("导出报价格式不正确，请刷新报价后重试。");
       const quote: DeliveryExportQuote = { ...result, type, unit: "tts_character" };
@@ -498,7 +524,7 @@ export function DeliveryStage({
     setExportSubmitting(true);
     setQuoteError("");
     try {
-      await onExport(quoteIntent.type, quoteIntent.storyboardIds, confirmedCredits);
+      await onExport(quoteIntent.type, quoteIntent.storyboardIds, confirmedCredits, cut.reference);
       setQuoteIntent(null);
       setExportQuote(null);
     } catch (reason) {
@@ -510,11 +536,15 @@ export function DeliveryStage({
   }
 
   async function refreshDelivery() {
-    try { await onRefresh(project.id); }
+    if (busyAll) return;
+    setPendingAction("refresh");
+    try { await onRefresh(project.id); setRefreshRequired(false); setActionError(""); }
     catch (reason) { setActionError(reason instanceof Error ? reason.message : "成片数据刷新失败，请重试。"); }
+    finally { setPendingAction(""); }
   }
 
-  const activeMax = Math.max(1, videoRef.current?.duration || durationByShotId.get(activeShot?.id ?? "") || normalizeShotDuration(activeShot?.duration));
+  const activeMax = activeClip?.outPoint ?? normalizeShotDuration(activeShot?.duration);
+  const sourceMax = Math.min(normalizeShotDuration(activeShot?.duration), durationByShotId.get(activeShot?.id ?? "") ?? Infinity);
   const downloads = episodeExportJobs.filter((job) => job.status === "succeeded" && job.outputUrl).slice(0, 3);
   const historicalDownloads = exportsByScope.history.filter((job) => job.status === "succeeded" && job.outputUrl).slice(0, 3);
   const otherDownloads = exportsByScope.other.filter((job) => job.status === "succeeded" && job.outputUrl).slice(0, 3);
@@ -536,25 +566,37 @@ export function DeliveryStage({
           </span>
         </div>
         <div className="dlv2-topbar-right">
+          <button className="dlv2-btn" type="button" disabled={busyAll || !shots.length || (!cut.draft.dirty && cut.draft.revision > 0)} onClick={() => void cut.save()}><Save size={15} />{cut.saving ? "保存中…" : "保存剪辑"}</button>
           {actionMessage ? <span className="dlv2-flash" data-tone="ok">{actionMessage}</span> : null}
           {actionError ? <span className="dlv2-flash" data-tone="danger" role="alert">{actionError}</span> : null}
           <button
             className="dlv2-btn"
             type="button"
             onClick={() => void runBatchVideos()}
-            disabled={busyAll || !remaining.length}
-            title={remaining.length ? `按服务端筛选补齐 ${remaining.length} 个待生成镜头` : "没有待生成的镜头视频"}
+            disabled={busyAll || generationBlocked || !remaining.length}
+            title={remaining.length ? `仅处理第 ${activeEpisode} 集，每次最多请求 ${VIDEO_SELECTED_MAX} 个镜头` : "请先完成首帧；生成中的视频会在任务队列继续处理"}
           >
-            {pendingAction === "batch" ? <Loader2 size={15} className="dlv2-spin" /> : <WandSparkles size={15} />}批量生成剩余视频{remaining.length ? `（${remaining.length}）` : ""}
+            {pendingAction === "batch" ? <Loader2 size={15} className="dlv2-spin" /> : <WandSparkles size={15} />}批量生成剩余视频{remaining.length ? `（${Math.min(remaining.length, VIDEO_SELECTED_MAX)}）` : ""}
           </button>
-          <button className="dlv2-btn dlv2-btn-primary" type="button" onClick={() => void openExportQuote("video_export")} disabled={busyAll || !exportState.canExportVideo} title={exportState.missingVideoCount ? `本集还有 ${exportState.missingVideoCount} 个镜头视频未完成，请先补齐` : "先查看配音费用，再按当前集、当前时间线顺序合成"}>
+          <button className="dlv2-btn dlv2-btn-primary" type="button" onClick={() => void openExportQuote("video_export")} disabled={busyAll || cut.draft.dirty || Boolean(changedSourceIds.length) || !exportState.canExportVideo} title={cut.draft.dirty ? "请先保存剪辑，再确认导出费用" : changedSourceIds.length ? "请确认更新后的视频并保存剪辑" : exportState.missingVideoCount ? `本集还有 ${exportState.missingVideoCount} 个镜头视频未完成，请先补齐` : "先查看配音费用，再按当前集、当前时间线顺序合成"}>
             <Download size={15} />导出第 {activeEpisode} 集 MP4
           </button>
-          <button className="dlv2-icon-btn" type="button" aria-label="刷新成片数据" disabled={busyAll} onClick={() => void refreshDelivery()}>
+          <button className="dlv2-icon-btn" type="button" aria-label={refreshRequired ? "重新核对成片数据" : "刷新成片数据"} disabled={busyAll} onClick={() => void refreshDelivery()}>
             <RefreshCw size={15} />
           </button>
         </div>
       </header>
+      <section className="dlv2-generation-state" aria-label="视频生成状态" role="status">
+        <strong>{cut.draft.dirty ? "剪辑有未保存修改" : cut.draft.revision ? `剪辑 v${cut.draft.revision} · 已保存` : "原始镜头顺序"}</strong>
+        {cut.message ? <span>{cut.message}</span> : null}
+        {cut.error ? <span role="alert">{cut.error}</span> : null}
+        {cut.draft.dirty || cut.error ? <button type="button" className="dlv2-btn" onClick={cut.downloadDraft}>下载剪辑草稿</button> : null}
+        {cut.draft.dirty || cut.error ? <button type="button" className="dlv2-btn" disabled={busyAll} onClick={() => void cut.reloadSaved()}>载入云端剪辑</button> : null}
+        <span>{routeReady ? `${modelIdentity(routeModel).name} · ${selectedRoute?.provider.name}` : "请在参数面板选择可用的视频模型"}</span>
+        <span>{!routeReady ? selectedRoute?.description || "当前模型未配置或已停用。" : routeUnchanged ? "已保存为项目默认" : "模型已修改，生成前会自动保存"}</span>
+        {remaining.length > VIDEO_SELECTED_MAX ? <span>本集剩余 {remaining.length} 镜，本次最多请求 {VIDEO_SELECTED_MAX} 镜</span> : null}
+        {refreshRequired ? <button className="dlv2-btn" type="button" disabled={busyAll} onClick={() => void refreshDelivery()}>重新核对数据</button> : null}
+      </section>
 
       <section className="dlv2-delivery-checks" aria-label={`第 ${activeEpisode} 集交付检查`}>
         <span><strong>视频</strong>{stats.videoReady}/{stats.total}{exportState.missingVideoCount ? ` · 需补齐 ${exportState.missingVideoCount} 镜` : stats.total ? " · 已齐全" : " · 暂无镜头"}</span>
@@ -581,7 +623,7 @@ export function DeliveryStage({
                     <label className="dlv2-shot-check">
                       <input type="checkbox" checked={selectedShotIds.includes(shot.id)} onChange={event => toggleShotSelection(shot.id, event.target.checked)} aria-label={`选择镜头 ${label}`} />
                     </label>
-                    <button type="button" className="dlv2-shot-preview" aria-pressed={activeShot?.id === shot.id} aria-label={`预览镜头 ${label} · ${SHOT_STATUS_LABEL[status]}`} onClick={() => selectShot(shot.id)}>
+                    <button type="button" className="dlv2-shot-preview" aria-pressed={!viewedUrl && activeShot?.id === shot.id} aria-label={`预览镜头 ${label} · ${SHOT_STATUS_LABEL[status]}`} onClick={() => selectShot(shot.id)}>
                       <span className="dlv2-shot-thumb">{image?.referenceUrl ? <img src={image.referenceUrl} alt="" loading="lazy" /> : <Film size={14} />}</span>
                       <span className="dlv2-shot-info"><strong>镜头 {label}</strong><small>{shot.scene || shot.pictureDesc || "未命名镜头"} · {normalizeShotDuration(shot.duration)}s</small></span>
                       <span className="dlv2-shot-flags">
@@ -605,7 +647,7 @@ export function DeliveryStage({
             <button
               className="dlv2-btn"
               type="button"
-              disabled={busyAll || !selectedCount}
+              disabled={busyAll || generationBlocked || !selectedCount}
               title={selectedCount ? `为选中的 ${selectedCount} 个镜头生成视频；包含已生成镜头时会提示重新生成并产生新版本` : "先在列表勾选镜头"}
               onClick={() => void runSelectedVideos()}
             >
@@ -615,26 +657,43 @@ export function DeliveryStage({
         </aside>
 
         <section className="dlv2-stage" aria-label="镜头预览">
+          {changedSourceIds.length ? <p className="dlv3-media-error" role="alert">剪辑选用的视频已有更新，请重新确认后保存。<button className="dlv2-btn" type="button" disabled={busyAll} onClick={() => cut.edit(cut.draft.clips.map(clip => changedSourceIds.includes(clip.shotId) ? { ...clip, sourceUrl: undefined } : clip))}>选用更新后的视频</button></p> : null}
+          <header className="dlv3-preview-head">
+            <div><span>第 {activeEpisode} 集 · {project.videoRatio}</span><strong>{viewedJob ? "成片预览" : activeShot ? `镜头 ${String(shots.indexOf(activeShot) + 1).padStart(2, "0")}` : "创作预览"}</strong></div>
+            <div className="dlv3-preview-tabs"><button className="dlv2-btn" type="button" aria-pressed={!viewedUrl} onClick={() => setPreviewJobId("")}>镜头剪辑</button><button className="dlv2-btn" type="button" aria-pressed={Boolean(viewedUrl)} disabled={!publishableCandidate?.id.startsWith("export:")} onClick={() => setPreviewJobId(publishableCandidate?.id.replace("export:", "") ?? "")}>查看成片</button></div>
+          </header>
           <div className="dlv2-player">
-            {activeUrl ? (
+            {activeUrl || viewedUrl ? (
               <video
+                key={viewedUrl || activeUrl}
                 ref={videoRef}
-                src={activeUrl}
+                src={viewedUrl || activeUrl}
                 poster={imageByShot.get(activeShot?.id ?? "")?.referenceUrl}
                 preload="metadata"
                 playsInline
                 controls
-                onCanPlay={onCanPlay}
+                onCanPlay={event => { if (!viewedUrl) onCanPlay(event); }}
                 onLoadedMetadata={(event) => {
                   const duration = event.currentTarget.duration;
-                  if (Number.isFinite(duration) && duration > 0 && activeShot) {
+                  if (!viewedUrl && Number.isFinite(duration) && duration > 0 && activeShot) {
                     setDurationByShotId((current) => new Map(current).set(activeShot.id, duration));
+                    event.currentTarget.currentTime = activeClip?.inPoint ?? 0;
                   }
                 }}
-                onTimeUpdate={(event) => setProgress(event.currentTarget.currentTime)}
-                onPlay={() => setPlaying(true)}
+                onSeeking={(event) => {
+                  if (viewedUrl || !activeClip) return;
+                  const video = event.currentTarget;
+                  const clamped = Math.max(activeClip.inPoint, Math.min(activeClip.outPoint, video.currentTime));
+                  if (Math.abs(clamped - video.currentTime) > 0.001) video.currentTime = clamped;
+                }}
+                onTimeUpdate={(event) => { if (viewedUrl) return; setProgress(event.currentTarget.currentTime); if (!event.currentTarget.paused && activeClip && event.currentTarget.currentTime >= activeClip.outPoint) { event.currentTarget.pause(); onEnded(); } }}
+                onPlay={(event) => {
+                  if (!viewedUrl && activeClip && (event.currentTarget.currentTime < activeClip.inPoint || event.currentTarget.currentTime >= activeClip.outPoint)) event.currentTarget.currentTime = activeClip.inPoint;
+                  setPlaying(true);
+                }}
                 onPause={() => setPlaying(false)}
-                onEnded={onEnded}
+                onEnded={() => { if (!viewedUrl) onEnded(); }}
+                onError={() => { setMediaError("视频暂时无法播放，请重新核对素材或下载后查看。"); setPlaying(false); pendingAutoPlay.current = null; }}
               />
             ) : (
               <div className="dlv2-player-empty">
@@ -651,14 +710,16 @@ export function DeliveryStage({
               </div>
             )}
           </div>
-          <div className="dlv2-transport">
+          {mediaError ? <p role="alert" className="dlv3-media-error">{mediaError}</p> : null}
+          {viewedJob ? <p className="dlv3-final-note">{viewedJob.sourceStatus === "current" ? "已完成的合成视频" : "历史成片 · 内容已更新或输入未核验"} · {new Date(viewedJob.createdAt).toLocaleString()}<button type="button" className="dlv2-btn" onClick={() => void downloadJob(viewedJob)} disabled={Boolean(downloadingJobId)}><Download size={14} />下载此版本</button></p> : null}
+          {!viewedUrl ? <><div className="dlv2-transport">
             <button className="dlv2-icon-btn" type="button" aria-label={playing ? "暂停" : "播放"} disabled={!activeUrl} onClick={togglePlayback}>
               {playing ? <Pause size={15} /> : <Play size={15} />}
             </button>
             <input
               className="dlv2-seek"
               type="range"
-              min={0}
+              min={activeClip?.inPoint ?? 0}
               max={activeMax}
               step={0.1}
               value={Math.min(progress, activeMax)}
@@ -666,13 +727,13 @@ export function DeliveryStage({
               onChange={(event) => seek(Number(event.target.value))}
               aria-label="播放进度"
             />
-            <span className="dlv2-timecode">{formatTimecode(progress, true)} / {formatTimecode(activeMax)}</span>
+            <span className="dlv2-timecode">{formatTimecode(relativeProgress, true)} / {formatTimecode(activeMax - (activeClip?.inPoint ?? 0), true)}</span>
           </div>
           <div className="dlv2-shot-actions">
             <button
               className="dlv2-btn"
               type="button"
-              disabled={busyAll || !activeShot}
+              disabled={busyAll || generationBlocked || !activeShot || activeStatus === "running" || !hasUsableFrame(activeShot.id)}
               title={activeShot ? "重新生成本镜头视频并产生新版本（旧的可播放视频保留为历史资产）" : "先选择一个镜头"}
               onClick={() => void regenerateActiveShot()}
             >
@@ -689,6 +750,23 @@ export function DeliveryStage({
               <Check size={14} />{activeShot && usableShotIds.includes(activeShot.id) ? "已标记可用" : "标记可用"}
             </button>
           </div>
+          {activeShot && activeClip ? <section className="dlv3-cut-tools" aria-label="当前镜头剪辑">
+            <div className="dlv3-cut-title"><Scissors size={15} /><strong>保留精彩片段</strong><span>原视频保留 · 按入出点导出</span></div>
+            <div className="dlv3-cut-fields">
+              <label>视频版本<select aria-label="选用视频版本" value={activeClip.sourceAssetId} disabled={busyAll} onChange={event => cut.edit(cut.draft.clips.map(clip => clip.shotId === activeShot.id ? { ...clip, sourceAssetId: event.target.value, sourceUrl: undefined } : clip))}>{!activeVersions.some(version => version.id === activeClip.sourceAssetId) ? <option value={activeClip.sourceAssetId}>当前版本暂不可用</option> : null}{activeVersions.map((version, index) => <option key={version.id} value={version.id}>{version.id === `video_${activeShot.id}` ? "最新生成" : `历史版本 ${index}`}</option>)}</select></label>
+              <label>入点（秒）<input aria-label="镜头入点秒数" type="number" min={0} max={activeClip.outPoint - 0.2} step={0.1} value={activeClip.inPoint} disabled={busyAll} onChange={event => { const value = Number(event.target.value); if (Number.isFinite(value)) cut.edit(cut.draft.clips.map(clip => clip.shotId === activeShot.id ? { ...clip, inPoint: value } : clip)); }} /></label>
+              <label>出点（秒）<input aria-label="镜头出点秒数" type="number" min={activeClip.inPoint + 0.2} max={sourceMax} step={0.1} value={activeClip.outPoint} disabled={busyAll} onChange={event => { const value = Number(event.target.value); if (Number.isFinite(value)) cut.edit(cut.draft.clips.map(clip => clip.shotId === activeShot.id ? { ...clip, outPoint: value } : clip)); }} /></label>
+              <strong className="dlv3-cut-length">保留 {Math.max(0, activeClip.outPoint - activeClip.inPoint).toFixed(1)}s</strong>
+            </div>
+            <div className="dlv3-cut-actions">
+              <button className="dlv2-btn" type="button" disabled={busyAll || !activeUrl || progress >= activeClip.outPoint - 0.2} onClick={() => cut.edit(cut.draft.clips.map(clip => clip.shotId === activeShot.id ? { ...clip, inPoint: Math.max(0, Math.round(progress * 10) / 10) } : clip))}>设为入点</button>
+              <button className="dlv2-btn" type="button" disabled={busyAll || !activeUrl || progress <= activeClip.inPoint + 0.2} onClick={() => cut.edit(cut.draft.clips.map(clip => clip.shotId === activeShot.id ? { ...clip, outPoint: Math.min(sourceMax, Math.round(progress * 10) / 10) } : clip))}>设为出点</button>
+              <button className="dlv2-btn" type="button" aria-label="镜头前移" disabled={busyAll || shots.indexOf(activeShot) === 0} onClick={() => cut.edit(reorder(cut.draft.clips, shots.indexOf(activeShot), shots.indexOf(activeShot) - 1))}><ArrowLeft size={14} />前移</button>
+              <button className="dlv2-btn" type="button" aria-label="镜头后移" disabled={busyAll || shots.indexOf(activeShot) === shots.length - 1} onClick={() => cut.edit(reorder(cut.draft.clips, shots.indexOf(activeShot), shots.indexOf(activeShot) + 1))}><ArrowRight size={14} />后移</button>
+              <button className="dlv2-btn" type="button" disabled={busyAll || shots.length < 2} onClick={() => cut.edit(cut.draft.clips.filter(clip => clip.shotId !== activeShot.id))}>移出本集剪辑</button>
+            </div>
+            {activeClip.outPoint > sourceMax || activeClip.inPoint < 0 || activeClip.outPoint - activeClip.inPoint < 0.2 ? <p role="alert">请调整入出点：至少保留 0.2 秒，且不超出素材 {sourceMax.toFixed(1)} 秒。</p> : null}
+          </section> : null}</> : null}
         </section>
 
         <aside ref={inspectorPanelRef} className="dlv2-side" aria-label="成片参数" role={inspectorDrawerActive ? "dialog" : undefined} aria-modal={inspectorDrawerActive || undefined}>
@@ -701,16 +779,17 @@ export function DeliveryStage({
             <header className="dlv2-card-head"><SlidersHorizontal size={14} /><strong>视频生成参数</strong></header>
             <div className="dlv2-field">
               <span>模型</span>
-              <ModelRoutePicker modality="video" providers={providers} modelPrices={modelPrices} value={{ providerId, model: routeModel }} onChange={(nextProvider, nextModel) => { setProviderId(nextProvider); setRouteModel(nextModel); }} disabled={!videoProviders.length} />
+              <ModelRoutePicker modality="video" providers={providers} modelPrices={modelPrices} value={{ providerId, model: routeModel }} onChange={(nextProvider, nextModel) => { setProviderId(nextProvider); setRouteModel(nextModel); }} disabled={!videoProviders.length || busyAll || routeSaving} />
             </div>
             {unitCredits !== undefined && remaining.length ? (
-              <p className="dlv2-estimate">预计 {Math.ceil(remainingSeconds * unitCredits)} 积分（剩余 {remaining.length} 镜 · {remainingSeconds}s × {unitCredits} 积分/秒）</p>
+              <p className="dlv2-estimate">本集剩余镜头参考估算 {Math.ceil(remainingSeconds * unitCredits)} 积分（{remaining.length} 镜 · {remainingSeconds}s × {unitCredits} 积分/秒），实际按本批次接收镜头结算。</p>
             ) : null}
+            <p className="dlv2-route-status">{routeUnchanged ? "生成使用此项目默认模型。" : "模型尚未保存；点击生成会先保存当前选择。"}{!routeReady ? ` ${selectedRoute?.description || "请重新选择可用模型。"}` : ""}</p>
             <button
               className="dlv2-btn"
               type="button"
               onClick={() => void saveVideoRoute()}
-              disabled={routeSaving || busyAll || routeUnchanged || !providerId || !routeModel}
+              disabled={routeSaving || busyAll || routeUnchanged || !routeReady || refreshRequired}
             >
               {routeSaving ? <Loader2 size={14} className="dlv2-spin" /> : <Save size={14} />}保存为项目默认
             </button>
@@ -727,7 +806,7 @@ export function DeliveryStage({
                   </li>
                 ))}
               </ul>
-              <button className="dlv2-btn" type="button" onClick={() => void retryFailedVideos()} disabled={busyAll}>
+              <button className="dlv2-btn" type="button" onClick={() => void retryFailedVideos()} disabled={busyAll || generationBlocked}>
                 <RotateCcw size={14} />重试失败镜头
               </button>
             </section>
@@ -736,10 +815,10 @@ export function DeliveryStage({
           <section className="dlv2-card">
             <header className="dlv2-card-head"><FileAudio size={14} /><strong>配音与字幕</strong></header>
             <div className="dlv2-card-actions">
-              <button className="dlv2-btn" type="button" onClick={() => void openExportQuote("tts")} disabled={busyAll || !shots.length}>
+              <button className="dlv2-btn" type="button" onClick={() => void openExportQuote("tts")} disabled={busyAll || cut.draft.dirty || Boolean(changedSourceIds.length) || !shots.length}>
                 <FileAudio size={14} />生成本集配音
               </button>
-              <button className="dlv2-btn" type="button" onClick={() => void openExportQuote("subtitle")} disabled={busyAll || !shots.length}>
+              <button className="dlv2-btn" type="button" onClick={() => void openExportQuote("subtitle")} disabled={busyAll || cut.draft.dirty || Boolean(changedSourceIds.length) || !shots.length}>
                 <Subtitles size={14} />生成本集字幕
               </button>
             </div>
@@ -758,14 +837,17 @@ export function DeliveryStage({
               <Upload size={14} />发布到创作现场
             </button>
           </section>
+          <DeliveryOutputLibrary jobs={exportJobs} onPreview={job => { setPreviewJobId(job.id); onCloseInspector(); }} onDownload={job => void downloadJob(job)} downloading={Boolean(downloadingJobId)} />
+          {episodeShots.some(shot => !shots.some(item => item.id === shot.id)) ? <section className="dlv2-card"><strong>已移出剪辑的镜头</strong>{episodeShots.filter(shot => !shots.some(item => item.id === shot.id)).map(shot => <button key={shot.id} type="button" className="dlv2-btn" disabled={busyAll} onClick={() => cut.edit([...cut.draft.clips, { shotId: shot.id, sourceAssetId: `video_${shot.id}`, inPoint: 0, outPoint: normalizeShotDuration(shot.duration) }])}>加回镜头 {shot.shotNo}</button>)}</section> : null}
         </aside>
       </div>
 
       <footer className="dlv2-timeline" aria-label="多轨时间线">
         <div className="dlv2-tl-toolbar">
           <div className="dlv2-tl-tools">
-            <strong>镜头顺序</strong>
-            <span className="dlv2-tl-hint" title="导出使用当前集的全部镜头及当前顺序；刷新页面恢复原始顺序。选中镜头仅用于生成。">拖拽排序 · 按此顺序导出本集 · 刷新恢复</span>
+            <strong>本集剪辑 · {shots.length} 镜</strong>
+            <span className="dlv2-tl-hint">拖拽排序 · 保存后跨设备继续</span>
+            <button className="dlv2-btn" type="button" disabled={busyAll || !cut.draft.undo.length} onClick={cut.undo}><RotateCcw size={13} />撤销</button>
           </div>
           <div className="dlv2-tl-clock">{formatTimecode(absoluteSeconds, true)} / {formatTimecode(totalDuration)}</div>
           <div className="dlv2-tl-zoom">

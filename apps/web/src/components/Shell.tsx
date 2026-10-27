@@ -3,6 +3,7 @@ import {
   CircleHelp,
   ClipboardList,
   CreditCard,
+  Cpu,
   ListVideo,
   Grid2X2,
   LogOut,
@@ -28,6 +29,7 @@ export type PageKey =
   | "scripts"
   | "studio"
   | "tasks"
+  | "models"
   | "profile"
   | "recharge"
   | "ledger"
@@ -66,7 +68,8 @@ const sections: Array<{ label: string; items: Array<{ key: PageKey; label: strin
     label: "生产",
     items: [
       { key: "studio", label: "剪辑中心", icon: <StudioIcon stage="delivery" /> },
-      { key: "tasks", label: "生成队列", icon: <ListVideo size={20} /> }
+      { key: "tasks", label: "生成队列", icon: <ListVideo size={20} /> },
+      { key: "models", label: "模型中心", icon: <Cpu size={20} /> }
     ]
   },
   {
@@ -225,6 +228,7 @@ function pageTitle(page: PageKey) {
     scripts: "我的作品",
     studio: "剪辑中心",
     tasks: "生成队列",
+    models: "模型中心",
     profile: "我的",
     recharge: "积分充值",
     ledger: "积分明细",

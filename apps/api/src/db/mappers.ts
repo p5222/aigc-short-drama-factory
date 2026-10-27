@@ -29,6 +29,7 @@ import type {
   AnalyticsEvent
 } from "@aifilm/shared";
 import { getProviderQuotaSnapshot } from "../providers/modelQuota.js";
+import { providerEnvApiKey } from "../providers/credentials.js";
 import { isHistoricalAssetId } from "./mediaAssetIdentity.js";
 
 export function mapProject(row: any): Project {
@@ -81,6 +82,13 @@ export function mapTask(row: any): GenerationTask {
     progress: row.progress,
     estimatedCredits: row.estimatedCredits,
     finalCredits: row.finalCredits ?? undefined,
+    ...(row.billingQuote ? { billing: {
+        mode: row.billingQuote.mode, listCredits: row.billingQuote.listCredits,
+        payableCredits: row.billingQuote.payableCredits, maximumCredits: row.billingQuote.maximumCredits,
+        discountPercent: row.billingQuote.discountPercent, policyVersion: row.billingQuote.policy.version,
+        releasedCredits: row.billingSettlement?.releasedCredits, usage: row.billingSettlement?.usage,
+        costStatus: row.billingSettlement?.costStatus
+      } } : {}),
     errorReason: publicTaskError(row.errorReason),
     estimatedSeconds,
     refundPolicy: refundPolicyForTask(status),
@@ -251,6 +259,7 @@ export function mapExportJob(row: any, sourceStatus: NonNullable<ExportJob["sour
     type: row.type,
     status: row.status,
     sourceStatus,
+    deliveryEdit: diagnostics.deliveryEdit,
     outputUrl: row.outputUrl ?? undefined,
     downloadUrl: row.outputUrl ? `/api/projects/${row.projectId}/export/jobs/${row.id}/download` : undefined,
     previewUrl: diagnostics.previewUrl ?? (row.outputUrl?.endsWith(".mp4") ? row.outputUrl : undefined),
@@ -280,12 +289,18 @@ function parseExportDiagnostics(value?: string | null) {
     clipCount?: number;
     storyboardIds?: string[];
     warnings?: string[];
+    deliveryEdit?: ExportJob["deliveryEdit"];
   };
   try {
     const parsed = JSON.parse(value) as Record<string, unknown>;
     if (parsed.kind !== "export_diagnostics") return { message: value };
     return {
       message: typeof parsed.message === "string" ? parsed.message : undefined,
+      deliveryEdit: (() => {
+        const source = parsed.sourceSnapshot as { deliveryEdit?: ExportJob["deliveryEdit"] } | undefined;
+        const edit = source?.deliveryEdit;
+        return edit && Number.isSafeInteger(edit.episodeNo) && edit.episodeNo > 0 && Number.isSafeInteger(edit.revision) && edit.revision > 0 ? edit : undefined;
+      })(),
       outputKind: isExportOutputKind(parsed.outputKind) ? parsed.outputKind : undefined,
       manifestUrl: typeof parsed.manifestUrl === "string" ? parsed.manifestUrl : undefined,
       subtitleUrl: typeof parsed.subtitleUrl === "string" ? parsed.subtitleUrl : undefined,
@@ -361,7 +376,7 @@ export function mapRedeemCode(row: any): RedeemCode {
 
 export async function mapProvider(row: any): Promise<ModelProvider> {
   const apiKey = typeof row.apiKey === "string" ? row.apiKey : "";
-  const envKey = providerEnvApiKey(row.id);
+  const envKey = providerEnvApiKey(row.id, row.modality);
   const effectiveKey = apiKey || envKey;
   const routing = readProviderRoutingState(row.capability, row.models);
   const quotaModels = routing.mode === "manual"
@@ -414,20 +429,6 @@ export function readProviderRoutingState(capability: unknown, models: string[]) 
   };
 }
 
-function providerEnvApiKey(providerId: string) {
-  if (providerId === "doubao-seedance" || providerId === "doubao-seedream" || providerId === "doubao-text") {
-    return process.env.DOUBAO_API_KEY || process.env.ARK_API_KEY || process.env.VOLCENGINE_API_KEY || "";
-  }
-  if (providerId === "dashscope-video" || providerId === "dashscope-image" || providerId === "dashscope-tts") {
-    return process.env.DASHSCOPE_TTS_API_KEY || process.env.DASHSCOPE_API_KEY || "";
-  }
-  if (providerId === "dashscope-text") return process.env.DASHSCOPE_TEXT_API_KEY || process.env.DASHSCOPE_API_KEY || "";
-  if (providerId === "google-gemini-image" || providerId === "google-ai-studio") return process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || "";
-  if (providerId === "zml-image" || providerId === "zml-text") return process.env.ZML_API_KEY || "";
-  if (providerId === "ripp-image") return process.env.RIPP_IMAGE_API_KEY || "";
-  return "";
-}
-
 function uniqueStrings(values: Array<string | undefined>) {
   return [...new Set(values.filter((value): value is string => typeof value === "string").map((value) => value.trim()).filter(Boolean))];
 }
@@ -442,6 +443,7 @@ export function mapModelPrice(row: any): ModelPrice {
     unit: row.unit,
     unitCredits: row.unitCredits,
     vendorCostCny: row.vendorCostCny,
+    billing: row.billing ?? undefined,
     enabled: row.enabled
   };
 }

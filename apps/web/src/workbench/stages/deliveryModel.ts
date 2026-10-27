@@ -231,11 +231,16 @@ export function getDeliveryStats(shots: StoryboardShot[], assets: AssetItem[], j
   };
 }
 
-/** 与服务端 /videos/generate 的筛选一致：没有可播放视频、且已有分镜图资产的镜头。 */
+/** New submissions require a successful first frame; running videos remain in the task queue. */
 export function getRemainingVideoShots(shots: StoryboardShot[], assets: AssetItem[]): StoryboardShot[] {
   const videos = buildShotMediaIndex(shots, assets, "video");
   const images = buildShotMediaIndex(shots, assets, "image");
-  return shots.filter((shot) => !isPersistedPlayableVideoReference(videos.get(shot.id)?.referenceUrl) && images.has(shot.id));
+  return shots.filter((shot) => {
+    const image = images.get(shot.id);
+    const video = videos.get(shot.id);
+    return resolveShotVideoStatus(video) !== "running" && !isPersistedPlayableVideoReference(video?.referenceUrl)
+      && image?.status === "succeeded" && Boolean(image.referenceUrl && /^(?:https?:\/\/|\/storage\/|data:image\/)/i.test(image.referenceUrl));
+  });
 }
 
 const DEFAULT_VIDEO_DESCRIPTION_PREFIX = "基于分镜图生成视频";
@@ -252,11 +257,10 @@ export function getShotFailureMessage(videoAsset?: AssetItem, tasks: GenerationT
   return latestVideoTaskError?.errorReason || "生成失败，可重试";
 }
 
-/** 视频单价（积分/秒）：先精确匹配渠道+模型，再退化为仅模型匹配；查不到返回 undefined（界面隐藏预估）。 */
+/** Only an unambiguous price for the selected route can be displayed. */
 export function videoUnitCredits(prices: ModelPrice[], providerId: string, model: string): number | undefined {
-  const candidates = prices.filter((price) => price.enabled && price.modality === "video" && price.unit === "video_second");
-  const exact = candidates.find((price) => price.providerId === providerId && price.model === model);
-  return (exact ?? candidates.find((price) => price.model === model))?.unitCredits;
+  const candidates = prices.filter((price) => price.enabled && price.modality === "video" && price.unit === "video_second" && price.providerId === providerId && price.model === model);
+  return candidates.length === 1 ? candidates[0].unitCredits : undefined;
 }
 
 export function collectDeliveryEpisodes(shots: StoryboardShot[], fallbackCount = 1): number[] {

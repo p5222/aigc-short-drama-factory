@@ -9,7 +9,7 @@ import {
   UserRound,
   WandSparkles
 } from "lucide-react";
-import { useEffect, useMemo, useState, type ChangeEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 import type { AssetItem, ModelPrice, ModelProvider, Project, ProjectWorkflow, UserFeedback } from "@aifilm/shared";
 import {
   estimateImageCredits,
@@ -20,6 +20,7 @@ import {
 } from "@aifilm/shared";
 import { api } from "../../lib/api";
 import { ModelRoutePicker } from "../../components/ModelRoutePicker";
+import { buildModelCatalog } from "../../components/modelCatalog";
 import { InlineNotice } from "../../design-system/ui";
 import { MediaFrame } from "../components/MediaCanvas";
 import { ProductionWorkspace } from "../components/ProductionWorkspace";
@@ -95,9 +96,13 @@ function LoadedAssetStage({
 
   const [referenceDrafts, setReferenceDrafts] = useState<Record<string, string>>({});
   const [pendingKey, setPendingKey] = useState("");
+  const mutationPending = useRef(false);
+  const [routeSaving, setRouteSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [refreshRequired, setRefreshRequired] = useState<{ success: string } | null>(null);
+  const assetBusy = Boolean(pendingKey) || routeSaving;
+  const actionsBlocked = assetBusy || Boolean(refreshRequired);
 
   useEffect(() => {
     if (sameActiveAsset(state.activeAsset, activeAsset)) return;
@@ -105,12 +110,15 @@ function LoadedAssetStage({
   }, [activeAsset?.id, activeAsset?.type, dispatch, state.activeAsset?.id, state.activeAsset?.type]);
 
   function selectAsset(asset: ActiveAsset) {
+    if (assetBusy) return;
     setMessage("");
     setError("");
     dispatch({ type: "set-asset", asset });
   }
 
   async function runMutation(key: string, action: () => Promise<unknown>, success: string): Promise<boolean> {
+    if (mutationPending.current || refreshRequired) return false;
+    mutationPending.current = true;
     setPendingKey(key);
     setMessage("");
     setError("");
@@ -118,6 +126,7 @@ function LoadedAssetStage({
     if (result.status === "mutation-failed") {
       setError(errorMessage(result.error, "操作失败，请稍后重试。"));
       setPendingKey("");
+      mutationPending.current = false;
       return false;
     }
     if (result.status === "sync-required") {
@@ -128,11 +137,13 @@ function LoadedAssetStage({
       setMessage(success);
     }
     setPendingKey("");
+    mutationPending.current = false;
     return true;
   }
 
   async function retryRefresh() {
-    if (!refreshRequired) return;
+    if (!refreshRequired || mutationPending.current) return;
+    mutationPending.current = true;
     setPendingKey("refresh");
     setError("");
     try {
@@ -144,6 +155,7 @@ function LoadedAssetStage({
       setError(errorMessage(cause, "刷新失败，请稍后重试。"));
     } finally {
       setPendingKey("");
+      mutationPending.current = false;
     }
   }
 
@@ -163,18 +175,22 @@ function LoadedAssetStage({
   async function uploadReference(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     event.target.value = "";
-    if (!file) return;
+    if (!file || actionsBlocked || mutationPending.current) return;
     const character = activeCharacter;
     if (!character) return;
-    try {
-      await saveReference(character, await fileToDataUrl(file));
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "参考图读取失败。");
+    if (!["image/png", "image/jpeg", "image/webp", "image/gif"].includes(file.type) || file.size > 8 * 1024 * 1024) {
+      setError("请上传 8 MB 以内的 PNG、JPEG、WebP 或 GIF 图片。");
+      return;
     }
+    const persisted = await runMutation(`reference:${character.id}`, async () => {
+      const referenceUrl = await fileToDataUrl(file);
+      await api.setCharacterReferenceImage(project.id, character.id, { referenceUrl, description: `${character.name} 创作者上传参考设定图` });
+    }, "创作者参考图已保存，不会覆盖生成身份板。");
+    if (persisted) setReferenceDrafts(current => updateCharacterReferenceDraft(current, character.id, ""));
   }
 
   function deleteReferences() {
-    if (!activeCharacter || !window.confirm(`确认清空「${activeCharacter.name}」的创作者参考图？生成身份板不会被删除。`)) return;
+    if (actionsBlocked || !activeCharacter || !window.confirm(`确认清空「${activeCharacter.name}」的创作者参考图？生成身份板不会被删除。`)) return;
     void runMutation(
       `reference:${activeCharacter.id}`,
       () => api.deleteCharacterReferenceImage(project.id, activeCharacter.id),
@@ -215,10 +231,10 @@ function LoadedAssetStage({
             <p className="wb-region-copy">选择真实资产，集中检查生成结果与参考资料。</p>
           </div>
           <div className="wb-asset-mode" role="group" aria-label="资产类型">
-            <button type="button" className={mode === "character" ? "is-active" : undefined} aria-pressed={mode === "character"} onClick={() => characters[0] && selectAsset({ type: "character", id: characters[0].id })} disabled={!characters.length}>
+            <button type="button" className={mode === "character" ? "is-active" : undefined} aria-pressed={mode === "character"} onClick={() => characters[0] && selectAsset({ type: "character", id: characters[0].id })} disabled={assetBusy || !characters.length}>
               <UserRound aria-hidden="true" />角色 <span>{characters.length}</span>
             </button>
-            <button type="button" className={mode === "scene" ? "is-active" : undefined} aria-pressed={mode === "scene"} onClick={() => sceneAssets[0] && selectAsset({ type: "scene", id: sceneAssets[0].id })} disabled={!sceneAssets.length}>
+            <button type="button" className={mode === "scene" ? "is-active" : undefined} aria-pressed={mode === "scene"} onClick={() => sceneAssets[0] && selectAsset({ type: "scene", id: sceneAssets[0].id })} disabled={assetBusy || !sceneAssets.length}>
               <MapPin aria-hidden="true" />场景 <span>{sceneAssets.length}</span>
             </button>
           </div>
@@ -229,6 +245,7 @@ function LoadedAssetStage({
                 <AssetListButton
                   key={character.id}
                   selected={activeCharacter?.id === character.id}
+                  disabled={assetBusy}
                   name={character.name}
                   detail={character.identity || "未提供身份描述"}
                   status={identity?.referenceUrl ? "身份板已生成" : "待生成"}
@@ -241,6 +258,7 @@ function LoadedAssetStage({
               <AssetListButton
                 key={asset.id}
                 selected={activeScene?.id === asset.id}
+                disabled={assetBusy}
                 name={asset.name}
                 detail={asset.type === "prop" ? "关键道具" : "环境场景"}
                 status={asset.referenceUrl ? "场景图已生成" : "待生成"}
@@ -293,12 +311,13 @@ function LoadedAssetStage({
             providers={providers}
             modelPrices={modelPrices}
             disabled={!activeCharacter && !activeScene}
-            pending={pendingKey === `generate:${activeCharacter?.id ?? activeScene?.id}` || pendingKey === "refresh"}
+            pending={Boolean(pendingKey)}
             refreshRequired={Boolean(refreshRequired)}
             actionLabel={activeCharacter ? (identityAsset?.referenceUrl ? "重新生成身份板" : "生成身份板") : activeScene?.referenceUrl ? "重新生成场景图" : "生成场景图"}
             onGenerate={generateCurrent}
             onRetryRefresh={retryRefresh}
             onRefresh={onRefresh}
+            onBusyChange={setRouteSaving}
           />
           {activeCharacter ? (
             <section className="wb-inspector-section">
@@ -308,11 +327,12 @@ function LoadedAssetStage({
                 {referenceAssets.map((asset) => <button key={asset.id} type="button" onClick={() => asset.referenceUrl && onPreview({ url: asset.referenceUrl, title: `${activeCharacter.name} 参考图` })}><img src={asset.referenceUrl} alt={`${activeCharacter.name} 参考图`} loading="lazy" /></button>)}
                 {!referenceAssets.length ? <span>尚未上传参考图</span> : null}
               </div>
-              <label className="wb-reference-url"><span>图片 URL</span><span><input value={referenceDrafts[activeCharacter.id] ?? ""} onChange={(event) => setReferenceDrafts((current) => updateCharacterReferenceDraft(current, activeCharacter.id, event.target.value))} placeholder="粘贴图片 URL" /><button className="wb-icon-button" type="button" aria-label="保存参考图" disabled={!referenceDrafts[activeCharacter.id]?.trim() || pendingKey.startsWith("reference:")} onClick={() => void saveReference(activeCharacter, referenceDrafts[activeCharacter.id] ?? "")}><Save aria-hidden="true" /></button></span></label>
+              <label className="wb-reference-url"><span>图片 URL</span><span><input disabled={actionsBlocked} value={referenceDrafts[activeCharacter.id] ?? ""} onChange={(event) => setReferenceDrafts((current) => updateCharacterReferenceDraft(current, activeCharacter.id, event.target.value))} placeholder="粘贴图片 URL" /><button className="wb-icon-button" type="button" aria-label="保存参考图" disabled={!referenceDrafts[activeCharacter.id]?.trim() || actionsBlocked} onClick={() => void saveReference(activeCharacter, referenceDrafts[activeCharacter.id] ?? "")}><Save aria-hidden="true" /></button></span></label>
               <div className="wb-reference-actions">
-                <label className="wb-secondary-button"><Upload aria-hidden="true" />上传参考图<input type="file" accept="image/*" disabled={pendingKey.startsWith("reference:")} onChange={(event) => void uploadReference(event)} /></label>
-                <button className="wb-icon-button wb-icon-button--danger" type="button" aria-label="清空创作者参考图" disabled={!referenceAssets.length || pendingKey.startsWith("reference:")} onClick={deleteReferences}><Trash2 aria-hidden="true" /></button>
+                <label className="wb-secondary-button"><Upload aria-hidden="true" />{pendingKey.startsWith("reference:") ? "正在保存参考图…" : "上传参考图"}<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" disabled={actionsBlocked} onChange={(event) => void uploadReference(event)} /></label>
+                <button className="wb-icon-button wb-icon-button--danger" type="button" aria-label="清空创作者参考图" disabled={!referenceAssets.length || actionsBlocked} onClick={deleteReferences}><Trash2 aria-hidden="true" /></button>
               </div>
+              <p className="wb-task-hint">支持 PNG、JPEG、WebP、GIF，单张不超过 8 MB。{assetBusy ? "当前操作处理中，完成后可修改参考图。" : ""}</p>
             </section>
           ) : null}
           <section className="wb-inspector-section">
@@ -325,8 +345,8 @@ function LoadedAssetStage({
   );
 }
 
-function AssetListButton({ selected, name, detail, status, imageUrl, fallback, onClick }: { selected: boolean; name: string; detail: string; status: string; imageUrl?: string; fallback: ReactNode; onClick: () => void }) {
-  return <button type="button" className={selected ? "is-selected" : undefined} aria-pressed={selected} onClick={onClick}><span className="wb-asset-list__thumb">{imageUrl ? <img src={imageUrl} alt="" loading="lazy" /> : fallback}</span><span className="wb-asset-list__copy"><strong>{name}</strong><small>{detail}</small></span><em>{status}</em></button>;
+function AssetListButton({ selected, disabled, name, detail, status, imageUrl, fallback, onClick }: { selected: boolean; disabled?: boolean; name: string; detail: string; status: string; imageUrl?: string; fallback: ReactNode; onClick: () => void }) {
+  return <button type="button" disabled={disabled} className={selected ? "is-selected" : undefined} aria-pressed={selected} onClick={onClick}><span className="wb-asset-list__thumb">{imageUrl ? <img src={imageUrl} alt="" loading="lazy" /> : fallback}</span><span className="wb-asset-list__copy"><strong>{name}</strong><small>{detail}</small></span><em>{status}</em></button>;
 }
 
 function AssetDetail({ label, value }: { label: string; value: string }) {
@@ -343,7 +363,8 @@ function AssetImageRoute({
   actionLabel,
   onGenerate,
   onRetryRefresh,
-  onRefresh
+  onRefresh,
+  onBusyChange
 }: {
   project: Project;
   providers: ModelProvider[];
@@ -355,6 +376,7 @@ function AssetImageRoute({
   onGenerate: () => Promise<void>;
   onRetryRefresh: () => Promise<void>;
   onRefresh: (projectId: string) => Promise<ProjectWorkflow>;
+  onBusyChange: (busy: boolean) => void;
 }) {
   const imageProviders = providers.filter((provider) => provider.modality === "image" && provider.enabled);
   const pickerProviders = imageProviders
@@ -362,12 +384,13 @@ function AssetImageRoute({
     .filter((provider) => provider.models.length > 0);
   const [draft, setDraft] = useState(() => routeDraft(project, providers));
   const [saving, setSaving] = useState(false);
+  const generationPending = useRef(false);
   const [error, setError] = useState("");
   const selectedProvider = imageProviders.find((provider) => provider.id === draft.imageProvider);
   const models = selectedProvider?.models.filter((model) => !failedImageModels.has(model)) ?? [];
-  const validPair = models.includes(draft.imageModel);
-  const unitCredits = resolveImageUnitCredits(modelPrices, draft.imageProvider, draft.imageModel);
-  const estimate = estimateImageCredits(unitCredits, draft.imageSize, draft.imageQuality);
+  const route = buildModelCatalog(pickerProviders, modelPrices).find(item => item.provider.id === draft.imageProvider && item.model === draft.imageModel);
+  const validPair = models.includes(draft.imageModel) && Boolean(route?.selectable);
+  const estimate = route?.price ? `${estimateImageCredits(route.price.unitCredits, draft.imageSize, draft.imageQuality)} 积分` : "报价时确认";
 
   // 注意：providers 每次轮询都是新数组引用，放进依赖会导致用户改到一半的渠道/模型
   // 每 4 秒被重置回项目默认值（表现为"切换模型自动跳回通义万相"）。
@@ -376,23 +399,32 @@ function AssetImageRoute({
   useEffect(() => setDraft(routeDraft(project, providers)), [project.id, project.imageProvider, project.imageModel, project.imageSize, project.imageQuality]);
 
   async function applyAndGenerate() {
-    if (!validPair) return;
+    if (!validPair || disabled || pending || generationPending.current || refreshRequired) return;
+    generationPending.current = true;
     setSaving(true);
+    onBusyChange(true);
     setError("");
-    const routeResult = await commitMutationThenSync(
-      () => api.updateProjectModelRoutes(project.id, draft),
-      () => onRefresh(project.id)
-    );
-    if (routeResult.status === "mutation-failed") {
-      setError(errorMessage(routeResult.error, "模型路由保存失败。"));
+    try {
+      const routeResult = await commitMutationThenSync(
+        () => api.updateProjectModelRoutes(project.id, draft),
+        () => onRefresh(project.id)
+      );
+      if (routeResult.status === "mutation-failed") {
+        setError(errorMessage(routeResult.error, "模型路由保存失败。"));
+        return;
+      }
+      await onGenerate();
+    } catch (cause) {
+      setError(errorMessage(cause, "生成请求未能完成，请核对任务记录。"));
+    } finally {
+      generationPending.current = false;
       setSaving(false);
-      return;
+      onBusyChange(false);
     }
-    await onGenerate();
-    setSaving(false);
   }
 
-  return <section className="wb-route-panel"><header><strong><SlidersHorizontal aria-hidden="true" />图片模型</strong><small>预计 {estimate} 积分</small></header><div className="mrp-field"><span>渠道 / 模型</span><ModelRoutePicker modality="image" providers={pickerProviders} modelPrices={modelPrices} value={{ providerId: draft.imageProvider, model: draft.imageModel }} onChange={(providerId, model) => setDraft((current) => ({ ...current, ...resolveImageRoutePair(providerId, model, providers, failedImageModels) }))} /></div><div className="wb-route-grid"><label><span>尺寸</span><select value={draft.imageSize} onChange={(event) => setDraft((current) => ({ ...current, imageSize: normalizeImageOutputSize(event.target.value) }))}>{imageOutputSizeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label><label><span>质量</span><select value={draft.imageQuality} onChange={(event) => setDraft((current) => ({ ...current, imageQuality: normalizeImageOutputQuality(event.target.value) }))}>{imageOutputQualityOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label></div><button className="wb-primary-button" type="button" disabled={disabled || pending || saving || (!refreshRequired && !validPair)} onClick={() => void (refreshRequired ? onRetryRefresh() : applyAndGenerate())}>{pending || saving ? <Loader2 className="wb-spin" aria-hidden="true" /> : refreshRequired ? <Save aria-hidden="true" /> : <WandSparkles aria-hidden="true" />}{refreshRequired ? "重试刷新" : actionLabel}</button>{error ? <p className="wb-action-feedback--error">{error}</p> : null}</section>;
+  const blocked = disabled || pending || saving || refreshRequired;
+  return <section className="wb-route-panel"><header><strong><SlidersHorizontal aria-hidden="true" />图片模型</strong><small>预计：{estimate}</small></header><div className="mrp-field"><span>渠道 / 模型</span><ModelRoutePicker modality="image" providers={pickerProviders} modelPrices={modelPrices} value={{ providerId: draft.imageProvider, model: draft.imageModel }} onChange={(providerId, model) => setDraft((current) => ({ ...current, ...resolveImageRoutePair(providerId, model, providers, failedImageModels) }))} disabled={blocked} /></div><div className="wb-route-grid"><label><span>尺寸</span><select disabled={blocked} value={draft.imageSize} onChange={(event) => setDraft((current) => ({ ...current, imageSize: normalizeImageOutputSize(event.target.value) }))}>{imageOutputSizeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label><label><span>质量</span><select disabled={blocked} value={draft.imageQuality} onChange={(event) => setDraft((current) => ({ ...current, imageQuality: normalizeImageOutputQuality(event.target.value) }))}>{imageOutputQualityOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label></div><button className="wb-primary-button" type="button" disabled={disabled || pending || saving || (!refreshRequired && !validPair)} onClick={() => void (refreshRequired ? onRetryRefresh() : applyAndGenerate())}>{pending || saving ? <Loader2 className="wb-spin" aria-hidden="true" /> : refreshRequired ? <Save aria-hidden="true" /> : <WandSparkles aria-hidden="true" />}{pending || saving ? "正在处理…" : refreshRequired ? "重试刷新" : actionLabel}</button>{error ? <p className="wb-action-feedback--error" role="alert">{error}</p> : null}</section>;
 }
 function FeedbackForm({ projectId, target, recentCount, disabled, onRefresh }: { projectId: string; target: ReturnType<typeof buildAssetFeedbackTarget>; recentCount: number; disabled: boolean; onRefresh: (projectId: string) => Promise<ProjectWorkflow> }) {
   const [rating, setRating] = useState(4);

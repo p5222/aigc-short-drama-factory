@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { closeAfterAdminSuccess, createAdminActionRunner, createCreditAdjustmentAttempt, isValidCreditAdjustment, readAdminHash, runAdminBatch } from "./adminActionModel.ts";
+import { closeAfterAdminSuccess, createAdminActionRunner, createCreditAdjustmentAttempt, isValidCreditAdjustment, isValidModelPriceDraft, readAdminHash, runAdminBatch } from "./adminActionModel.ts";
 
 test("double click executes one mutation and keeps pending through refresh", async () => {
   const notices: { pending: boolean; message: string; error: string }[] = [];
@@ -49,6 +49,12 @@ test("credit adjustment requires a nonzero safe integer and reason", () => {
   assert.equal(isValidCreditAdjustment("-10", "纠正错误入账"), true);
 });
 
+test("price forms reject blank or fractional credits while preserving explicit free prices and decimal costs", () => {
+  for (const value of ["", " ", "-1", "1.5", "Infinity", "NaN", "9007199254740992"]) assert.equal(isValidModelPriceDraft(value, "0.01"), false);
+  for (const cost of ["", " ", "-0.1", "Infinity", "NaN"]) assert.equal(isValidModelPriceDraft("20", cost), false);
+  assert.equal(isValidModelPriceDraft("0", "0"), true);
+  assert.equal(isValidModelPriceDraft("20", "0.001"), true);
+});
 test("malformed admin hash cannot crash page", () => {
   assert.equal(readAdminHash("#%E0%A4%A"), "");
   assert.equal(readAdminHash("#%E7%94%A8%E6%88%B7%E7%AE%A1%E7%90%86"), "用户管理");

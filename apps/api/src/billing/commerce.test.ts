@@ -79,6 +79,9 @@ test("PostgreSQL commerce and startup configuration are idempotent", { skip: !da
       const updated = await getMembership(userId, db);
       assert.ok(Date.parse(updated.paidThrough!) > Date.parse(firstMember.paidThrough!));
       assert.equal(updated.active?.discountPercent, 10, "future renewal must not change current-term benefits");
+      assert.equal(updated.scheduledCount, 1);
+      assert.equal(updated.scheduled[0]?.discountPercent, 20);
+      assert.equal(updated.scheduled[0]?.startsAt, firstMember.active?.endsAt);
       assert.equal((await account(userId)).balance, 9100);
       assert.equal(await db.creditTransaction.count({ where: { userId, type: "recharge" } }), 2);
       const terms = await db.rechargeOrder.findMany({ where: { userId, status: "paid" }, orderBy: { membershipStartsAt: "asc" } });
@@ -110,6 +113,58 @@ test("PostgreSQL commerce and startup configuration are idempotent", { skip: !da
       await repository.handleRechargeCallback({ orderId: first.id, channel: "wechat", amountFen: 1000, paidAt: new Date(),
         providerTradeNo: `late_${crypto.randomUUID()}` });
       assert.equal((await getMembership(userId, db)).active?.planId, ids[0]);
+    });
+    await t.test("member overview and admin segmentation derive from paid terms despite stale cache or credit gifts", async () => {
+      const ids = await Promise.all([user(1000), user(), user(), user()]);
+      const [activeId, expiredId, futureId, ordinaryId] = ids as [string, string, string, string];
+      const now = Date.now();
+      const snapshots = [
+        { userId: activeId, start: now - 86400_000, end: now + 86400_000 },
+        { userId: expiredId, start: now - 2 * 86400_000, end: now - 86400_000 },
+        { userId: futureId, start: now + 86400_000, end: now + 2 * 86400_000 }
+      ];
+      for (const snapshot of snapshots) await db.rechargeOrder.create({ data: {
+        id: crypto.randomUUID(), userId: snapshot.userId, kind: "membership", planName: "Paid snapshot", membershipPlanId: "snapshot",
+        status: "paid", channel: "wechat", amountCny: 12.34, amountFen: 1234, credits: 100,
+        membershipStartsAt: new Date(snapshot.start), membershipEndsAt: new Date(snapshot.end), membershipDiscountPercent: 10
+      } });
+      // A refunded row and an admin gift cannot classify a user as a paid member.
+      await db.rechargeOrder.create({ data: { id: crypto.randomUUID(), userId: ordinaryId, kind: "membership",
+        planName: "Refunded snapshot", membershipPlanId: "snapshot", status: "refunded", channel: "wechat", amountCny: 10,
+        amountFen: 1000, credits: 100, membershipStartsAt: new Date(now - 1000), membershipEndsAt: new Date(now + 86400_000) } });
+      await repository.adjustUserCredits({ userId: ordinaryId, amount: 50, description: "Test gift" });
+      await db.userMembership.create({ data: { userId: ordinaryId, planId: "stale", planName: "Stale cache",
+        startsAt: new Date(now), endsAt: new Date(now + 9 * 86400_000), discountPercent: 90, priorityLevel: 9 } });
+      const ordinary = await getMembership(ordinaryId, db);
+      assert.equal(ordinary.active, null); assert.equal(ordinary.paidThrough, null);
+      assert.deepEqual(ordinary.scheduled, []); assert.equal(ordinary.lastExpired, null);
+      const expired = await getMembership(expiredId, db);
+      assert.equal(expired.active, null); assert.equal(expired.lastExpired?.planName, "Paid snapshot");
+      const scheduled = await getMembership(futureId, db);
+      assert.equal(scheduled.active, null); assert.equal(scheduled.scheduledCount, 1);
+      assert.equal(scheduled.scheduled[0]?.discountPercent, 10);
+      for (const [id, state] of [[activeId, "active"], [expiredId, "expired"], [futureId, "scheduled"], [ordinaryId, "none"]] as const) {
+        const row = (await repository.listAdminUsersPage({ keyword: id, membership: state, commercial: state === "none" ? "no_online_record" : "online_paid" })).items[0]!;
+        assert.equal(row.id, id); assert.equal(row.commercial?.membership, state);
+        assert.equal(row.commercial?.onlinePaidCny, state === "none" ? 0 : 12.34);
+        assert.equal(row.commercial?.onlinePaidOrders, state === "none" ? 0 : 1);
+        assert.equal(row.role, "creator");
+        assert.equal((await repository.listAdminUsersPage({ keyword: id, membership: state === "none" ? "active" : "none" })).total, 0);
+      }
+      assert.equal((await getMembership(activeId, db)).scheduledCount, 0, "another user's future term is never exposed");
+      assert.equal((await account(ordinaryId)).balance, 150);
+    });
+    await t.test("membership overview bounds future history and keeps authoritative total expiry", async () => {
+      const userId = await user();
+      const start = Date.now() + 86400_000;
+      await db.rechargeOrder.createMany({ data: Array.from({ length: 14 }, (_, i) => ({
+        id: crypto.randomUUID(), userId, kind: "membership", planName: "Future", membershipPlanId: "future", status: "paid",
+        channel: "mock", amountCny: 0, credits: 0, membershipStartsAt: new Date(start + i * 86400_000),
+        membershipEndsAt: new Date(start + (i + 1) * 86400_000)
+      })) });
+      const result = await getMembership(userId, db);
+      assert.equal(result.scheduled.length, 12); assert.equal(result.scheduledCount, 14);
+      assert.equal(result.paidThrough, new Date(start + 14 * 86400_000).toISOString());
     });
     await t.test("concurrent users cannot exceed a redeem code's total capacity", async () => {
       const people = await Promise.all(Array.from({ length: 8 }, () => user()));
@@ -247,6 +302,8 @@ test("PostgreSQL commerce and startup configuration are idempotent", { skip: !da
       const price = catalog.modelPrices.find((item) => item.providerId === "dashscope-image")!;
       await db.user.update({ where: { id: seed.ADMIN_USER_ID }, data: { name: "Operator-owned admin", passwordHash: "preserved-test-hash", status: "disabled" } });
       await db.plan.update({ where: { id: plan.id }, data: { price: 123, credits: 456, enabled: false } });
+      const memberPlan = catalog.membershipPlans[0]!;
+      await db.membershipPlan.update({ where: { id: memberPlan.id }, data: { monthlyPrice: 88.8, monthlyCredits: 4321, discountPercent: 7, enabled: false, features: ["Operator-owned benefits"] } });
       await db.modelPrice.update({ where: { id: price.id }, data: { unitCredits: 77, enabled: false } });
       await db.modelProvider.update({ where: { id: "dashscope-image" }, data: { models: ["operator-model"], enabled: false, capability: { custom: true } } });
       const demo = catalog.redeemCodes[0]!;
@@ -256,6 +313,10 @@ test("PostgreSQL commerce and startup configuration are idempotent", { skip: !da
       assert.equal(admin.passwordHash, "preserved-test-hash"); assert.equal(admin.name, "Operator-owned admin"); assert.equal(admin.status, "disabled");
       const preservedPlan = await db.plan.findUniqueOrThrow({ where: { id: plan.id } });
       assert.equal(preservedPlan.price, 123); assert.equal(preservedPlan.credits, 456); assert.equal(preservedPlan.enabled, false);
+      const preservedMember = await db.membershipPlan.findUniqueOrThrow({ where: { id: memberPlan.id } });
+      assert.equal(preservedMember.monthlyPrice, 88.8); assert.equal(preservedMember.monthlyCredits, 4321);
+      assert.equal(preservedMember.discountPercent, 7); assert.equal(preservedMember.enabled, false);
+      assert.deepEqual(preservedMember.features, ["Operator-owned benefits"]);
       assert.equal((await db.modelPrice.findUniqueOrThrow({ where: { id: price.id } })).unitCredits, 77);
       assert.deepEqual((await db.modelProvider.findUniqueOrThrow({ where: { id: "dashscope-image" } })).models, ["operator-model"]);
       assert.equal((await db.redeemCode.findUniqueOrThrow({ where: { code: demo.code } })).enabled, false);

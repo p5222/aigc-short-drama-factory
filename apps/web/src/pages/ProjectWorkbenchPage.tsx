@@ -26,6 +26,7 @@ import type {
   AssetItem,
   CharacterProfile,
   ExportJob,
+  DeliveryEditReference,
   ModelPrice,
   ModelProvider,
   Project,
@@ -47,6 +48,8 @@ import {
   normalizeImageOutputSize
 } from "@aifilm/shared";
 import { api } from "../lib/api";
+import { ModelRoutePicker } from "../components/ModelRoutePicker";
+import { buildModelCatalog } from "../components/modelCatalog";
 import { BEFORE_CREATOR_NAVIGATION } from "../lib/creatorNavigation";
 import { InlineNotice } from "../design-system/ui";
 import { ProductionWorkspace } from "../workbench/components/ProductionWorkspace";
@@ -88,7 +91,7 @@ const statusText: Record<TaskStatus, string> = {
   succeeded: "已完成",
   failed: "失败",
   canceled: "已取消",
-  refunded: "已退款"
+  refunded: "已解冻"
 };
 
 const failedImageModels = new Set(["wanx-v1", "wan2.5-t2i-preview"]);
@@ -250,13 +253,16 @@ function LoadedProjectWorkbenchPage({ workflow, providers, modelPrices, theme, o
   async function saveModelRoutes(routes: Partial<Pick<Project, "textProvider" | "textModel" | "imageProvider" | "imageModel" | "imageSize" | "imageQuality" | "videoProvider" | "videoModel">>) {
     setIsBusy(true);
     setError("");
+    let saved = false;
     try {
       await api.updateProjectModelRoutes(project.id, routes);
+      saved = true;
       setMessage("本项目模型路由已更新。");
       await refreshProject();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "模型路由保存失败");
-      throw err;
+      const message = saved ? "模型已保存，但项目数据暂未刷新。请重新核对项目数据后再生成。" : err instanceof Error ? err.message : "模型路由保存失败";
+      setError(message);
+      throw new Error(message);
     } finally {
       setIsBusy(false);
     }
@@ -284,12 +290,12 @@ function LoadedProjectWorkbenchPage({ workflow, providers, modelPrices, theme, o
     }
   }
 
-  async function createExport(type: "tts" | "subtitle" | "video_export", storyboardIds?: string[], maxCredits?: number) {
+  async function createExport(type: "tts" | "subtitle" | "video_export", storyboardIds?: string[], maxCredits?: number, deliveryEdit?: DeliveryEditReference) {
     setIsBusy(true);
     setError("");
     beginOperation("export", type === "video_export" ? "MP4 合成中" : type === "tts" ? "配音生成中" : "字幕生成中", "正在整理镜头、台词、时长和素材。");
     try {
-      const job = await createExportJob(project.id, { type, storyboardIds, maxCredits });
+      const job = await createExportJob(project.id, { type, storyboardIds, maxCredits, deliveryEdit });
       setExportJobs(current => [job, ...current.filter(item => item.id !== job.id)]);
       if (job.status === "failed") {
         setMessage("");
@@ -351,8 +357,8 @@ function LoadedProjectWorkbenchPage({ workflow, providers, modelPrices, theme, o
         {message ? <InlineNotice tone="success" onDismiss={() => setMessage("")}>{message}</InlineNotice> : null}
         {error ? <InlineNotice tone="error" onDismiss={() => setError("")}>{error}<button className="wb-text-button" type="button" disabled={isBusy} onClick={() => void refreshProject().catch(() => undefined)}>重新核对项目数据</button></InlineNotice> : null}
       </div> : null}
-      <TaskDrawer open={taskDrawerOpen} tasks={workflow.tasks} onClose={() => setTaskDrawerOpen(false)} />
-      <EvaluationDrawer open={evaluationDrawerOpen} reports={qualityReports} feedbacks={feedbacks} onClose={() => setEvaluationDrawerOpen(false)} onRefresh={() => void refreshProject().catch(() => undefined)} />
+      <TaskDrawer open={taskDrawerOpen} tasks={workflow.tasks} onClose={() => setTaskDrawerOpen(false)} onRetry={async task => { await api.retryTask(task.id); }} onCancel={async task => { await api.cancelTask(task.id); }} onRefresh={refreshProject} />
+      <EvaluationDrawer open={evaluationDrawerOpen} reports={qualityReports} feedbacks={feedbacks} onClose={() => setEvaluationDrawerOpen(false)} onRefresh={refreshProject} />
       {activeTab === "content" ? (
         <ContentStage
           onSaveStateChange={setSaveState}
@@ -398,6 +404,7 @@ function LoadedProjectWorkbenchPage({ workflow, providers, modelPrices, theme, o
         onPublish={(candidate) => { setPublishCandidate(candidate); setPublishOpen(true); }}
         exportJobs={exportJobs}
         onExport={createExport}
+        onSaveStateChange={setSaveState}
         isBusy={isBusy}
         activeShotId={workbenchState.activeShotId}
         activeEpisodeNo={workbenchState.activeEpisodeNo}
@@ -437,7 +444,7 @@ function LoadedProjectWorkbenchPage({ workflow, providers, modelPrices, theme, o
                 <span><SlidersHorizontal size={16} />项目默认模型</span>
                 <small>{project.imageModel || project.textModel || "按项目默认"}</small>
               </summary>
-              <ProjectRouteSwitcher project={project} providers={providers} onSave={saveModelRoutes} />
+              <ProjectRouteSwitcher project={project} providers={providers} modelPrices={modelPrices} onSave={saveModelRoutes} />
             </details>
           </div>
         )}
@@ -1708,7 +1715,7 @@ function CanvasBeatGrid({ storyboards, imageAssetByShotId, activeShotId, onSelec
   );
 }
 
-function ProjectRouteSwitcher({ project, providers, onSave }: { project: Project; providers: ModelProvider[]; onSave: (routes: Partial<Pick<Project, "textProvider" | "textModel" | "imageProvider" | "imageModel" | "imageSize" | "imageQuality" | "videoProvider" | "videoModel">>) => void | Promise<void> }) {
+function ProjectRouteSwitcher({ project, providers, modelPrices, onSave }: { project: Project; providers: ModelProvider[]; modelPrices: ModelPrice[]; onSave: (routes: Partial<Pick<Project, "textProvider" | "textModel" | "imageProvider" | "imageModel" | "imageSize" | "imageQuality" | "videoProvider" | "videoModel">>) => void | Promise<void> }) {
   const [draft, setDraft] = useState({
     textProvider: project.textProvider ?? "",
     textModel: project.textModel ?? "",
@@ -1719,46 +1726,20 @@ function ProjectRouteSwitcher({ project, providers, onSave }: { project: Project
     videoProvider: project.videoProvider ?? "",
     videoModel: project.videoModel ?? ""
   });
-  const textProviders = providers.filter((provider) => provider.modality === "text" && provider.enabled);
-  const imageProviders = providers.filter((provider) => provider.modality === "image" && provider.enabled);
-  const videoProviders = providers.filter((provider) => provider.modality === "video" && provider.enabled);
-
-  function modelsFor(providerId: string, modality: "text" | "image" | "video") {
-    const models = providers.find((provider) => provider.id === providerId && provider.modality === modality)?.models ?? [];
-    const filtered = modality === "image" ? models.filter((model) => !failedImageModels.has(model)) : models;
-    return filtered.length ? filtered : modality === "image" ? ["wan2.6-t2i"] : [];
-  }
-
-  function updateProvider(modality: "text" | "image" | "video", providerId: string) {
-    const models = modelsFor(providerId, modality);
-    setDraft((current) => ({
-      ...current,
-      [`${modality}Provider`]: providerId,
-      [`${modality}Model`]: models[0] ?? ""
-    }));
-  }
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
+  const pickerProviders = providers.map(provider => provider.modality === "image" ? { ...provider, models: provider.models.filter(model => !failedImageModels.has(model)) } : provider);
 
   return (
     <div className="project-route-switcher compact">
-      <RouteSelect title="剧本/分镜拆解" provider={draft.textProvider} model={draft.textModel} providers={textProviders} models={modelsFor(draft.textProvider, "text")} onProvider={(value) => updateProvider("text", value)} onModel={(value) => setDraft((current) => ({ ...current, textModel: value }))} />
-      <RouteSelect title="角色图/分镜图" provider={draft.imageProvider} model={draft.imageModel} providers={imageProviders} models={modelsFor(draft.imageProvider, "image")} onProvider={(value) => updateProvider("image", value)} onModel={(value) => setDraft((current) => ({ ...current, imageModel: value }))} />
-      <RouteSelect title="图生视频" provider={draft.videoProvider} model={draft.videoModel} providers={videoProviders} models={modelsFor(draft.videoProvider, "video")} onProvider={(value) => updateProvider("video", value)} onModel={(value) => setDraft((current) => ({ ...current, videoModel: value }))} />
+      {(["text", "image", "video"] as const).map((modality, index) => <div className="route-step-card" key={modality}><strong>{["剧本/分镜拆解", "角色图/分镜图", "图生视频"][index]}</strong><ModelRoutePicker modality={modality} providers={pickerProviders} modelPrices={modelPrices} value={{ providerId: draft[`${modality}Provider`], model: draft[`${modality}Model`] }} onChange={(providerId, model) => setDraft(current => ({ ...current, [`${modality}Provider`]: providerId, [`${modality}Model`]: model }))} disabled={saving} /></div>)}
       <div className="route-param-row">
         <label><span>分辨率</span><select value={draft.imageSize} onChange={(event) => setDraft((current) => ({ ...current, imageSize: normalizeImageOutputSize(event.target.value) }))}>{imageOutputSizeOptions.map((item) => <option key={item.value} value={item.value}>{item.label} · x{item.multiplier}</option>)}</select></label>
         <label><span>质量</span><select value={draft.imageQuality} onChange={(event) => setDraft((current) => ({ ...current, imageQuality: normalizeImageOutputQuality(event.target.value) }))}>{imageOutputQualityOptions.map((item) => <option key={item.value} value={item.value}>{item.label} · x{item.multiplier}</option>)}</select></label>
         <small>当前参数倍率 x{imageParameterMultiplier(draft.imageSize, draft.imageQuality).toFixed(2)}，生成时按项目参数扣费。</small>
       </div>
-      <button className="ghost-button" onClick={() => void onSave(draft)} type="button"><Save size={16} />保存路由</button>
-    </div>
-  );
-}
-
-function RouteSelect({ title, provider, model, providers, models, onProvider, onModel }: { title: string; provider: string; model: string; providers: ModelProvider[]; models: string[]; onProvider: (value: string) => void; onModel: (value: string) => void }) {
-  return (
-    <div className="route-step-card">
-      <strong>{title}</strong>
-      <select value={provider} onChange={(event) => onProvider(event.target.value)}>{providers.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>
-      <select value={model} onChange={(event) => onModel(event.target.value)}>{models.map((item) => <option key={item} value={item}>{item}</option>)}</select>
+      <button className="ghost-button" disabled={saving} onClick={async () => { setSaving(true); setSaveError(""); try { await onSave(draft); } catch (reason) { setSaveError(reason instanceof Error ? reason.message : "模型配置保存失败"); } finally { setSaving(false); } }} type="button"><Save size={16} />{saving ? "保存中…" : "保存路由"}</button>
+      {saveError ? <p className="error-text">{saveError}</p> : null}
     </div>
   );
 }
@@ -1797,11 +1778,9 @@ function ImageRoutePicker({
   });
   const [saving, setSaving] = useState(false);
   const [actionError, setActionError] = useState("");
-  const models = (imageProviders.find((provider) => provider.id === draft.imageProvider)?.models ?? [draft.imageModel]).filter((model) => !failedImageModels.has(model));
-  const unitPrice = modelPrices.find((price) => price.enabled && price.modality === "image" && price.providerId === draft.imageProvider && price.model === draft.imageModel)?.unitCredits
-    ?? modelPrices.find((price) => price.enabled && price.modality === "image" && price.model === draft.imageModel)?.unitCredits
-    ?? 8;
-  const estimatedCredits = Math.max(0, quantity) * estimateImageCredits(unitPrice, draft.imageSize, draft.imageQuality);
+  const currentRoute = buildModelCatalog(imageProviders, modelPrices).find(item => item.provider.id === draft.imageProvider && item.model === draft.imageModel);
+  const unitPrice = currentRoute?.price?.unitCredits;
+  const estimatedCredits = unitPrice === undefined ? undefined : Math.max(0, quantity) * estimateImageCredits(unitPrice, draft.imageSize, draft.imageQuality);
 
   useEffect(() => {
     setDraft({
@@ -1811,11 +1790,6 @@ function ImageRoutePicker({
       imageQuality: normalizeImageOutputQuality(project.imageQuality)
     });
   }, [project.id, project.imageProvider, project.imageModel, project.imageSize, project.imageQuality]);
-
-  function selectProvider(providerId: string) {
-    const nextModels = (imageProviders.find((provider) => provider.id === providerId)?.models ?? []).filter((model) => !failedImageModels.has(model));
-    setDraft((current) => ({ ...current, imageProvider: providerId, imageModel: nextModels[0] ?? current.imageModel }));
-  }
 
   async function applyRoute(action?: () => void | Promise<void>) {
     setSaving(true);
@@ -1832,9 +1806,8 @@ function ImageRoutePicker({
 
   return (
     <section className="image-route-picker">
-      <div className="asset-action-title"><strong><SlidersHorizontal size={15} />生成模型</strong><small>预计 {estimatedCredits} 积分</small></div>
-      <label><span>渠道</span><select value={draft.imageProvider} onChange={(event) => selectProvider(event.target.value)}>{imageProviders.map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}</select></label>
-      <label><span>模型</span><select value={draft.imageModel} onChange={(event) => setDraft((current) => ({ ...current, imageModel: event.target.value }))}>{models.map((model) => <option key={model} value={model}>{model}</option>)}</select></label>
+      <div className="asset-action-title"><strong><SlidersHorizontal size={15} />生成模型</strong><small>{estimatedCredits === undefined ? "价格待配置" : `预计 ${estimatedCredits} 积分`}</small></div>
+      <ModelRoutePicker modality="image" providers={imageProviders.map(provider => ({ ...provider, models: provider.models.filter(model => !failedImageModels.has(model)) }))} modelPrices={modelPrices} value={{ providerId: draft.imageProvider, model: draft.imageModel }} onChange={(providerId, model) => setDraft(current => ({ ...current, imageProvider: providerId, imageModel: model }))} disabled={saving} />
       <div className="image-route-params">
         <label><span>尺寸</span><select value={draft.imageSize} onChange={(event) => setDraft((current) => ({ ...current, imageSize: normalizeImageOutputSize(event.target.value) }))}>{imageOutputSizeOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
         <label><span>质量</span><select value={draft.imageQuality} onChange={(event) => setDraft((current) => ({ ...current, imageQuality: normalizeImageOutputQuality(event.target.value) }))}>{imageOutputQualityOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
@@ -1852,21 +1825,14 @@ function VideoRoutePicker({ project, providers, modelPrices, totalSeconds, onSav
   const [model, setModel] = useState(project.videoModel ?? videoProviders.find((provider) => provider.id === (project.videoProvider ?? videoProviders[0]?.id))?.models[0] ?? "");
   const [saving, setSaving] = useState(false);
   const [actionError, setActionError] = useState("");
-  const models = videoProviders.find((provider) => provider.id === providerId)?.models ?? [];
-  const unitCredits = modelPrices.find((price) => price.enabled && price.modality === "video" && price.providerId === providerId && price.model === model && price.unit === "video_second")?.unitCredits
-    ?? modelPrices.find((price) => price.enabled && price.modality === "video" && price.model === model && price.unit === "video_second")?.unitCredits
-    ?? 2;
+  const currentRoute = buildModelCatalog(videoProviders, modelPrices).find(item => item.provider.id === providerId && item.model === model);
+  const unitCredits = currentRoute?.price?.unit === "video_second" ? currentRoute.price.unitCredits : undefined;
 
   useEffect(() => {
     const nextProvider = project.videoProvider ?? videoProviders[0]?.id ?? "";
     setProviderId(nextProvider);
     setModel(project.videoModel ?? videoProviders.find((provider) => provider.id === nextProvider)?.models[0] ?? "");
   }, [project.id, project.videoProvider, project.videoModel]);
-
-  function updateProvider(nextProvider: string) {
-    setProviderId(nextProvider);
-    setModel(videoProviders.find((provider) => provider.id === nextProvider)?.models[0] ?? "");
-  }
 
   async function applyRouteAndGenerate() {
     setSaving(true);
@@ -1883,9 +1849,8 @@ function VideoRoutePicker({ project, providers, modelPrices, totalSeconds, onSav
 
   return (
     <section className="video-route-picker">
-      <div className="asset-action-title"><strong><SlidersHorizontal size={15} />视频模型</strong><small>约 {Math.ceil(totalSeconds * unitCredits)} 积分</small></div>
-      <label><span>渠道</span><select value={providerId} onChange={(event) => updateProvider(event.target.value)}>{videoProviders.map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}</select></label>
-      <label><span>模型</span><select value={model} onChange={(event) => setModel(event.target.value)}>{models.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
+      <div className="asset-action-title"><strong><SlidersHorizontal size={15} />视频模型</strong><small>{unitCredits === undefined ? "价格待配置" : `约 ${Math.ceil(totalSeconds * unitCredits)} 积分`}</small></div>
+      <ModelRoutePicker modality="video" providers={videoProviders} modelPrices={modelPrices} value={{ providerId, model }} onChange={(nextProvider, nextModel) => { setProviderId(nextProvider); setModel(nextModel); }} disabled={saving} />
       <button className="primary-button full-button" onClick={() => void applyRouteAndGenerate()} disabled={saving || disabled || !providerId || !model} type="button">{saving ? <Loader2 size={15} className="spin-icon" /> : <WandSparkles size={15} />}应用模型并生成待完成片段</button>
       {actionError ? <p className="error-text">{actionError}</p> : null}
     </section>

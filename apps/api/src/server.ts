@@ -14,6 +14,8 @@ import { getToonflowAdapterMetadata } from "./agents/toonflowAdapter.js";
 import { hashPassword, verifyPassword } from "./auth/password.js";
 import { EmailVerificationError, EmailVerificationService, QQ_EMAIL_PATTERN } from "./auth/emailVerification.js";
 import { mockCheckoutEnabled } from "./billing/checkoutPolicy.js";
+import { ContentMutationError } from "./content/contentMutation.js";
+import { DeliveryEditError, saveDeliveryEdit } from "./db/deliveryEdit.js";
 import { acceptWechatTransaction, getMembership, paymentAvailability, prepareCheckout, reconcilePayment, recoverPayments, startCheckout } from "./billing/payments.js";
 import { decryptWechatNotification, PaymentError, wechatConfig } from "./billing/wechat.js";
 import { createRateLimitMiddleware, positiveInteger, RequestRateLimiter } from "./security/rateLimit.js";
@@ -93,6 +95,8 @@ import {
   updateRedeemCode
 } from "./db/repository.js";
 import { prisma } from "./db/client.js";
+import { CreditQueryError, accountPage, billingTasks, fundingLots, ledgerCsv, ledgerPage, pricingOverview, saveCostRule, savePricingPolicy, verifyTaskCost } from "./billing/creditCenter.js";
+import type { CreditPolicy, OfficialCostRule } from "@aifilm/shared";
 import { beginAdminAudit, finishAdminAudit, listAdminAuditLogs } from "./admin/audit.js";
 import { captureStoryboardTailFrame, deleteCharacterReferenceImageV2, generateCharacterReferenceImages, generateSceneEnvironmentImage, regenerateStoryboardShotImage, runProjectStoryboardTasks, setCharacterReferenceImageV2, updateStoryboardShot } from "./db/storyboardActions.js";
 import { MediaSourceConflict } from "./db/mediaSource.js";
@@ -445,8 +449,16 @@ const invoiceRequestSchema = z.object({
 const exportJobCreateSchema = z.object({
   type: z.enum(["tts", "subtitle", "video_export"]),
   storyboardIds: z.array(z.string().min(1)).min(1).max(2000).optional(),
-  maxCredits: z.number().int().nonnegative().optional()
+  maxCredits: z.number().int().nonnegative().optional(),
+  deliveryEdit: z.object({ episodeNo: z.number().int().positive(), revision: z.number().int().positive() }).strict().optional()
 });
+
+const deliveryEditSaveSchema = z.object({
+  episodeNo: z.number().int().positive(),
+  expectedRevision: z.number().int().nonnegative(),
+  clips: z.array(z.object({ shotId: z.string().min(1).max(300), sourceAssetId: z.string().min(1).max(500),
+    inPoint: z.number().min(0).max(86400), outPoint: z.number().positive().max(86400) }).strict()).min(1).max(2000)
+}).strict();
 
 const adminUserUpdateSchema = z.object({
   name: z.string().trim().min(1).max(80).optional(),
@@ -1653,10 +1665,20 @@ app.get(
   })
 );
 
+app.put("/api/projects/:id/delivery-edit", asyncRoute(async (req, res) => {
+  const parsed = deliveryEditSaveSchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json(parsed.error.flatten());
+  try { res.json(await saveDeliveryEdit(paramId(req.params.id), requestUserId(req)!, parsed.data)); }
+  catch (reason) {
+    if (reason instanceof DeliveryEditError) return res.status(reason.statusCode).json({ message: reason.message });
+    throw reason;
+  }
+}));
+
 app.post("/api/projects/:id/exports/quote", asyncRoute(async (req, res) => {
   const parsed = exportJobCreateSchema.safeParse(req.body ?? {});
   if (!parsed.success) return res.status(400).json(parsed.error.flatten());
-  res.json(await quoteProjectExport(paramId(req.params.id), requestUserId(req)!, parsed.data.type, parsed.data.storyboardIds));
+  res.json(await quoteProjectExport(paramId(req.params.id), requestUserId(req)!, parsed.data.type, parsed.data.storyboardIds, parsed.data.deliveryEdit));
 }));
 
 app.post(
@@ -1664,7 +1686,7 @@ app.post(
   asyncRoute(async (req, res) => {
     const parsed = exportJobCreateSchema.safeParse(req.body ?? {});
     if (!parsed.success) return res.status(400).json(parsed.error.flatten());
-    res.status(201).json(await createProjectExportJob(paramId(req.params.id), requestUserId(req), parsed.data.type, parsed.data.storyboardIds, parsed.data.maxCredits));
+    res.status(201).json(await createProjectExportJob(paramId(req.params.id), requestUserId(req), parsed.data.type, parsed.data.storyboardIds, parsed.data.maxCredits, parsed.data.deliveryEdit));
   })
 );
 
@@ -1818,6 +1840,14 @@ app.get(
     res.json(await listCreditTransactions(requestUserId(req)));
   })
 );
+
+app.get("/api/credits/ledger", asyncRoute(async (req, res) => {
+  res.json(await ledgerPage(requestUserId(req) ?? DEMO_USER_ID, req.query));
+}));
+app.get("/api/credits/ledger.csv", asyncRoute(async (req, res) => {
+  const page = await ledgerPage(requestUserId(req) ?? DEMO_USER_ID, req.query);
+  res.type("text/csv").attachment("credit-ledger-page.csv").send(ledgerCsv(page.items));
+}));
 
 app.get(
   "/api/billing/orders",
@@ -2781,12 +2811,43 @@ app.post(
   })
 );
 
+const creditAdminRead = requireAdminPermission("billing:manage");
+const creditAdminAction = (run: (req: express.Request) => Promise<unknown>) => asyncRoute(async (req, res) => {
+  try { res.json(await run(req)); }
+  catch (error) { res.status(error instanceof Error && /已变化|已被/.test(error.message) ? 409 : 400).json({ message: error instanceof Error ? error.message : "积分操作失败" }); }
+});
+app.get("/api/admin/credits/pricing", creditAdminRead, creditAdminAction(() => pricingOverview()));
+app.get("/api/admin/credits/accounts", creditAdminRead, creditAdminAction(req => accountPage(req.query)));
+app.get("/api/admin/credits/funding", creditAdminRead, creditAdminAction(req => fundingLots(String(req.query.userId ?? ""))));
+app.get("/api/admin/credits/tasks", creditAdminRead, creditAdminAction(req => billingTasks(req.query)));
+app.get("/api/admin/credits/ledger", creditAdminRead, creditAdminAction(req => ledgerPage(String(req.query.userId ?? ""), req.query)));
+app.get("/api/admin/credits/ledger.csv", creditAdminRead, asyncRoute(async (req, res) => {
+  const page = await ledgerPage(String(req.query.userId ?? ""), req.query);
+  res.type("text/csv").attachment("credit-ledger-page.csv").send(ledgerCsv(page.items));
+}));
+app.patch("/api/admin/credits/policy", creditAdminRead, creditAdminAction(req => {
+  const parsed = z.object({ expectedVersion: z.number().int().positive(), policy: z.object({
+    version: z.number().int().positive(), targetMarginBps: z.number().int().min(0).max(9999),
+    creditValueMicros: z.number().int().positive(), usdCnyMicros: z.number().int().positive().nullable(),
+    overheadBps: z.number().int().min(0).max(10000), protectMargin: z.boolean()
+  }) }).parse(req.body);
+  return savePricingPolicy(parsed as { expectedVersion: number; policy: CreditPolicy });
+}));
+app.post("/api/admin/credits/cost-rule", creditAdminRead, creditAdminAction(req => {
+  const parsed = z.object({ priceId: z.string().min(1), expectedUpdatedAt: z.string().datetime(), expectedPolicyVersion: z.number().int().positive(), rule: z.record(z.string(), z.unknown()).nullable() }).parse(req.body);
+  return saveCostRule(parsed as unknown as { priceId: string; expectedUpdatedAt: string; expectedPolicyVersion: number; rule: OfficialCostRule | null });
+}));
+app.post("/api/admin/credits/verify-cost", creditAdminRead, creditAdminAction(req => {
+  const parsed = z.object({ taskId: z.string().min(1), expectedUpdatedAt: z.string().datetime(), costMicros: z.number().int().min(0), invoiceReference: z.string().min(1).max(200) }).parse(req.body);
+  return verifyTaskCost(parsed);
+}));
+
 app.use((error: unknown, req: express.Request, res: express.Response, _next: express.NextFunction) => {
   if (error instanceof EmailVerificationError) {
     if (error.retryAfter) res.setHeader("Retry-After", String(error.retryAfter));
     return res.status(error.status).json({ message: error.message, retryAfterSeconds: error.retryAfter });
   }
-  if (error instanceof ProjectRequestError || error instanceof MediaSourceConflict || error instanceof AnnouncementScheduleError || error instanceof SupportTicketError) return res.status(error.status).json({ message: error.message });
+  if (error instanceof CreditQueryError || error instanceof ProjectRequestError || error instanceof MediaSourceConflict || error instanceof AnnouncementScheduleError || error instanceof SupportTicketError || error instanceof ContentMutationError) return res.status(error.status).json({ message: error.message });
   const message = error instanceof Error ? error.message : "服务器异常";
   const cause = error instanceof Error && "cause" in error ? (error as Error & { cause?: unknown }).cause : undefined;
   const causeMessage = cause instanceof Error ? `${cause.name}: ${cause.message}` : typeof cause === "object" && cause ? JSON.stringify(cause).slice(0, 240) : "";
