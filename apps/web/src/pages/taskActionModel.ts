@@ -1,4 +1,9 @@
 import type { GenerationTask } from "@aifilm/shared";
+import type { SupportCreateDraft } from "../support/supportTicketModel";
+
+export function taskSupportDraft(task: GenerationTask): SupportCreateDraft {
+  return { subject: `任务问题 · ${task.id}`.slice(0, 120), category: task.type === "export" ? "export" : "generation", body: taskSupportDiagnostic(task) };
+}
 
 export type TaskAction = "retry" | "cancel" | "refresh";
 export type PendingTaskActions = Record<string, TaskAction>;

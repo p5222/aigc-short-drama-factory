@@ -1,7 +1,9 @@
 import { LoaderCircle, Plus, Trash2 } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ContentProjectSummary, Project } from "@aifilm/shared";
-import { contentMatchesFilter, contentWorkState, createWorkDeletionRunner, productionMatchesFilter, productionWorkState, worksFilterTabs, type WorksFilter } from "./scriptsPageModel";
+import { contentMatchesFilter, contentNextAction, contentWorkState, createWorkDeletionRunner, productionMatchesFilter, productionWorkState, sortWorks, worksFilterTabs, type WorksFilter, type WorksSort } from "./scriptsPageModel";
+import { ListPagination } from "../components/ListPagination";
+import { projectNextAction } from "./workbenchPresentation";
 import "./scripts-page.css";
 import { ConfirmDialog, InlineNotice, PageHeader, StatePanel } from "../design-system/ui";
 import { StudioIcon } from "../design-system/StudioIcon";
@@ -34,6 +36,11 @@ export function ScriptsPage({
   const [deleteNotice, setDeleteNotice] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string; kind: "production" | "content" } | null>(null);
   const [query, setQuery] = useState("");
+  const [sort, setSort] = useState<WorksSort>("updated");
+  const [contentPage, setContentPage] = useState(1);
+  const [productionPage, setProductionPage] = useState(1);
+  const pageSize = 12;
+  useEffect(() => { setContentPage(1); setProductionPage(1); }, [query, filter, sort]);
   const deletionRunner = useRef(createWorkDeletionRunner((state) => {
     setDeletingIds((current) => {
       const next = new Set(current);
@@ -42,8 +49,11 @@ export function ScriptsPage({
     });
     setDeleteErrors((current) => ({ ...current, [state.projectId]: state.error }));
   }));
-  const visibleContent = useMemo(() => contentProjects.filter((item) => contentMatchesFilter(item, filter) && item.title.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())), [contentProjects, filter, query]);
-  const visibleProjects = useMemo(() => projects.filter((item) => productionMatchesFilter(item, filter) && `${item.name} ${item.intro ?? ""}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())), [projects, filter, query]);
+  const visibleContent = useMemo(() => sortWorks(contentProjects.filter((item) => contentMatchesFilter(item, filter) && item.title.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())), sort), [contentProjects, filter, query, sort]);
+  const visibleProjects = useMemo(() => sortWorks(projects.filter((item) => productionMatchesFilter(item, filter) && `${item.name} ${item.intro ?? ""}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())), sort), [projects, filter, query, sort]);
+  const currentContentPage = Math.min(contentPage, Math.max(1, Math.ceil(visibleContent.length / pageSize)));
+  const currentProductionPage = Math.min(productionPage, Math.max(1, Math.ceil(visibleProjects.length / pageSize)));
+  useEffect(() => { setContentPage(currentContentPage); setProductionPage(currentProductionPage); }, [currentContentPage, currentProductionPage]);
   const totalCount = contentProjects.length + projects.length;
   const sectionOrder = !visibleContent.length && visibleProjects.length ? ["production", "content"] : ["content", "production"];
 
@@ -69,6 +79,9 @@ export function ScriptsPage({
         </>} />
       <div className="creator-list-toolbar">
       <label className="creator-search-field"><span className="creator-sr-only">搜索我的作品</span><input type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索作品名称或简介" /></label>
+      <label className="creator-filter-select"><span>作品排序</span><select value={sort} onChange={event => setSort(event.target.value as WorksSort)}><option value="updated">最近更新优先</option><option value="title">按名称排序</option></select></label>
+      </div>
+      <div className="works-filter-bar">
       <div className="tabs" role="group" aria-label="按作品状态筛选">
         {worksFilterTabs.map((tab) => (
           <button key={tab.id} type="button" className={tab.id === filter ? "active" : ""} aria-pressed={tab.id === filter} onClick={() => setFilter(tab.id)}>
@@ -76,6 +89,7 @@ export function ScriptsPage({
           </button>
         ))}
       </div>
+      <span className="works-result-count" role="status">找到 {visibleContent.length + visibleProjects.length} 部作品</span>
       </div>
       {deleteNotice ? <InlineNotice tone="success" onDismiss={() => setDeleteNotice("")}>{deleteNotice}</InlineNotice> : null}
 
@@ -92,7 +106,7 @@ export function ScriptsPage({
         </header>
         {visibleContent.length ? (
           <div className="project-grid">
-            {visibleContent.map((item) => {
+            {visibleContent.slice((currentContentPage - 1) * pageSize, currentContentPage * pageSize).map((item) => {
               const status = contentWorkState(item);
               const key = `content:${item.id}`;
               const deleting = deletingIds.has(key);
@@ -113,7 +127,7 @@ export function ScriptsPage({
                     <span>{item.styleProfile?.name || "风格自动"}</span>
                     <span>{new Date(item.updatedAt).toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" })} 更新</span>
                   </div>
-                  <div className="works-card-footer"><span>{deleting ? "正在删除，请稍候…" : "继续内容创作"}</span><button className="works-card-delete" type="button" disabled={deleting} aria-label={`删除故事 ${item.title}`} onClick={() => setDeleteTarget({ id: item.id, name: item.title, kind: "content" })}>{deleting ? <LoaderCircle size={15} className="spin" /> : <Trash2 size={15} />}<span>{deleting ? "删除中" : "删除"}</span></button></div>
+                  <div className="works-card-footer"><span>{deleting ? "正在删除，请稍候…" : contentNextAction(item)}</span><button className="works-card-delete" type="button" disabled={deleting} aria-label={`删除故事 ${item.title}`} onClick={() => setDeleteTarget({ id: item.id, name: item.title, kind: "content" })}>{deleting ? <LoaderCircle size={15} className="spin" /> : <Trash2 size={15} />}<span>{deleting ? "删除中" : "删除"}</span></button></div>
                   {deleteErrors[key] ? <p className="works-delete-error" role="alert">删除失败：{deleteErrors[key]} 当前故事仍保留在列表中。</p> : null}
                 </article>
               );
@@ -122,6 +136,7 @@ export function ScriptsPage({
         ) : !visibleProjects.length ? (
           <StatePanel compact title={query || filter !== "all" ? "没有匹配的故事" : "从一个故事开始"} description={query || filter !== "all" ? "试试其他关键词或查看全部状态。" : "写下灵感，逐步形成大纲、章节与可制作的剧本。"} action={query || filter !== "all" ? <button type="button" className="ghost-button" onClick={() => { setQuery(""); setFilter("all"); }}>清空筛选</button> : <button type="button" className="ghost-button" onClick={onNewContent}>写新故事</button>} />
         ) : null}
+        <ListPagination label="故事" total={visibleContent.length} page={currentContentPage} pageSize={pageSize} onChange={setContentPage} />
       </section>
       ) : (
       <section key="production" className={`panel works-section${!visibleProjects.length && visibleContent.length ? " is-compact-empty" : ""}`} data-tour-id="project-list" aria-labelledby="works-production-heading">
@@ -136,7 +151,7 @@ export function ScriptsPage({
         </header>
         {visibleProjects.length ? (
           <div className="project-grid">
-            {visibleProjects.map((project) => {
+            {visibleProjects.slice((currentProductionPage - 1) * pageSize, currentProductionPage * pageSize).map((project) => {
               const status = productionWorkState(project);
               const opening = openingId === project.id;
               const key = `production:${project.id}`;
@@ -158,7 +173,7 @@ export function ScriptsPage({
                   <span>{project.creditsSpent} 积分</span>
                 </div>
                 <div className="works-card-footer">
-                  <span>{deleting ? "正在删除，请稍候…" : "进入生产台继续制作"}</span>
+                  <span>{deleting ? "正在删除，请稍候…" : projectNextAction(project)}</span>
                   <button className="works-card-delete" type="button" disabled={opening || deleting} aria-label={`删除作品 ${project.name}`} onClick={() => setDeleteTarget({ id: project.id, name: project.name, kind: "production" })}>{deleting ? <LoaderCircle size={15} className="spin" /> : <Trash2 size={15} />}<span>{deleting ? "删除中" : "删除"}</span></button>
                 </div>
                 {deleteErrors[key] ? <p className="works-delete-error" role="alert">删除失败：{deleteErrors[key]} 当前作品仍保留在列表中。</p> : null}
@@ -173,6 +188,7 @@ export function ScriptsPage({
         ) : !visibleContent.length ? (
           <StatePanel compact title={query || filter !== "all" ? "没有匹配的漫剧" : "准备制作第一部漫剧"} description={query || filter !== "all" ? "试试其他关键词或查看全部状态。" : "导入小说或剧本，确认设置后开始制作。"} action={query || filter !== "all" ? <button type="button" className="ghost-button" onClick={() => { setQuery(""); setFilter("all"); }}>清空筛选</button> : <button type="button" className="primary-button" onClick={onNew}>新建漫剧</button>} />
         ) : null}
+        <ListPagination label="漫剧" total={visibleProjects.length} page={currentProductionPage} pageSize={pageSize} onChange={setProductionPage} />
       </section>
       ))}
       <ConfirmDialog open={Boolean(deleteTarget)} title="删除这部作品？" description={<>{deleteTarget?.name}<br />{deleteTarget?.kind === "content" ? "分析、大纲、章节及内容版本都会删除；已交接的漫剧项目保留。" : "剧本、分镜和资产都会删除；任务与积分历史保留。"}此操作不可恢复。{deleteTarget && deleteErrors[`${deleteTarget.kind}:${deleteTarget.id}`] ? <span className="creator-confirm-error" role="alert">{deleteErrors[`${deleteTarget.kind}:${deleteTarget.id}`]} 作品仍保留，可以重试。</span> : null}</>} confirmLabel="删除作品" danger pending={deleteTarget ? deletingIds.has(`${deleteTarget.kind}:${deleteTarget.id}`) : false} onConfirm={() => { if (deleteTarget) void deleteWork(deleteTarget); }} onCancel={() => setDeleteTarget(null)} />

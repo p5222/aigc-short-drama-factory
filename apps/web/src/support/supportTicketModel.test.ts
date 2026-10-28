@@ -1,7 +1,20 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { SupportTicketSummary } from "@aifilm/shared";
-import { captureSupportAttempt, claimSupportDraft, completeSupportAttempt, createSupportReadGate, emptySupportDraft, mergeSupportSummary, readSupportDraft, supportRequestId, supportStorageKey, validateSupportCreate, validateSupportMessage, writeSupportDraft } from "./supportTicketModel.ts";
+import { attachSupportContext, captureSupportAttempt, claimSupportDraft, completeSupportAttempt, createSupportReadGate, emptySupportDraft, mergeSupportSummary, readSupportDraft, supportRequestId, supportStorageKey, validateSupportCreate, validateSupportMessage, writeSupportDraft } from "./supportTicketModel.ts";
+
+test("attaching task context preserves draft fields, does not duplicate diagnostics and refuses overflow without truncation", () => {
+  const context = { subject: "任务问题", category: "generation" as const, body: "平台任务编号：task-1" };
+  const draft = { subject: "账单问题", category: "billing" as const, body: "我原来写下的内容" };
+  const merged = attachSupportContext(draft, context);
+  assert.equal(merged.subject, draft.subject);
+  assert.equal(merged.category, draft.category);
+  assert.equal(merged.body, `${draft.body}\n\n${context.body}`);
+  assert.deepEqual(attachSupportContext(merged, context), merged);
+  assert.deepEqual(attachSupportContext(emptySupportDraft(), context), context);
+  assert.throws(() => attachSupportContext({ ...draft, body: "文".repeat(5000) }, context), /原草稿已保留/);
+  assert.equal(draft.body, "我原来写下的内容");
+});
 
 function storage() { const values = new Map<string, string>(); return { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, value); }, removeItem: (key: string) => { values.delete(key); } }; }
 test("logical retries retain their request ID across remounts and version refreshes", () => {

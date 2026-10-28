@@ -1,7 +1,20 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ContentProjectSummary, Project } from "@aifilm/shared";
-import { contentMatchesFilter, contentWorkState, createWorkDeletionRunner, productionMatchesFilter, productionWorkState, worksFilterTabs } from "./scriptsPageModel.ts";
+import { contentMatchesFilter, contentNextAction, contentWorkState, createWorkDeletionRunner, productionMatchesFilter, productionWorkState, sortWorks, worksFilterTabs } from "./scriptsPageModel.ts";
+
+test("library sorting is stable across equal and invalid timestamps without mutating source data", () => {
+  const items = [{ id: "10", name: "作品10", updatedAt: "bad" }, { id: "2", name: "作品2", updatedAt: "2026-10-27" }, { id: "1", title: "作品1", updatedAt: "2026-10-27" }];
+  assert.deepEqual(sortWorks(items).map(item => item.id), ["1", "2", "10"]);
+  assert.deepEqual(sortWorks(items, "title").map(item => item.id), ["1", "2", "10"]);
+  assert.deepEqual(items.map(item => item.id), ["10", "2", "1"]);
+});
+
+test("story continuation prioritizes failed or stale work over existing script handoff", () => {
+  assert.equal(contentNextAction({ status: "stale", scriptCount: 2, activeStep: "script" }), "检查内容与生成结果");
+  assert.equal(contentNextAction({ status: "confirmed", scriptCount: 2, activeStep: "script" }), "检查剧本并交接制作");
+  assert.equal(contentNextAction({ status: "running", scriptCount: 2, activeStep: "script" }), "查看生成进度");
+});
 
 test("all real production stages belong to exactly one visible status filter", () => {
   const cases = { draft: "draft", planning: "running", scripting: "running", storyboarding: "running", asseting: "running", rendering: "running", completed: "done" } as const;

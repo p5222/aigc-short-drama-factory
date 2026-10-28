@@ -24,8 +24,10 @@ import type { GenerationTask, TaskStatus, TaskType } from "@aifilm/shared";
 import { canCancelTask, canRetryTask, createTaskActionRunner, taskRecoveryHint, taskSupportDiagnostic, type PendingTaskActions, type TaskAction } from "./taskActionModel";
 import { ListPagination } from "../components/ListPagination";
 import { BillingReceipt } from "../components/BillingReceipt";
+import type { TaskQueueFilter } from "../lib/creatorNavigation";
+import "./task-flow.css";
 
-type QueueFilter = "all" | "active" | "failed" | "succeeded" | "pending" | "canceled" | "refunded";
+type QueueFilter = TaskQueueFilter;
 
 const stageOrder: TaskType[] = ["text", "storyboard", "character", "image", "video", "tts", "export"];
 const statusPriority: Record<TaskStatus, number> = {
@@ -43,25 +45,31 @@ export function TaskCenterPage({
   onCancel,
   onRefresh,
   onOpenProject,
-  onOpenSupport
+  onOpenSupport,
+  initialFilter = "all",
+  initialTaskId = ""
 }: {
   tasks: GenerationTask[];
   onRetry: (taskId: string) => void | Promise<void>;
   onCancel: (taskId: string) => void | Promise<void>;
   onRefresh: () => void | Promise<void>;
   onOpenProject: (projectId: string) => void;
-  onOpenSupport: () => void;
+  onOpenSupport: (task: GenerationTask) => void;
+  initialFilter?: QueueFilter;
+  initialTaskId?: string;
 }) {
-  const [activeFilter, setActiveFilter] = useState<QueueFilter>("all");
+  const [activeFilter, setActiveFilter] = useState<QueueFilter>(initialFilter);
   const [activeStage, setActiveStage] = useState<TaskType | "all">("all");
-  const [selectedTaskId, setSelectedTaskId] = useState("");
+  const [selectedTaskId, setSelectedTaskId] = useState(initialTaskId);
+  const locatedInitialTask = useRef(false);
+  const detailRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
   const [pendingActions, setPendingActions] = useState<PendingTaskActions>({});
   const [actionError, setActionError] = useState("");
   const [actionMessage, setActionMessage] = useState("");
   const [query, setQuery] = useState("");
   const [requestedPage, setRequestedPage] = useState(1);
   const pageSize = 20;
-  useEffect(() => setRequestedPage(1), [query, activeFilter, activeStage]);
   const actionRunner = useRef(createTaskActionRunner()).current;
 
   async function runAction(taskId: string, action: TaskAction) {
@@ -95,19 +103,15 @@ export function TaskCenterPage({
       .sort((a, b) => statusPriority[a.status] - statusPriority[b.status] || new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
   }, [activeFilter, activeStage, tasks, query]);
 
+  useEffect(() => {
+    if (!initialTaskId || locatedInitialTask.current) return;
+    const index = filteredTasks.findIndex(task => task.id === initialTaskId);
+    if (index >= 0) { locatedInitialTask.current = true; setRequestedPage(Math.floor(index / pageSize) + 1); setSelectedTaskId(initialTaskId); }
+  }, [initialTaskId, filteredTasks]);
+
   const currentPage = Math.min(requestedPage, Math.max(1, Math.ceil(filteredTasks.length / pageSize)));
   const pageTasks = filteredTasks.slice((currentPage - 1) * pageSize, currentPage * pageSize);
   const selectedTask = pageTasks.find((task) => task.id === selectedTaskId) ?? pageTasks[0];
-
-  useEffect(() => {
-    if (!selectedTask) {
-      setSelectedTaskId("");
-      return;
-    }
-    if (!pageTasks.some((task) => task.id === selectedTaskId)) {
-      setSelectedTaskId(selectedTask.id);
-    }
-  }, [currentPage, filteredTasks, selectedTask, selectedTaskId]);
 
   return (
     <div className="page-stack generation-queue-page creator-page" data-tour-id="task-center">
@@ -121,8 +125,8 @@ export function TaskCenterPage({
       {actionError ? <InlineNotice tone="error" onDismiss={() => setActionError("")}>{actionError}</InlineNotice> : null}
       {actionMessage ? <InlineNotice tone="success" onDismiss={() => setActionMessage("")}>{actionMessage}</InlineNotice> : null}
       {tasks.length ? <><div className="creator-list-toolbar queue-search-toolbar">
-        <label className="creator-search-field"><span className="creator-sr-only">搜索任务</span><input type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索任务、作品或编号" /></label>
-        <label className="creator-filter-select"><span>生成类型</span><select value={activeStage} onChange={event => setActiveStage(event.target.value as TaskType | "all")}><option value="all">全部类型</option>{stageGroups.map(stage => <option key={stage.type} value={stage.type}>{taskTypeText(stage.type)} · {stage.tasks.length}</option>)}</select></label>
+        <label className="creator-search-field"><span className="creator-sr-only">搜索任务</span><input type="search" value={query} onChange={event => { setQuery(event.target.value); setRequestedPage(1); setSelectedTaskId(""); locatedInitialTask.current = true; }} placeholder="搜索任务、作品或编号" /></label>
+        <label className="creator-filter-select"><span>生成类型</span><select value={activeStage} onChange={event => { setActiveStage(event.target.value as TaskType | "all"); setRequestedPage(1); setSelectedTaskId(""); locatedInitialTask.current = true; }}><option value="all">全部类型</option>{stageGroups.map(stage => <option key={stage.type} value={stage.type}>{taskTypeText(stage.type)} · {stage.tasks.length}</option>)}</select></label>
       </div>
       <div className="queue-filter-row" role="group" aria-label="按任务状态筛选">
         {[
@@ -139,7 +143,7 @@ export function TaskCenterPage({
             key={value}
             className={activeFilter === value ? "active" : ""}
             aria-pressed={activeFilter === value}
-            onClick={() => setActiveFilter(value as QueueFilter)}
+            onClick={() => { setActiveFilter(value as QueueFilter); setRequestedPage(1); setSelectedTaskId(""); locatedInitialTask.current = true; }}
           >
             {label}
           </button>
@@ -147,7 +151,7 @@ export function TaskCenterPage({
       </div>
       </> : null}
       <section className={`queue-workspace${filteredTasks.length ? "" : " is-empty"}`}>
-        <div className="queue-list-card">
+        <div className="queue-list-card" ref={listRef} tabIndex={-1}>
           {tasks.length ? <div className="queue-card-head">
             <div>
               <h2>生成任务</h2>
@@ -164,7 +168,13 @@ export function TaskCenterPage({
                   key={task.id}
                   className={selectedTask?.id === task.id ? "queue-task-row active" : "queue-task-row"}
                 >
-                  <button type="button" className="queue-task-select" aria-pressed={selectedTask?.id === task.id} onClick={() => setSelectedTaskId(task.id)}>
+                  <button type="button" className="queue-task-select" aria-pressed={selectedTask?.id === task.id} aria-controls="selected-task-detail" onClick={() => {
+                    setSelectedTaskId(task.id);
+                    if (window.matchMedia("(max-width: 900px)").matches) {
+                      detailRef.current?.focus({ preventScroll: true });
+                      detailRef.current?.scrollIntoView({ block: "start", behavior: "instant" });
+                    }
+                  }}>
                   <span className="queue-task-type">{taskTypeIcon(task.type)}</span>
                   <span className="queue-task-main">
                     <strong>{taskTitleText(task.title)}</strong>
@@ -201,7 +211,10 @@ export function TaskCenterPage({
           <ListPagination total={filteredTasks.length} page={currentPage} pageSize={pageSize} onChange={page => { setRequestedPage(page); setSelectedTaskId(""); }} />
         </div>
 
-        {selectedTask ? <TaskDetailPanel task={selectedTask} onOpenProject={onOpenProject} onOpenSupport={onOpenSupport} queuePolicy={queuePolicy} pendingAction={pendingActions[selectedTask.id]} actionsDisabled={Boolean(pendingActions.__refresh__) || actionRunner.isAwaitingSync(selectedTask.id)} onRetry={(id) => void runAction(id, "retry")} onCancel={(id) => void runAction(id, "cancel")} /> : null}
+        {selectedTask ? <div id="selected-task-detail" ref={detailRef} className="queue-detail-region" tabIndex={-1} role="region" aria-label="所选任务详情">
+          <button type="button" className="ghost-button queue-return-list" onClick={() => { listRef.current?.focus({ preventScroll: true }); listRef.current?.scrollIntoView({ block: "start", behavior: "instant" }); }}>返回任务列表</button>
+          <TaskDetailPanel task={selectedTask} onOpenProject={onOpenProject} onOpenSupport={onOpenSupport} queuePolicy={queuePolicy} pendingAction={pendingActions[selectedTask.id]} actionsDisabled={Boolean(pendingActions.__refresh__) || actionRunner.isAwaitingSync(selectedTask.id)} onRetry={(id) => void runAction(id, "retry")} onCancel={(id) => void runAction(id, "cancel")} />
+        </div> : null}
       </section>
       <p className="creator-page-footnote">当前显示你的任务。成功后正式扣费，失败或取消会退回未消耗的冻结积分。</p>
     </div>
@@ -220,7 +233,7 @@ function TaskDetailPanel({
 }: {
   task?: GenerationTask;
   onOpenProject: (projectId: string) => void;
-  onOpenSupport: () => void;
+  onOpenSupport: (task: GenerationTask) => void;
   queuePolicy: ReturnType<typeof buildQueuePolicy>;
   pendingAction?: TaskAction;
   actionsDisabled?: boolean;
@@ -318,7 +331,7 @@ function TaskDetailPanel({
         }}>复制诊断摘要</button>
         {copyMessage ? <p role="status">{copyMessage}</p> : null}
       </details>
-      <button type="button" className="ghost-button" onClick={onOpenSupport}>前往帮助中心提交工单</button>
+      <button type="button" className="ghost-button" onClick={() => onOpenSupport(task)}>前往帮助中心提交工单</button>
 
       {task.projectId ? <button type="button" className="primary-button" onClick={() => onOpenProject(task.projectId!)}><Film size={16} /> 打开所属作品</button> : <p className="muted">对应作品已不可用，任务记录仍保留。</p>}
       <div className="queue-detail-actions">
