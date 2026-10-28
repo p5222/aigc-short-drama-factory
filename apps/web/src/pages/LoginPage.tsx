@@ -1075,6 +1075,7 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
       <main className="cine-admin-login-page">
         <section className="cine-admin-login-card">
           <div className="cine-logo-text">
+            <StudioMark size={34} />
             <span>漫角</span>
             <small>MANJIAO.CLOUD</small>
           </div>
@@ -1278,7 +1279,7 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
       <footer className="cine-icp-line">© {ICP_YEAR} 漫角 manjiao.cloud · <a className="cine-icp-link" href="https://beian.miit.gov.cn/" target="_blank" rel="noreferrer">{ICP_NUMBER}</a>{ICP_COMPANY ? ` · ${ICP_COMPANY}` : ""}{ICP_REGION ? ` · ${ICP_REGION}` : ""}</footer>
 
       <Dialog open={authOpen} title={activeMode === "login" ? t.welcome : t.createAccount} description={activeMode === "login" ? t.loginIntro : t.registerIntro} busy={authBusy} onClose={() => setAuthOpen(false)} className={`creator-auth-dialog ${activeMode === "register" ? "register-mode" : "login-mode"}`}>
-            <div className="creator-auth-wordmark">漫角 <span>MANJIAO STUDIO</span></div>
+            <div className="creator-auth-wordmark"><StudioMark size={25} />漫角 <span>MANJIAO STUDIO</span></div>
             <div className="cine-auth-tabs" role="group" aria-label={locale === "cn" ? "登录或注册" : "Authentication mode"}>
               <button className={activeMode === "login" ? "active" : undefined} aria-pressed={activeMode === "login"} disabled={authBusy} type="button" onClick={() => switchMode("login")}>
                 {t.login}

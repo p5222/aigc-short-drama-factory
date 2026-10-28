@@ -17,10 +17,10 @@ export function StudioIcon({ stage, size = 20, ...props }: LucideProps & { stage
   return <Icon size={size} strokeWidth={1.75} aria-hidden="true" {...props} />;
 }
 
-/** A folded story page with a dialogue frame, drawn on the same 24-unit grid. */
+/** Original Manjiao M: two story frames meet at a corner. Keep export geometry in sync. */
 export function StudioMark({ size = 24 }: { size?: number }) {
-  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">
-    <path d="M5 3h10l5 5v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z" stroke="currentColor" strokeWidth="1.75" strokeLinejoin="round" />
-    <path d="M15 3v5h5M7 12h9v4h-4l-3 2v-2H7v-4Z" stroke="currentColor" strokeWidth="1.75" strokeLinejoin="round" />
+  return <svg className="studio-mark" width={size} height={size} viewBox="0 0 32 32" fill="currentColor" aria-hidden="true" focusable="false">
+    <path d="M3 26V9a6 6 0 0 1 6-6h3l4 9 4-9h3a6 6 0 0 1 6 6v10l-7 7V12l-6 13-6-13v14H3Z" />
+    <path d="M25 27h4v-4l-4 4Z" opacity=".55" />
   </svg>;
 }

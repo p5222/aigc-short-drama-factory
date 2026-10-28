@@ -133,3 +133,21 @@ test("no usable configured text model keeps creation disabled", async ({ page })
   await page.getByRole("textbox", { name: "已有标题", exact: true }).fill("没有配置的创作");
   await expect(page.getByRole("button", { name: "开始结构拆解", exact: true })).toBeDisabled();
 });
+
+test("brand, channel and availability intersect; reset restores hidden routes", async ({ page }) => {
+  await fixtures(page);
+  await page.goto("/#/models");
+  await page.getByLabel("模型品牌", { exact: true }).selectOption("deepseek");
+  await expect(page.locator(".model-library-card")).toHaveCount(2);
+  await page.getByLabel("接入渠道", { exact: true }).selectOption("relay-b");
+  await expect(page.locator(".model-library-card")).toHaveCount(1);
+  await page.getByLabel("可用状态", { exact: true }).selectOption("ready");
+  await expect(page.getByText("没有匹配的模型", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "重置筛选", exact: true }).click();
+  await expect(page.locator(".model-library-card")).toHaveCount(4);
+  await page.getByLabel("模型品牌", { exact: true }).selectOption("qwen");
+  await expect(page.locator(".model-library-card")).toHaveCount(1);
+  await expect(page.locator(".model-library-card [data-brand=qwen] svg")).toHaveCount(1);
+  await page.getByRole("button", { name: "切换主题", exact: true }).click();
+  await capture(page, "brand-filters-dark");
+});

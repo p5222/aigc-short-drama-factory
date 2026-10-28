@@ -1,4 +1,7 @@
 /* Creation: source → direction → review. Shared surfaces, readable editors, one next action. */
+:root .product-shell .cw2-paper-editor { display: grid; gap: 18px; }
+:root .product-shell .cw2-paper-editor textarea { min-height: clamp(280px,48vh,560px); width: 100%; padding: 18px; line-height: 2; font-size: 14px; resize: vertical; }
+:root .product-shell .cw2-paper-editor input { font-size: 16px; font-weight: 550; }
 :root .app-shell.product-shell .creation-entry-page { max-width: 1360px; margin: 0 auto; padding-top: 48px; }
 :root .app-shell.product-shell .creation-entry-grid { gap: 24px; }
 :root .app-shell.product-shell .creation-entry-grid > button {

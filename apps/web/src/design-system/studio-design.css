@@ -1,5 +1,5 @@
-/* Creator visual system: quiet editorial typography, warm canvas, teal actions.
- * Loaded last so route CSS and historical !important paint cannot undo it. */
+/* Creator visual system: warm paper, graphite nights and restrained teal.
+ * Shared surfaces live here; route structure stays in its owning stylesheet. */
 :root {
   --ds-radius-control: 10px;
   --ds-radius-surface: 16px;
@@ -7,52 +7,65 @@
   --ds-page-width: 1480px;
 }
 :root[data-theme="light"], .wb-shell[data-theme="light"] {
-  --bg-app: #f7f8f6;
-  --bg-shell: #fcfdfb;
+  --bg-app: #f6f5f2;
+  --bg-shell: #fbfaf8;
   --surface-1: #ffffff;
-  --surface-2: #f5f7f4;
-  --surface-3: #edf1ed;
-  --text-1: #24312d;
-  --text-2: #56645e;
-  --text-3: #6b7a72;
-  --border-1: #e3e9e3;
-  --border-2: #cdd7d0;
-  --divider: #edf0eb;
-  --accent: #0b7768;
+  --surface-2: #f5f5f2;
+  --surface-3: #ecece8;
+  --text-1: #262a29;
+  --text-2: #5d6461;
+  --text-3: #686e6a;
+  --border-1: #e4e5df;
+  --border-2: #ccd0c9;
+  --divider: #edeee9;
+  --accent: #0c7466;
   --accent-hover: #086253;
-  --accent-soft: #e8f3ee;
-  --accent-selected: #d8ebe1;
-  --focus: #0b7768;
+  --accent-soft: #eaf3ef;
+  --accent-selected: #daebe2;
+  --focus: #0c7466;
+  --on-accent: #ffffff;
+  --media-bg: #eaece8;
+  --media-border: #d6dad4;
+  --timeline-ruler: #eeefeb;
+  --timeline-track: #f7f8f5;
 }
 :root[data-theme="dark"], .wb-shell[data-theme="dark"] {
-  --bg-app: #101714;
-  --bg-shell: #151e1a;
-  --surface-1: #19241f;
-  --surface-2: #1e2b24;
-  --surface-3: #29372f;
-  --text-1: #eef3ed;
-  --text-2: #bccbc0;
-  --text-3: #9aad9f;
-  --border-1: #2c3c32;
-  --border-2: #465c4c;
-  --divider: #29372e;
-  --accent: #79d2b0;
-  --accent-hover: #9adfc4;
-  --accent-soft: #233e31;
-  --accent-selected: #2c503d;
-  --focus: #79d2b0;
-  --on-accent: #102b1f;
+  --bg-app: #141618;
+  --bg-shell: #191b1d;
+  --surface-1: #202224;
+  --surface-2: #27292b;
+  --surface-3: #303335;
+  --text-1: #eeefec;
+  --text-2: #bbbeba;
+  --text-3: #969c97;
+  --border-1: #343739;
+  --border-2: #4c514f;
+  --divider: #303334;
+  --accent: #7ccbb3;
+  --accent-hover: #9bddc8;
+  --accent-soft: #253b34;
+  --accent-selected: #2e4b40;
+  --focus: #8cd9c2;
+  --on-accent: #152e25;
+  --success: #85ceac;
+  --info: #94b9e4;
+  --warning: #e3bb79;
+  --danger: #ed9690;
+  --media-bg: #101214;
+  --media-border: #343739;
+  --timeline-ruler: #1a1c1e;
+  --timeline-track: #232628;
 }
 :root .app-shell.product-shell {
   grid-template-columns: 248px minmax(0,1fr);
   font-family: var(--ds-font-body);
   -webkit-font-smoothing: antialiased;
-  --studio-shadow: 0 2px 6px rgb(26 46 34 / 2%), 0 12px 32px rgb(26 46 34 / 2%);
+  --studio-shadow: 0 1px 2px rgb(20 25 22 / 3%), 0 8px 28px rgb(20 25 22 / 2%);
 }
 :root .app-shell.product-shell .sidebar { width: 248px; padding: 24px 16px !important; }
 :root .app-shell.product-shell .brand { gap: 12px; padding: 0 8px 28px !important; }
 :root .app-shell.product-shell .brand-mark { width: 38px; height: 38px; flex-basis: 38px; border-radius: 12px; }
-:root .app-shell.product-shell .brand strong { font-size: 18px !important; }
+:root .app-shell.product-shell .brand strong { font-size: 20px !important; letter-spacing: .02em; }
 :root .app-shell.product-shell .brand span { margin-top: 3px; letter-spacing: .04em; }
 :root .app-shell.product-shell .side-create { min-height: 44px; margin-bottom: 28px; }
 :root .app-shell.product-shell .nav { gap: 24px; }
@@ -66,12 +79,12 @@
 :root .app-shell.product-shell .creator-search { max-width: 320px; }
 :root .app-shell.product-shell .search-box { border-radius: 10px; height: 38px; }
 :root .app-shell.product-shell .creator-avatar { border: 0; width: 30px; height: 30px; flex-basis: 30px; }
-:root .app-shell.product-shell .page-stack { padding: 36px; gap: 28px; background: var(--ds-bg-canvas) !important; color: var(--ds-text-primary); }
+:root .app-shell.product-shell .page-stack { padding: 36px 40px 48px; gap: 28px; background: var(--ds-bg-canvas) !important; color: var(--ds-text-primary); }
 :root .app-shell.product-shell :is(.row-title, .dashboard-action-header) h1 { font-size: 29px !important; font-weight: 600 !important; letter-spacing: -.7px; line-height: 1.4; }
 :root .app-shell.product-shell :is(.row-title, .dashboard-action-header) p { margin-top: 10px; font-size: 14px; color: var(--ds-text-muted) !important; }
 :root .app-shell.product-shell .section-kicker { margin-bottom: 10px; font-size: 10px; letter-spacing: .14em; }
 :root .app-shell.product-shell .ui-page-heading h1 { font-size: 28px; font-weight: 600; }
-:root .app-shell.product-shell .panel { padding: 24px; box-shadow: var(--studio-shadow) !important; }
+:root .app-shell.product-shell .panel { padding: 24px; border-radius: 16px !important; box-shadow: var(--studio-shadow) !important; }
 :root .app-shell.product-shell .panel-head { margin-bottom: 20px; }
 :root .app-shell.product-shell .panel-head h2 { font-size: 16px !important; font-weight: 600 !important; }
 :root .app-shell.product-shell :is(.primary-button, .ghost-button) { min-height: 40px; padding: 10px 16px; font-weight: 550 !important; }
@@ -132,7 +145,7 @@
 :root .app-shell.product-shell .creator-page :is(.tabs, .queue-filter-row) button.active { background: var(--ds-bg-surface); color: var(--ds-action-primary); box-shadow: 0 1px 4px rgb(22 38 29 / 5%); }
 :root .app-shell.product-shell .creator-page .profile-v2-balance strong { font-weight: 500; font-size: 38px; }
 :root .app-shell.product-shell .creator-page .recharge-plan-grid { gap: 16px; }
-:root .app-shell.product-shell .creator-page .recharge-plan-grid .plan-card { padding: 24px; border-radius: 14px; }
+:root .app-shell.product-shell .creator-page .recharge-plan-grid .plan-card { padding: 26px 24px; border-radius: 14px !important; gap: 12px; position: relative; }
 :root .app-shell.product-shell .creator-page .recharge-card-price strong { font-weight: 500; font-size: 36px; }
 :root .app-shell.product-shell .creator-page .recharge-card-credits { padding: 14px; background: var(--ds-action-soft); border-radius: 9px; }
 :root .app-shell.product-shell .creator-page .ledger-summary-grid article { padding: 24px; border-radius: 14px; }
@@ -160,7 +173,72 @@
 .wb-shell .wb-header__project-copy strong { font-weight: 600; letter-spacing: -.3px; }
 .wb-shell .wb-stage-nav button { font-weight: 500; }
 .wb-shell .wb-stage-nav button[aria-current=step] { color: var(--accent); }
+:root .wb-shell.project-workbench :is(input:not([type="checkbox"]):not([type="range"]):not([type="file"]), textarea, select) {
+  color: var(--text-1) !important; background: var(--surface-1) !important; border-color: var(--border-2) !important;
+}
+:root .wb-shell.project-workbench :is(input, textarea)::placeholder { color: var(--text-3) !important; opacity: 1; }
+/* Account: identity first, editable details and activity beneath. */
+.profile-overview { display: flex; align-items: center; justify-content: space-between; gap: 32px; padding: 32px; background: var(--ds-bg-surface); border: 1px solid var(--ds-border-default); border-radius: 18px; }
+.profile-overview-identity { display: flex; gap: 22px; align-items: center; min-width: 0; }
+.profile-overview-identity > div { min-width: 0; }
+.profile-overview h2 { margin: 0; font-size: 28px; font-weight: 600; letter-spacing: -.04em; overflow-wrap: anywhere; }
+.profile-overview p { margin: 7px 0 12px; font-size: 13px; color: var(--ds-text-secondary); overflow-wrap: anywhere; }
+.profile-overview .section-kicker { display: block; font-size: 10px; }
+.profile-overview .profile-badges { display: flex; flex-wrap: wrap; gap: 8px; }
+.profile-overview .profile-badges > span { display: flex; gap: 5px; align-items: center; font-size: 11px; padding: 3px 8px; border-radius: 5px; background: var(--ds-bg-subtle); color: var(--ds-text-secondary); }
+.profile-overview-stats { display: flex; flex: 0 0 auto; margin: 0; }
+.profile-overview-stats > div { padding: 6px 26px; border-left: 1px solid var(--ds-border-default); }
+.profile-overview-stats dt { font-size: 11px; color: var(--ds-text-secondary); margin-bottom: 12px; }
+.profile-overview-stats dd { margin: 0; font: 500 25px/1.2 var(--ds-font-body); font-variant-numeric: tabular-nums; }
+.profile-overview-stats dd small { font-size: 10px; color: var(--ds-text-muted); }
+.profile-admin-entry { display: flex; align-items: center; gap: 14px; padding: 20px 24px; border: 1px solid color-mix(in srgb,var(--ds-action-primary) 25%,var(--ds-border-default)); border-radius: 14px; background: var(--ds-action-soft); color: var(--ds-action-primary); text-decoration: none; }
+.profile-admin-entry > div { display: grid; gap: 5px; flex: 1; min-width: 0; }
+.profile-admin-entry strong { font-size: 14px; font-weight: 600; }
+.profile-admin-entry small { font-size: 11px; line-height: 1.6; color: var(--ds-text-secondary); }
+.profile-admin-entry:hover { border-color: var(--ds-action-primary); }
+:root .product-shell .profile-v2-grid { gap: 24px; }
+:root .product-shell .profile-v2-column { gap: 24px; }
+:root .product-shell .profile-v2-credit .panel-head { padding-bottom: 20px; border-bottom: 1px solid var(--ds-border-default); }
+:root .product-shell .profile-v2-credit-metrics { background: var(--ds-bg-subtle); padding: 16px 12px; border-radius: 10px; }
+:root .product-shell .profile-v2-credit-metrics b { font-weight: 500; font-variant-numeric: tabular-nums; }
+:root .product-shell .profile-v2-recent-row { padding-block: 14px; }
+:root .product-shell .profile-v2-shortcuts .profile-v2-shortcut-list { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 4px 24px; }
+:root .product-shell .creator-page .profile-shortcut { background: transparent !important; border-radius: 8px; min-width: 0; color: var(--ds-text-primary); }
+:root .product-shell .creator-page .profile-shortcut:hover { background: var(--ds-bg-subtle) !important; }
+:root .product-shell .creator-page .profile-shortcut > div { color: var(--ds-action-primary) !important; background: var(--ds-action-soft) !important; }
+.creator-auth-wordmark { display: flex; align-items: center; gap: 9px; }
+.creator-auth-wordmark > .studio-mark { color: var(--ds-action-primary); flex-shrink: 0; }
+.cine-admin-login-card .cine-logo-text > .studio-mark { color: #0c7466; align-self: center; }
+/* Recharge: a readable wallet and purchasing journey, with real configured amounts. */
+.recharge-overview { display: grid; grid-template-columns: minmax(240px,.8fr) minmax(0,1.6fr); border: 1px solid var(--ds-border-default); border-radius: 18px; background: var(--ds-bg-surface); overflow: hidden; }
+.recharge-wallet { display: grid; align-content: center; gap: 14px; padding: 32px; background: var(--ds-action-soft); border-right: 1px solid var(--ds-border-default); }
+.recharge-wallet > span { display: flex; gap: 10px; align-items: center; color: var(--ds-action-primary); font-size: 12px; }
+.recharge-wallet > strong { font-size: clamp(32px,3.4vw,46px); font-weight: 500; line-height: 1.2; letter-spacing: -.05em; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.recharge-wallet > small { font-size: 11px; color: var(--ds-text-secondary); }
+.recharge-intro { padding: 30px 36px; }
+.recharge-intro > h2 { font-size: 25px; font-weight: 600; margin: 10px 0; letter-spacing: -.04em; }
+.recharge-intro > p { font-size: 12px; line-height: 1.9; color: var(--ds-text-secondary); max-width: 46em; margin-bottom: 20px; }
+.recharge-intro > div { display: flex; gap: 10px; flex-wrap: wrap; }
+.recharge-unit-price { font-size: 11px; margin: -4px 0 2px; color: var(--ds-text-muted); line-height: 1.7; }
+:root .product-shell .creator-page .recharge-card.featured { border-color: var(--ds-action-primary) !important; background: color-mix(in srgb,var(--ds-action-soft) 30%,var(--ds-bg-surface)) !important; }
+:root .product-shell .creator-page .recharge-card-name { font-size: 15px; font-weight: 600; }
+:root .product-shell .creator-page .recharge-card-features { padding-block: 10px; }
+:root .product-shell .creator-page .recharge-plan-grid .recharge-card { display: flex; flex-direction: column; }
+.recharge-section-nav { display: flex; flex-wrap: wrap; gap: 12px 24px; padding-bottom: 18px; margin-top: -6px; border-bottom: 1px solid var(--ds-border-default); }
+.recharge-section-nav button { padding: 5px 0; min-height: 36px; background: none; border: 0; color: var(--ds-text-secondary); font: 500 12px var(--ds-font-body); cursor: pointer; }
+.recharge-section-nav button:hover { color: var(--ds-action-primary); }
+.recharge-flow { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); padding: 0; margin: 8px 0 24px; list-style: none; gap: 24px; }
+.recharge-flow li { display: flex; gap: 14px; padding-top: 18px; border-top: 1px solid var(--ds-border-default); }
+.recharge-flow li > span { color: var(--ds-action-primary); font: 500 17px/1.5 var(--ds-font-code); }
+.recharge-flow li > div { display: grid; gap: 7px; }
+.recharge-flow strong { font-size: 13px; font-weight: 600; }
+.recharge-flow small { font-size: 11px; line-height: 1.7; color: var(--ds-text-secondary); }
+:is(#recharge-plan-title, #online-payment-title, #creator-redeem-title, #credit-usage-title) { scroll-margin-top: 100px; }
 @media (max-width: 1200px) {
+  .profile-overview { flex-wrap: wrap; }
+  .profile-overview-stats { width: 100%; border-top: 1px solid var(--ds-border-default); padding-top: 22px; }
+  .profile-overview-stats > div { flex: 1; }
+  .profile-overview-stats > div:first-child { border-left: 0; padding-left: 0; }
   :root .app-shell.product-shell .topbar { padding-inline: 24px; }
   :root .app-shell.product-shell .page-stack { padding: 28px; }
   :root .app-shell.product-shell .dashboard-work-grid { grid-template-columns: minmax(0,1fr) 270px; gap: 20px; }
@@ -175,6 +253,18 @@
   :root .app-shell.product-shell .dashboard-work-grid { grid-template-columns: minmax(0,1fr) 260px; }
 }
 @media (max-width: 640px) {
+  :root .product-shell .profile-v2-shortcuts .profile-v2-shortcut-list { grid-template-columns: minmax(0,1fr); gap: 0; }
+  .profile-overview { padding: 24px 20px; gap: 24px; }
+  .profile-overview-identity { gap: 16px; }
+  .profile-overview h2 { font-size: 24px; }
+  .profile-overview-stats > div { padding-inline: 14px; }
+  .profile-overview-stats dd { font-size: 22px; }
+  .profile-admin-entry { padding: 18px 20px; }
+  .recharge-overview { grid-template-columns: minmax(0,1fr); }
+  .recharge-wallet { padding: 24px; border-right: 0; border-bottom: 1px solid var(--ds-border-default); gap: 12px; }
+  .recharge-intro { padding: 24px; }
+  .recharge-intro > h2 { font-size: 23px; }
+  .recharge-flow { grid-template-columns: minmax(0,1fr); gap: 18px; }
   :root .app-shell.product-shell .page-stack { padding: 28px 16px; gap: 24px; }
   :root .app-shell.product-shell .topbar { height: auto; min-height: 62px; }
   :root .app-shell.product-shell :is(.row-title, .dashboard-action-header) h1 { font-size: 25px !important; }

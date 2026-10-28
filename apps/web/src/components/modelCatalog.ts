@@ -1,7 +1,12 @@
 import type { ModelModality, ModelPrice, ModelProvider } from "@aifilm/shared";
 import { creditPriceUnit, inspectModelPrice } from "@aifilm/shared";
 
-export type ModelFamily = "openai" | "deepseek" | "qwen" | "wan" | "gemini" | "claude" | "seed" | "kling" | "flux" | "minimax" | "kimi" | "generic";
+export type ModelFamily = "openai" | "deepseek" | "qwen" | "wan" | "gemini" | "claude" | "seed" | "kling" | "flux" | "minimax" | "kimi" | "zhipu" | "generic";
+export const modelFamilyNames: Record<ModelFamily, string> = {
+  openai: "OpenAI", deepseek: "DeepSeek", qwen: "通义千问", wan: "阿里云 · 通义万相", gemini: "Google Gemini",
+  claude: "Anthropic Claude", seed: "字节 Seed", kling: "可灵 Kling", flux: "FLUX", minimax: "MiniMax",
+  kimi: "Kimi", zhipu: "智谱 GLM", generic: "其他 / 私有模型"
+};
 export type ModelState = "configured" | "unknown" | "disabled" | "missing_key" | "cooling" | "limited" | "missing_price" | "price_conflict" | "invalid_price";
 export interface CatalogModel {
   key: string;
@@ -57,14 +62,15 @@ export function modelIdentity(model: string | null | undefined): { family: Model
     [/^gpt[-_]?/i, "openai", "GPT "],
     [/^o(?=\d)/i, "openai", "o"],
     [/^qwen[-_]?/i, "qwen", "Qwen "],
-    [/^wan(?=[\d._-])/i, "wan", "Wan "],
+    [/^wanx?(?=[\d._-])/i, "wan", "Wan "],
     [/^gemini[-_]?/i, "gemini", "Gemini "],
     [/^claude[-_]?/i, "claude", "Claude "],
     [/^(?:seedance|seedream|doubao)[-_]?/i, "seed", (leaf.match(/^(seedance|seedream|doubao)/i)?.[0] ?? "Seed").replace(/^./, c => c.toUpperCase()) + " "],
     [/^kling[-_]?/i, "kling", "Kling "],
     [/^flux[-_]?/i, "flux", "FLUX "],
     [/^(?:minimax|hailuo)[-_]?/i, "minimax", "MiniMax "],
-    [/^kimi[-_]?/i, "kimi", "Kimi "]
+    [/^kimi[-_]?/i, "kimi", "Kimi "],
+    [/^glm[-_]?/i, "zhipu", "GLM "]
   ];
   for (const [pattern, family, prefix] of patterns) {
     if (!pattern.test(leaf)) continue;
@@ -125,7 +131,7 @@ export function buildModelCatalog(providers: ModelProvider[], prices?: ModelPric
 export function searchModelCatalog(items: CatalogModel[], query: string): CatalogModel[] {
   const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
   return items.filter(item => {
-    const text = `${item.name} ${item.model} ${item.provider.name} ${item.provider.id} ${item.tags.join(" ")} ${item.statusLabel} ${item.issues.join(" ")}`.toLowerCase();
+    const text = `${item.name} ${modelFamilyNames[item.family]} ${item.model} ${item.provider.name} ${item.provider.id} ${item.tags.join(" ")} ${item.statusLabel} ${item.issues.join(" ")}`.toLowerCase();
     return terms.every(term => text.includes(term));
   });
 }
