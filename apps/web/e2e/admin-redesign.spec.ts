@@ -165,8 +165,8 @@ test("all create dialogs keep footer visible, inherit theme and guard unsaved in
     await expect(page.getByRole("button", { name: button, exact: true })).toBeFocused();
     await page.getByRole("button", { name: "切换主题", exact: true }).click();
     await page.getByRole("button", { name: button, exact: true }).click();
-    await expect(dialog).toHaveCSS("background-color", "rgb(30, 41, 59)");
-    await expect(dialog.getByLabel(field, { exact: true })).toHaveCSS("color", "rgb(243, 244, 246)");
+    await expect(dialog).toHaveCSS("background-color", "rgb(32, 34, 36)");
+    await expect(dialog.getByLabel(field, { exact: true })).toHaveCSS("color", "rgb(238, 239, 236)");
     await capture(page, `create-${module}-dark`);
     await page.keyboard.press("Escape");
     await page.getByRole("button", { name: "切换主题", exact: true }).click();

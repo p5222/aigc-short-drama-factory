@@ -540,7 +540,7 @@ export function App() {
       case "profile":
         return user ? <ProfilePage user={user} account={account} summary={summary} transactions={transactions} orders={orders} onNavigate={setActivePage} onLogout={logout} onUserUpdate={setUser} /> : null;
       case "recharge":
-        return <RechargePage plans={plans} membershipPlans={membershipPlans} modelPrices={modelPrices} onRefresh={() => load()} />;
+        return <RechargePage account={account} plans={plans} membershipPlans={membershipPlans} modelPrices={modelPrices} onRefresh={() => load()} />;
       case "ledger":
         return <LedgerPage account={account} transactions={transactions} />;
       case "settings":

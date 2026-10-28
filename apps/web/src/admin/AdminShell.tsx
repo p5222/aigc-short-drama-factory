@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ChevronLeft, ChevronRight, Menu, PanelLeftClose, PanelLeftOpen, Search, ShieldCheck, SunMoon, X } from "lucide-react";
 import { dialogStackForDocument } from "../design-system/dialogStack";
 import { AdminConfirmHost } from "./AdminConfirm";
+import { StudioMark } from "../design-system/StudioIcon";
 import "./admin-navigation.css";
 
 export interface AdminNavItem { id: string; label: string; group?: string; icon?: ReactNode; badge?: string | number; }
@@ -50,7 +51,7 @@ export function AdminShell({ title, description, items, activeId, onNavigate, on
   return <div className={`adm-shell admin-product${isCollapsed ? " is-collapsed" : ""}`}>
     <a href="#admin-main-content" className="ui-skip-link" onClick={event => { event.preventDefault(); document.getElementById("admin-main-content")?.focus(); }}>跳到主要内容</a>
     <aside id="admin-sidebar" ref={sidebar} className={`adm-sidebar${mobileOpen ? " is-open" : ""}`} inert={compact && !mobileOpen} aria-hidden={compact && !mobileOpen ? true : undefined} role={compact && mobileOpen ? "dialog" : undefined} aria-modal={compact && mobileOpen ? true : undefined} aria-label={compact ? "后台导航" : undefined}>
-      <div className="adm-brand"><span className="adm-brand-mark">漫</span><div><strong>漫角 <em>Console</em></strong><small>运营管理平台</small></div><button type="button" aria-label="关闭导航" onClick={() => onMobileOpenChange?.(false)}><X /></button></div>
+      <div className="adm-brand"><span className="adm-brand-mark"><StudioMark size={26} /></span><div><strong>漫角 <em>Console</em></strong><small>运营管理平台</small></div><button type="button" aria-label="关闭导航" onClick={() => onMobileOpenChange?.(false)}><X /></button></div>
       {isCollapsed ? <button className="adm-collapsed-search" type="button" aria-label="展开并查找管理模块" title="查找管理模块" onClick={toggleCollapsed}><Search size={18} /></button> : <label className="adm-nav-search"><Search size={16} aria-hidden="true" /><input type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="查找管理模块" aria-label="查找管理模块" /></label>}
       <nav aria-label="后台模块">{groups.map(group => <section className="adm-nav-group" key={group}><h2>{group}</h2>{visibleItems.filter(item => (item.group || "工作区") === group).map(item => <button type="button" key={item.id} className={item.id === activeId ? "is-active" : ""} aria-label={item.label} title={isCollapsed ? item.label : undefined} aria-current={item.id === activeId ? "page" : undefined} onClick={() => { if (onNavigate(item.id) !== false) { onMobileOpenChange?.(false); setQuery(""); } }}>{item.icon}<span>{item.label}</span>{item.badge != null ? <em>{item.badge}</em> : null}</button>)}</section>)}{!visibleItems.length ? <div className="adm-nav-empty" role="status"><p>没有匹配的模块</p><button type="button" onClick={() => setQuery("")}>清空搜索</button></div> : null}</nav>
       <div className="adm-sidebar-foot">

@@ -25,6 +25,15 @@ test("a relay name cannot turn DeepSeek or an unknown custom ID into an OpenAI m
 test("legacy records without a model can still render a model selection prompt", () => {
   for (const model of [undefined, null, ""]) assert.deepEqual(modelIdentity(model), { family: "generic", name: "未选择模型" });
 });
+test("Wanx and GLM map to their brands while an opaque endpoint remains unidentified", () => {
+  assert.deepEqual(modelIdentity("wanx2.1-i2v-plus"), { family: "wan", name: "Wan 2.1 I2v Plus" });
+  assert.deepEqual(modelIdentity("glm-5.1"), { family: "zhipu", name: "GLM 5.1" });
+  const items = buildModelCatalog([provider("seed", { name: "豆包 Seedance", models: ["ep-20260703-private", "doubao-seedance-1-5-pro"] })]);
+  assert.equal(items[0].family, "generic");
+  assert.equal(items[1].family, "seed");
+  const qwen = buildModelCatalog([provider("a", { models: ["qwen3.7-plus"] })]);
+  assert.equal(searchModelCatalog(qwen, "通义千问").length, 1);
+});
 test("a same-named model on another route never supplies the displayed price", () => {
   const items = buildModelCatalog([provider("a"), provider("b")], [price("a", { unitCredits: 3 })]);
   assert.equal(items[0].price?.unitCredits, 3);

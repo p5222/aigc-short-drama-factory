@@ -262,6 +262,19 @@ export function ProfilePage({
         } />
       {pending || dirty ? <InlineNotice tone="info">{pending ? "正在保存，请等待操作完成。" : avatarReading ? "正在处理头像。处理完成后可以保存，也可以取消本次修改。" : "有未保存的修改。请在对应分组保存，或取消修改。"}</InlineNotice> : null}
 
+      <section className="profile-overview" aria-label="账户概览">
+        <div className="profile-overview-identity">
+          <ProfileAvatar name={user.name} avatarUrl={user.avatarUrl} size="large" />
+          <div><span className="section-kicker">你的创作空间</span><h2>{user.name}</h2><p>{maskContact(contact)}</p>
+            <div className="profile-badges"><span><BadgeCheck size={14} />{roleLabel(user.role)}</span><span><ShieldCheck size={14} />{user.status === "active" ? "账号正常" : "账号停用"}</span></div>
+          </div>
+        </div>
+        <dl className="profile-overview-stats">
+          <div><dt>我的作品</dt><dd>{summary?.projects ?? "—"}<small> 部</small></dd></div>
+          <div><dt>正在生成</dt><dd>{summary?.runningTasks ?? "—"}<small> 项</small></dd></div>
+          <div><dt>可用积分</dt><dd>{account || summary ? creditBalance.toLocaleString() : "—"}</dd></div>
+        </dl>
+      </section>
       <div className="profile-v2-grid">
         <div className="profile-v2-column">
           <section className="panel profile-v2-card profile-v2-account">
@@ -273,17 +286,6 @@ export function ProfilePage({
               <button className="ghost-button" type="button" aria-expanded={editOpen} disabled={pending} onClick={() => setEditOpen((value) => !value)}>
                 <Camera size={16} />{editOpen ? "收起编辑" : "编辑资料"}
               </button>
-            </div>
-            <div className="profile-v2-identity">
-              <ProfileAvatar name={user.name} avatarUrl={user.avatarUrl} size="large" />
-              <div>
-                <strong>{user.name}</strong>
-                <span>{maskContact(contact)}</span>
-                <div className="profile-badges">
-                  <span><BadgeCheck size={15} />{roleLabel(user.role)}</span>
-                  <span><ShieldCheck size={15} />{user.status === "active" ? "账号正常" : "账号停用"}</span>
-                </div>
-              </div>
             </div>
             {editOpen ? (
               <form className="profile-inline-editor" onSubmit={event => { event.preventDefault(); void saveProfile(); }}><fieldset className="creator-form-fieldset" disabled={pending}>
@@ -424,6 +426,7 @@ export function ProfilePage({
         </div>
 
         <div className="profile-v2-column profile-v2-side">
+          {user.role === "admin" && user.status === "active" ? <a className="profile-admin-entry" href="/admin" target="_blank" rel="noopener noreferrer"><span><ShieldCheck size={22} /></span><div><strong>进入管理后台</strong><small>管理用户、模型、积分与平台运营</small></div><ChevronRight size={18} /></a> : null}
           <section className="panel profile-v2-card profile-v2-credit">
             <div className="panel-head">
               <div>
@@ -467,24 +470,21 @@ export function ProfilePage({
               {!recentTransactions.length && !recentOrders.length ? <small className="profile-v2-recent-empty">暂无积分流水与订单记录。</small> : null}
             </div>
           </section>
-
-          <section className="panel profile-v2-card profile-v2-shortcuts">
-            <div className="panel-head">
-              <div>
-                <h2>快捷入口</h2>
-                <small>常用功能直达。</small>
-              </div>
-            </div>
-            <div className="profile-v2-shortcut-list">
-              <ProfileShortcut icon={<BookOpen size={19} />} title="我的作品" desc={`${summary?.projects ?? 0} 部漫剧 · 继续创作`} onClick={() => onNavigate("scripts")} />
-              <ProfileShortcut icon={<Film size={19} />} title="剪辑中心" desc="选择作品，预览并导出成片" onClick={() => onNavigate("studio")} />
-              <ProfileShortcut icon={<ClipboardList size={19} />} title="生成队列" desc="查看任务进度与失败原因" onClick={() => onNavigate("tasks")} />
-              <ProfileShortcut icon={<CircleHelp size={19} />} title="帮助中心" desc="新手教程 · 积分规则 · 故障排查" onClick={() => onNavigate("help")} />
-              <ProfileShortcut icon={<Settings size={19} />} title="设置" desc="显示主题 · 账号安全" onClick={() => onNavigate("settings")} />
-            </div>
-          </section>
         </div>
       </div>
+
+      <section className="panel profile-v2-card profile-v2-shortcuts">
+        <div className="panel-head">
+          <div><h2>快捷入口</h2><small>常用功能直达。</small></div>
+        </div>
+        <div className="profile-v2-shortcut-list">
+          <ProfileShortcut icon={<BookOpen size={19} />} title="我的作品" desc={`${summary?.projects ?? 0} 部漫剧 · 继续创作`} onClick={() => onNavigate("scripts")} />
+          <ProfileShortcut icon={<Film size={19} />} title="剪辑中心" desc="选择作品，预览并导出成片" onClick={() => onNavigate("studio")} />
+          <ProfileShortcut icon={<ClipboardList size={19} />} title="生成队列" desc="查看任务进度与失败原因" onClick={() => onNavigate("tasks")} />
+          <ProfileShortcut icon={<CircleHelp size={19} />} title="帮助中心" desc="新手教程 · 积分规则 · 故障排查" onClick={() => onNavigate("help")} />
+          <ProfileShortcut icon={<Settings size={19} />} title="设置" desc="显示主题 · 账号安全" onClick={() => onNavigate("settings")} />
+        </div>
+      </section>
     </div>
   );
 }
