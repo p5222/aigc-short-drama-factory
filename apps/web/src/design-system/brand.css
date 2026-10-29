@@ -1,0 +1,23 @@
+/* The approved text-only identity, traced from the selected concept D. */
+:root { --studio-brand-ink: #123d37; }
+:root[data-theme="dark"] { --studio-brand-ink: #eeefec; }
+.studio-wordmark { display: block; flex-shrink: 0; max-width: 100%; }
+:root .app-shell.product-shell .studio-brand-copy { display: grid; gap: 9px; min-width: 0; color: var(--studio-brand-ink); }
+:root .app-shell.product-shell .studio-brand-copy > span { margin: 0; font-size: 11px; font-weight: 400; letter-spacing: .06em; color: var(--ds-text-muted); }
+.cine-home-page .cine-logo-text { color: #f7f5ed; gap: 6px; }
+.cine-home-page .nav-logo { grid-template-columns: max-content; gap: 6px; text-align: center; }
+.cine-home-page .nav-logo > .studio-wordmark { grid-row: auto; width: auto; height: 34px; color: inherit; }
+.cine-home-page .nav-logo > small { margin: 0; }
+.cine-home-page .cine-logo-text > small,
+.cine-admin-login-card .cine-logo-text > small { color: inherit; font: 400 9px/1 Georgia, "Times New Roman", serif; letter-spacing: .22em; opacity: .8; }
+.cine-admin-login-card .cine-logo-text { display: grid; gap: 8px; color: #123d37; }
+.creator-auth-wordmark { color: var(--studio-brand-ink); }
+.creator-auth-wordmark > .studio-wordmark { color: var(--studio-brand-ink); }
+.admin-product .adm-brand > .studio-wordmark { color: var(--studio-brand-ink); }
+.admin-product .adm-brand-copy { display: grid; gap: 2px; }
+.admin-product .adm-brand-copy strong { line-height: 1; }
+.admin-product .adm-brand-copy strong em { margin: 0; font-size: 10px; letter-spacing: .08em; }
+@media (max-width: 520px) {
+  .cine-home-page .nav-logo > .studio-wordmark { height: 30px; width: auto; }
+  .cine-home-page .nav-logo > small { font-size: 8px; }
+}
