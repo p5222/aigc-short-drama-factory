@@ -1,4 +1,5 @@
 import { BookOpenText, Clapperboard, Film, ScanFace, type LucideProps } from "lucide-react";
+import wordmark from "./manjiao-wordmark.json";
 
 export type StudioStage = "content" | "assets" | "shots" | "delivery";
 
@@ -17,10 +18,10 @@ export function StudioIcon({ stage, size = 20, ...props }: LucideProps & { stage
   return <Icon size={size} strokeWidth={1.75} aria-hidden="true" {...props} />;
 }
 
-/** Original Manjiao M: two story frames meet at a corner. Keep export geometry in sync. */
-export function StudioMark({ size = 24 }: { size?: number }) {
-  return <svg className="studio-mark" width={size} height={size} viewBox="0 0 32 32" fill="currentColor" aria-hidden="true" focusable="false">
-    <path d="M3 26V9a6 6 0 0 1 6-6h3l4 9 4-9h3a6 6 0 0 1 6 6v10l-7 7V12l-6 13-6-13v14H3Z" />
-    <path d="M25 27h4v-4l-4 4Z" opacity=".55" />
+/** The selected Chinese wordmark. Compact navigation uses its existing 角 glyph. */
+export function StudioWordmark({ height = 32, compact = false }: { height?: number; compact?: boolean }) {
+  const geometry = compact ? wordmark.compact : wordmark.full;
+  return <svg className="studio-wordmark" width={height * geometry.width / geometry.height} height={height} viewBox={`0 0 ${geometry.width} ${geometry.height}`} fill="currentColor" role="img" aria-label="漫角" focusable="false">
+    <path d={geometry.path} fillRule="evenodd" />
   </svg>;
 }

@@ -207,8 +207,6 @@
 :root .product-shell .creator-page .profile-shortcut:hover { background: var(--ds-bg-subtle) !important; }
 :root .product-shell .creator-page .profile-shortcut > div { color: var(--ds-action-primary) !important; background: var(--ds-action-soft) !important; }
 .creator-auth-wordmark { display: flex; align-items: center; gap: 9px; }
-.creator-auth-wordmark > .studio-mark { color: var(--ds-action-primary); flex-shrink: 0; }
-.cine-admin-login-card .cine-logo-text > .studio-mark { color: #0c7466; align-self: center; }
 /* Recharge: a readable wallet and purchasing journey, with real configured amounts. */
 .recharge-overview { display: grid; grid-template-columns: minmax(240px,.8fr) minmax(0,1.6fr); border: 1px solid var(--ds-border-default); border-radius: 18px; background: var(--ds-bg-surface); overflow: hidden; }
 .recharge-wallet { display: grid; align-content: center; gap: 14px; padding: 32px; background: var(--ds-action-soft); border-right: 1px solid var(--ds-border-default); }

@@ -26,7 +26,7 @@ import { PublicShowcase, type PublicLocale, type PublicView } from "./PublicShow
 import { cineScenes as scenes } from "./cineScenes";
 import { getCardPose, nextCardIndex, relativeCardOffset, shouldCorrectDrift, shouldReleasePreparedSlot } from "./cineHomeModel";
 import { Dialog, InlineNotice } from "../design-system/ui";
-import { StudioMark } from "../design-system/StudioIcon";
+import { StudioWordmark } from "../design-system/StudioIcon";
 
 interface LoginPageProps {
   onAuthed: (token: string, user: AuthUser) => void;
@@ -1075,9 +1075,8 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
       <main className="cine-admin-login-page">
         <section className="cine-admin-login-card">
           <div className="cine-logo-text">
-            <StudioMark size={34} />
-            <span>漫角</span>
-            <small>MANJIAO.CLOUD</small>
+            <StudioWordmark height={38} />
+            <small>MANJIAO</small>
           </div>
           <h1>{t.adminTitle}</h1>
           <p>{t.adminIntro}</p>
@@ -1091,10 +1090,9 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
   return (
     <main className={`cine-home-page relative w-screen bg-black text-white ${publicView === "home" ? "" : "cine-scroll-page"}`} data-public-view={publicView}>
       <nav className={`cine-top-nav ${publicView === "home" ? "" : "solid"}`} aria-label="首页导航">
-        <button className="cine-logo-text nav-logo" type="button" onClick={() => setPublicView("home")}>
-          <StudioMark size={30} />
-          <span>漫角</span>
-          <small>MANJIAO.CLOUD</small>
+        <button className="cine-logo-text nav-logo" type="button" aria-label="漫角首页" onClick={() => setPublicView("home")}>
+          <StudioWordmark height={34} />
+          <small>MANJIAO</small>
         </button>
         <div className="cine-nav-links">
           <button className={publicView === "home" ? "active" : ""} aria-current={publicView === "home" ? "page" : undefined} type="button" onClick={() => setPublicView("home")}>{t.navHome}</button>
@@ -1279,7 +1277,7 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
       <footer className="cine-icp-line">© {ICP_YEAR} 漫角 manjiao.cloud · <a className="cine-icp-link" href="https://beian.miit.gov.cn/" target="_blank" rel="noreferrer">{ICP_NUMBER}</a>{ICP_COMPANY ? ` · ${ICP_COMPANY}` : ""}{ICP_REGION ? ` · ${ICP_REGION}` : ""}</footer>
 
       <Dialog open={authOpen} title={activeMode === "login" ? t.welcome : t.createAccount} description={activeMode === "login" ? t.loginIntro : t.registerIntro} busy={authBusy} onClose={() => setAuthOpen(false)} className={`creator-auth-dialog ${activeMode === "register" ? "register-mode" : "login-mode"}`}>
-            <div className="creator-auth-wordmark"><StudioMark size={25} />漫角 <span>MANJIAO STUDIO</span></div>
+            <div className="creator-auth-wordmark"><StudioWordmark height={30} /><span>MANJIAO STUDIO</span></div>
             <div className="cine-auth-tabs" role="group" aria-label={locale === "cn" ? "登录或注册" : "Authentication mode"}>
               <button className={activeMode === "login" ? "active" : undefined} aria-pressed={activeMode === "login"} disabled={authBusy} type="button" onClick={() => switchMode("login")}>
                 {t.login}

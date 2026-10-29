@@ -20,7 +20,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { ContentProjectSummary, GenerationTask, Project } from "@aifilm/shared";
 import { searchCreatorItems, type CreatorSearchItem } from "./creatorSearchModel";
 import { dialogStackForDocument } from "../design-system/dialogStack";
-import { StudioIcon, StudioMark } from "../design-system/StudioIcon";
+import { StudioIcon, StudioWordmark } from "../design-system/StudioIcon";
 
 export type PageKey =
   | "workbench"
@@ -138,9 +138,8 @@ export function Shell({ active, onNavigate, children, credits, theme, onToggleTh
       <a href="#creator-main-content" className="ui-skip-link" onClick={event => { event.preventDefault(); document.getElementById("creator-main-content")?.focus(); }}>跳到主要内容</a>
       <aside ref={sidebarRef} id="creator-sidebar" className={`sidebar${mobileOpen ? " is-open" : ""}`} inert={compact && !mobileOpen} aria-hidden={compact && !mobileOpen || undefined} role={compact ? "dialog" : undefined} aria-modal={compact && mobileOpen || undefined} aria-label={compact ? "创作导航" : undefined}>
         <div className="brand">
-          <div className="brand-mark"><StudioMark /></div>
-          <div>
-            <strong>漫角 Studio</strong>
+          <div className="studio-brand-copy">
+            <StudioWordmark height={36} />
             <span>创作工作空间</span>
           </div>
           <button type="button" className="ui-icon-button creator-menu-close" aria-label="关闭导航" onClick={() => setMobileOpen(false)}><X size={20} /></button>
