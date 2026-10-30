@@ -392,11 +392,40 @@ export interface RedeemCode {
   maxRedemptions: number;
   usedCount: number;
   enabled: boolean;
+  batchEnabled?: boolean;
   startsAt?: string;
   endsAt?: string;
   status?: "active" | "disabled" | "used_up" | "expired" | "scheduled";
   createdAt: string;
 }
+
+export interface RedeemBatchInput {
+  name: string;
+  prefix: string;
+  credits: number;
+  count: number;
+  maxRedemptions?: number;
+  enabled?: boolean;
+  startsAt?: string | null;
+  endsAt?: string | null;
+  requestId: string;
+}
+
+export interface RedeemHistoryPage {
+  items: {
+    id: string;
+    name: string;
+    maskedCode: string;
+    credits: number;
+    createdAt: string;
+    user?: { id: string; name: string };
+  }[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export { normalizeRedeemCode, redeemCodeStatus } from "./redeem.js";
 
 export interface AdminUserRow {
   id: string;
@@ -592,6 +621,8 @@ export interface PromptVersion {
   createdAt: string;
   updatedAt: string;
 }
+
+export type { ProductionPromptStage, ProductionPromptDefinition, ProductionPromptSummary, ProductionPromptVersion, ProductionPromptDetail, ProductionPromptDraft, ProductionPromptPreview } from "./productionPrompts.js";
 
 export type ContentProjectMode = "same_genre" | "original" | "adaptation";
 export type ContentStep = "source" | "analysis" | "strategy" | "outline" | "chapter" | "script" | "entity";

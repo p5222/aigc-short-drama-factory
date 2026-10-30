@@ -145,20 +145,21 @@ export function WorkbenchHeader({
             <PanelRight aria-hidden="true" /><span>设置</span>
           </button>
         ) : null}
-        {onOpenTasks ? <button className="wb-icon-button wb-header__overflow-action" type="button" aria-label="打开生成任务" title="生成任务" onClick={onOpenTasks}><ListTree aria-hidden="true" /></button> : null}
-        {onOpenEvaluation ? <button className="wb-icon-button wb-header__overflow-action" type="button" aria-label="打开评测反馈" title="评测反馈" onClick={onOpenEvaluation}><PanelRight aria-hidden="true" /></button> : null}
+        {onOpenTasks ? <button className="wb-icon-button wb-labelled-action wb-header__overflow-action" type="button" aria-label="打开生成任务" onClick={onOpenTasks}><ListTree aria-hidden="true" /><span>任务</span></button> : null}
+        {onOpenEvaluation ? <button className="wb-icon-button wb-labelled-action wb-header__overflow-action" type="button" aria-label="打开评测反馈" onClick={onOpenEvaluation}><PanelRight aria-hidden="true" /><span>评测</span></button> : null}
         {onRefresh ? (
-          <button className="wb-icon-button wb-header__secondary-action" type="button" aria-label="刷新项目数据" onClick={onRefresh}>
-            <RefreshCw aria-hidden="true" />
+          <button className="wb-icon-button wb-labelled-action wb-header__secondary-action" type="button" aria-label="刷新项目数据" onClick={onRefresh}>
+            <RefreshCw aria-hidden="true" /><span>刷新</span>
           </button>
         ) : null}
         <button
-          className="wb-icon-button wb-header__secondary-action"
+          className="wb-icon-button wb-labelled-action wb-header__secondary-action"
           type="button"
           aria-label={theme === "dark" ? "切换到浅色主题" : "切换到深色主题"}
           onClick={() => onThemeChange(nextWorkbenchTheme(theme))}
         >
           {theme === "dark" ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
+          <span>{theme === "dark" ? "浅色" : "深色"}</span>
         </button>
         <div ref={moreMenuRef} className="wb-more-menu">
           <button

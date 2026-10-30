@@ -131,7 +131,7 @@ test("corrupt preferences and deleted episodes recover to a valid current select
     assert.equal(state.activeEpisodeNo, 1);
     assert.equal(state.activeShotId, "e1");
   }
-  const deleted = restoreWorkbenchPageState({ ...workflow, storyboards: shots.slice(0, 1) }, saved());
+  const deleted = restoreWorkbenchPageState({ ...workflow, project: { ...workflow.project, episodes: 1 }, storyboards: shots.slice(0, 1) }, saved());
   assert.equal(deleted.activeStage, "delivery");
   assert.equal(deleted.activeEpisodeNo, 1);
   assert.equal(deleted.activeShotId, "e1");
@@ -142,6 +142,11 @@ test("corrupt preferences and deleted episodes recover to a valid current select
   const emptyConfiguredEpisode = restoreWorkbenchPageState({ ...workflow, storyboards: shots.slice(0, 1) }, saved("content", 2));
   assert.equal(emptyConfiguredEpisode.activeEpisodeNo, 2);
   assert.equal(emptyConfiguredEpisode.activeShotId, null);
+  for (const stage of ["shots", "delivery"]) {
+    const emptyStage = restoreWorkbenchPageState({ ...workflow, storyboards: shots.slice(0, 1) }, saved(stage, 2));
+    assert.equal(emptyStage.activeEpisodeNo, 2);
+    assert.equal(emptyStage.activeShotId, null);
+  }
 });
 
 test("preferences are isolated by project and blocked session storage remains usable", () => {

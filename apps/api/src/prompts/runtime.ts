@@ -3,7 +3,7 @@ import { getPromptDefinition, type PromptDefinition } from "./catalog.js";
 
 export function renderPrompt(template: string, variables: Record<string, unknown>) {
   return template.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_match, key: string) => {
-    const value = key.split(".").reduce<unknown>((current, segment) => (current && typeof current === "object" ? (current as Record<string, unknown>)[segment] : undefined), variables);
+    const value = key.split(".").reduce<unknown>((current, segment) => (current && typeof current === "object" && Object.hasOwn(current, segment) ? (current as Record<string, unknown>)[segment] : undefined), variables);
     if (value === undefined || value === null || value === "") throw new Error(`提示词缺少变量：${key}`);
     return typeof value === "string" ? value : JSON.stringify(value);
   });
@@ -16,7 +16,7 @@ export function materializePrompt(key: string, variables: Record<string, unknown
   return {
     key: definition.key,
     version: definition.version,
-    systemPrompt: `${definition.systemPrompt}${contract}`,
+    systemPrompt: `${renderPrompt(definition.systemPrompt, variables)}${contract}`,
     userPrompt: renderPrompt(definition.userTemplate, variables),
     outputSchema: definition.outputSchema,
     validationRules: definition.validationRules,

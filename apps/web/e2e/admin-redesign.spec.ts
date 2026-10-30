@@ -232,7 +232,6 @@ test("help creator and all record editors retain failed changes and can save aga
   for (const editor of editors) {
     await page.goto(`/admin#${encodeURIComponent(editor.module)}`);
     if (editor.help) await page.getByRole("button", { name: /帮助中心/ }).last().click();
-    if (editor.module === "价格策略") await page.getByRole("button", { name: "展开价格", exact: true }).first().click();
     if (editor.module === "兑换码" && await page.getByRole("button", { name: "展开批次", exact: true }).first().isVisible()) await page.getByRole("button", { name: "展开批次", exact: true }).first().click();
     await page.getByRole("button", { name: editor.trigger }).first().click();
     const dialog = page.getByRole("dialog", { name: editor.title, exact: true });

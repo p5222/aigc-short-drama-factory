@@ -581,8 +581,8 @@ export function DeliveryStage({
           <button className="dlv2-btn dlv2-btn-primary" type="button" onClick={() => void openExportQuote("video_export")} disabled={busyAll || cut.draft.dirty || Boolean(changedSourceIds.length) || !exportState.canExportVideo} title={cut.draft.dirty ? "请先保存剪辑，再确认导出费用" : changedSourceIds.length ? "请确认更新后的视频并保存剪辑" : exportState.missingVideoCount ? `本集还有 ${exportState.missingVideoCount} 个镜头视频未完成，请先补齐` : "先查看配音费用，再按当前集、当前时间线顺序合成"}>
             <Download size={15} />导出第 {activeEpisode} 集 MP4
           </button>
-          <button className="dlv2-icon-btn" type="button" aria-label={refreshRequired ? "重新核对成片数据" : "刷新成片数据"} disabled={busyAll} onClick={() => void refreshDelivery()}>
-            <RefreshCw size={15} />
+          <button className="dlv2-btn" type="button" aria-label={refreshRequired ? "重新核对成片数据" : "刷新成片数据"} disabled={busyAll} onClick={() => void refreshDelivery()}>
+            <RefreshCw size={15} />刷新
           </button>
         </div>
       </header>
@@ -631,7 +631,7 @@ export function DeliveryStage({
                         <span className="dlv2-badge" data-tone={status}>{status === "running" ? <Loader2 size={11} className="dlv2-spin" /> : null}{SHOT_STATUS_LABEL[status]}</span>
                       </span>
                     </button>
-                    {status === "failed" ? <button className="dlv2-expand-error" type="button" aria-expanded={expanded} aria-label={`查看镜头 ${label} 失败原因`} onClick={() => setExpandedFailureId(expanded ? null : shot.id)}><AlertTriangle size={13} /></button> : null}
+                    {status === "failed" ? <button className="dlv2-expand-error" type="button" aria-expanded={expanded} aria-label={`查看镜头 ${label} 失败原因`} onClick={() => setExpandedFailureId(expanded ? null : shot.id)}><span>原因</span></button> : null}
                   </div>
                   {expanded ? <p className="dlv2-shot-error">{getShotFailureMessage(videoByShot.get(shot.id), tasks)}</p> : null}
                 </div>

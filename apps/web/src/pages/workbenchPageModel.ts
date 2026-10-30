@@ -61,7 +61,7 @@ export function restoreWorkbenchPageState(workflow: PageWorkflow, raw: string | 
   const state = createWorkbenchState({ activeStage: saved.activeStage ?? "content", activeEpisodeNo });
   // Only navigation is persisted. Rebuild scene/shot selection from the current server data.
   const emptyContentEpisode = state.activeStage === "content" && !workflow.storyboards.some(shot => shot.episodeNo === activeEpisodeNo);
-  return workflow.storyboards.length && !emptyContentEpisode ? reconcileSelection(state, workflow.storyboards) : state;
+  return workflow.storyboards.length && !emptyContentEpisode ? reconcileSelection(state, workflow.storyboards, workflow.project.episodes) : state;
 }
 
 export function createWorkbenchPageSession(storage: () => StorageLike | undefined) {

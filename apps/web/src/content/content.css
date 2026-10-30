@@ -554,3 +554,17 @@
   .cw2-episode-picker select { min-width: 0; flex: 1; }
 }
 @media (prefers-reduced-motion: reduce) { .cw2-progress i { transition: none; } .cw2-spin { animation: none; } }
+
+.cw2-frame .cw2-icon-button.cw2-labelled-action { width: auto; flex-basis: auto; display: inline-flex; align-items: center; gap: 5px; padding-inline: 10px; white-space: nowrap; font-size: 12px; }
+.cw2-stage-brief { margin: 20px 32px 0; padding: 16px 18px; border: 1px solid var(--content-border); background: var(--content-subtle); border-radius: 10px; }
+.cw2-stage-brief dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 0; }
+.cw2-stage-brief dt { color: var(--content-muted); font-size: 11px; margin-bottom: 5px; }
+.cw2-stage-brief dd { color: var(--content-text); font-size: 13px; margin: 0; line-height: 1.6; }
+.cw2-stage-brief p { color: var(--content-secondary); font-size: 12px; margin: 12px 0 6px; line-height: 1.7; }
+.cw2-stage-brief > span { color: var(--content-accent); font-size: 11px; }
+.cw2-frame .creator-readiness { padding: 12px; background: var(--content-subtle); }
+.cw2-frame .creator-readiness ul { display: flex; }
+@media (max-width: 767px) {
+  .cw2-stage-brief { margin: 16px 16px 0; padding: 14px; }
+  .cw2-stage-brief dl { grid-template-columns: minmax(0, 1fr); }
+}

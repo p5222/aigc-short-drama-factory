@@ -25,10 +25,8 @@ import { ProductionWorkspace } from "../components/ProductionWorkspace";
 import {
   buildShotAssetMap,
   buildShotImageGenerationPayload,
-  buildProjectVideoGenerationArgs,
   buildBatchResultSummary,
   buildStoryboardShotUpdatePayload,
-  collectPendingShotIds,
   collectEligibleVideoShotIds,
   createShotDraftState,
   reduceShotDraftState,
@@ -60,6 +58,8 @@ const editableFields = [
   "characters", "scene", "emotion", "dialogue", "imagePrompt", "videoPrompt"
 ] as const;
 const failedImageModels = new Set(["wanx-v1", "wan2.5-t2i-preview"]);
+// 与服务端 videoGenerateSchema 的请求上限一致。
+const VIDEO_BATCH_MAX = 20;
 
 export function ShotStage(props: ShotStageProps) {
   const { workflow } = useWorkbench();
@@ -80,10 +80,20 @@ function LoadedShotStage({
   onSaveStateChange
 }: ShotStageProps & { workflow: ProjectWorkflow }) {
   const { state, dispatch } = useWorkbench();
-  const { project, storyboards, assets, tasks } = workflow;
+  const { project, storyboards: projectStoryboards, assets: projectAssets, tasks } = workflow;
+  const episodes = useMemo(() => [...new Set([
+    ...Array.from({ length: Math.max(1, project.episodes) }, (_, index) => index + 1),
+    ...projectStoryboards.map(shot => shot.episodeNo)
+  ])].sort((a, b) => a - b), [project.episodes, projectStoryboards]);
+  const activeEpisode = state.activeEpisodeNo ?? episodes[0];
+  const storyboards = useMemo(() => projectStoryboards.filter(shot => shot.episodeNo === activeEpisode), [projectStoryboards, activeEpisode]);
+  const assets = useMemo(() => projectAssets.filter(asset => !asset.isHistorical), [projectAssets]);
   const imageMap = useMemo(() => buildShotAssetMap(storyboards, assets, "image"), [assets, storyboards]);
   const videoMap = useMemo(() => buildShotAssetMap(storyboards, assets, "video"), [assets, storyboards]);
-  const pendingShotIds = useMemo(() => collectPendingShotIds(storyboards, assets), [assets, storyboards]);
+  const pendingShotIds = useMemo(() => storyboards.filter(shot => {
+    const image = imageMap.get(shot.id);
+    return !image || image.status === "failed" || (image.status === "succeeded" && !image.referenceUrl);
+  }).map(shot => shot.id), [imageMap, storyboards]);
   const activeShot = storyboards.find((shot) => shot.id === state.activeShotId) ?? storyboards[0];
   const [draftState, updateDraft] = useReducer(
     reduceShotDraftState,
@@ -131,11 +141,15 @@ function LoadedShotStage({
   const imageModel = catalog.find(item => item.provider.id === imageRoute.imageProvider && item.model === imageRoute.imageModel);
   const videoModel = catalog.find(item => item.provider.id === videoRoute.videoProvider && item.model === videoRoute.videoModel);
   const selectedImageCount = selectedIds.length
-    ? selectedIds.filter((shotId) => !imageMap.get(shotId)?.referenceUrl).length
-    : activeShot && !activeImage?.referenceUrl ? 1 : 0;
+    ? selectedIds.filter((shotId) => pendingShotIds.includes(shotId)).length
+    : activeShot && pendingShotIds.includes(activeShot.id) ? 1 : 0;
   const imageUnitEstimate = imageModel?.price ? `${estimateImageCredits(imageModel.price.unitCredits, imageRoute.imageSize, imageRoute.imageQuality)} 积分` : "报价时确认";
-  const eligibleVideoShotIds = useMemo(() => collectEligibleVideoShotIds(storyboards, assets), [assets, storyboards]);
-  const eligibleVideoSet = new Set(eligibleVideoShotIds);
+  const eligibleVideoShotIds = useMemo(() => collectEligibleVideoShotIds(storyboards, assets).filter(id =>
+    resolveVideoAssetStatus(videoMap.get(id)) !== "running"
+    && /^(?:https?:\/\/|\/storage\/|data:image\/)/i.test(imageMap.get(id)?.referenceUrl ?? "")
+  ), [assets, storyboards, videoMap, imageMap]);
+  const videoBatchIds = eligibleVideoShotIds.slice(0, VIDEO_BATCH_MAX);
+  const eligibleVideoSet = new Set(videoBatchIds);
   const videoSeconds = storyboards
     .filter((shot) => eligibleVideoSet.has(shot.id))
     .reduce((total, shot) => total + Math.max(1, shot.duration || 0), 0);
@@ -146,10 +160,9 @@ function LoadedShotStage({
   const validVideoRoute = videoModels.includes(videoRoute.videoModel) && Boolean(videoModel?.selectable);
 
   useEffect(() => {
-    if (!activeShot) return;
-    if (draftState.shotId === activeShot.id) return;
+    if (draftState.shotId === (activeShot?.id ?? "")) return;
     activeOperationRef.current = null;
-    updateDraft({ type: "rebuild", shotId: activeShot.id, draft: shotDraft(activeShot) });
+    updateDraft({ type: "rebuild", shotId: activeShot?.id ?? "", draft: activeShot ? shotDraft(activeShot) : {} });
   }, [activeShot?.id, draftState.shotId]);
 
   useEffect(() => {
@@ -163,7 +176,19 @@ function LoadedShotStage({
 
   useEffect(() => () => onSaveStateChange("unchanged"), [onSaveStateChange]);
 
+  function selectEpisode(episodeNo: number) {
+    if (episodeNo === activeEpisode || pending || draftState.activeOperation) return;
+    if (hasUnsavedDraft && !window.confirm("当前镜头有未保存修改。确认放弃这些修改并切换剧集？")) return;
+    activeOperationRef.current = null;
+    const nextShot = projectStoryboards.find(shot => shot.episodeNo === episodeNo);
+    updateDraft({ type: "rebuild", shotId: nextShot?.id ?? "", draft: nextShot ? shotDraft(nextShot) : {} });
+    dispatch({ type: "set-episode", episodeNo, storyboards: projectStoryboards, episodeCount: project.episodes });
+    setMessage("");
+    setError("");
+  }
+
   function selectShot(shot: StoryboardShot) {
+    if (pending) return;
     const selection = resolveShotSelection(activeShot?.id ?? "", shot.id, draftState, () => (
       window.confirm("当前镜头有未保存修改。确认放弃这些修改并继续？")
     ));
@@ -251,12 +276,11 @@ function LoadedShotStage({
   }
 
   async function generateImages(scope: "current" | "selected" | "pending") {
-    if (!activeShot || pending || refreshRequired || !validImageRoute) return;
+    if (!activeShot || pending || hasUnsavedDraft || refreshRequired || !validImageRoute) return;
     const payloads = buildShotImageGenerationPayload(activeShot.id, selectedIds, pendingShotIds);
-    const payload = payloads[scope];
+    const payload = { shotIds: payloads[scope].shotIds.filter(id => pendingShotIds.includes(id)) };
     if (!payload.shotIds.length) return;
-    const billableCount = payload.shotIds.filter((shotId) => !imageMap.get(shotId)?.referenceUrl).length;
-      if (!window.confirm(`首帧请求范围 ${payload.shotIds.length} 个（其中 ${billableCount} 个当前待生成）；服务端按当前批次上限接收，最终数量和扣费以后端返回为准。\n单个接收镜头约 ${imageUnitEstimate} · ${imageRoute.imageProvider} / ${imageRoute.imageModel} / ${imageRoute.imageSize} / ${imageRoute.imageQuality}\n如修改模型，将同时更新项目默认模型。确认继续？`)) return;
+    if (!window.confirm(`第 ${activeEpisode} 集首帧请求范围 ${payload.shotIds.length} 个待生成镜头；服务端按当前批次上限接收，最终数量和扣费以后端返回为准。\n单个接收镜头约 ${imageUnitEstimate} · ${imageRoute.imageProvider} / ${imageRoute.imageModel} / ${imageRoute.imageSize} / ${imageRoute.imageQuality}\n如修改模型，将同时更新项目默认模型。确认继续？`)) return;
     setPending(`image:${scope}`);
     setMessage("");
     setError("");
@@ -280,14 +304,14 @@ function LoadedShotStage({
   }
 
   async function generateVideos() {
-    if (pending || refreshRequired || !validVideoRoute || !eligibleVideoShotIds.length || !window.confirm(`视频请求范围 ${eligibleVideoShotIds.length} 个符合条件的待完成片段；服务端按当前批次上限接收，最终数量和扣费以后端返回为准。\n实际接收片段单价 ${videoUnit} · ${videoRoute.videoProvider} / ${videoRoute.videoModel}\n如修改模型，将同时更新项目默认模型。确认继续？`)) return;
+    if (pending || hasUnsavedDraft || refreshRequired || !validVideoRoute || !videoBatchIds.length || !window.confirm(`第 ${activeEpisode} 集视频请求范围 ${videoBatchIds.length} 个待完成片段，已排除生成中和已完成镜头；服务端按当前批次上限接收，最终数量和扣费以后端返回为准。\n实际接收片段单价 ${videoUnit} · ${videoRoute.videoProvider} / ${videoRoute.videoModel}\n如修改模型，将同时更新项目默认模型。确认继续？`)) return;
     setPending("video");
     setMessage("");
     setError("");
     try {
       await persistVideoRoute(project, videoRoute);
-      const result = await api.generateVideos(project.id, ...buildProjectVideoGenerationArgs());
-      setMessage(buildBatchResultSummary("视频", eligibleVideoShotIds.length, result));
+      const result = await api.generateVideos(project.id, { storyboardIds: videoBatchIds });
+      setMessage(buildBatchResultSummary("视频", videoBatchIds.length, result));
     } catch (cause) {
       setError(errorText(cause, "项目视频任务提交失败。"));
       setPending("");
@@ -305,7 +329,7 @@ function LoadedShotStage({
 
   return <ProductionWorkspace
     rail={<div className="wb-shot-rail">
-      <header><h2>镜头清单</h2><small>{storyboards.length} 个镜头 · 已选 {selectedIds.length}</small></header>
+      <header><h2>第 {activeEpisode} 集镜头</h2><small>{storyboards.length} 个镜头 · 已选 {selectedIds.length}</small></header>
       <div className="wb-shot-list">
         {storyboards.map((shot, index) => {
           const image = imageMap.get(shot.id);
@@ -323,6 +347,7 @@ function LoadedShotStage({
     </div>}
     canvas={<div className="wb-shot-canvas">
       <header className="wb-shot-toolbar">
+        <label className="wb-shot-episode"><span>制作范围</span><select aria-label="选择分镜剧集" value={activeEpisode} disabled={Boolean(pending || draftState.activeOperation)} onChange={event => selectEpisode(Number(event.target.value))}>{episodes.map(episode => <option key={episode} value={episode}>第 {episode} 集</option>)}</select></label>
         <div role="tablist" aria-label="镜头视图">
           <ModeButton mode="table" current={state.shotMode} icon={<Table2 />} onSelect={(mode) => dispatch({ type: "set-shot-mode", mode })}>镜头表</ModeButton>
           <ModeButton mode="image" current={state.shotMode} icon={<ImageIcon />} onSelect={(mode) => dispatch({ type: "set-shot-mode", mode })}>分镜图</ModeButton>
@@ -333,7 +358,7 @@ function LoadedShotStage({
         </div>
         <small>{activeShot ? formatShot(activeShot, storyboards.indexOf(activeShot)) : "未选择镜头"}</small>
       </header>
-      {state.shotMode === "table" ? <ShotTable storyboards={storyboards} activeShot={activeShot} onSelect={selectShot} /> : null}
+      {state.shotMode === "table" ? storyboards.length ? <ShotTable storyboards={storyboards} activeShot={activeShot} onSelect={selectShot} /> : <p className="wb-empty-state">第 {activeEpisode} 集暂无镜头，请先在内容阶段拆解这一集。</p> : null}
       {state.shotMode === "image" ? <ShotImageCanvas shot={activeShot} imageUrl={activeImage?.referenceUrl} onPreview={() => activeImage?.referenceUrl && onPreview({ url: activeImage.referenceUrl, title: activeImage.name })} /> : null}
       {state.shotMode === "video" ? <ShotVideoCanvas shot={activeShot} videoUrl={activeVideo?.referenceUrl} status={resolveVideoAssetStatus(activeVideo)} onCaptureTailFrame={async (frameUrl, sourceVideoUrl) => { if (!activeShot) return; setPending("tail-frame"); setError(""); try { await api.captureStoryboardTailFrame(project.id, activeShot.id, frameUrl, sourceVideoUrl); await onRefresh(project.id); setMessage(activeShot.shotNo < storyboards.filter((item) => item.episodeNo === activeShot.episodeNo).length ? "尾帧已保存，并已作为下一镜头首帧。" : "尾帧已保存。" ); } catch (cause) { setError(errorText(cause, "尾帧保存失败，请重试。")); } finally { setPending(""); } }} /> : null}
       <div className="wb-action-feedback" aria-live="polite">{message ? <p className="wb-action-feedback--success">{message}</p> : null}{error ? <p className="wb-action-feedback--error">{error}</p> : null}</div>
@@ -346,12 +371,12 @@ function LoadedShotStage({
         <div className="wb-shot-route-grid"><RouteSelect label="尺寸" value={imageRoute.imageSize} options={imageOutputSizeOptions.map((item) => ({ value: item.value, label: item.label }))} onChange={(value) => setImageRoute((current) => ({ ...current, imageSize: normalizeImageOutputSize(value) }))} /><RouteSelect label="质量" value={imageRoute.imageQuality} options={imageOutputQualityOptions.map((item) => ({ value: item.value, label: item.label }))} onChange={(value) => setImageRoute((current) => ({ ...current, imageQuality: normalizeImageOutputQuality(value) }))} /></div>
         <small>单个实际接收镜头约 {imageUnitEstimate} · 服务端按当前批次上限结算</small>
         <button className="wb-primary-button" type="button" disabled={!activeShot || Boolean(pending) || refreshRequired || hasUnsavedDraft || !validImageRoute || selectedImageCount === 0} onClick={() => void generateImages(selectedIds.length ? "selected" : "current")}>{pending.startsWith("image:") ? <Loader2 className="wb-spin" /> : <WandSparkles />}{selectedIds.length ? `生成已选 ${selectedIds.length} 个首帧` : activeImage?.referenceUrl ? "当前首帧已生成" : "生成当前首帧"}</button>
-        <button className="wb-secondary-button" type="button" disabled={!pendingShotIds.length || Boolean(pending) || refreshRequired || hasUnsavedDraft || !validImageRoute} onClick={() => void generateImages("pending")}>生成全部待生成（{pendingShotIds.length}）</button>
+        <button className="wb-secondary-button" type="button" disabled={!pendingShotIds.length || Boolean(pending) || refreshRequired || hasUnsavedDraft || !validImageRoute} onClick={() => void generateImages("pending")}>生成本集待生成首帧（{pendingShotIds.length}）</button>
       </section> : null}
       {state.shotMode === "video" ? <section className="wb-shot-generation"><h3>批量生成视频</h3><p>按已就绪首帧补齐待完成片段。需要重新生成单个镜头时，可在成片阶段选择对应镜头。</p>
-        <div className="wb-video-input-preview"><div><span>本镜头首帧参考</span>{activeImage?.referenceUrl ? <img src={activeImage.referenceUrl} alt="本镜头首帧参考" /> : <strong>请先生成首帧图</strong>}</div><div><span>视频提示词</span><pre>{activeShot.videoPrompt || "暂无视频提示词"}</pre></div></div>
+        <div className="wb-video-input-preview"><div><span>本镜头首帧参考</span>{activeImage?.referenceUrl ? <img src={activeImage.referenceUrl} alt="本镜头首帧参考" /> : <strong>请先生成首帧图</strong>}</div><div><span>视频提示词</span><pre>{activeShot?.videoPrompt || "暂无视频提示词"}</pre></div></div>
         <div className="wb-shot-route"><span>渠道 / 模型</span><ModelRoutePicker modality="video" providers={videoProviders} modelPrices={modelPrices} value={{ providerId: videoRoute.videoProvider, model: videoRoute.videoModel }} onChange={(providerId, model) => setVideoRoute({ videoProvider: providerId, videoModel: model })} disabled={Boolean(pending)} /></div>
-        <small>{eligibleVideoShotIds.length} 个符合条件片段 · 共 {videoSeconds}s · {videoUnit}，实际扣费以后端本批次结果为准</small>
+        <small>第 {activeEpisode} 集有 {eligibleVideoShotIds.length} 个待生成片段 · 本批 {videoBatchIds.length} 个，共 {videoSeconds}s · {videoUnit}，实际扣费以后端本批次结果为准</small>
         {!eligibleVideoShotIds.length ? <p>当前没有可生成片段。请先生成成功首帧，或等待现有视频任务完成。</p> : null}
         {latestVideoTask?.status === "failed" ? <p className="wb-action-feedback--error">项目视频任务失败：{latestVideoTask.errorReason || "未提供失败原因"}</p> : null}
         <button className="wb-primary-button" type="button" disabled={!eligibleVideoShotIds.length || Boolean(pending) || refreshRequired || hasUnsavedDraft || !validVideoRoute} onClick={() => void generateVideos()}>{pending === "video" ? <Loader2 className="wb-spin" /> : <Film />}生成当前批次视频</button>

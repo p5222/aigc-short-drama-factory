@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode
 import { analyzeProductionEpisodes, episodeGenerationOptions, type ContentProductionPackage, type ContentProjectSummary, type ModelPrice, type ModelProvider, type StyleProfile } from "@aifilm/shared";
 import { contentApi, type ContentVersionHistory, type SourceDocumentInput } from "../lib/contentApi";
 import { ModelRoutePicker } from "../components/ModelRoutePicker";
+import { ProductionReadiness } from "../components/ProductionReadiness";
 import { buildModelCatalog, defaultModelRoute, modelIdentity } from "../components/modelCatalog";
 import { chapterGenerationPlan, chapterNavigationStage, cleanModelText, contentEditorDirty, contentNavigationDecision, contentSourceForProject, reconcileContentEditor, isCurrentRequest, modeLabel, reconcileProjectId, sourceKindForMode, statusLabel, type ContentEditorDraft, type RequestToken } from "./model";
 import { BEFORE_CREATOR_NAVIGATION } from "../lib/creatorNavigation";
@@ -25,6 +26,13 @@ const stageFlow: Array<{ id: StageId; label: string }> = [
   { id: "chapter", label: "正文创作" },
   { id: "handoff", label: "制作交接" }
 ];
+const stageBrief: Record<StageId, { input: string; output: string; next: string }> = {
+  intent: { input: "标题、题材或参考作品", output: "故事方向与结构拆解", next: "先明确主角、冲突与结局，再确认创作方向。" },
+  analysis: { input: "已保存的创作意图", output: "开头、高潮、反转与情绪节点", next: "检查分析依据，再生成章节大纲。" },
+  outline: { input: "已保存的结构分析", output: "每章目标、冲突与结尾钩子", next: "逐章核对后确认大纲，开始首批正文。" },
+  chapter: { input: "已确认的大纲与前文", output: "可编辑、可续写的章节正文", next: "每批自动保存。检查人物与情节连续性，再生成分集剧本。" },
+  handoff: { input: "已保存的正文与制作范围", output: "分集剧本、人物与场景设定", next: "核对所选剧集后进入制作，再准备角色定稿、首帧与视频。" }
+};
 
 function deriveStage(pkg?: ContentProductionPackage): StageId {
   if (!pkg?.analysis) return "intent";
@@ -502,9 +510,9 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
     </nav>
     <div className="cw2-top-actions">
       {selected && !creating ? <ModelRoutePicker modality="text" compact providers={providers} modelPrices={modelPrices} value={{ providerId: selected.textProvider, model: selected.textModel }} onChange={(providerId, model) => { void changeModelRoute(providerId, model); }} disabled={working} /> : null}
-      <button type="button" className="cw2-icon-button" disabled={working} onClick={startNewContent} title="新建内容创作" aria-label="新建内容创作"><Plus size={16} /></button>
-      <button type="button" className="cw2-icon-button" disabled={working} onClick={() => void refresh()} title="刷新" aria-label="刷新"><RefreshCw size={15} /></button>
-      {selected && !creating ? <button type="button" className="cw2-icon-button danger" disabled={working} onClick={() => { if (canChangeView()) void removeContentProject(selected.id); }} title="删除作品" aria-label="删除作品"><Trash2 size={15} /></button> : null}
+      <button type="button" className="cw2-icon-button cw2-labelled-action" disabled={working} onClick={startNewContent} aria-label="新建内容创作"><Plus size={16} /><span>新建</span></button>
+      <button type="button" className="cw2-icon-button cw2-labelled-action" disabled={working} onClick={() => void refresh()} aria-label="刷新"><RefreshCw size={15} /><span>刷新</span></button>
+      {selected && !creating ? <button type="button" className="cw2-icon-button cw2-labelled-action danger" disabled={working} onClick={() => { if (canChangeView()) void removeContentProject(selected.id); }} aria-label="删除作品"><Trash2 size={15} /><span>删除</span></button> : null}
     </div>
   </header>;
 
@@ -514,7 +522,7 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
     stageView = <div className="cw2-stage-scroll"><ContentCreationIntent
       intent={createTitle} intentType={intentType} targetWords={targetWords} chapterCount={chapterCount} batchSize={batchSize}
       busy={busy === "create"} locked={Boolean(failedProjectId)} canSubmit={createRouteReady && !failedProjectId}
-      modelSelection={<div className="content-create-model"><span>文本创作模型</span><ModelRoutePicker modality="text" label="选择文本创作模型" providers={providers} modelPrices={modelPrices} value={createRoute} onChange={(providerId, model) => setCreateRoute({ providerId, model })} disabled={Boolean(busy) || Boolean(failedProjectId)} /><small>{failedProjectId ? "保留的项目沿用首次提交的意图、参数与模型。请重试当前阶段，或删除后重新创建。" : "结构拆解与后续内容生成使用此模型，费用按当前渠道价格及生成阶段计算。"}</small></div>}
+      modelSelection={<div className="content-create-model"><span>文本创作模型</span><ModelRoutePicker modality="text" label="选择文本创作模型" providers={providers} modelPrices={modelPrices} value={createRoute} onChange={(providerId, model) => setCreateRoute({ providerId, model })} disabled={Boolean(busy) || Boolean(failedProjectId)} /><small>{failedProjectId ? "保留的项目沿用首次提交的意图、参数与模型。请重试当前阶段，或删除后重新创建。" : "结构拆解与后续内容生成使用此模型，费用按当前渠道价格及生成阶段计算。"}</small><ProductionReadiness providers={providers} prices={modelPrices} modalities={["text"]} routes={{ text: createRoute }} /></div>}
       canCancel={Boolean(projects.length)} onIntentChange={setCreateTitle} onIntentTypeChange={setIntentType}
       onTargetWordsChange={setTargetWords} onChapterCountChange={setChapterCount} onBatchSizeChange={setBatchSize}
       onCancel={() => changeView(() => setCreating(false))} onSubmit={() => void createProject()}
@@ -598,7 +606,7 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
         <span className="cw2-hint">{serverBusy ? "服务器正在生成中，离开此页也会继续，完成后自动刷新…" : generationPlan.remainingCount ? `每批完成后自动保存 · 还剩 ${generationPlan.remainingCount} 章 · 中断可随时续生成` : "全部章节已生成，可在右侧进入制作交接"}</span>
         {selectedGenerated ? <button type="button" className="content-secondary-button" disabled={working} onClick={() => setEditingChapter({ chapterNo: selectedGenerated.chapterNo, title: selectedGenerated.title, content: selectedGenerated.content, originalTitle: selectedGenerated.title, originalContent: selectedGenerated.content, expectedChapterId: selectedGenerated.id })}><FileText size={14} />编辑本章</button> : null}
         {selectedGenerated ? <button type="button" className="content-secondary-button" disabled={working} onClick={() => void regenerateChapter(selectedChapterNo)}><RefreshCw size={14} />重新生成本章</button> : null}
-        <button type="button" className="content-secondary-button" disabled={working || !generationPlan.remainingCount} onClick={() => void generateNextChapters()}>{working ? <LoaderCircle size={15} /> : <Sparkles size={15} />}继续生成下一批（{Math.max(2, generationPlan.nextBatchSize) || 2} 章）</button>
+        <button type="button" className="content-secondary-button" disabled={working || !generationPlan.remainingCount} onClick={() => void generateNextChapters()}>{working ? <LoaderCircle size={15} /> : <Sparkles size={15} />}继续生成下一批（{generationPlan.nextBatchSize} 章）</button>
         <button type="button" className="content-primary-button" disabled={working || !generationPlan.remainingCount} onClick={() => void generateAllChapters()}><ArrowRight size={15} />一键生成全部剩余 {generationPlan.remainingCount} 章</button>
       </div>}
     </section>;
@@ -607,7 +615,7 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
     stageView = <section className="cw2-stage-scroll">
       {productionPackage?.script ? <>
         <div className="cw2-stage-head"><h2>可生产剧本 <span className="cw2-tag">剧本 v{productionPackage.script.version}</span></h2><small>{statusLabel(productionPackage.script.status)}</small></div>
-        <div className="cw2-episode-picker"><label htmlFor="handoff-episode">查看剧集</label><select id="handoff-episode" value={handoffEpisode?.episodeNo ?? 1} onChange={(event) => setHandoffEpisodeNo(Number(event.target.value))}>{(productionPackage.episodes ?? []).map((episode) => <option key={episode.episodeNo} value={episode.episodeNo}>第{episode.episodeNo}集 · {episode.title}</option>)}</select><span>{handoffEpisode ? `${handoffEpisode.sourceCharacterCount.toLocaleString()} 字 · ${handoffEpisode.status}` : "完整剧本"}</span></div>
+        <div className="cw2-episode-picker">{productionPackage.episodes?.length ? <><label htmlFor="handoff-episode">查看剧集</label><select id="handoff-episode" value={handoffEpisode?.episodeNo ?? 1} onChange={(event) => setHandoffEpisodeNo(Number(event.target.value))}>{productionPackage.episodes.map((episode) => <option key={episode.episodeNo} value={episode.episodeNo}>第{episode.episodeNo}集 · {episode.title}</option>)}</select><span>{handoffEpisode ? `${handoffEpisode.sourceCharacterCount.toLocaleString()} 字 · ${statusLabel(handoffEpisode.status)}` : "完整剧本"}</span></> : <span>当前显示完整剧本 · 生成分集版本后可按集查看</span>}</div>
         <article className="cw2-paper"><div className="cw2-paper-scroll"><pre>{handoffEpisodeContent}</pre></div></article>
         <div className="content-entity-summary">
           <article><UsersRound size={18} /><strong>{productionPackage.entities?.characters.length ?? 0}</strong><span>人物</span></article>
@@ -685,6 +693,7 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
       <main className="cw2-stage">
         {(message || error || serverBusy) && (!creating || !error) ? <div className="cw2-feedback"><InlineNotice tone={error ? "error" : busy || serverBusy ? "info" : "success"}>{error || (serverBusy ? "服务器正在生成，已完成内容会自动同步。" : message)}</InlineNotice></div> : null}
         {detailError && productionPackage ? <div className="cw2-feedback"><InlineNotice tone="warning">{detailError} 已保留上次读取的内容。<button type="button" className="cw2-link-button" onClick={() => setDetailReload(value => value + 1)}>重新读取</button></InlineNotice></div> : null}
+        {selected && !creating && !sourceOpen && productionPackage ? <section className="cw2-stage-brief" aria-label="当前写作阶段说明"><dl><div><dt>本步输入</dt><dd>{stageBrief[viewStage].input}</dd></div><div><dt>本步产物</dt><dd>{stageBrief[viewStage].output}</dd></div></dl><p>{stageBrief[viewStage].next}</p><span>{hasUnsavedInput ? "有未保存修改 · 先保存再继续" : detailError ? "上次读取的内容 · 等待重新同步" : working ? "正在处理 · 已完成的内容会保留" : "当前内容已同步"}</span></section> : null}
         {stageView}
       </main>
       {sidePanel}

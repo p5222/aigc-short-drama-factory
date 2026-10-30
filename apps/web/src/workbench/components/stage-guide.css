@@ -1,0 +1,14 @@
+.wb-stage-guide { min-width: 0; margin: 20px 24px 0; padding: 17px 18px; border: 1px solid var(--border-1); border-radius: 10px; background: var(--surface-2); }
+.wb-stage-guide header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.wb-stage-guide header > span { color: var(--text-3); font-size: 11px; }
+.wb-stage-guide header > strong { font-size: 14px; color: var(--text-1); font-weight: 600; }
+.wb-stage-guide p { margin: 8px 0 12px; font-size: 12px; line-height: 1.75; color: var(--text-2); }
+.wb-stage-guide__bottom { display: flex; align-items: center; justify-content: space-between; gap: 8px 16px; flex-wrap: wrap; }
+.wb-stage-guide dl { display: flex; flex-wrap: wrap; gap: 10px 20px; margin: 0; }
+.wb-stage-guide dl > div { display: flex; gap: 8px; align-items: center; }
+.wb-stage-guide dt { display: flex; gap: 5px; align-items: center; color: var(--text-3); font-size: 11px; }
+.wb-stage-guide dd { margin: 0; font-size: 12px; font-variant-numeric: tabular-nums; color: var(--text-1); }
+.wb-stage-guide dt i { width: 5px; height: 5px; background: var(--text-3); border-radius: 50%; }
+.wb-stage-guide [data-complete="true"] dt svg { color: var(--accent); }
+.wb-stage-guide .wb-text-button { display: inline-flex; gap: 6px; align-items: center; padding: 4px 0; font-size: 12px; }
+@media (max-width: 767px) { .wb-stage-guide { margin: 12px 12px 0; padding: 14px; } }

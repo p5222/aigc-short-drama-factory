@@ -47,6 +47,10 @@
   stroke-width: 1.75;
 }
 
+.wb-icon-button.wb-labelled-action { width: auto; flex-basis: auto; display: inline-flex; gap: 6px; padding: 0 9px; white-space: nowrap; font-size: 12px; }
+.wb-labelled-action.wb-icon-button--danger { color: var(--ds-status-danger); }
+@media (max-width: 1439px) { .wb-icon-button.wb-labelled-action.wb-header__secondary-action { display: none; } }
+
 .wb-stage-nav {
   min-width: 0;
   display: flex;

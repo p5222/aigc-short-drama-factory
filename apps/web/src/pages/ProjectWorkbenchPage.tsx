@@ -67,6 +67,7 @@ import { generateCharacterImages, generateStoryboards, generateImages, generateV
 import { buildShotAssetMap as buildCurrentShotAssetMap, resolveCharacterIdentityAsset, shouldReconcileStoryboardSelection, workbenchReducer, type WorkbenchStage, type WorkbenchTheme } from "../workbench/model";
 import { buildTimelineClipLayout } from "./projectWorkbenchModel";
 import { createWorkbenchSourceSync, isWorkbenchDeliveryComplete, workbenchPageSession } from "./workbenchPageModel";
+import { buildStageGuidance, productionProgress } from "../workbench/readinessModel";
 import "./ProjectStudioV4.css";
 
 interface ProjectWorkbenchPageProps {
@@ -165,7 +166,7 @@ function LoadedProjectWorkbenchPage({ workflow, providers, modelPrices, theme, o
 
   useEffect(() => {
     if (!workflow || !shouldReconcileStoryboardSelection(workbenchState.activeStage)) return;
-    dispatch({ type: "reconcile-workflow", storyboards: workflow.storyboards });
+    dispatch({ type: "reconcile-workflow", storyboards: workflow.storyboards, episodeCount: workflow.project.episodes });
   }, [workbenchState.activeStage, workflow]);
 
   const { project, script, characters, storyboards } = workflow;
@@ -190,10 +191,12 @@ function LoadedProjectWorkbenchPage({ workflow, providers, modelPrices, theme, o
   const completedImages = imageAssets.filter((asset) => asset.referenceUrl && asset.status === "succeeded").length;
   const completedVideos = videoAssets.filter((asset) => asset.status === "succeeded" && isPersistedPlayableVideoReference(asset.referenceUrl)).length;
   const completedRoleRefs = countCompletedCharacterSheets(characters, roleAssets);
+  const progress = productionProgress(workflow, null);
+  const stageGuidance = buildStageGuidance(workflow, activeTab, workbenchState.activeEpisodeNo);
   const pipelineSteps = [
-    { id: "content" as const, label: "内容", detail: "大纲 / 分集 / 剧本", done: Boolean(script) },
-    { id: "assets" as const, label: "资产", detail: "角色 / 场景 / 道具", done: Boolean(script) && (characters.length === 0 || completedRoleRefs >= characters.length) },
-    { id: "shots" as const, label: "分镜", detail: "脚本 / 首帧 / 视频", done: storyboards.length > 0 && completedImages >= storyboards.length },
+    { id: "content" as const, label: "内容", detail: "大纲 / 分集 / 剧本", done: progress.script },
+    { id: "assets" as const, label: "资产", detail: "角色 / 场景 / 道具", done: progress.script && progress.roles >= progress.characters },
+    { id: "shots" as const, label: "分镜", detail: "脚本 / 首帧 / 视频", done: progress.shots > 0 && progress.images === progress.shots },
     { id: "delivery" as const, label: "成片", detail: "配音 / 字幕 / 导出", done: isWorkbenchDeliveryComplete(project, storyboards, exportJobs) }
   ];
 
@@ -328,6 +331,8 @@ function LoadedProjectWorkbenchPage({ workflow, providers, modelPrices, theme, o
       workflow={workflow}
       theme={theme}
       onThemeChange={onThemeChange}
+      stageGuidance={stageGuidance}
+      onStageChange={setActiveTab}
     >
     <div className={`wb-shell project-workbench${operation || message || error ? " wb-has-notices" : ""}`} data-theme={theme}>
       <WorkbenchHeader
@@ -408,7 +413,7 @@ function LoadedProjectWorkbenchPage({ workflow, providers, modelPrices, theme, o
         isBusy={isBusy}
         activeShotId={workbenchState.activeShotId}
         activeEpisodeNo={workbenchState.activeEpisodeNo}
-        onEpisodeChange={(episodeNo) => dispatch({ type: "set-episode", episodeNo, storyboards })}
+        onEpisodeChange={(episodeNo) => dispatch({ type: "set-episode", episodeNo, storyboards, episodeCount: project.episodes })}
         onSelectShot={(shotId) => dispatch({ type: "set-shot", shotId })}
         selectedShotIds={workbenchState.selectedShotIds}
         onSelectShots={(shotIds) => dispatch({ type: "set-selected-shots", shotIds })}

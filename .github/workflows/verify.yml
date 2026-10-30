@@ -12,7 +12,7 @@ concurrency:
 jobs:
   test-and-build:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
     services:
       postgres:
         image: postgres:16-alpine
@@ -83,7 +83,7 @@ jobs:
       - name: Install Chromium for isolated desktop and mobile UI regression
         run: pnpm --filter @aifilm/web exec playwright install --with-deps chromium
       - name: Verify all creator and administrator browser workflows
-        timeout-minutes: 6
+        timeout-minutes: 10
         env:
           PLAYWRIGHT_OUTPUT_DIR: ${{ runner.temp }}/manjiao-browser-results
           PLAYWRIGHT_REPORT_DIR: ${{ runner.temp }}/manjiao-browser-report

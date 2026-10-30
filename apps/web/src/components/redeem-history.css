@@ -1,0 +1,13 @@
+.redeem-history { min-width: 0; padding: 4px 0; }
+.redeem-history-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
+.redeem-history h3 { margin: 0; font-size: 16px; }
+.redeem-history p, .redeem-history small { color: var(--ds-text-secondary); font-size: 12px; line-height: 1.7; }
+.redeem-history ol { list-style: none; margin: 0; padding: 0; }
+.redeem-history li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; padding: 16px 0; border-top: 1px solid var(--ds-border-default); }
+.redeem-history li > div { display: grid; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
+.redeem-history li > div:last-child { text-align: right; }
+.redeem-history li strong { font-size: 14px; }
+.redeem-history-pagination { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-top: 16px; border-top: 1px solid var(--ds-border-default); font-size: 12px; }
+.redeem-history-pagination > span { margin-right: auto; }
+.creator-redeem-panel > .redeem-history { border-top: 1px solid var(--ds-border-default); margin-top: 16px; padding-top: 20px; }
+@media (max-width: 600px) { .redeem-history li { grid-template-columns: minmax(0, 1fr); gap: 8px; } .redeem-history li > div:last-child { text-align: left; } }

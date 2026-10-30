@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import type { Prisma } from "@prisma/client";
 import { DelayedError, type Job } from "bullmq";
 import type { CreateProjectInput } from "@aifilm/shared";
 import { generateProjectScriptContent, hasTextModelConfig, textModelName, textProviderName } from "../agents/generator.js";
@@ -131,7 +132,8 @@ export async function processCreationJob(
       if (!settlement.applied) return;
       await tx.scriptDraft.create({ data: {
         id: generated.script.id, projectId, name: generated.script.name,
-        content: generated.script.content, synopsis: generated.script.synopsis, version: generated.script.version
+        content: generated.script.content, synopsis: generated.script.synopsis, version: generated.script.version,
+        promptSnapshot: (generated.promptSnapshot ?? {}) as Prisma.InputJsonValue
       } });
       await tx.character.createMany({ data: generated.characters.map((character) => ({
         id: character.id, projectId, name: character.name, identity: character.identity,

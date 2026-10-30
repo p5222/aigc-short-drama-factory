@@ -5,7 +5,7 @@ import type { ContentProductionPackage, ContentProjectMode, ContentProjectSummar
 import { prisma } from "../db/client.js";
 import { assertUsableScriptOutput, callTextModelJson, extractSceneNames } from "../agents/generator.js";
 import { createToonflowScriptPlan, type ToonflowCharacterCard } from "../agents/toonflowAdapter.js";
-import { materializePrompt } from "../prompts/runtime.js";
+import { materializeProductionPrompt } from "../prompts/production.js";
 import { normalizeDevelopmentAnalysis, normalizeDevelopmentOutline } from "./normalization.js";
 import { generateEpisodes } from "../production/episodeService.js";
 import { markContentOperationFailed, runBilledContentGeneration, saveContentOperationOutput, withContentGenerationOperation } from "./generationBilling.js";
@@ -116,7 +116,7 @@ async function analyzeContentProjectUnlocked(userId: string, contentProjectId: s
   await prisma.contentProject.update({ where: { id: contentProjectId }, data: { activeStep: "analysis", status: "running" } });
   try {
     const analysisKey = input.intentType === "title" ? "title_story_planning" : input.intentType === "genre" ? "genre_story_research" : "reference_story_research";
-    const analysisPrompt = materializePrompt(analysisKey, { intent: input.intent, targetWords: input.targetWords, chapterCount: input.chapterCount, styleProfile: project.styleProfile });
+    const analysisPrompt = await materializeProductionPrompt(analysisKey, { intent: input.intent, targetWords: input.targetWords, chapterCount: input.chapterCount, styleProfile: project.styleProfile });
     await runBilledContentGeneration(project, "内容结构拆解", async () => {
       const analysisRaw = await callTextModelJson<unknown>({ ...(await contentTextRuntime(project)), system: analysisPrompt.systemPrompt, prompt: analysisPrompt.userPrompt, maxTokens: 5000, label: "爆款结构分析" });
       const analysis = normalizeDevelopmentAnalysis(analysisRaw);
@@ -151,7 +151,7 @@ async function generateContentOutlineUnlocked(userId: string, contentProjectId: 
   const chapterCount = Number(analysisResult.chapterCount ?? 10);
   await prisma.contentProject.update({ where: { id: contentProjectId }, data: { activeStep: "outline", status: "running" } });
   try {
-    const prompt = materializePrompt("same_genre_story_strategy", { analysis: analysisResult, targetWords, chapterCount, styleProfile: project.styleProfile });
+    const prompt = await materializeProductionPrompt("same_genre_story_strategy", { analysis: analysisResult, targetWords, chapterCount, styleProfile: project.styleProfile });
     await runBilledContentGeneration(project, "内容章节大纲", async () => {
     const raw = await callTextModelJson<unknown>({ ...(await contentTextRuntime(project)), system: prompt.systemPrompt, prompt: prompt.userPrompt, maxTokens: 7000, label: "章节大纲" });
     const outline = normalizeDevelopmentOutline(raw);
@@ -232,7 +232,7 @@ async function generateContentChapterBatchUnlocked(userId: string, contentProjec
   let previousHandoff: unknown = project.chapters.filter((chapter, index, all) => all.findIndex((candidate) => candidate.chapterNo === chapter.chapterNo) === index).filter((chapter) => chapter.chapterNo < input.startChapter).at(-1)?.result ?? "这是第一章，无前章交接";
   try {
     for (const goal of goals) {
-      const prompt = materializePrompt("chapter_generation", { outline, previousHandoff, chapterGoal: goal, characterState: outline.characters, targetWords: goal.targetWords ?? Math.round(Number((project.outlines[0]?.result as any)?.targetWords ?? 20000) / outline.chapters.length) });
+      const prompt = await materializeProductionPrompt("chapter_generation", { outline, previousHandoff, chapterGoal: goal, characterState: outline.characters, targetWords: goal.targetWords ?? Math.round(Number((project.outlines[0]?.result as any)?.targetWords ?? 20000) / outline.chapters.length) });
       const generated = await runBilledContentGeneration(project, `内容第${goal.chapterNo}章正文`, async () => generatedChapterSchema.parse(await callTextModelJson<unknown>({ ...(await contentTextRuntime(project)), system: prompt.systemPrompt, prompt: prompt.userPrompt, maxTokens: 7000, label: `第${goal.chapterNo}章正文` })), async (tx, generated) => {
         const currentVersion = (await tx.storyChapter.aggregate({ where: { contentProjectId, chapterNo: goal.chapterNo }, _max: { version: true } }))._max.version ?? 0;
         await tx.storyChapter.create({ data: { id: `chapter_${crypto.randomUUID()}`, contentProjectId, chapterNo: goal.chapterNo, title: generated.title, status: "confirmed", content: generated.content, result: JSON.parse(JSON.stringify({ factUpdates: generated.factUpdates, handoff: generated.handoff })) as Prisma.InputJsonValue, promptSnapshot: prompt.snapshot as unknown as Prisma.InputJsonValue, version: currentVersion + 1 } });

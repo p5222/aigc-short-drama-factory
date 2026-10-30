@@ -941,10 +941,29 @@
 
 .wb-shot-toolbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
   margin-bottom: 24px;
+}
+
+.wb-shot-episode {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.wb-shot-episode select {
+  min-height: 40px;
+  min-width: 108px;
+  padding: 0 28px 0 12px;
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-sm);
+  color: var(--text-1);
+  background: var(--surface-1);
 }
 
 .wb-shot-toolbar > div {
@@ -1131,12 +1150,26 @@
   }
 
   .wb-shot-toolbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
     align-items: stretch;
-    flex-direction: column;
+    gap: 10px;
+    margin-bottom: 16px;
   }
 
-  .wb-shot-toolbar > div {
+  .wb-shot-toolbar > [role="tablist"] {
+    grid-column: 1 / -1;
+    grid-row: 2;
     width: 100%;
+  }
+
+  .wb-shot-toolbar > .wb-shot-profile {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .wb-shot-toolbar > small {
+    grid-column: 1 / -1;
   }
 
   .wb-shot-toolbar button {
@@ -2237,3 +2270,4 @@
 .wb-shell .dlv2-delivery-checks { display: flex; flex-wrap: wrap; gap: 8px 24px; padding: 12px 18px; border-bottom: 1px solid var(--border-1); background: var(--surface-1); font-size: 12px; color: var(--text-2); }
 .wb-shell .dlv2-delivery-checks span { display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; }
 .wb-shell .dlv2-delivery-checks strong { color: var(--text-1); font-weight: 600; }
+.wb-shell .dlv2-shot-row > .dlv2-expand-error { width: 44px; padding: 0 4px; font-size: 11px; white-space: nowrap; }

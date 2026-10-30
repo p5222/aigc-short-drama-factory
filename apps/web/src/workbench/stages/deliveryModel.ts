@@ -264,9 +264,10 @@ export function videoUnitCredits(prices: ModelPrice[], providerId: string, model
 }
 
 export function collectDeliveryEpisodes(shots: StoryboardShot[], fallbackCount = 1): number[] {
-  const values = [...new Set(shots.map((shot) => Math.max(1, shot.episodeNo || 1)))].sort((a, b) => a - b);
-  if (values.length) return values;
-  return Array.from({ length: Math.max(1, fallbackCount) }, (_, index) => index + 1);
+  return [...new Set([
+    ...Array.from({ length: Math.max(1, fallbackCount) }, (_, index) => index + 1),
+    ...shots.map((shot) => Math.max(1, shot.episodeNo || 1))
+  ])].sort((a, b) => a - b);
 }
 
 /** 确定性伪波形（配音轨占位）：同一 seed 恒定输出，points 可直接用于 SVG polyline。 */

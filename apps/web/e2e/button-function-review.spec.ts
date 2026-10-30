@@ -222,7 +222,6 @@ test("admin price creation and editing block invalid numbers while allowing expl
   await capture(page, "admin-price-validation");
   await page.keyboard.press("Escape");
   await page.getByRole("alertdialog").getByRole("button", { name: "放弃修改", exact: true }).click();
-  await page.getByRole("button", { name: "展开价格", exact: true }).click();
   await page.getByRole("button", { name: "编辑价格", exact: true }).click();
   dialog = page.getByRole("dialog", { name: "编辑价格策略", exact: true });
   await dialog.getByLabel(/^积分 \//).fill("0.5");

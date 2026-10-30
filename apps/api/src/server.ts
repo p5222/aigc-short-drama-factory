@@ -15,6 +15,7 @@ import { hashPassword, verifyPassword } from "./auth/password.js";
 import { EmailVerificationError, EmailVerificationService, QQ_EMAIL_PATTERN } from "./auth/emailVerification.js";
 import { mockCheckoutEnabled } from "./billing/checkoutPolicy.js";
 import { ContentMutationError } from "./content/contentMutation.js";
+import { activateProductionPrompt, getProductionPrompt, listProductionPrompts, previewProductionPrompt, ProductionPromptError, productionPromptActivateSchema, productionPromptPreviewSchema, productionPromptSaveSchema, saveProductionPrompt } from "./prompts/production.js";
 import { DeliveryEditError, saveDeliveryEdit } from "./db/deliveryEdit.js";
 import { acceptWechatTransaction, getMembership, paymentAvailability, prepareCheckout, reconcilePayment, recoverPayments, startCheckout } from "./billing/payments.js";
 import { decryptWechatNotification, PaymentError, wechatConfig } from "./billing/wechat.js";
@@ -76,6 +77,7 @@ import {
   ProjectRequestError,
   requestInvoice,
   listRedeemCodes,
+  listRedeemHistory,
   listTasks,
   listTemplates,
   updateAdminUser,
@@ -402,21 +404,25 @@ const membershipPlanCreateSchema = z.object({
 });
 
 const redeemCodeUpdateSchema = z.object({
-  name: z.string().min(1).optional(),
-  code: z.string().min(3).optional(),
-  credits: z.coerce.number().int().min(1).optional(),
-  maxRedemptions: z.coerce.number().int().min(1).optional(),
+  name: z.string().trim().min(1).max(100).optional(),
+  code: z.string().min(3).max(160).optional(),
+  credits: z.coerce.number().int().min(1).max(2147483647).optional(),
+  maxRedemptions: z.coerce.number().int().min(1).max(2147483647).optional(),
   enabled: z.boolean().optional(),
   startsAt: z.string().datetime().nullable().optional(),
   endsAt: z.string().datetime().nullable().optional()
 });
 
 const redeemBatchCreateSchema = z.object({
-  name: z.string().min(1).default("批量体验码"),
+  name: z.string().trim().min(1).max(100).default("批量体验码"),
   prefix: z.string().min(1).max(16).default("GIFT"),
   credits: z.coerce.number().int().min(1).max(1_000_000),
   count: z.coerce.number().int().min(1).max(1000),
-  enabled: z.boolean().optional()
+  enabled: z.boolean().optional(),
+  maxRedemptions: z.coerce.number().int().min(1).max(10000).optional(),
+  startsAt: z.string().datetime().nullable().optional(),
+  endsAt: z.string().datetime().nullable().optional(),
+  requestId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/)
 });
 
 const adjustCreditsSchema = z.object({
@@ -1940,6 +1946,12 @@ app.post(
   })
 );
 
+app.get("/api/credits/redemptions", asyncRoute(async (req, res) => {
+  const userId = requestUserId(req);
+  if (!userId) return res.status(401).json({ message: "请先登录" });
+  res.json(await listRedeemHistory({ userId }, Number(req.query.page) || 1));
+}));
+
 app.get(
   "/api/plans",
   asyncRoute(async (_req, res) => {
@@ -2328,6 +2340,28 @@ app.get(
   })
 );
 
+app.get("/api/admin/production-prompts", requireAdminPermission("dashboard:read"), asyncRoute(async (_req, res) => {
+  res.json(await listProductionPrompts());
+}));
+app.get("/api/admin/production-prompts/:key", requireAdminPermission("dashboard:read"), asyncRoute(async (req, res) => {
+  res.json(await getProductionPrompt(paramId(req.params.key)));
+}));
+app.post("/api/admin/production-prompts/:key/preview", requireAdminPermission("evaluation:manage"), asyncRoute(async (req, res) => {
+  const parsed = productionPromptPreviewSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ message: "请输入完整模板与预览变量" });
+  res.json(previewProductionPrompt(paramId(req.params.key), { systemPrompt: parsed.data.systemPrompt, userTemplate: parsed.data.userTemplate }, parsed.data.variables));
+}));
+app.post("/api/admin/production-prompts/:key/versions", requireAdminPermission("evaluation:manage"), asyncRoute(async (req, res) => {
+  const parsed = productionPromptSaveSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ message: "保存需要完整模板、修改说明与版本标识" });
+  res.status(201).json(await saveProductionPrompt(paramId(req.params.key), parsed.data, requestAuthUser(req)!.id));
+}));
+app.post("/api/admin/production-prompts/:key/activate", requireAdminPermission("evaluation:manage"), asyncRoute(async (req, res) => {
+  const parsed = productionPromptActivateSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ message: "请选择版本并刷新当前生效状态" });
+  res.json(await activateProductionPrompt(paramId(req.params.key), parsed.data));
+}));
+
 app.post(
   "/api/admin/evaluation/prompt-versions",
   requireAdminPermission("evaluation:manage"),
@@ -2585,9 +2619,15 @@ app.post(
   asyncRoute(async (req, res) => {
     const parsed = redeemBatchCreateSchema.safeParse(req.body ?? {});
     if (!parsed.success) return res.status(400).json(parsed.error.flatten());
-    res.status(201).json(await createRedeemCodeBatch(parsed.data));
+    const actorId = requestUserId(req);
+    if (!actorId) return res.status(401).json({ message: "请先登录" });
+    res.status(201).json(await createRedeemCodeBatch(parsed.data, actorId));
   })
 );
+
+app.get("/api/admin/redeem-redemptions", requireAdminPermission("redeem:manage"), asyncRoute(async (req, res) => {
+  res.json(await listRedeemHistory({ admin: true, codeId: typeof req.query.codeId === "string" ? req.query.codeId.trim() || undefined : undefined, batchId: typeof req.query.batchId === "string" ? req.query.batchId.trim() || undefined : undefined }, Number(req.query.page) || 1));
+}));
 
 app.patch(
   "/api/admin/model-prices/:id",
@@ -2847,7 +2887,7 @@ app.use((error: unknown, req: express.Request, res: express.Response, _next: exp
     if (error.retryAfter) res.setHeader("Retry-After", String(error.retryAfter));
     return res.status(error.status).json({ message: error.message, retryAfterSeconds: error.retryAfter });
   }
-  if (error instanceof CreditQueryError || error instanceof ProjectRequestError || error instanceof MediaSourceConflict || error instanceof AnnouncementScheduleError || error instanceof SupportTicketError || error instanceof ContentMutationError) return res.status(error.status).json({ message: error.message });
+  if (error instanceof ProductionPromptError || error instanceof CreditQueryError || error instanceof ProjectRequestError || error instanceof MediaSourceConflict || error instanceof AnnouncementScheduleError || error instanceof SupportTicketError || error instanceof ContentMutationError) return res.status(error.status).json({ message: error.message });
   const message = error instanceof Error ? error.message : "服务器异常";
   const cause = error instanceof Error && "cause" in error ? (error as Error & { cause?: unknown }).cause : undefined;
   const causeMessage = cause instanceof Error ? `${cause.name}: ${cause.message}` : typeof cause === "object" && cause ? JSON.stringify(cause).slice(0, 240) : "";

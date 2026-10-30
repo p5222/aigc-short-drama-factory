@@ -51,7 +51,7 @@ export async function pricingOverview() {
     plans: plans.map(p => ({ id: p.id, name: p.name, price: p.price, credits: p.credits, bonusCredits: p.bonusCredits, enabled: p.enabled,
       cashValueMicros: p.credits + p.bonusCredits > 0 ? Math.floor(p.price * 1000000 / (p.credits + p.bonusCredits)) : null })),
     memberships: memberships.map(p => ({ id: p.id, name: p.name, monthlyPrice: p.monthlyPrice, monthlyCredits: p.monthlyCredits, discountPercent: p.discountPercent, enabled: p.enabled })),
-    catalog: verifiedOfficialCosts, warnings: ["40%指API成本口径毛利；运营费用需另行配置。", "DeepSeek官方中英文页面冲突，未加入自动同步；美元规则必须填写结算汇率。", "成本来源于2026-10-26的人工核验目录；应用前需确认当前官方价格、地域和Key账单。"] };
+    catalog: verifiedOfficialCosts, warnings: [`当前目标 ${effective.targetMarginBps / 100}% 指 API 成本口径毛利；运营费用需另行配置。`, "DeepSeek 官方中英文页面冲突，未加入自动同步；美元规则必须填写结算汇率。", "成本来源于 2026-10-26 的人工核验目录；应用前需确认当前官方价格、地域和渠道账单。"] };
 }
 export async function savePricingPolicy(input: { expectedVersion: number; policy: CreditPolicy }) {
   validateCreditPolicy(input.policy);

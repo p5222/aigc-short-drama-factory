@@ -336,7 +336,7 @@ test("all admin modules render with empty or recoverable unavailable data", asyn
   const modules = ["用户管理", "操作记录", "平台公告", "支持工单", "创作现场管理", "创作质量中心", "兑换码", "套餐会员", "订阅会员", "模型路由", "价格策略", "提示词评分"];
   for (const [index, module] of modules.entries()) {
     await page.goto(`/admin#${encodeURIComponent(module)}`);
-    const title = module === "套餐会员" ? "充值套餐" : module;
+    const title = module === "套餐会员" ? "充值套餐" : module === "提示词评分" ? "提示词工作室" : module;
     await expect(page.getByRole("heading", { name: title, exact: true }).first()).toBeVisible();
     await expect(page.locator('[aria-busy="true"]')).toHaveCount(0);
     await expect(page.getByText("页面暂时无法显示", { exact: true })).toHaveCount(0);

@@ -39,6 +39,10 @@
   ProjectWorkflow,
   PromptTemplate,
   PromptVersion,
+  ProductionPromptSummary,
+  ProductionPromptDetail,
+  ProductionPromptDraft,
+  ProductionPromptPreview,
   QualityEvaluationRunInput,
   QualityEvaluationRunResult,
   QualityProjectRow,
@@ -46,6 +50,8 @@
   RechargeOrder,
   RelayGatewayPolicy,
   RedeemCode,
+  RedeemBatchInput,
+  RedeemHistoryPage,
   StoryboardExportRow,
   StoryboardProductionPackage,
   StoryboardShot,
@@ -206,6 +212,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ code })
     }),
+  redeemHistory: (page = 1) => request<RedeemHistoryPage>(`/credits/redemptions?page=${page}`),
   plans: () => request<Plan[]>("/plans"),
   membershipPlans: () => request<MembershipPlan[]>("/membership-plans"),
   providers: () => request<ModelProvider[]>("/providers"),
@@ -299,6 +306,14 @@ export const api = {
     request<PagedResult<UserFeedback>>(`/admin/feedback/page?page=${page}&pageSize=${pageSize}&keyword=${encodeURIComponent(keyword)}&stage=${encodeURIComponent(stage)}&status=${encodeURIComponent(status)}`),
   adminPromptVersions: (page = 1, pageSize = 50, stage = "all", purpose = "all") =>
     request<PagedResult<PromptVersion>>(`/admin/evaluation/prompt-versions?page=${page}&pageSize=${pageSize}&stage=${encodeURIComponent(stage)}&purpose=${encodeURIComponent(purpose)}`),
+  productionPrompts: () => request<ProductionPromptSummary[]>("/admin/production-prompts"),
+  productionPrompt: (key: string) => request<ProductionPromptDetail>(`/admin/production-prompts/${encodeURIComponent(key)}`),
+  previewProductionPrompt: (key: string, draft: ProductionPromptDraft, variables: Record<string, unknown>) =>
+    request<ProductionPromptPreview>(`/admin/production-prompts/${encodeURIComponent(key)}/preview`, { method: "POST", body: JSON.stringify({ ...draft, variables }) }),
+  saveProductionPrompt: (key: string, input: ProductionPromptDraft & { notes: string; expectedRevision: number; requestId: string }) =>
+    request<{ id: string; number: number }>(`/admin/production-prompts/${encodeURIComponent(key)}/versions`, { method: "POST", body: JSON.stringify(input) }),
+  activateProductionPrompt: (key: string, versionId: string | null, expectedRevision: number) =>
+    request<{ revision: number }>(`/admin/production-prompts/${encodeURIComponent(key)}/activate`, { method: "POST", body: JSON.stringify({ versionId, expectedRevision }) }),
   createPromptVersion: (input: Pick<PromptVersion, "key" | "name" | "stage" | "purpose" | "version" | "content"> & Partial<Pick<PromptVersion, "status" | "owner" | "notes">>) =>
     request<PromptVersion>("/admin/evaluation/prompt-versions", { method: "POST", body: JSON.stringify(input) }),
   updatePromptVersion: (id: string, input: Partial<Pick<PromptVersion, "name" | "content" | "status" | "owner" | "notes">>) =>
@@ -341,7 +356,8 @@ export const api = {
   adminPlans: () => request<Plan[]>("/admin/plans"),
   adminMembershipPlans: () => request<MembershipPlan[]>("/admin/membership-plans"),
   adminRedeemCodes: () => request<RedeemCode[]>("/admin/redeem-codes"),
-  createRedeemCodeBatch: (input: { name: string; prefix: string; credits: number; count: number; enabled?: boolean }) =>
+  adminRedeemHistory: (page = 1, codeId = "", batchId = "") => request<RedeemHistoryPage>(`/admin/redeem-redemptions?page=${page}&codeId=${encodeURIComponent(codeId)}&batchId=${encodeURIComponent(batchId)}`),
+  createRedeemCodeBatch: (input: RedeemBatchInput) =>
     request<RedeemCode[]>("/admin/redeem-codes/batch", {
       method: "POST",
       body: JSON.stringify(input)

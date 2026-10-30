@@ -4,6 +4,7 @@ import type { CreateProjectInput, CreationEstimate, ModelPrice, ModelProvider } 
 import { imageOutputQualityOptions, imageOutputSizeOptions, imageParameterMultiplier, normalizeImageOutputQuality, normalizeImageOutputSize } from "@aifilm/shared";
 import { api } from "../lib/api";
 import { ModelRoutePicker } from "../components/ModelRoutePicker";
+import { ProductionReadiness } from "../components/ProductionReadiness";
 import { buildModelCatalog, defaultModelRoute } from "../components/modelCatalog";
 import { modelIdentity } from "../components/modelCatalog";
 import { analyzeSourceEpisodes, episodeScopeOptions, parseSampleManifest, type SourceEpisodeAnalysis } from "./wizardSourceModel";
@@ -356,8 +357,9 @@ export function WizardPage({ providers, modelPrices, canManageModels = false, on
     setError("");
   }
 
-  function openBlankEditor() {
+  function openBlankEditor(sourceType: "novel" | "script") {
     try { window.sessionStorage.removeItem(CREATION_ATTEMPT_KEY); } catch { /* start() reports unavailable storage before submitting. */ }
+    setForm(current => ({ ...current, sourceType }));
     setEntrySelected(true);
   }
 
@@ -366,7 +368,8 @@ export function WizardPage({ providers, modelPrices, canManageModels = false, on
       <PageHeader title="让一个新故事，从这里开始" description="选择你的创作起点，逐步完成从文字到画面的制作。" />
       <div className="creation-entry-grid">
         <button type="button" onClick={onCreateContent}><span className="creation-entry-icon"><StudioIcon stage="content" size={24} /></span><small>01 / 从灵感出发</small><strong>先写一个故事</strong><span>把一句灵感发展为大纲、章节和剧本，再进入漫剧制作。</span><b>开始内容创作 <ChevronRight size={18} /></b></button>
-        <button type="button" onClick={openBlankEditor}><span className="creation-entry-icon"><FileUp size={24} /></span><small>02 / 从原稿出发</small><strong>导入小说或剧本</strong><span>导入你准备好的文本，确认视觉风格与制作范围，建立新项目。</span><b>导入我的原稿 <ChevronRight size={18} /></b></button>
+        <button type="button" onClick={() => openBlankEditor("novel")}><span className="creation-entry-icon"><BookOpenCheck size={24} /></span><small>02 / 已有小说或故事</small><strong>导入小说</strong><span>保留故事原稿，按选定集数改编剧本，提取角色与场景。</span><b>开始小说改编 <ChevronRight size={18} /></b></button>
+        <button type="button" onClick={() => openBlankEditor("script")}><span className="creation-entry-icon"><FileUp size={24} /></span><small>03 / 已有分集剧本</small><strong>导入已有剧本</strong><span>保留原剧本，识别分集与场次，直接准备制作资产。</span><b>开始剧本拆解 <ChevronRight size={18} /></b></button>
       </div>
       {recoverableDraft?.content.trim() ? <section className="creation-draft-recovery" aria-label="可恢复的草稿">
         <FileText size={22} /><div><strong>{recoverableDraft.title || "未命名草稿"}</strong><span>此浏览器有一份未完成草稿 · {recoverableDraft.content.trim().length.toLocaleString()} 字</span></div>
@@ -376,6 +379,7 @@ export function WizardPage({ providers, modelPrices, canManageModels = false, on
         <div><span className="section-kicker">你的制作路线</span><h2>每一步，都有自己的工作空间</h2></div>
         <ol>{studioStages.map(stage => <li key={stage.id}><span><StudioIcon stage={stage.id} size={20} /></span><strong>{stage.label}</strong><small>{stage.detail}</small></li>)}</ol>
       </section>
+      <ProductionReadiness providers={providers} prices={modelPrices} />
       <p className="creator-page-footnote">新项目从空白开始。已有作品可在“我的作品”继续编辑；每次生成前都会单独确认费用。</p>
     </div>;
   }
@@ -730,7 +734,7 @@ function ScriptStep({
   const scriptAssets = [
     { title: "全局设定", text: "世界观、题材、人设关系、主角动机和内容边界。", icon: <BrainCircuit size={18} />, meta: form.genre || "AI 自动识别" },
     { title: form.sourceType === "script" ? "场次结构" : "核心剧情", text: form.sourceType === "script" ? "识别集、场次、时空、出场角色和剧情作用。" : "按集数梳理事件、情绪弧光、反转点和结尾钩子。", icon: <BookOpenCheck size={18} />, meta: `${form.targetEpisodes ?? 1} 集` },
-    { title: form.sourceType === "script" ? "剧本拆解" : "剧本改编", text: form.sourceType === "script" ? "保留原剧情，规范动作、台词、旁白和节奏。" : "把小说叙事转换为可拍摄的场景、动作、台词和旁白。", icon: <FileText size={18} />, meta: form.textModel || "待选择" },
+    { title: form.sourceType === "script" ? "剧本拆解" : "剧本改编", text: form.sourceType === "script" ? "保留原文，识别动作、台词、旁白与场次结构。" : "把小说叙事转换为可拍摄的场景、动作、台词和旁白。", icon: <FileText size={18} />, meta: form.textModel || "待选择" },
     { title: "角色卡", text: "固定外貌、服装、性格、声线和一致性提示词。", icon: <UsersRound size={18} />, meta: form.videoRatio }
   ];
   const textRouteConfigured = isConfiguredModelRoute(textProviders, "text", form.textProvider, form.textModel);
@@ -757,13 +761,16 @@ function ScriptStep({
           <div><dt>视觉风格</dt><dd>{form.artStyle || "根据故事识别"}</dd></div>
         </dl>
         <details className="creation-source-review"><summary>查看原稿 · {form.content.trim().length.toLocaleString()} 字</summary><p>{form.content}</p></details>
+        <ProductionReadiness providers={[...textProviders, ...imageProviders, ...videoProviders]} prices={modelPrices} modalities={["text", "image", "video"]} routes={{ text: { providerId: form.textProvider, model: form.textModel }, image: { providerId: form.imageProvider, model: form.imageModel }, video: { providerId: form.videoProvider, model: form.videoModel } }} />
 
-        <div className="script-output-heading"><div><strong>将自动完成</strong><span>创建后进入项目工作台继续调整</span></div><span>{form.sourceType === "script" ? "剧本直接拆解" : "小说先转为剧本"}</span></div>
-        <div className="script-preview-list script-output-map compact-output-map">
+        <details className="creation-output-review">
+          <summary><span><strong>本次产物：剧本、场次与角色卡</strong><small>{form.sourceType === "script" ? "保留原文并识别结构" : "把小说改编为可拍摄的剧本"} · 查看处理步骤</small></span><ChevronDown size={16} /></summary>
+          <div className="script-preview-list script-output-map compact-output-map">
           {scriptAssets.map((asset) => (
             <PreviewLine key={asset.title} title={asset.title} text={asset.text} icon={asset.icon} meta={asset.meta} />
           ))}
-        </div>
+          </div>
+        </details>
         <button className="ghost-button" onClick={onBack} disabled={isGenerating} type="button">返回设定</button>
       </section>
 

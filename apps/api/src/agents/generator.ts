@@ -4,6 +4,8 @@ import { createToonflowScriptPlan, createToonflowStoryboardPlan } from "./toonfl
 import { blockModelUntilNextDay, coolDownModel, getModelQuotaDecision, recordModelSubmission } from "../providers/modelQuota.js";
 import { providerEnvApiKey } from "../providers/credentials.js";
 import { materializePrompt } from "../prompts/runtime.js";
+import { resolveProductionPrompt } from "../prompts/production.js";
+import type { PromptDefinition } from "../prompts/catalog.js";
 import { recordTextUsage } from "../billing/metering.js";
 
 interface PipelineCharacter {
@@ -43,6 +45,7 @@ interface PipelineOutput {
   script: string;
   characters: PipelineCharacter[];
   storyboards: PipelineStoryboard[];
+  promptSnapshot?: Record<string, unknown>;
 }
 
 type TextModelResponse = {
@@ -72,6 +75,7 @@ export interface GeneratedProjectScriptContent {
   script: ScriptDraft;
   characters: CharacterProfile[];
   assets: AssetItem[];
+  promptSnapshot?: Record<string, unknown>;
 }
 
 export interface GeneratedProjectStoryboardContent {
@@ -272,15 +276,17 @@ async function generateWithModel(input: CreateProjectInput): Promise<PipelineOut
 }
 
 async function generateScriptWithModel(input: CreateProjectInput): Promise<Omit<PipelineOutput, "storyboards">> {
+  const definition = await resolveProductionPrompt(input.sourceType === "script" ? "existing_script_structure" : "novel_to_script");
+  const rendered = materializeScriptPrompt(input, definition);
   const data = await callOpenAICompatible({
     temperature: 0.72,
     response_format: { type: "json_object" },
     messages: [
       {
         role: "system",
-        content: "You are a professional Chinese short-drama planner and screenwriter. Write in Simplified Chinese. Output valid JSON only."
+        content: rendered.systemPrompt
       },
-      { role: "user", content: buildScriptPrompt(input) }
+      { role: "user", content: buildScriptPrompt(input, definition) }
     ]
   }, input);
 
@@ -289,6 +295,7 @@ async function generateScriptWithModel(input: CreateProjectInput): Promise<Omit<
 
   const parsed = parseModelJson<Omit<PipelineOutput, "storyboards">>(content, "剧本模型");
   assertUsableScriptOutput(parsed, input.sourceType);
+  parsed.promptSnapshot = structuredClone(definition) as unknown as Record<string, unknown>;
   return parsed;
 }
 
@@ -571,16 +578,18 @@ function buildPrompt(input: CreateProjectInput) {
   ].join("\n");
 }
 
-export function buildScriptPrompt(input: CreateProjectInput) {
-  const plan = createToonflowScriptPlan(input);
-  if (input.sourceType === "script") return plan.prompt;
-
-  const builtin = materializePrompt("novel_to_script", {
+function materializeScriptPrompt(input: CreateProjectInput, definition?: PromptDefinition) {
+  return materializePrompt(input.sourceType === "script" ? "existing_script_structure" : "novel_to_script", {
     content: input.content,
     episodes: input.targetEpisodes ?? 1,
     ratio: input.videoRatio,
     styleProfile: input.artStyle || "自动匹配"
-  });
+  }, definition);
+}
+
+export function buildScriptPrompt(input: CreateProjectInput, definition?: PromptDefinition) {
+  const plan = createToonflowScriptPlan(input);
+  const builtin = materializeScriptPrompt(input, definition);
   return [
     builtin.systemPrompt,
     builtin.userPrompt,
@@ -610,7 +619,7 @@ export function normalizeScriptOutput(
     projectId,
     name: `${input.title || untitled} ${scriptSuffix}`,
     synopsis: safeText(output.synopsis, `${input.title || untitled} ${scriptSuffix}\u56f4\u7ed5\u4e3b\u89d2\u7684\u5173\u952e\u9009\u62e9\u5c55\u5f00\u3002`),
-    content: safeText(output.script, input.sourceType === "script" ? input.content : buildFallbackScript(input)),
+    content: input.sourceType === "script" ? input.content : safeText(output.script, buildFallbackScript(input)),
     version: 1,
     createdAt: now
   };
@@ -655,7 +664,7 @@ export function normalizeScriptOutput(
     status: "pending"
   }));
 
-  return { mode, script, characters, assets: [...assets, ...sceneAssets] };
+  return { mode, script, characters, assets: [...assets, ...sceneAssets], promptSnapshot: output.promptSnapshot };
 }
 
 function normalizeOutput(

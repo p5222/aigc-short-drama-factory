@@ -138,6 +138,7 @@ model ScriptDraft {
   content   String
   synopsis  String
   version   Int      @default(1)
+  promptSnapshot Json @default("{}")
   createdAt DateTime @default(now())
   @@index([projectId])
 }
@@ -574,6 +575,26 @@ model PromptVersion {
   @@index([status])
 }
 
+// Production overrides are isolated from evaluation experiment versions.
+// Immutable versions; the state row is updated under a per-key transaction lock.
+model ProductionPromptVersion {
+  id         String   @id
+  key        String
+  number     Int
+  definition Json
+  notes      String   @default("")
+  owner      String
+  createdAt  DateTime @default(now())
+  @@unique([key, number])
+}
+
+model ProductionPromptState {
+  key             String   @id
+  activeVersionId String?
+  revision        Int      @default(0)
+  updatedAt       DateTime @updatedAt
+}
+
 model StyleProfile {
   id             String   @id
   key            String   @unique
@@ -849,6 +870,7 @@ model RedeemCode {
 
 model RedeemBatch {
   id         String       @id
+  requestHash String?
   name       String
   prefix     String
   credits    Int

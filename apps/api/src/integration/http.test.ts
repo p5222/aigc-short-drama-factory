@@ -14,7 +14,7 @@ import { hashPassword } from "../auth/password.js";
 import { releaseTaskCredits, reserveTaskCredits } from "../billing/taskCredits.js";
 
 const databaseUrl = process.env.AIFILM_TEST_API_DATABASE_URL;
-test("HTTP business boundaries: sessions, administrator writes, private media and audit history", { skip: !databaseUrl, timeout: 120_000 }, async t => {
+test("HTTP business boundaries: sessions, administrator writes, private media and audit history", { skip: !databaseUrl, timeout: Number(process.env.AIFILM_TEST_HTTP_TIMEOUT_MS) || 120_000 }, async t => {
   const url = new URL(databaseUrl!);
   assert.ok(["localhost", "127.0.0.1"].includes(url.hostname));
   assert.match(url.pathname, /^\/audit_api_[a-z0-9_]+$/i);
@@ -69,7 +69,8 @@ test("HTTP business boundaries: sessions, administrator writes, private media an
   });
   try {
     let ready = false;
-    for (let i = 0; i < 120; i++) {
+    const startupDeadline = Date.now() + (Number(process.env.AIFILM_TEST_STARTUP_TIMEOUT_MS) || 45000);
+    while (Date.now() < startupDeadline) {
       if (child.exitCode !== null) throw new Error(`API exited during startup: ${logs}`);
       try { ready = (await request("/ready")).ok; } catch { /* startup */ }
       if (ready) break;
@@ -84,6 +85,67 @@ test("HTTP business boundaries: sessions, administrator writes, private media an
       sessions.push({ token: body.token, cookie: response.headers.get("set-cookie")!.split(";")[0]! });
     }
     const [owner, other, admin] = sessions as [typeof sessions[number], typeof sessions[number], typeof sessions[number]];
+    await t.test("production prompts enforce administrator access, preview validation and publication revisions", async () => {
+      const key = "episode_adaptation", path = `/api/admin/production-prompts/${key}`;
+      assert.equal((await request("/api/admin/production-prompts")).status, 401);
+      assert.equal((await request(path, owner.token)).status, 403);
+      const detailResponse = await request(path, admin.token);
+      assert.equal(detailResponse.status, 200);
+      const detail = await detailResponse.json() as { revision: number; effective: { systemPrompt: string; userTemplate: string } };
+      const draft = { systemPrompt: detail.effective.systemPrompt, userTemplate: detail.effective.userTemplate };
+      assert.equal((await request(`${path}/preview`, admin.token, "POST", { ...draft, variables: {} })).status, 400);
+      const preview = await request(`${path}/preview`, admin.token, "POST", { ...draft, variables: { episodeNo: 1, duration: 180, content: "测试素材", styleProfile: "二维" } });
+      assert.equal(preview.status, 200);
+      const input = { ...draft, notes: `HTTP ${run}`, requestId: crypto.randomUUID(), expectedRevision: detail.revision };
+      assert.equal((await request(`${path}/versions`, owner.token, "POST", input)).status, 403);
+      try {
+        const savedResponse = await request(`${path}/versions`, admin.token, "POST", input);
+        assert.equal(savedResponse.status, 201);
+        const saved = await savedResponse.json() as { id: string };
+        assert.deepEqual(await (await request(`${path}/versions`, admin.token, "POST", input)).json(), saved);
+        assert.equal((await request(`${path}/activate`, admin.token, "POST", { versionId: saved.id, expectedRevision: detail.revision })).status, 200);
+        assert.equal((await request(`${path}/activate`, admin.token, "POST", { versionId: null, expectedRevision: detail.revision })).status, 409);
+        assert.equal((await request(`${path}/activate`, admin.token, "POST", { versionId: null, expectedRevision: detail.revision + 1 })).status, 200);
+        assert.equal((await request("/api/admin/production-prompts/storyboard_core/activate", admin.token, "POST", { versionId: null, expectedRevision: 0 })).status, 400);
+      } finally {
+        await db.productionPromptState.deleteMany({ where: { key } });
+        await db.productionPromptVersion.deleteMany({ where: { owner: ids[2]! } });
+      }
+    });
+    await t.test("redeem administration is protected; retries reuse a batch and redemption history is account-scoped", async () => {
+      const input = { name: "HTTP redemption", prefix: "HTTP", credits: 12, count: 1, maxRedemptions: 2, requestId: crypto.randomUUID() };
+      assert.equal((await request("/api/admin/redeem-codes/batch", owner.token, "POST", input)).status, 403);
+      assert.equal((await request("/api/credits/redemptions")).status, 401);
+      let batchId: string | undefined;
+      const redeemUser = `api_redeem_${run}`;
+      await db.user.create({ data: { id: redeemUser, name: "Redeem HTTP", email: `${redeemUser}@example.test`, passwordHash, credit: { create: { id: `credit_${redeemUser}`, balance: 0 } } } });
+      const redeemSession = await (await request("/api/auth/login", undefined, "POST", { account: `${redeemUser}@example.test`, password })).json() as { token: string };
+      try {
+        const first = await request("/api/admin/redeem-codes/batch", admin.token, "POST", input);
+        assert.equal(first.status, 201);
+        const rows = await first.json() as { id: string; batchId: string; code: string }[]; batchId = rows[0]!.batchId;
+        const retry = await request("/api/admin/redeem-codes/batch", admin.token, "POST", input);
+        assert.equal(retry.status, 201); assert.deepEqual(await retry.json(), rows);
+        assert.equal((await request("/api/admin/redeem-codes/batch", admin.token, "POST", { ...input, credits: 13 })).status, 409);
+        assert.equal((await request("/api/credits/redeem", redeemSession.token, "POST", { code: rows[0]!.code })).status, 200);
+        const own = await (await request(`/api/credits/redemptions?userId=${ids[1]}`, redeemSession.token)).json() as { items: { credits: number; user?: unknown }[]; total: number };
+        assert.equal(own.total, 1); assert.equal(own.items[0]!.credits, 12); assert.equal(own.items[0]!.user, undefined);
+        const otherHistory = await (await request(`/api/credits/redemptions?userId=${ids[0]}`, other.token)).json() as { total: number };
+        assert.equal(otherHistory.total, 0);
+        assert.equal((await request("/api/admin/redeem-redemptions", owner.token)).status, 403);
+        const adminHistory = await (await request(`/api/admin/redeem-redemptions?codeId=&batchId=${batchId}`, admin.token)).json() as { total: number };
+        assert.equal(adminHistory.total, 1);
+        assert.equal((await request(`/api/admin/redeem-codes/${rows[0]!.id}`, admin.token, "PATCH", { credits: 13 })).status, 409);
+        assert.equal((await request(`/api/admin/redeem-codes/${rows[0]!.id}`, admin.token, "DELETE")).status, 200);
+        assert.equal(await db.redeemRedemption.count({ where: { redeemCodeId: rows[0]!.id } }), 1);
+      } finally {
+        if (batchId) {
+          await db.redeemCode.deleteMany({ where: { batchId } });
+          await db.redeemBatch.delete({ where: { id: batchId } });
+        }
+        await db.user.delete({ where: { id: redeemUser } });
+      }
+    });
     await t.test("content edit and deletion return ownership and conflict errors without replacing old versions", async () => {
       const id = `api_content_edit_${run}`;
       const chapterId = `api_chapter_edit_${run}`;
