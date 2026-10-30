@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 from types import SimpleNamespace
-from release_preflight import check_space, latest_backup_size, MIB
+from release_preflight import check_space, latest_backup_size, pending_archive_size, MIB
 
 ROOT = Path(__file__).resolve().parent.parent
 HELPER = ROOT / "deploy/manjiao_remote.sh"
@@ -366,11 +366,47 @@ if [ -n "${TEST_READY_BODY:-}" ]; then printf '%s' "$TEST_READY_BODY"; else prin
 
 
 class DeploymentContractTests(unittest.TestCase):
+    def test_pending_archive_is_budgeted_before_write_and_not_counted_twice(self):
+        with tempfile.TemporaryDirectory() as folder:
+            archive = Path(folder) / "release.tar.gz"
+            listing = b"100644 blob " + b"a" * 40 + b" 4194304\tmedia/large.bin\0"
+            with patch("release_preflight.subprocess.check_output", return_value=listing):
+                estimate = pending_archive_size("repo", "a" * 40, str(archive))
+            self.assertGreater(estimate, 4 * MIB)
+            stat = SimpleNamespace(f_bavail=105, f_frsize=MIB)
+            with patch("release_preflight.os.statvfs", return_value=stat, create=True):
+                checks = check_space([folder, archive], 90 * MIB, 10 * MIB, [(archive, estimate)])
+            self.assertEqual(len(checks), 1)
+            self.assertFalse(checks[0]["ok"])
+            self.assertGreater(checks[0]["plannedArchiveMiB"], 4)
+            archive.write_bytes(b"existing")
+            self.assertEqual(pending_archive_size("repo", "a" * 40, str(archive)), 0)
+
+    def test_archive_budget_is_charged_to_its_own_filesystem(self):
+        app = SimpleNamespace(stat=lambda: SimpleNamespace(st_dev=1), __str__=lambda _: "app")
+        temp = SimpleNamespace(stat=lambda: SimpleNamespace(st_dev=2), __str__=lambda _: "temp")
+        with patch("release_preflight.existing_parent", side_effect=lambda path: app if path == "app" else temp), \
+             patch("release_preflight.os.statvfs", return_value=SimpleNamespace(f_bavail=120, f_frsize=MIB), create=True):
+            checks = check_space(["app", "archive"], 100 * MIB, 0, [("archive", 30 * MIB)])
+        self.assertTrue(checks[0]["ok"])
+        self.assertFalse(checks[1]["ok"])
+        self.assertEqual(checks[0]["plannedArchiveMiB"], 0)
+        self.assertEqual(checks[1]["plannedArchiveMiB"], 30)
+
+    def test_pending_archive_rejects_missing_revision_and_git_estimate_failure(self):
+        with tempfile.TemporaryDirectory() as folder:
+            archive = str(Path(folder) / "release.tar.gz")
+            with self.assertRaises(ValueError):
+                pending_archive_size("repo", "", archive)
+            with patch("release_preflight.subprocess.check_output", side_effect=subprocess.CalledProcessError(1, "git")):
+                with self.assertRaises(subprocess.CalledProcessError):
+                    pending_archive_size("repo", "a" * 40, archive)
+
     def test_disk_guard_uses_unprivileged_available_space_and_deduplicates_mounts(self):
         with tempfile.TemporaryDirectory() as folder:
             # Root-reserved space must not be counted as available to deployment.
             stat = SimpleNamespace(f_bavail=100, f_bfree=200, f_frsize=MIB)
-            with patch("release_preflight.os.statvfs", return_value=stat):
+            with patch("release_preflight.os.statvfs", return_value=stat, create=True):
                 checks = check_space([folder, str(Path(folder) / "not-created")], 90 * MIB, 20 * MIB)
             self.assertEqual(len(checks), 1)
             self.assertFalse(checks[0]["ok"])

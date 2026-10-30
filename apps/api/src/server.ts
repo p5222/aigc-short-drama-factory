@@ -22,6 +22,7 @@ import { decryptWechatNotification, PaymentError, wechatConfig } from "./billing
 import { createRateLimitMiddleware, positiveInteger, RequestRateLimiter } from "./security/rateLimit.js";
 import { ensureSeedData, DEMO_USER_ID } from "./db/seed.js";
 import { adminUserPageQuery } from "./db/adminUserQuery.js";
+import { exportRedeemCodes, listRedeemBatchPage, listRedeemCodePage, lookupRedeemReceipt, RedeemOperationError, redeemBatchPageSchema, redeemBatchStatusSchema, redeemBulkStatusSchema, redeemCodePageSchema, redeemHistoryQuerySchema, setRedeemBatchStatus, setRedeemCodeStatuses } from "./db/redeemOperations.js";
 import {
   cancelTask,
   createAdminUser,
@@ -404,6 +405,7 @@ const membershipPlanCreateSchema = z.object({
 });
 
 const redeemCodeUpdateSchema = z.object({
+  expectedUpdatedAt: z.iso.datetime().optional(),
   name: z.string().trim().min(1).max(100).optional(),
   code: z.string().min(3).max(160).optional(),
   credits: z.coerce.number().int().min(1).max(2147483647).optional(),
@@ -1952,6 +1954,14 @@ app.get("/api/credits/redemptions", asyncRoute(async (req, res) => {
   res.json(await listRedeemHistory({ userId }, Number(req.query.page) || 1));
 }));
 
+app.post("/api/credits/redeem/receipt", asyncRoute(async (req, res) => {
+  const userId = requestUserId(req);
+  if (!userId) return res.status(401).json({ message: "请先登录" });
+  const parsed = redeemSchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json(parsed.error.flatten());
+  res.json(await lookupRedeemReceipt(userId, parsed.data.code));
+}));
+
 app.get(
   "/api/plans",
   asyncRoute(async (_req, res) => {
@@ -2626,7 +2636,39 @@ app.post(
 );
 
 app.get("/api/admin/redeem-redemptions", requireAdminPermission("redeem:manage"), asyncRoute(async (req, res) => {
-  res.json(await listRedeemHistory({ admin: true, codeId: typeof req.query.codeId === "string" ? req.query.codeId.trim() || undefined : undefined, batchId: typeof req.query.batchId === "string" ? req.query.batchId.trim() || undefined : undefined }, Number(req.query.page) || 1));
+  const parsed = redeemHistoryQuerySchema.safeParse(req.query);
+  if (!parsed.success) return res.status(400).json(parsed.error.flatten());
+  res.json(await listRedeemHistory({ admin: true, ...parsed.data, codeId: parsed.data.codeId || undefined, batchId: parsed.data.batchId || undefined }, parsed.data.page));
+}));
+
+app.get("/api/admin/redeem-codes/page", requireAdminPermission("redeem:manage"), asyncRoute(async (req, res) => {
+  const parsed = redeemCodePageSchema.safeParse(req.query);
+  if (!parsed.success) return res.status(400).json(parsed.error.flatten());
+  res.json(await listRedeemCodePage(parsed.data));
+}));
+
+app.get("/api/admin/redeem-codes/export", requireAdminPermission("redeem:manage"), asyncRoute(async (req, res) => {
+  const parsed = redeemCodePageSchema.safeParse(req.query);
+  if (!parsed.success) return res.status(400).json(parsed.error.flatten());
+  res.json(await exportRedeemCodes(parsed.data));
+}));
+
+app.get("/api/admin/redeem-batches", requireAdminPermission("redeem:manage"), asyncRoute(async (req, res) => {
+  const parsed = redeemBatchPageSchema.safeParse(req.query);
+  if (!parsed.success) return res.status(400).json(parsed.error.flatten());
+  res.json(await listRedeemBatchPage(parsed.data));
+}));
+
+app.patch("/api/admin/redeem-codes/status", requireAdminPermission("redeem:manage"), asyncRoute(async (req, res) => {
+  const parsed = redeemBulkStatusSchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json(parsed.error.flatten());
+  res.json(await setRedeemCodeStatuses(parsed.data));
+}));
+
+app.patch("/api/admin/redeem-batches/:id/status", requireAdminPermission("redeem:manage"), asyncRoute(async (req, res) => {
+  const parsed = redeemBatchStatusSchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json(parsed.error.flatten());
+  res.json(await setRedeemBatchStatus(paramId(req.params.id), parsed.data));
 }));
 
 app.patch(
@@ -2700,6 +2742,7 @@ app.patch(
     const parsed = redeemCodeUpdateSchema.safeParse(req.body ?? {});
     if (!parsed.success) return res.status(400).json(parsed.error.flatten());
     const redeemUpdate: Parameters<typeof updateRedeemCode>[1] = {
+      expectedUpdatedAt: parsed.data.expectedUpdatedAt,
       name: parsed.data.name,
       code: parsed.data.code?.trim().toUpperCase(),
       credits: parsed.data.credits,
@@ -2887,7 +2930,7 @@ app.use((error: unknown, req: express.Request, res: express.Response, _next: exp
     if (error.retryAfter) res.setHeader("Retry-After", String(error.retryAfter));
     return res.status(error.status).json({ message: error.message, retryAfterSeconds: error.retryAfter });
   }
-  if (error instanceof ProductionPromptError || error instanceof CreditQueryError || error instanceof ProjectRequestError || error instanceof MediaSourceConflict || error instanceof AnnouncementScheduleError || error instanceof SupportTicketError || error instanceof ContentMutationError) return res.status(error.status).json({ message: error.message });
+  if (error instanceof RedeemOperationError || error instanceof ProductionPromptError || error instanceof CreditQueryError || error instanceof ProjectRequestError || error instanceof MediaSourceConflict || error instanceof AnnouncementScheduleError || error instanceof SupportTicketError || error instanceof ContentMutationError) return res.status(error.status).json({ message: error.message });
   const message = error instanceof Error ? error.message : "服务器异常";
   const cause = error instanceof Error && "cause" in error ? (error as Error & { cause?: unknown }).cause : undefined;
   const causeMessage = cause instanceof Error ? `${cause.name}: ${cause.message}` : typeof cause === "object" && cause ? JSON.stringify(cause).slice(0, 240) : "";

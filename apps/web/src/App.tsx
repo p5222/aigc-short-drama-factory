@@ -23,7 +23,6 @@ import type {
   ProjectWorkflow,
   QualityProjectRow,
   RechargeOrder,
-  RedeemCode,
   WorkbenchSummary
 } from "@aifilm/shared";
 import { Shell, type PageKey } from "./components/Shell";
@@ -71,10 +70,10 @@ const creatorPageResources: Partial<Record<PageKey, string[]>> = {
   recharge: ["充值套餐", "会员配置", "模型价格"], ledger: ["账户积分", "积分明细"],
   help: ["帮助文章"], wizard: ["模型渠道"], content: ["模型渠道"]
 };
-const adminResourceLabels = ["充值套餐", "会员配置", "兑换码", "平台公告", "帮助文章", "用户列表", "模型渠道", "模型价格", "提示词模板", "运营概况", "质量概况", "质量项目"];
+const adminResourceLabels = ["充值套餐", "会员配置", "平台公告", "帮助文章", "用户列表", "模型渠道", "模型价格", "提示词模板", "运营概况", "质量概况", "质量项目"];
 const adminPageResources: Record<string, string[]> = {
   "运营总览": ["运营概况", "模型渠道", "模型价格"], "用户管理": ["用户列表"], "平台公告": ["平台公告", "帮助文章"],
-  "创作质量中心": ["质量概况", "质量项目", "模型渠道"], "兑换码": ["兑换码"],
+  "创作质量中心": ["质量概况", "质量项目", "模型渠道"], "兑换码": [],
   "套餐会员": ["充值套餐"], "订阅会员": ["会员配置"], "模型路由": ["模型渠道"],
   "价格策略": ["模型价格", "模型渠道"], "提示词评分": ["提示词模板"]
 };
@@ -164,7 +163,6 @@ export function App() {
   const [plans, setPlans] = useState<Plan[]>([]);
   const [adminPlans, setAdminPlans] = useState<Plan[]>([]);
   const [membershipPlans, setMembershipPlans] = useState<MembershipPlan[]>([]);
-  const [redeemCodes, setRedeemCodes] = useState<RedeemCode[]>([]);
   const [announcements, setAnnouncements] = useState<PlatformAnnouncement[]>([]);
   const [helpArticles, setHelpArticles] = useState<HelpArticle[]>([]);
   const [adminUsers, setAdminUsers] = useState<AdminUserRow[]>([]);
@@ -271,7 +269,6 @@ export function App() {
       const [
         adminPlansRes,
         adminMembershipPlansRes,
-        redeemCodesRes,
         announcementsRes,
         helpArticlesRes,
         adminUsersRes,
@@ -285,7 +282,6 @@ export function App() {
         await Promise.allSettled([
           api.adminPlans(),
           api.adminMembershipPlans(),
-          api.adminRedeemCodes(),
           api.adminAnnouncements(),
           api.adminHelpArticles(),
           api.adminUsers(),
@@ -301,7 +297,6 @@ export function App() {
       setPlans([]);
       if (adminPlansRes.status === "fulfilled") setAdminPlans(adminPlansRes.value);
       if (adminMembershipPlansRes.status === "fulfilled") setMembershipPlans(adminMembershipPlansRes.value);
-      if (redeemCodesRes.status === "fulfilled") setRedeemCodes(redeemCodesRes.value);
       if (announcementsRes.status === "fulfilled") setAnnouncements(announcementsRes.value);
       if (helpArticlesRes.status === "fulfilled") setHelpArticles(helpArticlesRes.value);
       if (adminUsersRes.status === "fulfilled") setAdminUsers(adminUsersRes.value);
@@ -312,8 +307,8 @@ export function App() {
       if (evaluationRes.status === "fulfilled") setEvaluationOverview(evaluationRes.value);
       if (qualityProjectsRes.status === "fulfilled") setQualityProjects(qualityProjectsRes.value);
 
-      const failure = firstAdminRefreshFailure([adminPlansRes, adminMembershipPlansRes, redeemCodesRes, announcementsRes, helpArticlesRes, adminUsersRes, providersRes, modelPricesRes, templatesRes, adminRes, evaluationRes, qualityProjectsRes]);
-      markResourcesRead([adminPlansRes, adminMembershipPlansRes, redeemCodesRes, announcementsRes, helpArticlesRes, adminUsersRes, providersRes, modelPricesRes, templatesRes, adminRes, evaluationRes, qualityProjectsRes].flatMap((result, index) => result.status === "fulfilled" ? [adminResourceLabels[index]] : []));
+      const failure = firstAdminRefreshFailure([adminPlansRes, adminMembershipPlansRes, announcementsRes, helpArticlesRes, adminUsersRes, providersRes, modelPricesRes, templatesRes, adminRes, evaluationRes, qualityProjectsRes]);
+      markResourcesRead([adminPlansRes, adminMembershipPlansRes, announcementsRes, helpArticlesRes, adminUsersRes, providersRes, modelPricesRes, templatesRes, adminRes, evaluationRes, qualityProjectsRes].flatMap((result, index) => result.status === "fulfilled" ? [adminResourceLabels[index]] : []));
       if (failure) throw failure;
       setError("");
     } catch (err) {
@@ -413,7 +408,6 @@ export function App() {
     setPlans([]);
     setAdminPlans([]);
     setMembershipPlans([]);
-    setRedeemCodes([]);
     setAnnouncements([]);
     setHelpArticles([]);
     setAdminUsers([]);
@@ -557,7 +551,6 @@ export function App() {
             templates={templates}
             plans={adminPlans}
             membershipPlans={membershipPlans}
-            redeemCodes={redeemCodes}
             announcements={announcements}
             helpArticles={helpArticles}
             users={adminUsers}
@@ -569,7 +562,7 @@ export function App() {
       default:
         return null;
     }
-  }, [navigate, setActivePage, creationSession, openProject, projectError, route.projectId, route.taskFilter, route.taskId, readResources, supportIntent, consumeSupportIntent, account, activePage, adminPlans, adminSummary, adminUsers, announcements, contentFocusId, contentProjects, handleThemeChange, helpArticles, membershipPlans, modelPrices, openingProjectId, orders, plans, projects, providers, redeemCodes, summary, tasks, templates, theme, transactions, workflow, load, user]);
+  }, [navigate, setActivePage, creationSession, openProject, projectError, route.projectId, route.taskFilter, route.taskId, readResources, supportIntent, consumeSupportIntent, account, activePage, adminPlans, adminSummary, adminUsers, announcements, contentFocusId, contentProjects, handleThemeChange, helpArticles, membershipPlans, modelPrices, openingProjectId, orders, plans, projects, providers, summary, tasks, templates, theme, transactions, workflow, load, user]);
 
   const unreadResources = (isAdminRoute ? adminPageResources[adminHash] ?? [] : creatorPageResources[activePage] ?? []).filter((label) => !readResources.has(label));
   const initialReadState = !dataReady || unreadResources.length ? <div className="page-stack"><StatePanel
@@ -645,7 +638,6 @@ export function App() {
           templates={templates}
           plans={adminPlans}
           membershipPlans={membershipPlans}
-          redeemCodes={redeemCodes}
           announcements={announcements}
           helpArticles={helpArticles}
           users={adminUsers}

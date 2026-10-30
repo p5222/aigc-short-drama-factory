@@ -366,7 +366,8 @@ export function mapRedeemCode(row: any): RedeemCode {
     startsAt: row.startsAt?.toISOString(),
     endsAt: row.endsAt?.toISOString(),
     status,
-    createdAt: row.createdAt.toISOString()
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt?.toISOString()
   };
 }
 

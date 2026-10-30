@@ -928,3 +928,20 @@ test("an empty script or episode cannot present a completed stage or direct the 
   data.script.content = "已保存的无人空镜剧本";
   assert.equal(buildStageGuidance(data, "content", 1).next?.stage, "shots");
 });
+
+test("success without a persistent image cannot complete progress; delivery never links to itself", () => {
+  const data = { ...workflow([shot("a", 1, 1)]), script: script("已保存"), characters: [character("lin", "identity")],
+    assets: [{ ...asset("identity", "role", "lin", ""), status: "succeeded" as const }, asset("image_a", "image", undefined, "blob:https://example.test/temporary")] };
+  assert.equal(productionProgress(data, 1).roles, 0);
+  assert.equal(productionProgress(data, 1).images, 0);
+  assert.equal(buildStageGuidance(data, "delivery", 1).next?.stage, "shots");
+  data.assets[0].referenceUrl = "/storage/identity.png";
+  data.assets[1].referenceUrl = "https://cdn.example.test/image";
+  assert.equal(productionProgress(data, 1).roles, 1);
+  assert.equal(productionProgress(data, 1).images, 1);
+  assert.equal(buildStageGuidance(data, "delivery", 1).next, undefined);
+  for (const url of ["task-123", "data:video/mp4;base64,AAAA", "javascript:alert(1)", "https://", undefined]) {
+    data.assets[1].referenceUrl = url;
+    assert.equal(productionProgress(data, 1).images, 0);
+  }
+});

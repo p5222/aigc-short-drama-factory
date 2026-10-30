@@ -21,6 +21,7 @@ export function RechargePage({ account, plans, membershipPlans, modelPrices, onR
   const [redeemCode, setRedeemCode] = useState("");
   const [error, setError] = useState("");
   const [redeeming, setRedeeming] = useState(false);
+  const [needsReceipt, setNeedsReceipt] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false), [historyVersion, setHistoryVersion] = useState(0);
   const redeemRunner = useRef(createTaskActionRunner()).current;
   const availablePlans = plans.filter((plan) => plan.enabled);
@@ -36,7 +37,7 @@ export function RechargePage({ account, plans, membershipPlans, modelPrices, onR
   );
 
   async function redeem() {
-    if (!redeemCode.trim()) return;
+    if (!redeemCode.trim() || needsReceipt) return;
     const code = redeemCode.trim();
     setMessage("");
     setError("");
@@ -54,7 +55,29 @@ export function RechargePage({ account, plans, membershipPlans, modelPrices, onR
     if (result.status === "failed") {
       void api.trackEvent({ eventName: "redeem_code_fail", campaignCode: codePrefix, properties: { codePrefix, message: result.message } }).catch(() => undefined);
       setError(result.message);
+      setNeedsReceipt(true);
     }
+  }
+
+  async function checkReceipt() {
+    const code = redeemCode.trim();
+    if (!code) return;
+    setError(""); setMessage("");
+    const result = await redeemRunner.run("redeem", "retry", async () => {
+      const result = await api.redeemReceipt(code);
+      if (!result.found || !result.receipt) {
+        setMessage("尚未查到此码在当前账号的到账记录。若刚提交兑换，请稍后再核对。");
+        setNeedsReceipt(false);
+        return;
+      }
+      const receipt = result.receipt;
+      const message = `已确认到账 ${receipt.credits.toLocaleString()} 积分 · ${new Date(receipt.createdAt).toLocaleString("zh-CN")} · ${receipt.maskedCode}。`;
+      setMessage(message); setNeedsReceipt(false); setRedeemCode("");
+      setHistoryOpen(true); setHistoryVersion(value => value + 1);
+      try { await onRefresh(); }
+      catch { setMessage(`${message}余额面板刷新失败，可稍后刷新查看，到账记录已确认。`); }
+    }, pending => setRedeeming(Boolean(pending.redeem)));
+    if (result.status === "failed") setError(`到账记录读取失败，暂时无法确认结果。${result.message}`);
   }
 
   function openCheckout(item: Plan) {
@@ -80,11 +103,13 @@ export function RechargePage({ account, plans, membershipPlans, modelPrices, onR
       <section className="panel creator-redeem-panel" aria-labelledby="creator-redeem-title">
         <div><h2 id="creator-redeem-title">已有卡密？直接兑换</h2><p>兑换成功后，积分立即计入当前账户。</p></div>
         <form className="redeem-row" onSubmit={event => { event.preventDefault(); void redeem(); }}>
-          <label className="creator-redeem-input"><span className="creator-sr-only">兑换码</span><input value={redeemCode} disabled={redeeming} onChange={event => setRedeemCode(event.target.value.toUpperCase())} placeholder="输入店铺提供的兑换码" autoComplete="off" /></label>
-          <button type="submit" className="primary-button" disabled={redeeming || !redeemCode.trim()}>{redeeming ? "兑换中…" : "兑换积分"}</button>
+          <label className="creator-redeem-input"><span className="creator-sr-only">兑换码</span><input value={redeemCode} disabled={redeeming} onChange={event => { setRedeemCode(event.target.value.toUpperCase()); setNeedsReceipt(false); setError(""); setMessage(""); }} placeholder="输入店铺提供的兑换码" autoComplete="off" /></label>
+          <button type="submit" className="primary-button" disabled={redeeming || needsReceipt || !redeemCode.trim()}>{redeeming ? "处理中…" : "兑换积分"}</button>
+          <button type="button" className="ghost-button" disabled={redeeming || !redeemCode.trim()} onClick={() => void checkReceipt()}>核对到账</button>
         </form>
-        {message ? <InlineNotice tone={message.startsWith("兑换成功") ? "success" : "info"} onDismiss={() => setMessage("")}>{message}</InlineNotice> : null}
+        {message ? <InlineNotice tone={message.startsWith("兑换成功") || message.startsWith("已确认到账") ? "success" : "info"} onDismiss={() => setMessage("")}>{message}</InlineNotice> : null}
         {error ? <InlineNotice tone="error">{error}</InlineNotice> : null}
+        {needsReceipt ? <p>兑换结果未确认，请先核对当前账号是否已到账。</p> : null}
         <button className="ghost-button" type="button" aria-expanded={historyOpen} onClick={() => setHistoryOpen(!historyOpen)}>{historyOpen ? "收起兑换记录" : "查看我的兑换记录"}</button>
         {historyOpen ? <RedeemHistory refreshKey={historyVersion} /> : null}
       </section>

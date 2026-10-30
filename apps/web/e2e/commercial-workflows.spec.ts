@@ -27,6 +27,7 @@ async function fixtureApi(page: Page, options: { admin?: boolean; tasks?: number
       "/credits/ledger": { items: [], total: 0, page: 1, pageSize: 20 },
       "/admin/summary": { users: 0, projects: 0, tasksToday: 0, totalTasks: 0, completedTasks: 0, successRate: 0, creditsConsumed: 0, providerCost: null, paidRechargeCny: 0 },
       "/admin/evaluation/overview": { datasets: [], runs: [], promptVersions: [], experiments: [] },
+      "/admin/redeem-batches": { items: [], total: 0, page: 1, pageSize: 20, legacyCodes: 0 },
       "/admin/users/page": { items: [], total: 0, page: 1, pageSize: 25 },
       "/admin/audit-logs": { items: [], total: 0, page: 1, pageSize: 30 },
       "/admin/showcase/works": { items: [], total: 0, page: 1, pageSize: 20, totalPages: 1 },

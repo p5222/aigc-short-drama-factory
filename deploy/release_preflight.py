@@ -4,6 +4,8 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
+import subprocess
 
 MIB = 1024 * 1024
 
@@ -22,7 +24,7 @@ def existing_parent(path):
     return path
 
 
-def check_space(paths, minimum, backup_bytes=0):
+def check_space(paths, minimum, backup_bytes=0, allocations=()):
     results = []
     # All named locations must be writable without using root-reserved blocks.
     # Do not add the same headroom repeatedly for directories on one filesystem.
@@ -35,10 +37,37 @@ def check_space(paths, minimum, backup_bytes=0):
         seen.add(device)
         stat = os.statvfs(parent)
         available = stat.f_bavail * stat.f_frsize
-        required = minimum + backup_bytes
+        planned = sum(size for target, size in allocations if existing_parent(target).stat().st_dev == device)
+        required = minimum + backup_bytes + planned
         results.append({"path": str(parent), "availableMiB": available // MIB,
-                        "requiredMiB": (required + MIB - 1) // MIB, "ok": available >= required})
+                        "requiredMiB": (required + MIB - 1) // MIB,
+                        "plannedArchiveMiB": (planned + MIB - 1) // MIB, "ok": available >= required})
     return results
+
+
+def pending_archive_size(repo, revision, archive):
+    """Budget a gzip tar before it exists, without creating another archive.
+
+    Uncompressed blob sizes plus tar/PAX headers and gzip expansion are a
+    conservative upper bound, including incompressible checked-in media.
+    """
+    if not archive or Path(archive).exists():
+        return 0
+    if not re.fullmatch(r"[a-f0-9]{40}", revision or ""):
+        raise ValueError("A pending release archive requires a full release revision")
+    listing = subprocess.check_output(
+        ["git", f"--git-dir={repo}", "ls-tree", "-rlz", revision],
+        timeout=60
+    )
+    total = MIB
+    for entry in listing.split(b"\0"):
+        if not entry:
+            continue
+        metadata, filename = entry.split(b"\t", 1)
+        fields = metadata.split()
+        size = int(fields[3]) if fields[3] != b"-" else 0
+        total += ((size + 511) // 512) * 512 + 2048 + len(filename) * 2
+    return (total * 105 + 99) // 100
 
 
 def latest_backup_size(root):
@@ -64,7 +93,10 @@ def main():
     minimum = setting("MANJIAO_MIN_RUNTIME_FREE_MB", 1024) if runtime else setting("MANJIAO_MIN_BUILD_FREE_MB", 6144)
     backup_bytes = latest_backup_size(args.backups) if args.phase == "backup" else 0
     docker_root = os.environ.get("MANJIAO_DOCKER_ROOT", "/var/lib/docker")
-    results = check_space([args.app, args.backups, args.repo, docker_root], minimum, backup_bytes)
+    archive = os.environ.get("MANJIAO_RELEASE_ARCHIVE")
+    archive_bytes = pending_archive_size(args.repo, os.environ.get("MANJIAO_RELEASE"), archive) if args.phase == "backup" else 0
+    paths = [args.app, args.backups, args.repo, docker_root] + ([archive] if archive else [])
+    results = check_space(paths, minimum, backup_bytes, [(archive, archive_bytes)] if archive else [])
     print(json.dumps({"phase": args.phase, "prebuilt": args.prebuilt, "filesystems": results}))
     if not all(item["ok"] for item in results):
         raise SystemExit("DISK_PREFLIGHT_STOPPED: insufficient free space; archive unused releases or load the exact CI image before retrying. Live containers have not been replaced.")

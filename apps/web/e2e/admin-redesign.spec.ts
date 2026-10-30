@@ -14,7 +14,8 @@ const providers = ["text", "image", "video"].map((modality, i) => ({ id: `design
 const ticket = { id: "support-design", userId: "design-user-0", userName: "林初", subject: "如何调整分镜中的角色形象", category: "generation", status: "waiting_staff", version: 1, createdAt: stamp, updatedAt: stamp };
 const announcement = { id: "announcement", title: "创作工作台更新 · 更清晰的制作流程", body: "现在可以从原稿、全局设定到确认创建逐步完成准备。已创建的作品可在工作台继续制作。", type: "update", enabled: true, pinned: true, createdAt: stamp, updatedAt: stamp };
 const plan = { id: "starter", name: "创作体验包", price: 29, credits: 3000, bonusCredits: 200, badge: "适合初次创作", features: ["文本、图片与视频共用积分", "按实际使用量扣费"], shopUrl: "", enabled: true };
-const code = { id: "code-1", code: "CREATOR-TEST-2026", name: "创作体验活动", credits: 300, maxRedemptions: 1, usedCount: 0, enabled: true, status: "active", createdAt: stamp };
+const code = { id: "code-1", batchId: "design-batch", code: "CREATOR-TEST-2026", name: "创作体验活动", credits: 300, maxRedemptions: 1, usedCount: 0, enabled: true, status: "active", createdAt: stamp, updatedAt: stamp };
+const redeemSummary = { codes: 1, active: 1, scheduled: 0, disabled: 0, expired: 0, used_up: 0, redemptions: 0, redeemedCredits: 0, remainingCredits: 300 };
 
 async function adminFixtures(page: Page) {
   const queries: URLSearchParams[] = [];
@@ -43,7 +44,8 @@ async function adminFixtures(page: Page) {
       "/admin/announcements": [announcement, { ...announcement, id: "second", title: "新用户创作指南", type: "guide", pinned: false }],
       "/admin/help-articles": [{ id: "help", title: "完成你的第一部漫剧", summary: "从导入原稿开始，了解每一步的准备内容。", content: "导入原稿后选择画面比例和风格，确认文本报价后开始创建。", category: "getting_started", tags: ["新手"], enabled: true, pinned: true, sortOrder: 1, createdAt: stamp, updatedAt: stamp }],
       "/admin/plans": [plan], "/admin/membership-plans": [{ ...plan, id: "member", name: "创作月度方案", monthlyPrice: 99, monthlyCredits: 12000, discountPercent: 10, priorityLevel: 1 }],
-      "/admin/redeem-codes": [code],
+      "/admin/redeem-codes/page": { ...paged([code]), summary: redeemSummary },
+      "/admin/redeem-batches": { ...paged([{ id: "design-batch", name: code.name, prefix: "CREATOR", enabled: true, createdAt: stamp, updatedAt: stamp, summary: redeemSummary }]), legacyCodes: 0 },
       "/admin/evaluation/overview": { datasets: [], runs: [], promptVersions: [], experiments: [] },
       "/admin/evaluation/projects": [],
       "/admin/quality-center": { summary: { successRate: 96, failureRate: 4, averageScore: 82, p95LatencyMs: 12000, costAnomalies: 0, modelHealth: 3, openEvents: 0, sampleCount: 20 }, events: [], voc: [], modelMonitoring: [], lab: { datasets: [], runs: [], recentReports: [] }, samples: [], attribution: [], releaseGates: [], lineage: [], stageOptimization: { windowDays: 30, rows: ["content","assets","storyboard","final"].map((key,i) => ({ key, label: ["内容","资产","分镜","成片"][i], stages: [], reportCount: 5, averageScore: 82, passRate: 90, openFeedback: 0, unusableFeedback: 0, failedTasks: 0, topProblems: [], topRootCauses: [], recommendation: "继续积累真实样本", health: "pass" })) }, generatedAt: stamp },
@@ -232,7 +234,7 @@ test("help creator and all record editors retain failed changes and can save aga
   for (const editor of editors) {
     await page.goto(`/admin#${encodeURIComponent(editor.module)}`);
     if (editor.help) await page.getByRole("button", { name: /帮助中心/ }).last().click();
-    if (editor.module === "兑换码" && await page.getByRole("button", { name: "展开批次", exact: true }).first().isVisible()) await page.getByRole("button", { name: "展开批次", exact: true }).first().click();
+    if (editor.module === "兑换码") await page.getByRole("button", { name: "码明细", exact: true }).click();
     await page.getByRole("button", { name: editor.trigger }).first().click();
     const dialog = page.getByRole("dialog", { name: editor.title, exact: true });
     await dialog.getByLabel(editor.field, { exact: typeof editor.field === "string" }).fill(editor.value);

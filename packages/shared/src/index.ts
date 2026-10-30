@@ -397,6 +397,67 @@ export interface RedeemCode {
   endsAt?: string;
   status?: "active" | "disabled" | "used_up" | "expired" | "scheduled";
   createdAt: string;
+  updatedAt?: string;
+}
+
+export interface RedeemCodeQuery {
+  page?: number;
+  pageSize?: number;
+  codeId?: string;
+  search?: string;
+  status?: NonNullable<RedeemCode["status"]> | "all";
+  batchId?: string;
+  legacy?: boolean;
+  distributable?: boolean;
+}
+
+export interface RedeemSummary {
+  codes: number;
+  active: number;
+  scheduled: number;
+  disabled: number;
+  expired: number;
+  used_up: number;
+  redeemedCredits: number;
+  remainingCredits: number;
+  redemptions: number;
+}
+
+export interface RedeemCodePage {
+  items: RedeemCode[];
+  total: number;
+  page: number;
+  pageSize: number;
+  summary: RedeemSummary;
+}
+
+export interface RedeemBatchRow {
+  id: string;
+  name: string;
+  prefix: string;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+  summary: RedeemSummary;
+}
+
+export interface RedeemBatchPage {
+  items: RedeemBatchRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+  legacyCodes: number;
+}
+
+export interface RedeemStatusResult {
+  requested: number;
+  changed: number;
+  unchanged: number;
+}
+
+export interface RedeemReceipt {
+  found: boolean;
+  receipt?: RedeemHistoryPage["items"][number];
 }
 
 export interface RedeemBatchInput {

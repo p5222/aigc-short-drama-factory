@@ -52,6 +52,11 @@
   RedeemCode,
   RedeemBatchInput,
   RedeemHistoryPage,
+  RedeemCodeQuery,
+  RedeemCodePage,
+  RedeemBatchPage,
+  RedeemReceipt,
+  RedeemStatusResult,
   StoryboardExportRow,
   StoryboardProductionPackage,
   StoryboardShot,
@@ -213,6 +218,7 @@ export const api = {
       body: JSON.stringify({ code })
     }),
   redeemHistory: (page = 1) => request<RedeemHistoryPage>(`/credits/redemptions?page=${page}`),
+  redeemReceipt: (code: string) => request<RedeemReceipt>("/credits/redeem/receipt", { method: "POST", body: JSON.stringify({ code }) }),
   plans: () => request<Plan[]>("/plans"),
   membershipPlans: () => request<MembershipPlan[]>("/membership-plans"),
   providers: () => request<ModelProvider[]>("/providers"),
@@ -356,7 +362,12 @@ export const api = {
   adminPlans: () => request<Plan[]>("/admin/plans"),
   adminMembershipPlans: () => request<MembershipPlan[]>("/admin/membership-plans"),
   adminRedeemCodes: () => request<RedeemCode[]>("/admin/redeem-codes"),
-  adminRedeemHistory: (page = 1, codeId = "", batchId = "") => request<RedeemHistoryPage>(`/admin/redeem-redemptions?page=${page}&codeId=${encodeURIComponent(codeId)}&batchId=${encodeURIComponent(batchId)}`),
+  adminRedeemCodePage: (query: RedeemCodeQuery = {}) => request<RedeemCodePage>(`/admin/redeem-codes/page?${new URLSearchParams(Object.entries(query).filter(([, value]) => value !== undefined && value !== "").map(([key, value]) => [key, String(value)]))}`),
+  adminRedeemExport: (query: RedeemCodeQuery = {}) => request<{ items: RedeemCode[]; total: number; exportedAt: string }>(`/admin/redeem-codes/export?${new URLSearchParams(Object.entries(query).filter(([, value]) => value !== undefined && value !== "").map(([key, value]) => [key, String(value)]))}`),
+  adminRedeemBatches: (query: { page?: number; search?: string; status?: "all" | "enabled" | "disabled" } = {}) => request<RedeemBatchPage>(`/admin/redeem-batches?${new URLSearchParams(Object.entries(query).map(([key, value]) => [key, String(value)]))}`),
+  adminRedeemHistory: (page = 1, codeId = "", batchId = "", filters: { search?: string; from?: string; to?: string } = {}) => request<RedeemHistoryPage>(`/admin/redeem-redemptions?${new URLSearchParams({ page: String(page), codeId, batchId, ...filters })}`),
+  setRedeemCodeStatuses: (codes: { id: string; updatedAt: string }[], enabled: boolean) => request<RedeemStatusResult>("/admin/redeem-codes/status", { method: "PATCH", body: JSON.stringify({ codes, enabled }) }),
+  setRedeemBatchStatus: (id: string, enabled: boolean, expectedUpdatedAt: string) => request<RedeemStatusResult>(`/admin/redeem-batches/${encodeURIComponent(id)}/status`, { method: "PATCH", body: JSON.stringify({ enabled, expectedUpdatedAt }) }),
   createRedeemCodeBatch: (input: RedeemBatchInput) =>
     request<RedeemCode[]>("/admin/redeem-codes/batch", {
       method: "POST",
@@ -431,7 +442,7 @@ export const api = {
     }),
   updateRedeemCode: (
     id: string,
-    input: Partial<Pick<RedeemCode, "name" | "code" | "credits" | "maxRedemptions" | "enabled">> & { startsAt?: string | null; endsAt?: string | null }
+    input: Partial<Pick<RedeemCode, "name" | "code" | "credits" | "maxRedemptions" | "enabled">> & { startsAt?: string | null; endsAt?: string | null; expectedUpdatedAt?: string }
   ) =>
     request<RedeemCode>(`/admin/redeem-codes/${id}`, {
       method: "PATCH",
