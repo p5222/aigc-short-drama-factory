@@ -123,11 +123,29 @@ test("HTTP business boundaries: sessions, administrator writes, private media an
       try {
         const first = await request("/api/admin/redeem-codes/batch", admin.token, "POST", input);
         assert.equal(first.status, 201);
-        const rows = await first.json() as { id: string; batchId: string; code: string }[]; batchId = rows[0]!.batchId;
+        const rows = await first.json() as { id: string; batchId: string; code: string; updatedAt: string }[]; batchId = rows[0]!.batchId;
         const retry = await request("/api/admin/redeem-codes/batch", admin.token, "POST", input);
         assert.equal(retry.status, 201); assert.deepEqual(await retry.json(), rows);
         assert.equal((await request("/api/admin/redeem-codes/batch", admin.token, "POST", { ...input, credits: 13 })).status, 409);
+        for (const path of ["/api/admin/redeem-codes/page", "/api/admin/redeem-codes/export", "/api/admin/redeem-batches"]) {
+          assert.equal((await request(path)).status, 401);
+          assert.equal((await request(path, owner.token)).status, 403);
+        }
+        assert.equal((await request("/api/admin/redeem-codes/page?pageSize=10000", admin.token)).status, 400);
+        assert.equal((await request("/api/admin/redeem-redemptions?from=invalid", admin.token)).status, 400);
+        assert.equal((await request("/api/admin/redeem-codes/status", admin.token, "PATCH", { enabled: false, codes: [] })).status, 400);
+        assert.equal((await request("/api/admin/redeem-codes/status", owner.token, "PATCH", { enabled: false, codes: rows })).status, 403);
+        const codePage = await (await request(`/api/admin/redeem-codes/page?batchId=${batchId}`, admin.token)).json() as { total: number; summary: { active: number } };
+        assert.equal(codePage.total, 1); assert.equal(codePage.summary.active, 1);
+        const batches = await (await request(`/api/admin/redeem-batches?search=${batchId}`, admin.token)).json() as { items: { updatedAt: string }[]; total: number };
+        assert.equal(batches.total, 1);
+        assert.equal((await request(`/api/admin/redeem-batches/${batchId}/status`, admin.token, "PATCH", { enabled: false })).status, 400);
+        assert.equal((await request("/api/credits/redeem/receipt", undefined, "POST", { code: rows[0]!.code })).status, 401);
         assert.equal((await request("/api/credits/redeem", redeemSession.token, "POST", { code: rows[0]!.code })).status, 200);
+        const receipt = await (await request("/api/credits/redeem/receipt", redeemSession.token, "POST", { code: rows[0]!.code, userId: ids[1] })).json() as { found: boolean; receipt: { credits: number; user?: unknown } };
+        assert.equal(receipt.found, true); assert.equal(receipt.receipt.credits, 12); assert.equal(receipt.receipt.user, undefined);
+        assert.deepEqual(await (await request("/api/credits/redeem/receipt", other.token, "POST", { code: rows[0]!.code, userId: redeemUser })).json(), { found: false });
+        assert.equal((await request(`/api/admin/redeem-codes/${rows[0]!.id}`, admin.token, "PATCH", { name: "stale", expectedUpdatedAt: rows[0]!.updatedAt })).status, 409);
         const own = await (await request(`/api/credits/redemptions?userId=${ids[1]}`, redeemSession.token)).json() as { items: { credits: number; user?: unknown }[]; total: number };
         assert.equal(own.total, 1); assert.equal(own.items[0]!.credits, 12); assert.equal(own.items[0]!.user, undefined);
         const otherHistory = await (await request(`/api/credits/redemptions?userId=${ids[0]}`, other.token)).json() as { total: number };

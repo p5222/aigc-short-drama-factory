@@ -1,0 +1,116 @@
+.redeem-workspace, .redeem-detail, .redeem-editor, .redeem-code-list { display: grid; gap: 20px; min-width: 0; color: var(--adm-text); }
+.admin-product .admin-modal.wide:has(> .admin-modal-body > .redeem-detail) { width: min(1100px,100%); }
+.redeem-detail, .redeem-detail .redeem-fieldset, .redeem-detail .redeem-code-list { gap: 16px; }
+.redeem-detail .redeem-totals { padding-block: 14px; }
+.redeem-detail .redeem-totals > div { gap: 5px; }
+.redeem-detail .redeem-totals strong { font-size: 24px; }
+.redeem-detail .redeem-export-row { padding-block: 12px; }
+.redeem-toolbar, .redeem-section-head, .redeem-actions, .redeem-selection, .redeem-export-row, .redeem-batch-gate { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+.redeem-actions { justify-content: flex-start; gap: 8px; }
+.redeem-tabs { display: flex; gap: 4px; padding: 4px; width: fit-content; max-width: 100%; border: 1px solid var(--adm-border); border-radius: 9px; background: var(--adm-surface); }
+.redeem-tabs button { border: 0; border-radius: 6px; padding: 9px 16px; font: inherit; font-size: 13px; color: var(--adm-muted); background: transparent; cursor: pointer; }
+.redeem-tabs button.active { background: var(--adm-accent-soft); color: var(--adm-accent); font-weight: 600; }
+.redeem-panel { display: grid; gap: 20px; min-width: 0; border: 1px solid var(--adm-border); border-radius: 12px; padding: 24px; background: var(--adm-surface); }
+.redeem-section-head h2 { display: flex; align-items: center; gap: 9px; margin: 0; font-size: 16px; font-weight: 650; }
+.redeem-section-head h2 svg { color: var(--adm-accent); }
+.redeem-section-head p, .redeem-note, .redeem-export-row p, .redeem-batch-gate p, .redeem-conflict p { margin: 6px 0 0; font-size: 12px; color: var(--adm-muted); line-height: 1.8; }
+.redeem-caption { margin: 0; font-size: 11px; line-height: 1.8; color: var(--adm-muted); }
+.redeem-filters { display: flex; align-items: end; gap: 12px; flex-wrap: wrap; }
+.redeem-filters label, .redeem-form-grid label { display: grid; min-width: 0; gap: 8px; color: var(--adm-text); font-size: 12px; }
+.redeem-filters .redeem-search { flex: 1 1 240px; max-width: 560px; }
+.redeem-search > div { position: relative; }
+.redeem-search svg { position: absolute; z-index: 1; top: 12px; left: 12px; color: var(--adm-muted); pointer-events: none; }
+.redeem-workspace input, .redeem-workspace select, .redeem-detail input, .redeem-detail select, .redeem-editor input, .redeem-editor select { max-width: 100%; min-width: 0; border: 1px solid var(--adm-border); background: var(--adm-surface); border-radius: 7px; padding: 10px 12px; min-height: 40px; color: var(--adm-text); font: inherit; font-size: 13px; }
+.admin-product .redeem-search input { width: 100%; padding-left: 36px !important; }
+.admin-product .admin-modal .redeem-search input:not([type="checkbox"]):not([type="radio"]) { padding-left: 36px; border-radius: 7px; }
+.redeem-form-grid input, .redeem-form-grid select { width: 100%; }
+.redeem-workspace input[type="checkbox"], .redeem-detail input[type="checkbox"], .redeem-editor input[type="checkbox"] { width: 16px; height: 16px; min-height: 0; margin: 0; accent-color: var(--adm-accent); cursor: pointer; flex-shrink: 0; }
+.redeem-workspace :focus-visible, .redeem-detail :focus-visible, .redeem-editor :focus-visible { outline: 2px solid var(--adm-accent); outline-offset: 3px; }
+.redeem-workspace button:disabled, .redeem-detail button:disabled, .redeem-editor button:disabled { opacity: .5; cursor: not-allowed; }
+.redeem-totals { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); padding: 20px 0; background: var(--adm-surface-2); border: 1px solid var(--adm-border); border-radius: 9px; }
+.redeem-totals > div { display: grid; gap: 8px; padding: 0 20px; border-right: 1px solid var(--adm-border); }
+.redeem-totals > div:last-child { border: 0; }
+.redeem-totals span, .redeem-totals small { font-size: 11px; font-weight: 400; color: var(--adm-muted); line-height: 1.7; }
+.redeem-totals strong { font-size: clamp(21px,2vw,28px); font-weight: 650; letter-spacing: -.025em; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.redeem-totals strong small { margin-left: 6px; }
+.redeem-table-wrap { max-width: 100%; overflow: auto; }
+.redeem-table { width: 100%; min-width: 720px; border-collapse: collapse; font-size: 12px; }
+.redeem-table th, .redeem-table td { padding: 16px 12px; border-bottom: 1px solid var(--adm-border); text-align: left; vertical-align: middle; line-height: 1.7; }
+.redeem-table th { padding-top: 11px; padding-bottom: 11px; background: var(--adm-surface-2); color: var(--adm-muted); font-weight: 500; font-size: 11px; white-space: nowrap; }
+.redeem-table th:first-child { border-radius: 6px 0 0 6px; }
+.redeem-table th:last-child { border-radius: 0 6px 6px 0; }
+.redeem-table tr:hover td { background: var(--adm-surface-2); }
+.redeem-table tr.selected td { background: var(--adm-accent-soft); }
+.redeem-table td strong { font-weight: 600; font-variant-numeric: tabular-nums; }
+.redeem-table small { display: block; margin-top: 4px; color: var(--adm-muted); font-size: 11px; overflow-wrap: anywhere; }
+.redeem-name { display: block; border: 0; background: transparent; color: var(--adm-text); text-align: left; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; padding: 0; max-width: 240px; overflow-wrap: anywhere; }
+.redeem-name:hover { color: var(--adm-accent); }
+.redeem-mono { font-family: ui-monospace,Consolas,monospace; }
+.redeem-code-value { display: block; font: 12px/1.8 ui-monospace,Consolas,monospace; overflow-wrap: anywhere; max-width: 260px; color: var(--adm-text); user-select: all; }
+.redeem-tag { display: inline-flex; padding: 3px 8px; border-radius: 5px; color: var(--adm-muted); background: var(--adm-surface-2); font-size: 11px; line-height: 1.7; white-space: nowrap; }
+.redeem-tag.positive { color: var(--adm-accent); background: var(--adm-accent-soft); }
+.redeem-progress { width: 100px; height: 3px; background: var(--adm-border); margin-top: 10px; border-radius: 2px; overflow: hidden; }
+.redeem-progress i { display: block; height: 100%; background: var(--adm-accent); }
+.redeem-fieldset { display: grid; gap: 20px; padding: 0; margin: 0; min-width: 0; border: 0; }
+.redeem-selection { min-height: 40px; }
+.redeem-selection > label { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--adm-muted); }
+.redeem-export-row { border-top: 1px solid var(--adm-border); border-bottom: 1px solid var(--adm-border); padding: 16px 0; }
+.redeem-export-row p { flex: 1 1 220px; max-width: 500px; margin: 0; }
+.redeem-batch-gate p { margin-top: 8px; }
+.redeem-created { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 18px 22px; border: 1px solid color-mix(in srgb,var(--adm-accent) 25%,var(--adm-border)); border-radius: 10px; background: var(--adm-accent-soft); color: var(--adm-accent); }
+.redeem-created > div:first-of-type { flex: 1 1 250px; min-width: 0; }
+.redeem-created strong { font-size: 13px; overflow-wrap: anywhere; }
+.redeem-created p { margin: 6px 0 0; color: var(--adm-muted); font-size: 12px; line-height: 1.7; }
+.redeem-presets { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
+.redeem-presets button { display: flex; align-items: center; gap: 12px; padding: 18px; border: 1px solid var(--adm-border); border-radius: 8px; background: var(--adm-surface); color: var(--adm-muted); text-align: left; cursor: pointer; }
+.redeem-presets button[aria-pressed="true"] { color: var(--adm-accent); background: var(--adm-accent-soft); border-color: var(--adm-accent); }
+.redeem-presets strong { display: block; font-size: 14px; font-weight: 600; }
+.redeem-presets small { display: block; font-size: 11px; color: var(--adm-muted); margin-top: 7px; line-height: 1.7; }
+.redeem-form-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 20px; }
+.redeem-form-grid small { color: var(--adm-muted); font-size: 11px; line-height: 1.7; }
+.redeem-full { grid-column: 1 / -1; }
+.redeem-form-grid .redeem-check { display: flex; align-items: center; gap: 10px; }
+.redeem-advanced { border-top: 1px solid var(--adm-border); padding-top: 18px; font-size: 12px; }
+.redeem-advanced > summary { color: var(--adm-muted); cursor: pointer; width: fit-content; }
+.redeem-advanced[open] > summary { margin-bottom: 20px; }
+.redeem-create-preview { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 18px; padding: 22px; border: 1px solid color-mix(in srgb,var(--adm-accent) 20%,var(--adm-border)); background: var(--adm-accent-soft); border-radius: 9px; }
+.redeem-create-preview span { font-size: 12px; color: var(--adm-muted); }
+.redeem-create-preview strong { display: block; margin-top: 9px; color: var(--adm-accent); font-size: 32px; font-weight: 650; letter-spacing: -.03em; }
+.redeem-create-preview p { font-size: 12px; color: var(--adm-muted); margin: 0; line-height: 1.9; }
+.redeem-conflict { border: 1px solid var(--adm-border); border-left: 3px solid var(--adm-danger); border-radius: 6px; padding: 16px; font-size: 13px; }
+.redeem-conflict button { margin-top: 12px; }
+@media (max-width: 1100px) {
+  .redeem-totals { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 22px 0; }
+  .redeem-totals > div:nth-child(2) { border: 0; }
+}
+@media (max-width: 760px) {
+  .redeem-panel { padding: 18px; }
+  .redeem-toolbar > .redeem-actions { width: 100%; }
+  .redeem-toolbar > .redeem-actions > .admin-primary-btn { margin-left: auto; }
+  .redeem-filters .redeem-search { max-width: none; flex-basis: 100%; }
+  .redeem-table { min-width: 0; display: block; }
+  .redeem-table thead { display: none; }
+  .redeem-table tbody { display: grid; gap: 12px; }
+  .redeem-table tr { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px; border: 1px solid var(--adm-border); border-radius: 8px; padding: 16px; position: relative; }
+  .redeem-table td { display: block; padding: 0; border: 0; min-width: 0; }
+  .redeem-table td::before { content: attr(data-label); display: block; font-size: 10px; color: var(--adm-muted); margin-bottom: 5px; }
+  .redeem-table td:first-child, .redeem-table td:last-child { grid-column: 1 / -1; }
+  .redeem-codes-table td:nth-child(2) { grid-column: 1 / -1; padding-right: 22px; }
+  .redeem-codes-table .redeem-select-cell { position: absolute; right: 16px; top: 18px; }
+  .redeem-table td:first-child::before, .redeem-table td:last-child::before, .redeem-codes-table td:nth-child(2)::before { display: none; }
+  .redeem-table td:last-child { border-top: 1px solid var(--adm-border); padding-top: 10px; }
+  .redeem-name, .redeem-code-value { max-width: none; }
+  .redeem-selection { align-items: flex-start; }
+  .redeem-selection > .redeem-actions { width: 100%; }
+  .redeem-totals > div { padding: 0 14px; }
+  .redeem-presets button { padding: 14px 10px; gap: 8px; align-items: flex-start; }
+  .redeem-presets button > svg { flex-shrink: 0; width: 17px; }
+  .redeem-form-grid { gap: 18px 14px; }
+  .redeem-created { padding: 16px; }
+  .redeem-created > svg { display: none; }
+  .redeem-created > .redeem-actions { width: 100%; }
+}
+@media (max-width: 420px) {
+  .redeem-form-grid { grid-template-columns: minmax(0,1fr); }
+  .redeem-tabs button { padding: 9px 12px; }
+}

@@ -10,15 +10,24 @@ export interface StageGuidance {
   next?: { stage: WorkbenchStage; label: string };
 }
 
+function usableImage(url?: string): boolean {
+  if (!url || url !== url.trim()) return false;
+  if (/^\/storage\/[^?#\s]+/.test(url) || /^data:image\/(?:png|jpe?g|webp|gif|avif);base64,[A-Za-z0-9+/]+={0,2}$/.test(url)) return true;
+  try { return ["http:", "https:"].includes(new URL(url).protocol); } catch { return false; }
+}
+
 export function productionProgress(workflow: ProjectWorkflow, episodeNo: number | null) {
   const shots = workflow.storyboards.filter(shot => episodeNo === null || shot.episodeNo === episodeNo);
   const assets = (workflow.assets ?? []).filter(asset => !asset.isHistorical);
   const images = buildShotAssetMap(shots, assets, "image");
   const videos = buildShotAssetMap(shots, assets, "video");
-  const imageCount = shots.filter(shot => images.get(shot.id)?.status === "succeeded" && images.get(shot.id)?.referenceUrl).length;
+  const imageCount = shots.filter(shot => images.get(shot.id)?.status === "succeeded" && usableImage(images.get(shot.id)?.referenceUrl)).length;
   const videoCount = shots.filter(shot => videos.get(shot.id)?.status === "succeeded" && isPersistedPlayableVideoReference(videos.get(shot.id)?.referenceUrl)).length;
   const identities = assets.filter(asset => asset.type === "role" || asset.type === "role_derivative");
-  const roleCount = workflow.characters.filter(character => resolveCharacterIdentityAsset(character, identities)?.status === "succeeded").length;
+  const roleCount = workflow.characters.filter(character => {
+    const identity = resolveCharacterIdentityAsset(character, identities);
+    return identity?.status === "succeeded" && usableImage(identity.referenceUrl);
+  }).length;
   return { shots: shots.length, images: imageCount, videos: videoCount, roles: roleCount, characters: workflow.characters.length, script: Boolean(workflow.script?.content?.trim()) };
 }
 
@@ -40,6 +49,15 @@ export function buildStageGuidance(workflow: ProjectWorkflow, stage: WorkbenchSt
     scope: "全剧共用资产", title: p.roles < p.characters ? "先确认主角形象，再批量制作" : "把统一设定带入每一个镜头",
     detail: "上传参考图后仍需生成并核对角色定稿。检查服装、外貌与场景风格，再进入分镜。",
     checks: [roles, script], next: p.script ? { stage: "shots", label: "下一步：分镜与首帧" } : undefined
+  };
+  if (stage === "delivery") return {
+    scope, title: !p.shots ? "先准备本集镜头" : p.videos < p.shots ? "把镜头制作成可播放的片段" : "核对剪辑，准备导出成片",
+    detail: !p.shots ? "返回分镜阶段，按当前分集拆解镜头。"
+      : p.images < p.shots ? "部分镜头还缺少有效首帧，可返回补齐后继续制作视频。"
+      : p.videos < p.shots ? "逐镜生成并预览视频，确认动作衔接、角色一致性和时长。"
+      : "在本页调整顺序、裁剪与字幕，确认配音及导出报价后生成成片。",
+    checks: [shots, images, videos],
+    next: !p.shots || p.images < p.shots ? { stage: "shots", label: "返回分镜补齐画面" } : undefined
   };
   return {
     scope, title: !p.shots ? "先把这一集拆成镜头" : p.images < p.shots ? "先确认少量首帧，再补齐画面" : p.videos < p.shots ? "首帧已齐全，可以制作动态片段" : "片段已齐全，继续剪辑与交付",

@@ -55,8 +55,6 @@ import type {
   QualityCenterOverview,
   QualityEvaluationRunResult,
   QualityProjectRow,
-  RedeemCode,
-  RedeemBatchInput,
   RelayGatewayPolicy,
   ShowcaseWork,
   VideoModelTestResult,
@@ -65,9 +63,7 @@ import type {
   VisualPipelineDescriptor,
   VisualPipelineTestResult
 } from "@aifilm/shared";
-import { creditPriceUnit, redeemCodeStatus } from "@aifilm/shared";
-import { downloadRedeemCodes, redeemLiability, redeemDateInput, redeemDateIso } from "../admin/redeemModel";
-import { RedeemHistory } from "../components/RedeemHistory";
+import { creditPriceUnit } from "@aifilm/shared";
 import { api, type AdminContentProject } from "../lib/api";
 import { HttpError } from "../lib/httpClient";
 import { AdminEvaluationPage, AdminMasterDetail, AdminTablePage } from "../admin";
@@ -97,6 +93,7 @@ import { ModelLibrary } from "../components/ModelLibrary";
 import { CreditCenter } from "../admin/CreditCenter";
 import { PromptStudio } from "../admin/PromptStudio";
 import { AdminCommercialIdentity, membershipLabels } from "../admin/AdminCommercialIdentity";
+import { RedeemWorkspace } from "../admin/RedeemWorkspace";
 
 const AdminActionContext = createContext({ pending: false, message: "", error: "", version: 0 });
 type ProviderTestResult = ModelTestResult | ImageModelTestResult | VideoModelTestResult;
@@ -120,9 +117,9 @@ const moduleCopy: Record<string, { title: string; subtitle: string }> = {
   支持工单: { title: "支持工单", subtitle: "查看创作者的问题、补充记录与处理回复。回复会保存在站内工单中。" },
   创作现场管理: { title: "创作现场管理", subtitle: "审核创作者提交的真实作品，维护封面、视频、精选和前台展示顺序。" },
   创作质量中心: { title: "创作质量中心", subtitle: "根据真实创作内容定位阶段瓶颈，对比模型与提示词版本，持续验证优化效果。" },
-  兑换码: { title: "兑换码", subtitle: "批量生成唯一兑换码，控制额度、次数和启停状态。" },
+  兑换码: { title: "兑换码", subtitle: "按活动发放积分，管理批次与单码，核对每次实际到账。" },
   套餐会员: { title: "充值套餐", subtitle: "管理一次性积分充值包、售价与购买链接。" },
-  订阅会员: { title: "订阅会员", subtitle: "预留方案配置。订阅购买、自动月度发放、折扣与优先队列尚未开放。" },
+  订阅会员: { title: "订阅会员", subtitle: "配置按月手动购买与同档续费。实际购买入口以支付开关为准，不自动扣款。" },
   模型路由: { title: "模型路由", subtitle: "管理文本、生图、视频供应商，测试模型连接。" },
   提示词评分: { title: "提示词工作室", subtitle: "管理实际生成提示词、发布版本与质量评分标准。" },
   价格策略: { title: "价格策略", subtitle: "按供应商、模型和计费单位配置积分单价与成本。" }
@@ -136,7 +133,6 @@ export function AdminPage({
   templates,
   plans,
   membershipPlans,
-  redeemCodes,
   announcements,
   helpArticles,
   users,
@@ -151,7 +147,6 @@ export function AdminPage({
   templates: PromptTemplate[];
   plans: Plan[];
   membershipPlans: MembershipPlan[];
-  redeemCodes: RedeemCode[];
   announcements: PlatformAnnouncement[];
   helpArticles: HelpArticle[];
   users: AdminUserRow[];
@@ -350,7 +345,7 @@ export function AdminPage({
     <div className="admin-v2-page" aria-busy={actionPending}>
       <PageHeader eyebrow="运营控制台" title={current.title} description={current.subtitle} actions={
         <div className="admin-v2-title-actions">
-          {activeModule !== "支持工单" ? <button className="admin-icon-btn" disabled={actionPending} onClick={() => void actionRunner.current(async () => { await onRefresh(); }, "后台数据已刷新。") } title="刷新" aria-label="刷新后台数据">
+          {!["支持工单", "兑换码"].includes(activeModule) ? <button className="admin-icon-btn" disabled={actionPending} onClick={() => void actionRunner.current(async () => { await onRefresh(); }, "后台数据已刷新。") } title="刷新" aria-label="刷新后台数据">
             <RefreshCw size={16} /><span>刷新数据</span>
           </button> : null}
         </div>
@@ -397,14 +392,7 @@ export function AdminPage({
           onHelpDelete={(id) => runAction(() => api.deleteHelpArticle(id), "帮助文章已删除。")}
         />
       ) : null}
-      {activeModule === "兑换码" ? (
-        <RedeemSection
-          redeemCodes={redeemCodes}
-          onBatchCreate={(input, created) => runAction(async () => { created(await api.createRedeemCodeBatch(input)); }, "已批量生成唯一兑换码。")}
-          onSave={(id, input) => runAction(() => api.updateRedeemCode(id, input), "兑换码配置已保存。")}
-          onDelete={(id) => runAction(() => api.deleteRedeemCode(id), "兑换码已停用，兑换记录保留。")}
-        />
-      ) : null}
+      {activeModule === "兑换码" ? <RedeemWorkspace key={userId} userId={userId} /> : null}
       {activeModule === "套餐会员" ? (
         <PlansSection
           plans={plans}
@@ -3255,144 +3243,6 @@ function ModelQualityCard({ modelQuality, providers }: { modelQuality: NonNullab
   );
 }
 
-function RedeemSection({
-  redeemCodes,
-  onBatchCreate,
-  onSave,
-  onDelete
-}: {
-  redeemCodes: RedeemCode[];
-  onBatchCreate: (input: RedeemBatchInput, created: (codes: RedeemCode[]) => void) => AdminActionResult;
-  onSave: (id: string, input: Partial<Pick<RedeemCode, "name" | "code" | "credits" | "maxRedemptions" | "enabled">> & { startsAt?: string | null; endsAt?: string | null }) => AdminActionResult;
-  onDelete: (id: string) => AdminActionResult;
-}) {
-  const [keyword, setKeyword] = useState("");
-  const [status, setStatus] = useState("unused");
-  const [viewMode, setViewMode] = useState("codes");
-  const [createOpen, setCreateOpen] = useState(false);
-  const [expandedBatch, setExpandedBatch] = useState<string | null>(null);
-  const [receipt, setReceipt] = useState<RedeemCode[]>([]);
-  const [, tick] = useState(0);
-  useEffect(() => { const timer = window.setInterval(() => tick(value => value + 1), 30000); return () => window.clearInterval(timer); }, []);
-  const batchPending = useRef(false);
-  const [batchNotice, setBatchNotice] = useState("");
-  const rows = redeemCodes.filter((code) => {
-    const matchedKeyword = `${code.code} ${code.name} ${code.batchId ?? ""}`.toLowerCase().includes(keyword.toLowerCase());
-    const codeStatus = redeemStatus(code);
-    const matchedStatus =
-      status === "all" ||
-      (status === "unused" && code.usedCount === 0 && codeStatus === "active") ||
-      (status === "used" && code.usedCount > 0) ||
-      codeStatus === status;
-    return matchedKeyword && matchedStatus;
-  });
-  const matchedIds = new Set(rows.map(row => row.id));
-  const batches = groupRedeemCodes(redeemCodes).filter(batch => batch.codes.some(code => matchedIds.has(code.id)));
-  const used = redeemCodes.reduce((sum, code) => sum + code.usedCount, 0);
-  const railItems: AdminRailItem[] = [
-    { id: "unused", label: "未使用", count: redeemCodes.filter((code) => code.usedCount === 0 && redeemStatus(code) === "active").length, meta: "默认运营视图", tone: "green" },
-    { id: "all", label: "全部兑换码", count: redeemCodes.length, meta: "所有批次" },
-    { id: "used", label: "已使用", count: redeemCodes.filter((code) => code.usedCount > 0).length, meta: "已产生权益", tone: "blue" },
-    { id: "active", label: "可用", count: redeemCodes.filter((code) => redeemStatus(code) === "active").length, meta: "前台可兑换", tone: "green" },
-    { id: "scheduled", label: "未开始", count: redeemCodes.filter((code) => redeemStatus(code) === "scheduled").length, meta: "定时活动", tone: "amber" },
-    { id: "expired", label: "已过期", count: redeemCodes.filter((code) => redeemStatus(code) === "expired").length, meta: "需复盘活动", tone: "danger" },
-    { id: "disabled", label: "已停用", count: redeemCodes.filter((code) => redeemStatus(code) === "disabled").length, meta: "不可兑换", tone: "danger" },
-    { id: "used_up", label: "已用完", count: redeemCodes.filter((code) => redeemStatus(code) === "used_up").length, meta: "达到上限", tone: "violet" }
-  ];
-  const pagination = useAdminPagination(rows, `${keyword}:${status}:${viewMode}`);
-  const batchPagination = useAdminPagination(batches, `${keyword}:${status}:${viewMode}`);
-  const visibleCodes = pagination.items;
-  async function batchToggle(codes: RedeemCode[], enabled: boolean) {
-    if (batchPending.current) return;
-    const target = codes.filter((code) => code.enabled !== enabled);
-    if (!target.length) { setBatchNotice("当前筛选范围内没有需要变更的兑换码。"); return; }
-    if (!await confirmAdminAction(`确认${enabled ? "启用" : "停用"}整个批次中的 ${target.length} 个兑换码？${enabled ? "有效期、批次开关和剩余次数仍会限制兑换。" : "历史兑换记录保留。"}`, { title: "修改兑换码状态", confirmLabel: enabled ? "启用兑换码" : "停用兑换码" })) return;
-    batchPending.current = true;
-    setBatchNotice(`正在处理 ${target.length} 个兑换码…`);
-    try { const completed = await runAdminBatch(target, (code) => onSave(code.id, { enabled })); setBatchNotice(`批量${enabled ? "启用" : "停用"}：已完成 ${completed.length} / ${target.length} 个。${completed.length < target.length ? "其余未完成，已停止；请核对错误后再操作。" : ""}`); }
-    finally { batchPending.current = false; }
-  }
-
-  return (
-    <section className="admin-v2-section">
-      <AdminModuleWorkbench
-        railTitle="兑换码状态"
-        railDescription="按活动生命周期管理发放、兑换和停用。"
-        railItems={railItems}
-        activeRail={status}
-        onRailChange={setStatus}
-        railFooter={<span>{batches.length} 个批次，{rows.length} 个明细。</span>}
-      >
-        <div className="admin-product-metrics compact">
-          <AdminMetric icon={<Gift size={20} />} label="兑换码总数" value={redeemCodes.length} hint="后台记录" tone="blue" />
-          <AdminMetric icon={<ShieldCheck size={20} />} label="当前可兑换" value={redeemCodes.filter((item) => redeemStatus(item) === "active").length} hint="已核对期限、次数与开关" tone="green" />
-          <AdminMetric icon={<WalletCards size={20} />} label="已兑换次数" value={used} hint="累计使用" tone="amber" />
-          <AdminMetric icon={<CircleDollarSign size={20} />} label="待兑积分上限" value={redeemLiability(redeemCodes).toLocaleString()} hint="可用与未开始兑换码剩余额度" tone="violet" />
-        </div>
-        <AdminToolbar
-          right={
-            <AdminActionBar>
-              <SelectFilter value={viewMode} onChange={setViewMode} options={["codes", "batches", "history"]} labels={{ codes: "明细视图", batches: "批次视图", history: "兑换记录" }} />
-              <button className="admin-secondary-btn" disabled={!rows.length} onClick={() => downloadRedeemCodes(rows)}><Download size={16} />导出筛选 {rows.length} 份</button>
-              <button className="admin-primary-btn" type="button" onClick={() => setCreateOpen(true)}><Plus size={18} />生成兑换码</button>
-            </AdminActionBar>
-          }
-        >
-          <SearchField value={keyword} onChange={setKeyword} placeholder="搜索兑换码、活动名、批次..." />
-        </AdminToolbar>
-        {batchNotice ? <InlineNotice tone="info">{batchNotice}</InlineNotice> : null}
-        {receipt.length ? <div className="adm-redeem-receipt" role="status"><div><strong>已生成 {receipt.length} 个兑换码 · {receipt[0].name}</strong><p>每次 {receipt[0].credits} 积分，每码 {receipt[0].maxRedemptions} 次。导出后可发放给用户。</p></div><button className="admin-secondary-btn" onClick={() => downloadRedeemCodes(receipt)}><Download size={16} />导出新批次</button></div> : null}
-        {viewMode === "codes" ? (
-          <div className="admin-data-card">
-            <div className="admin-v2-card-head">
-              <div>
-                <h2>兑换码明细</h2>
-                <p>每人每码限用一次；已兑换的码值与积分额度锁定。停用后仍可核对历史。</p>
-              </div>
-            </div>
-            <div className="admin-redeem-code-list admin-redeem-code-list-standalone">
-              <div className="admin-redeem-code-head">
-                <span />
-                <span>兑换码</span>
-                <span>活动</span>
-                <span>类型</span>
-                <span>额度</span>
-                <span>使用</span>
-                <span>状态</span>
-                <span>创建</span>
-                <span>操作</span>
-              </div>
-              {visibleCodes.map((code) => <RedeemCodeRow key={code.id} code={code} onSave={onSave} onDelete={onDelete} />)}
-
-              {!rows.length ? <EmptyHint text="没有匹配的兑换码。可以切换左侧状态，或重新搜索批次/活动名。" /> : null}
-            </div>
-          </div>
-        ) : viewMode === "history" ? <div className="admin-data-card"><RedeemHistory admin /></div> : (
-          <div className="admin-redeem-batch-list">
-            {batchPagination.items.map((batch) => (
-              <RedeemBatchCard
-                key={batch.id}
-                batch={batch}
-                expanded={expandedBatch === batch.id}
-                onToggleExpand={() => setExpandedBatch(expandedBatch === batch.id ? null : batch.id)}
-                onSave={onSave}
-                onDelete={onDelete}
-                onBatchEnable={() => void batchToggle(batch.codes, true)}
-                onBatchDisable={() => void batchToggle(batch.codes, false)}
-              />
-            ))}
-            {!batches.length ? <EmptyHint text="没有匹配的兑换码批次。" /> : null}
-          </div>
-        )}
-        {viewMode !== "history" ? <TableFooter total={viewMode === "codes" ? rows.length : batches.length} page={viewMode === "codes" ? pagination.page : batchPagination.page} pageSize={pagination.pageSize} onPageChange={viewMode === "codes" ? pagination.setPage : batchPagination.setPage} /> : null}
-      </AdminModuleWorkbench>
-      <AdminModal open={createOpen} title="生成兑换码" description="配置额度与有效期，生成后可导出完整批次。每个用户对同一码只能兑换一次。" onClose={() => setCreateOpen(false)} wide>
-        <RedeemBatchCreator onCreate={(input) => closeAfterAdminSuccess(() => onBatchCreate(input, setReceipt), () => setCreateOpen(false))} />
-      </AdminModal>
-    </section>
-  );
-}
-
 function PlansSection({
   plans,
   onCreate,
@@ -4496,149 +4346,6 @@ function UserRow({
   );
 }
 
-function RedeemBatchCreator({ onCreate }: { onCreate: (input: RedeemBatchInput) => AdminActionResult }) {
-  const formId = useId();
-  const initial = { name: "新用户体验码", prefix: "TRIAL", credits: "300", count: "20", maxRedemptions: "1", startsAt: "", endsAt: "", enabled: true };
-  const [draft, setDraft] = useState(initial);
-  const attempt = useRef<{ fingerprint: string; requestId: string } | undefined>(undefined);
-  const action = useContext(AdminActionContext);
-  const datesValid = (!draft.startsAt || Number.isFinite(Date.parse(draft.startsAt))) && (!draft.endsAt || (Date.parse(draft.endsAt) > Date.now() && (!draft.startsAt || Date.parse(draft.endsAt) > Date.parse(draft.startsAt))));
-  async function submit() {
-    if (action.pending || !datesValid) return;
-    const input = { name: draft.name.trim(), prefix: draft.prefix.trim(), credits: Number(draft.credits), count: Number(draft.count), maxRedemptions: Number(draft.maxRedemptions), enabled: draft.enabled, startsAt: redeemDateIso(draft.startsAt), endsAt: redeemDateIso(draft.endsAt) };
-    const fingerprint = JSON.stringify(input);
-    // Preserve the attempt across transient errors and reopening the same draft in this tab.
-    if (!attempt.current) {
-      try { attempt.current = JSON.parse(sessionStorage.getItem("manjiao-redeem-attempt") ?? "null") ?? undefined; } catch { /* storage may be unavailable */ }
-    }
-    if (attempt.current?.fingerprint !== fingerprint) attempt.current = { fingerprint, requestId: crypto.randomUUID() };
-    try { sessionStorage.setItem("manjiao-redeem-attempt", JSON.stringify(attempt.current)); } catch { /* in-memory retry protection remains */ }
-    if (await onCreate({ ...input, requestId: attempt.current.requestId }) !== false) {
-      attempt.current = undefined;
-      try { sessionStorage.removeItem("manjiao-redeem-attempt"); } catch { /* optional storage */ }
-    }
-  }
-  return (
-    <form id={formId} className="admin-modal-form admin-redeem-create-form" data-admin-dirty={JSON.stringify(draft) !== JSON.stringify(initial) || undefined} onSubmit={(event) => { event.preventDefault(); void submit(); }}>
-      <div className="adm-redeem-preview"><span>本批次最大可兑积分</span><strong>{(Number(draft.credits) * Number(draft.count) * Number(draft.maxRedemptions) || 0).toLocaleString()}</strong><small>{draft.count || 0} 份 × 每码 {draft.maxRedemptions || 0} 次 × 每次 {draft.credits || 0} 积分</small></div>
-      <label className="admin-create-field"><span>活动名</span><input required maxLength={100} value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder="例如：新用户体验码" /></label>
-      <label className="admin-create-field"><span>前缀</span><input required pattern="[A-Z0-9]{1,16}" maxLength={16} value={draft.prefix} onChange={(event) => setDraft({ ...draft, prefix: event.target.value.toUpperCase() })} placeholder="1–16 位字母或数字" /></label>
-      <label className="admin-create-field"><span>积分/码</span><input type="number" required min={1} max={1000000} step={1} value={draft.credits} onChange={(event) => setDraft({ ...draft, credits: event.target.value })} placeholder="例如：300" /></label>
-      <label className="admin-create-field"><span>生成份数</span><input type="number" required min={1} max={1000} step={1} value={draft.count} onChange={(event) => setDraft({ ...draft, count: event.target.value })} placeholder="例如：20" /></label>
-      <label className="admin-create-field"><span>每码总次数</span><input type="number" required min={1} max={10000} step={1} value={draft.maxRedemptions} onChange={event => setDraft({ ...draft, maxRedemptions: event.target.value })} /></label>
-      <label className="admin-create-field"><span>生成后状态</span><select value={draft.enabled ? "enabled" : "disabled"} onChange={event => setDraft({ ...draft, enabled: event.target.value === "enabled" })}><option value="enabled">启用 · 按有效期开放</option><option value="disabled">停用 · 稍后发放</option></select></label>
-      <label className="admin-create-field"><span>开始时间</span><input aria-label="开始时间" type="datetime-local" value={draft.startsAt} onChange={event => setDraft({ ...draft, startsAt: event.target.value })} /><small>留空立即开始；使用本地时间。</small></label>
-      <label className="admin-create-field"><span>结束时间</span><input aria-label="结束时间" type="datetime-local" value={draft.endsAt} onChange={event => setDraft({ ...draft, endsAt: event.target.value })} /><small>留空长期有效；到达此刻停止兑换。</small></label>
-      {!datesValid ? <InlineNotice tone="error">结束时间须晚于当前时间及开始时间。</InlineNotice> : null}
-      <AdminDialogActions><button className="admin-primary-btn" type="submit" form={formId} disabled={action.pending || !datesValid || !draft.name.trim() || !draft.prefix.trim()}>
-        <Gift size={18} />生成
-      </button></AdminDialogActions>
-    </form>
-  );
-}
-
-function RedeemBatchCard({
-  batch,
-  expanded,
-  onToggleExpand,
-  onSave,
-  onDelete,
-  onBatchEnable,
-  onBatchDisable
-}: {
-  batch: ReturnType<typeof groupRedeemCodes>[number];
-  expanded: boolean;
-  onToggleExpand: () => void;
-  onSave: (id: string, input: Partial<Pick<RedeemCode, "name" | "code" | "credits" | "maxRedemptions" | "enabled">> & { startsAt?: string | null; endsAt?: string | null }) => AdminActionResult;
-  onDelete: (id: string) => AdminActionResult;
-  onBatchEnable: () => void;
-  onBatchDisable: () => void;
-}) {
-  const used = batch.codes.reduce((sum, code) => sum + code.usedCount, 0);
-  const active = batch.codes.filter((code) => redeemStatus(code) === "active").length;
-  const disabled = batch.codes.filter((code) => !code.enabled).length;
-  const expired = batch.codes.filter((code) => redeemStatus(code) === "expired").length;
-  const unused = batch.codes.filter((code) => code.usedCount === 0).length;
-  const pagination = useAdminPagination(batch.codes, batch.batchId ?? batch.name);
-  const previewCodes = pagination.items;
-  const statusText = active ? `${active} 个可用` : disabled + expired ? `${disabled + expired} 个不可用` : "暂无可用";
-  return (
-    <article className="admin-redeem-batch-card compact">
-      <div className="admin-redeem-batch-head">
-        <button className="admin-text-btn" onClick={() => { if (canLeaveAdminEditor()) onToggleExpand(); }} aria-expanded={expanded} aria-label={expanded ? "收起批次" : "展开批次"} title={expanded ? "收起批次" : "展开批次"}>
-          {expanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}{expanded ? "收起" : "展开"}
-        </button>
-        <div className="admin-redeem-batch-title">
-          <strong>{batch.name}</strong>
-          <span>{batch.batchId ?? "历史单码"} / 前缀 {batch.prefix}</span>
-        </div>
-        <div className="admin-redeem-batch-summary">
-          <span><b>{batch.codes.length}</b> 总数</span>
-          <span><b>{unused}</b> 未使用</span>
-          <span><b>{used}</b> 已兑换</span>
-          <span><b>{new Set(batch.codes.map(code => code.credits)).size === 1 ? batch.credits : "多种额度"}</b> 积分/次</span>
-          <StatusChip active={active > 0} label={statusText} />
-        </div>
-        <div className="admin-row-actions">
-          <button className="admin-text-btn" onClick={onBatchEnable}>启用全部</button>
-          <button className="admin-text-btn" onClick={onBatchDisable}>停用全部</button>
-          <button className="admin-text-btn" onClick={() => downloadRedeemCodes(batch.codes)}>导出整批 {batch.codes.length} 份</button>
-        </div>
-      </div>
-      {expanded ? (
-        <div className="admin-redeem-code-list">
-          <p className="admin-list-note">完整批次共 {batch.codes.length} 份，筛选仅用于查找批次；批量操作覆盖整批。待兑积分上限 {redeemLiability(batch.codes).toLocaleString()}。</p>
-          <div className="admin-redeem-code-head">
-            <span />
-            <span>兑换码</span>
-            <span>活动</span>
-            <span>类型</span>
-            <span>额度</span>
-            <span>使用</span>
-            <span>状态</span>
-            <span>创建</span>
-            <span>操作</span>
-          </div>
-          {previewCodes.map((code) => (
-            <RedeemCodeRow key={code.id} code={code} onSave={onSave} onDelete={onDelete} />
-          ))}
-          <TableFooter total={batch.codes.length} page={pagination.page} pageSize={pagination.pageSize} onPageChange={pagination.setPage} />
-        </div>
-      ) : null}
-    </article>
-  );
-}
-
-function RedeemCodeRow({ code, onSave, onDelete }: {
-  code: RedeemCode;
-  onSave: (id: string, input: Partial<Pick<RedeemCode, "name" | "code" | "credits" | "maxRedemptions" | "enabled">> & { startsAt?: string | null; endsAt?: string | null }) => AdminActionResult;
-  onDelete: (id: string) => AdminActionResult;
-}) {
-  const initial = () => ({ code: code.code, name: code.name, credits: String(code.credits), maxRedemptions: String(code.maxRedemptions), enabled: code.enabled, startsAt: redeemDateInput(code.startsAt), endsAt: redeemDateInput(code.endsAt) });
-  const [draft, setDraft] = useState(initial), [editing, setEditing] = useState(false), [copyState, setCopyState] = useState("");
-  const [history, setHistory] = useState(false);
-  const action = useContext(AdminActionContext);
-  useEffect(() => { if (!editing) setDraft(initial()); }, [code, editing]);
-  const dirty = editing && JSON.stringify(draft) !== JSON.stringify(initial());
-  const valid = draft.code.trim() && draft.name.trim() && Number.isSafeInteger(Number(draft.credits)) && Number(draft.credits) > 0 && Number.isSafeInteger(Number(draft.maxRedemptions)) && Number(draft.maxRedemptions) >= Math.max(1, code.usedCount) && (!draft.startsAt || !draft.endsAt || Date.parse(draft.endsAt) > Date.parse(draft.startsAt));
-  function closeEditor() { setDraft(initial()); setEditing(false); }
-  async function copyCode() {
-    try { if (!navigator.clipboard) throw new Error("当前浏览器不支持自动复制，请选中兑换码手动复制。"); await navigator.clipboard.writeText(code.code); setCopyState("已复制已保存的兑换码"); }
-    catch (reason) { setCopyState(reason instanceof Error ? reason.message : "复制失败，请手动复制。"); }
-  }
-  return <article className="admin-redeem-record" data-admin-dirty={dirty || undefined}>
-    <div className="admin-redeem-summary"><div><strong className="admin-redeem-saved-code">{code.code}</strong><small>{code.name}</small><small>{code.startsAt ? new Date(code.startsAt).toLocaleString("zh-CN") : "立即开始"} → {code.endsAt ? new Date(code.endsAt).toLocaleString("zh-CN") : "长期有效"}</small><DraftIndicator dirty={dirty} /></div><div><strong>{code.credits.toLocaleString()} 积分</strong><small>已用 {code.usedCount} / {code.maxRedemptions} 次</small></div><RedeemStatusChip status={redeemStatus(code)} /><div className="admin-row-actions"><button className="admin-text-btn" type="button" title="复制已保存的兑换码" aria-label="复制已保存的兑换码" onClick={() => void copyCode()}><Copy size={15} />复制</button><button className="admin-text-btn" onClick={() => setHistory(true)}>记录</button><button className="admin-text-btn primary" type="button" aria-haspopup="dialog" onClick={() => setEditing(true)}>编辑</button></div></div>
-    {copyState ? <p className="admin-copy-notice" role="status">{copyState}</p> : null}
-    <AdminModal open={history} title="兑换记录" description={`${code.name} · 尾号 ${code.code.slice(-4)}`} onClose={() => setHistory(false)} wide><RedeemHistory admin codeId={code.id} /></AdminModal>
-    <AdminModal open={editing} title="编辑兑换码" description="额度、次数和状态仅在保存后生效，已使用记录保留。" onClose={closeEditor} wide><div className="admin-editor-grid" data-admin-dirty={dirty || undefined}>
-      <label><span>兑换码</span><input disabled={code.usedCount > 0} value={draft.code} onChange={event => setDraft({ ...draft, code: event.target.value.toUpperCase() })} /></label><label><span>活动名称</span><input value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} /></label>
-      <label><span>每次到账积分</span><input aria-label="每次到账积分" disabled={code.usedCount > 0} type="number" min="1" value={draft.credits} onChange={event => setDraft({ ...draft, credits: event.target.value })} />{code.usedCount > 0 ? <small>已产生兑换记录，码值与积分额度锁定。</small> : null}</label><label><span>可兑换总次数（已用 {code.usedCount} 次）</span><input type="number" min={Math.max(1, code.usedCount)} value={draft.maxRedemptions} onChange={event => setDraft({ ...draft, maxRedemptions: event.target.value })} /></label>
-      <label><span>开始时间</span><input type="datetime-local" value={draft.startsAt} onChange={event => setDraft({ ...draft, startsAt: event.target.value })} /></label><label><span>结束时间</span><input type="datetime-local" value={draft.endsAt} onChange={event => setDraft({ ...draft, endsAt: event.target.value })} /></label>
-      <label><span>保存后的状态</span><select value={draft.enabled ? "enabled" : "disabled"} onChange={event => setDraft({ ...draft, enabled: event.target.value === "enabled" })}><option value="enabled">启用</option><option value="disabled">停用</option></select></label></div>
-      <AdminDialogActions><button className="admin-text-btn danger" type="button" disabled={action.pending || !code.enabled} onClick={async () => { if (await confirmAdminAction(`停用「${code.name}」兑换码？已产生的兑换记录保留。`, { title: "停用兑换码", confirmLabel: "停用兑换码" })) void closeAfterAdminSuccess(() => onDelete(code.id), closeEditor); }}>停用并保留记录</button><button className="admin-primary-btn" type="button" disabled={action.pending || !dirty || !valid} onClick={() => void closeAfterAdminSuccess(() => onSave(code.id, { code: draft.code, name: draft.name, credits: Number(draft.credits), maxRedemptions: Number(draft.maxRedemptions), enabled: draft.enabled, startsAt: draft.startsAt === initial().startsAt ? code.startsAt ?? null : redeemDateIso(draft.startsAt), endsAt: draft.endsAt === initial().endsAt ? code.endsAt ?? null : redeemDateIso(draft.endsAt) }), () => setEditing(false))}>保存兑换码</button></AdminDialogActions></AdminModal>
-  </article>;
-}
-
 function PlanCreator({ onCreate }: { onCreate: (input: Pick<Plan, "name" | "price" | "credits" | "bonusCredits" | "badge" | "features" | "shopUrl" | "enabled">) => AdminActionResult }) {
   const formId = useId();
   const [draft, setDraft] = useState({ name: "积分充值包", price: "9.9", credits: "600", bonusCredits: "100", badge: "", features: "", shopUrl: "" });
@@ -4698,7 +4405,7 @@ function MembershipCreator({ onCreate }: { onCreate: (input: Pick<MembershipPlan
     && (!draft.shopUrl.trim() || /^https?:\/\/[^\s]+$/i.test(draft.shopUrl.trim()));
   return (
     <div className="admin-modal-form admin-membership-create-strip" data-admin-dirty={JSON.stringify(draft) !== JSON.stringify(initial) || undefined}>
-      <div><strong>新增订阅方案</strong><span>仅保存预留配置，购买、自动月度发放、折扣及优先队列尚未开放。</span></div>
+      <div><strong>新增订阅方案</strong><span>支持按月手动购买、同档续费与期间权益。新方案默认停用；支付入口依实际开关开放。</span></div>
       <label className="admin-create-field"><span>会员名</span><input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder="例如：创作者月卡" /></label>
       <label className="admin-create-field"><span>月费</span><input type="number" value={draft.monthlyPrice} onChange={(event) => setDraft({ ...draft, monthlyPrice: event.target.value })} placeholder="例如：29" /></label>
       <label className="admin-create-field"><span>月额度</span><input type="number" value={draft.monthlyCredits} onChange={(event) => setDraft({ ...draft, monthlyCredits: event.target.value })} placeholder="例如：3000" /></label>
@@ -4757,7 +4464,7 @@ function MembershipRow({
       <td><StatusChip active={plan.enabled} /></td>
       <td>
         <button className="admin-text-btn primary" type="button" aria-haspopup="dialog" onClick={() => setEditing(true)}>编辑方案</button>
-        <AdminModal open={editing} title="编辑订阅方案" description="仅保存预留配置，订阅购买及自动发放尚未开放。" onClose={() => { setDraft(initial()); setEditing(false); }} wide>
+        <AdminModal open={editing} title="编辑订阅方案" description="调整后用于新的购买报价；已有会员保留购买时的权益快照。按月手动续费，不自动扣款。" onClose={() => { setDraft(initial()); setEditing(false); }} wide>
           <div className="admin-editor-grid" data-admin-dirty={dirty || undefined}>
             <label><span>方案名称</span><input value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} /></label>
             <label><span>月费（元）</span><input type="number" min={0} step=".01" value={draft.monthlyPrice} onChange={event => setDraft({ ...draft, monthlyPrice: event.target.value })} /></label>
@@ -5296,18 +5003,6 @@ function StatusChip({ active, label }: { active: boolean; label?: string }) {
   return <span className={active ? "admin-status enabled" : "admin-status disabled"}>{label ?? (active ? "启用" : "停用")}</span>;
 }
 
-function RedeemStatusChip({ status }: { status: NonNullable<RedeemCode["status"]> }) {
-  const labels: Record<NonNullable<RedeemCode["status"]>, string> = {
-    active: "可用",
-    disabled: "停用",
-    used_up: "已用完",
-    expired: "已过期",
-    scheduled: "未开始"
-  };
-  const active = status === "active" || status === "scheduled";
-  return <span className={active ? "admin-status enabled" : "admin-status disabled"}>{labels[status]}</span>;
-}
-
 function EvaluationRunStatusChip({ status }: { status: EvaluationRun["status"] }) {
   const labels: Record<EvaluationRun["status"], string> = {
     running: "运行中",
@@ -5507,10 +5202,6 @@ function MetricPill({ label, value, strong = false }: { label: string; value: Re
   );
 }
 
-function redeemStatus(code: RedeemCode): NonNullable<RedeemCode["status"]> {
-  return redeemCodeStatus(code);
-}
-
 function pipelineKindLabel(kind: VisualPipelineDescriptor["kind"]) {
   const labels: Record<VisualPipelineDescriptor["kind"], string> = {
     video: "视频生成",
@@ -5551,30 +5242,6 @@ function groupModelQuality(rows: NonNullable<EvaluationOverview["modelQuality"]>
       averageScore: Math.round(weightedScore)
     };
   }).sort((a, b) => b.tasks - a.tasks);
-}
-
-function groupRedeemCodes(codes: RedeemCode[]) {
-  const map = new Map<string, { id: string; batchId?: string; name: string; prefix: string; credits: number; codes: RedeemCode[] }>();
-  codes.forEach((code) => {
-    const id = code.batchId ?? `single-${code.id}`;
-    const current = map.get(id) ?? {
-      id,
-      batchId: code.batchId,
-      name: code.batchId ? code.name : "历史单码",
-      prefix: code.code.split("-")[0] || code.code.slice(0, 4),
-      credits: code.credits,
-      codes: []
-    };
-    current.codes.push(code);
-    current.name = current.name || code.name;
-    current.credits = current.codes.length === 1 ? code.credits : current.credits;
-    map.set(id, current);
-  });
-  return [...map.values()].sort((a, b) => {
-    const newestA = Math.max(...a.codes.map((code) => new Date(code.createdAt).getTime()));
-    const newestB = Math.max(...b.codes.map((code) => new Date(code.createdAt).getTime()));
-    return newestB - newestA;
-  });
 }
 
 function formatDate(value?: string) {

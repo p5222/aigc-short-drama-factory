@@ -524,12 +524,23 @@ export async function createRedeemCodeBatch(input: RedeemBatchInput, actorId: st
   }, { timeout: 20000 });
 }
 
-export async function listRedeemHistory(scope: { userId: string } | { admin: true; codeId?: string; batchId?: string }, requestedPage = 1): Promise<RedeemHistoryPage> {
+export async function listRedeemHistory(scope: { userId: string } | { admin: true; codeId?: string; batchId?: string; search?: string; from?: string; to?: string }, requestedPage = 1): Promise<RedeemHistoryPage> {
   const pageSize = 20;
   const page = Number.isSafeInteger(requestedPage) && requestedPage > 0 ? Math.min(requestedPage, 100000) : 1;
   const admin = "admin" in scope;
   const where: Prisma.RedeemRedemptionWhereInput = admin
-    ? { redeemCodeId: scope.codeId, ...(scope.batchId ? { redeemCode: { batchId: scope.batchId } } : {}) }
+    ? {
+      redeemCodeId: scope.codeId,
+      ...(scope.batchId ? { redeemCode: { batchId: scope.batchId } } : {}),
+      ...((scope.from || scope.to) ? { createdAt: { gte: scope.from ? new Date(scope.from) : undefined, lt: scope.to ? new Date(scope.to) : undefined } } : {}),
+      ...(scope.search ? { OR: [
+        { redeemCode: { name: { contains: scope.search, mode: "insensitive" as const } } },
+        { redeemCode: { code: { contains: scope.search, mode: "insensitive" as const } } },
+        { redeemCode: { batch: { name: { contains: scope.search, mode: "insensitive" as const } } } },
+        { user: { name: { contains: scope.search, mode: "insensitive" as const } } },
+        { userId: { contains: scope.search, mode: "insensitive" as const } }
+      ] } : {})
+    }
     : { userId: scope.userId };
   return prisma.$transaction(async tx => {
     const total = await tx.redeemRedemption.count({ where });
@@ -915,12 +926,13 @@ function normalizePlanUpdate<T extends { shopUrl?: string | null; badge?: string
 
 export async function updateRedeemCode(
   id: string,
-  data: Partial<{ name: string; code: string; credits: number; maxRedemptions: number; enabled: boolean; startsAt: Date | null; endsAt: Date | null }>
+  data: Partial<{ name: string; code: string; credits: number; maxRedemptions: number; enabled: boolean; startsAt: Date | null; endsAt: Date | null; expectedUpdatedAt: string }>
 ) {
   return mapRedeemCode(await prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT "id" FROM "RedeemCode" WHERE "id" = ${id} FOR UPDATE`;
     const current = await tx.redeemCode.findUniqueOrThrow({ where: { id } });
-    const defined = Object.fromEntries(Object.entries(data).filter(([, value]) => value !== undefined));
+    if (data.expectedUpdatedAt && current.updatedAt.toISOString() !== data.expectedUpdatedAt) throw new ProjectRequestError(409, "兑换码已被其他操作更新，草稿已保留。请核对最新数据后重试");
+    const defined = Object.fromEntries(Object.entries(data).filter(([key, value]) => key !== "expectedUpdatedAt" && value !== undefined));
     const clean = { ...defined, ...(data.name !== undefined ? { name: data.name.trim() } : {}), ...(data.code !== undefined ? { code: data.code === current.code ? current.code : normalizeRedeemCode(data.code) } : {}) };
     const next = { ...current, ...clean };
     if (current.usedCount > 0 && (next.code !== current.code || next.credits !== current.credits)) throw new ProjectRequestError(409, "已使用兑换码的码值和积分额度不可修改，请新建批次");
