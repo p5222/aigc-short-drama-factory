@@ -7,6 +7,7 @@ import { modelCreditRange, rechargeCheckoutUrl } from "./creditCheckoutModel";
 import { createTaskActionRunner } from "./taskActionModel";
 import { InlineNotice, PageHeader, StatePanel } from "../design-system/ui";
 import { ModelIdentity } from "../components/ModelIdentity";
+import { RedeemHistory } from "../components/RedeemHistory";
 import "../components/model-experience.css";
 import "./creator-pages.css";
 import { OnlineCheckout } from "./OnlineCheckout";
@@ -20,6 +21,7 @@ export function RechargePage({ account, plans, membershipPlans, modelPrices, onR
   const [redeemCode, setRedeemCode] = useState("");
   const [error, setError] = useState("");
   const [redeeming, setRedeeming] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false), [historyVersion, setHistoryVersion] = useState(0);
   const redeemRunner = useRef(createTaskActionRunner()).current;
   const availablePlans = plans.filter((plan) => plan.enabled);
   const enabledModelPrices = modelPrices.filter((price) => price.enabled);
@@ -45,6 +47,7 @@ export function RechargePage({ account, plans, membershipPlans, modelPrices, onR
       void api.trackEvent({ eventName: "redeem_code_success", campaignCode: codePrefix, properties: { codePrefix, balance: account.balance } }).catch(() => undefined);
       setMessage(`兑换成功，当前积分余额 ${account.balance.toLocaleString()}。`);
       setRedeemCode("");
+      setHistoryOpen(true); setHistoryVersion(value => value + 1);
       try { await onRefresh(); }
       catch { setMessage(`兑换成功，当前积分余额 ${account.balance.toLocaleString()}。余额面板刷新失败，可稍后刷新查看，请勿重复兑换。`); }
     }, (pending) => setRedeeming(Boolean(pending.redeem)));
@@ -82,6 +85,8 @@ export function RechargePage({ account, plans, membershipPlans, modelPrices, onR
         </form>
         {message ? <InlineNotice tone={message.startsWith("兑换成功") ? "success" : "info"} onDismiss={() => setMessage("")}>{message}</InlineNotice> : null}
         {error ? <InlineNotice tone="error">{error}</InlineNotice> : null}
+        <button className="ghost-button" type="button" aria-expanded={historyOpen} onClick={() => setHistoryOpen(!historyOpen)}>{historyOpen ? "收起兑换记录" : "查看我的兑换记录"}</button>
+        {historyOpen ? <RedeemHistory refreshKey={historyVersion} /> : null}
       </section>
       <section className="panel recharge-plan-panel">
         <div className="panel-head">

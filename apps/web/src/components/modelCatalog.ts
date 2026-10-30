@@ -4,7 +4,7 @@ import { creditPriceUnit, inspectModelPrice } from "@aifilm/shared";
 export type ModelFamily = "openai" | "deepseek" | "qwen" | "wan" | "gemini" | "claude" | "seed" | "kling" | "flux" | "minimax" | "kimi" | "zhipu" | "generic";
 export const modelFamilyNames: Record<ModelFamily, string> = {
   openai: "OpenAI", deepseek: "DeepSeek", qwen: "通义千问", wan: "阿里云 · 通义万相", gemini: "Google Gemini",
-  claude: "Anthropic Claude", seed: "字节 Seed", kling: "可灵 Kling", flux: "FLUX", minimax: "MiniMax",
+  claude: "Anthropic Claude", seed: "豆包 Doubao · Seed", kling: "可灵 Kling", flux: "FLUX", minimax: "MiniMax",
   kimi: "Kimi", zhipu: "智谱 GLM", generic: "其他 / 私有模型"
 };
 export type ModelState = "configured" | "unknown" | "disabled" | "missing_key" | "cooling" | "limited" | "missing_price" | "price_conflict" | "invalid_price";
@@ -90,6 +90,12 @@ export function modelCapabilityTags(provider: ModelProvider): string[] {
     capability?.supportsImageToVideo ? "图生视频" : "",
     capability?.supportsSeed ? "固定随机种子" : ""
   ].filter(Boolean);
+}
+
+/** A channel can host several brands. Its display name cannot establish brand identity. */
+export function providerModelFamily(models: string[]): ModelFamily {
+  const families = new Set(models.filter(model => model.trim()).map(model => modelIdentity(model).family));
+  return families.size === 1 ? [...families][0] : "generic";
 }
 
 /** Strict route matching mirrors production billing. Never borrow another route's price. */

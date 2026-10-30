@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { normalizeRedeemCode, redeemCodeStatus, type RedeemBatchInput, type RedeemHistoryPage } from "@aifilm/shared";
 import type { ExportJob as ExportJobRow, Prisma, PrismaClient } from "@prisma/client";
 import { adminUserQuery, type AdminUserPageOptions } from "./adminUserQuery.js";
 import { adminCommercialSummary } from "./adminCommercial.js";
@@ -483,57 +484,62 @@ export async function listMembershipPlans() {
 }
 
 export async function listRedeemCodes() {
-  return (await prisma.redeemCode.findMany({ orderBy: { createdAt: "desc" } })).map(mapRedeemCode);
+  return (await prisma.redeemCode.findMany({ include: { batch: { select: { enabled: true } } }, orderBy: { createdAt: "desc" } })).map(mapRedeemCode);
 }
 
-export async function createRedeemCodeBatch(input: {
-  name: string;
-  prefix: string;
-  credits: number;
-  count: number;
-  enabled?: boolean;
-}) {
-  const prefix = normalizeRedeemPrefix(input.prefix);
-  const name = input.name.trim() || `${prefix} 批量兑换码`;
-  const credits = Math.max(1, Math.floor(input.credits));
-  const count = Math.max(1, Math.min(1000, Math.floor(input.count)));
-  const existing = await prisma.redeemCode.findMany({
-    where: { code: { startsWith: `${prefix}-` } },
-    select: { code: true }
-  });
-  const codeSet = new Set(existing.map((item) => item.code));
-  const newCodes: string[] = [];
-
-  while (newCodes.length < count) {
-    const code = `${prefix}-${crypto.randomBytes(4).toString("hex").toUpperCase()}`;
-    if (codeSet.has(code)) continue;
-    codeSet.add(code);
-    newCodes.push(code);
-  }
-
-  const batchId = `redeem_batch_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
-  await prisma.redeemBatch.create({
-    data: {
-      id: batchId,
-      name,
-      prefix,
-      credits,
-      totalCodes: count,
-      enabled: input.enabled ?? true,
-      codes: {
-        create: newCodes.map((code) => ({
-          id: `redeem_${crypto.randomUUID()}`,
-          code,
-          name,
-          credits,
-          maxRedemptions: 1,
-          enabled: input.enabled ?? true
-        }))
-      }
+export async function createRedeemCodeBatch(input: RedeemBatchInput, actorId: string) {
+  const prefix = normalizeRedeemCode(input.prefix);
+  const name = input.name.trim();
+  const { credits, count } = input;
+  const maxRedemptions = input.maxRedemptions ?? 1;
+  const startsAt = input.startsAt ? new Date(input.startsAt) : null;
+  const endsAt = input.endsAt ? new Date(input.endsAt) : null;
+  if (!actorId || !/^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/.test(input.requestId)) throw new ProjectRequestError(400, "缺少有效的生成请求标识");
+  if (!name || name.length > 100 || !/^[A-Z0-9]{1,16}$/.test(prefix)) throw new ProjectRequestError(400, "活动名必填，前缀只支持 1–16 位字母或数字");
+  if (!Number.isSafeInteger(credits) || credits < 1 || credits > 1_000_000 || !Number.isSafeInteger(count) || count < 1 || count > 1000 || !Number.isSafeInteger(maxRedemptions) || maxRedemptions < 1 || maxRedemptions > 10000) throw new ProjectRequestError(400, "积分、份数或每码次数超出范围");
+  if ([startsAt, endsAt].some(date => date && !Number.isFinite(date.getTime())) || (startsAt && endsAt && startsAt >= endsAt)) throw new ProjectRequestError(400, "兑换结束时间必须晚于开始时间");
+  const values = { name, prefix, credits, count, maxRedemptions, startsAt, endsAt, enabled: input.enabled ?? true };
+  const requestHash = crypto.createHash("sha256").update(JSON.stringify(values)).digest("hex");
+  const batchId = `redeem_batch_${crypto.createHash("sha256").update(JSON.stringify([actorId, input.requestId])).digest("hex")}`;
+  return prisma.$transaction(async tx => {
+    await tx.$queryRaw`SELECT true AS locked FROM pg_advisory_xact_lock(hashtext(${batchId}))`;
+    const previous = await tx.redeemBatch.findUnique({ where: { id: batchId } });
+    if (previous && previous.requestHash !== requestHash) throw new ProjectRequestError(409, "此请求已生成其他内容的批次，请核对原批次后重新生成");
+    if (!previous) {
+      if (endsAt && endsAt <= new Date()) throw new ProjectRequestError(400, "结束时间必须在未来");
+      await tx.redeemBatch.create({
+        data: {
+          id: batchId, requestHash, name, prefix, credits, totalCodes: count,
+          // Individual code lifecycle controls availability; the batch remains an independent gate.
+          enabled: true,
+          codes: { create: Array.from({ length: count }, () => ({
+            id: `redeem_${crypto.randomUUID()}`,
+            code: `${prefix}-${crypto.randomBytes(12).toString("hex").toUpperCase()}`,
+            name, credits, maxRedemptions, startsAt, endsAt, enabled: values.enabled
+          })) }
+        }
+      });
     }
-  });
+    return (await tx.redeemCode.findMany({ where: { batchId }, include: { batch: { select: { enabled: true } } }, orderBy: { code: "asc" } })).map(mapRedeemCode);
+  }, { timeout: 20000 });
+}
 
-  return (await prisma.redeemCode.findMany({ where: { batchId }, orderBy: { code: "asc" } })).map(mapRedeemCode);
+export async function listRedeemHistory(scope: { userId: string } | { admin: true; codeId?: string; batchId?: string }, requestedPage = 1): Promise<RedeemHistoryPage> {
+  const pageSize = 20;
+  const page = Number.isSafeInteger(requestedPage) && requestedPage > 0 ? Math.min(requestedPage, 100000) : 1;
+  const admin = "admin" in scope;
+  const where: Prisma.RedeemRedemptionWhereInput = admin
+    ? { redeemCodeId: scope.codeId, ...(scope.batchId ? { redeemCode: { batchId: scope.batchId } } : {}) }
+    : { userId: scope.userId };
+  return prisma.$transaction(async tx => {
+    const total = await tx.redeemRedemption.count({ where });
+    const rows = await tx.redeemRedemption.findMany({ where, skip: (page - 1) * pageSize, take: pageSize, orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      include: { redeemCode: { select: { name: true, code: true } }, ...(admin ? { user: { select: { id: true, name: true } } } : {}) } });
+    return { total, page, pageSize, items: rows.map(row => ({
+      id: row.id, name: row.redeemCode.name, maskedCode: `•••• ${row.redeemCode.code.slice(-4)}`, credits: row.credits, createdAt: row.createdAt.toISOString(),
+      ...(admin && row.user ? { user: { id: row.user.id, name: row.user.name } } : {})
+    })) };
+  }, { isolationLevel: "RepeatableRead" });
 }
 
 export async function listAdminUsers(): Promise<AdminUserRow[]> {
@@ -914,18 +920,20 @@ export async function updateRedeemCode(
   return mapRedeemCode(await prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT "id" FROM "RedeemCode" WHERE "id" = ${id} FOR UPDATE`;
     const current = await tx.redeemCode.findUniqueOrThrow({ where: { id } });
-    const clean = { ...data, ...(data.name !== undefined ? { name: data.name.trim() } : {}), ...(data.code !== undefined ? { code: data.code.trim().toUpperCase() } : {}) };
+    const defined = Object.fromEntries(Object.entries(data).filter(([, value]) => value !== undefined));
+    const clean = { ...defined, ...(data.name !== undefined ? { name: data.name.trim() } : {}), ...(data.code !== undefined ? { code: data.code === current.code ? current.code : normalizeRedeemCode(data.code) } : {}) };
     const next = { ...current, ...clean };
-    if (!next.name || !next.code) throw new Error("兑换码及名称不能为空");
-    if (!Number.isSafeInteger(next.credits) || next.credits <= 0 || next.credits > 2147483647) throw new Error("兑换积分必须是有效正整数");
-    if (!Number.isSafeInteger(next.maxRedemptions) || next.maxRedemptions < Math.max(1, current.usedCount) || next.maxRedemptions > 2147483647) throw new Error("兑换上限不能小于已兑换次数，且必须为有效正整数");
-    if (next.startsAt && next.endsAt && next.startsAt >= next.endsAt) throw new Error("兑换结束时间必须晚于开始时间");
-    return tx.redeemCode.update({ where: { id }, data: clean });
+    if (current.usedCount > 0 && (next.code !== current.code || next.credits !== current.credits)) throw new ProjectRequestError(409, "已使用兑换码的码值和积分额度不可修改，请新建批次");
+    if (!next.name || !next.code) throw new ProjectRequestError(400, "兑换码及名称不能为空");
+    if (!Number.isSafeInteger(next.credits) || next.credits <= 0 || next.credits > 2147483647) throw new ProjectRequestError(400, "兑换积分必须是有效正整数");
+    if (!Number.isSafeInteger(next.maxRedemptions) || next.maxRedemptions < Math.max(1, current.usedCount) || next.maxRedemptions > 2147483647) throw new ProjectRequestError(400, "兑换上限不能小于已兑换次数，且必须为有效正整数");
+    if ([next.startsAt, next.endsAt].some(date => date && !Number.isFinite(date.getTime())) || (next.startsAt && next.endsAt && next.startsAt >= next.endsAt)) throw new ProjectRequestError(400, "兑换结束时间必须晚于开始时间");
+    return tx.redeemCode.update({ where: { id }, data: clean, include: { batch: { select: { enabled: true } } } });
   }));
 }
 
 export async function deleteRedeemCode(id: string) {
-  return mapRedeemCode(await prisma.redeemCode.update({ where: { id }, data: { enabled: false } }));
+  return updateRedeemCode(id, { enabled: false });
 }
 
 export async function updateProvider(
@@ -1141,22 +1149,25 @@ export async function adjustUserCredits({
 }
 
 export async function redeemExperienceCode(userId = DEMO_USER_ID, rawCode: string) {
-  const code = rawCode.trim().toUpperCase();
+  // Prefer an exact historical code if normalization would collide with a legacy spelling.
+  const legacy = rawCode.trim().toUpperCase();
+  const normalized = normalizeRedeemCode(rawCode);
+  const code = legacy !== normalized && await prisma.redeemCode.findUnique({ where: { code: legacy }, select: { id: true } }) ? legacy : normalized;
   if (!code) throw new Error("请输入兑换码");
-  const now = new Date();
 
   return prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT "id" FROM "RedeemCode" WHERE "code" = ${code} FOR UPDATE`;
     const redeemCode = await tx.redeemCode.findUnique({ where: { code }, include: { batch: { select: { enabled: true } } } });
     if (!redeemCode || !redeemCode.enabled) throw new Error("兑换码不存在或已停用");
     if (redeemCode.batch && !redeemCode.batch.enabled) throw new Error("兑换码批次已停用");
-    if (!Number.isSafeInteger(redeemCode.credits) || redeemCode.credits < 0) throw new Error("兑换码积分配置无效");
-    if (redeemCode.startsAt && redeemCode.startsAt > now) throw new Error("兑换码尚未开始");
-    if (redeemCode.endsAt && redeemCode.endsAt < now) throw new Error("兑换码已过期");
-    if (redeemCode.usedCount >= redeemCode.maxRedemptions) throw new Error("兑换码额度已用完");
+    if (!Number.isSafeInteger(redeemCode.credits) || redeemCode.credits <= 0) throw new Error("兑换码积分配置无效");
 
     const existing = await tx.redeemRedemption.findFirst({ where: { userId, redeemCodeId: redeemCode.id } });
     if (existing) throw new Error("该兑换码已使用过");
+    const status = redeemCodeStatus(redeemCode);
+    if (status === "scheduled") throw new Error("兑换码尚未开始");
+    if (status === "expired") throw new Error("兑换码已过期");
+    if (status === "used_up") throw new Error("兑换码额度已用完");
 
     const account = await lockCreditAccount(tx, userId);
     await ensureFunding(tx, userId, account.balance);
@@ -2246,15 +2257,6 @@ function isMockImageProvider(provider: string) {
 
 function isMockVideoProvider(provider: string) {
   return provider === "mock" || provider === "mock-video" || provider === "mock-video-v1";
-}
-
-function normalizeRedeemPrefix(value: string) {
-  const normalized = value
-    .trim()
-    .toUpperCase()
-    .replace(/[^A-Z0-9]/g, "")
-    .slice(0, 16);
-  return normalized || "GIFT";
 }
 
 function normalizeAnnouncementType(value?: string) {

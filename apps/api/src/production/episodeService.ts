@@ -5,6 +5,7 @@ import { z } from "zod";
 import { callTextModelJson } from "../agents/generator.js";
 import { prisma } from "../db/client.js";
 import { runBilledContentGeneration, withContentGenerationOperation } from "../content/generationBilling.js";
+import { materializeProductionPrompt } from "../prompts/production.js";
 
 const episodeResultSchema = z.object({
   title: z.string().min(1),
@@ -106,20 +107,15 @@ async function generateOne(userId: string, contentProjectId: string, episodeNo: 
   const existing = await prisma.productionEpisode.findUnique({ where: { contentProjectId_episodeNo: { contentProjectId, episodeNo } }, include: { scripts: true } });
   if (existing?.activeScriptVersion && existing.status !== "stale" && !force) return mapEpisode(existing);
 
-  const prompt = [
-    `把下面素材改编为第 ${episodeNo} 集、约 180 秒的漫剧剧本。`,
-    "只允许使用当前素材片段已有的人物、事件和设定。默认禁止扩写，禁止新增剧情事实，禁止挪用其他集内容。",
-    "输出 JSON：title, characters, scenes, props, dialogue, voiceOver, sounds, estimatedSeconds, preservedFacts, endingHook, script。characters 每项包含 name/identity/appearance/costume/personality；scenes 每项包含 location/characters/description；props 每项包含 name/description。只列素材中明确存在的实体。script 必须是可直接制作的完整中文剧本。",
-    `当前素材片段：\n${slice.content}`
-  ].join("\n\n");
+  const prompt = await materializeProductionPrompt("episode_adaptation", { episodeNo, duration: 180, content: slice.content, styleProfile: project.styleProfile });
   return runBilledContentGeneration(project, `内容第${episodeNo}集剧本`, async () => {
-    const raw = await callTextModelJson<unknown>({ ...(await runtime(project)), system: "你是漫剧改编编剧。严格忠于输入素材，只输出合法 JSON。", prompt, maxTokens: 8000, label: `第 ${episodeNo} 集剧本` });
+    const raw = await callTextModelJson<unknown>({ ...(await runtime(project)), system: prompt.systemPrompt, prompt: prompt.userPrompt, maxTokens: 8000, label: `第 ${episodeNo} 集剧本` });
     return episodeResultSchema.parse(raw);
   }, async (tx, generated) => {
   const previous = await tx.episodeScriptVersion.aggregate({ where: { episode: { contentProjectId, episodeNo } }, _max: { version: true } });
   const nextVersion = (previous._max.version ?? 0) + 1;
   const episodeId = existing?.id ?? `episode_${crypto.randomUUID()}`;
-  const snapshot = { sourceId, sourceStart: slice.start, sourceEnd: slice.end, sourceType, allowExpansion: false, episodeNo } as Prisma.InputJsonValue;
+  const snapshot = { ...prompt.snapshot, sourceId, sourceStart: slice.start, sourceEnd: slice.end, sourceType, allowExpansion: false, episodeNo } as unknown as Prisma.InputJsonValue;
 
     const episode = await tx.productionEpisode.upsert({
       where: { contentProjectId_episodeNo: { contentProjectId, episodeNo } },

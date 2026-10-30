@@ -55,7 +55,7 @@ async function newFromSidebar(page: Page) {
   await page.locator(".side-create").click();
 }
 async function enterText(page: Page) {
-  await page.getByRole("button", { name: /导入小说或剧本/ }).click();
+  await page.getByRole("button", { name: /开始小说改编/ }).click();
   await expect(page.getByLabel("小说正文", { exact: true })).toHaveValue("");
   await expect(page.getByLabel("作品名称", { exact: true })).toHaveValue("");
   await page.getByLabel("作品名称", { exact: true }).fill(project.name);
@@ -66,7 +66,7 @@ test("all new-drama entry paths are blank; draft recovery is explicit, including
   await fixtures(page);
   await page.goto("/#/workbench");
   await newFromSidebar(page);
-  await expect(page.getByRole("button", { name: /导入小说或剧本/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /开始小说改编/ })).toBeVisible();
   await screenshot(page, "creation-entry");
   await enterText(page);
   await newFromSidebar(page);
@@ -74,7 +74,7 @@ test("all new-drama entry paths are blank; draft recovery is explicit, including
   await page.getByRole("button", { name: "恢复草稿", exact: true }).click();
   await expect(page.getByLabel("小说正文", { exact: true })).toHaveValue(source);
   await newFromSidebar(page);
-  await page.getByRole("button", { name: /导入小说或剧本/ }).click();
+  await page.getByRole("button", { name: /开始小说改编/ }).click();
   await expect(page.getByLabel("小说正文", { exact: true })).toHaveValue("");
   await expect(page.getByLabel("作品名称", { exact: true })).toHaveValue("");
 });
@@ -123,7 +123,7 @@ test("new remains guarded while the creation result is pending", async ({ page }
   finish();
   await expect(page.getByText("界面验证：稍后重试", { exact: true })).toBeVisible();
   await newFromSidebar(page);
-  await expect(page.getByRole("button", { name: /导入小说或剧本/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /开始小说改编/ })).toBeVisible();
 });
 
 test("populated production stages, compact drawers and content fresh entry", async ({ page }, info) => {

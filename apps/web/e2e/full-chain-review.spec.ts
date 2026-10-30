@@ -41,6 +41,9 @@ async function fixtures(page: Page) {
       state.rejectRefresh = state.failRefreshAfterGenerate;
       return route.fulfill({ json: { assetsCreated: 1, message: "本批次已处理", project: state.project, task: { id: "video-task", status: "succeeded" } } });
     }
+    if (path.endsWith("/images/generate")) {
+      return route.fulfill({ json: { assetsCreated: 1, project: state.project, task: { id: "image-task", status: "succeeded" } } });
+    }
     if (path.endsWith("/workflow") && state.rejectRefresh) {
       state.rejectRefresh = false; return route.fulfill({ status: 503, json: { message: "夹具：数据暂未刷新" } });
     }
@@ -83,6 +86,79 @@ async function inspector(page: Page) {
   const trigger = page.getByRole("button", { name: "打开检查器", exact: true });
   if (await trigger.isVisible()) await trigger.click();
 }
+
+test("shot video batches use the displayed episode, exclude running media and stop at twenty exact IDs", async ({ page }) => {
+  const state = await fixtures(page);
+  const batch = Array.from({ length: 24 }, (_, index) => ({ ...shots[4], id: `scoped-${index}`, shotNo: index + 1 }));
+  state.storyboards = [...shots.slice(0, 4), ...batch];
+  state.assets.push(...batch.map(shot => ({ ...assets[0], id: `image_${shot.id}`, type: "image", referenceUrl: "/storage/frame-ready.png" })));
+  state.assets.push({ ...assets[0], id: "video_scoped-0", type: "video", status: "running", referenceUrl: undefined });
+  state.failRefreshAfterGenerate = true;
+  await page.goto("/#/project/chain-project");
+  await page.getByRole("navigation", { name: "项目生产阶段" }).getByRole("button", { name: "分镜", exact: true }).click();
+  await page.getByRole("combobox", { name: "选择分镜剧集" }).selectOption("2");
+  await expect(page.locator(".wb-shot-table tbody tr")).toHaveCount(24);
+  await page.getByRole("tab", { name: "视频", exact: true }).click();
+  await inspector(page);
+  await expect(page.locator(".wb-shot-generation")).toContainText("本批 20 个");
+  page.once("dialog", async dialog => { expect(dialog.message()).toContain("第 2 集视频请求范围 20 个"); await dialog.accept(); });
+  await page.getByRole("button", { name: "生成当前批次视频", exact: true }).click();
+  await expect.poll(() => state.writes.filter(write => write.path.endsWith("/videos/generate")).length).toBe(1);
+  expect(state.writes.find(write => write.path.endsWith("/videos/generate"))?.body).toEqual({ storyboardIds: batch.slice(1, 21).map(shot => shot.id) });
+  await expect(page.getByRole("button", { name: "重试刷新", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "生成当前批次视频", exact: true })).toBeDisabled();
+  if (await page.getByRole("dialog", { name: "检查器", exact: true }).count()) await page.keyboard.press("Escape");
+  await expect(page.getByText(/重试刷新不会重复生成/)).toBeVisible();
+  await inspector(page);
+  await page.getByRole("button", { name: "重试刷新", exact: true }).click();
+  await expect(page.getByRole("button", { name: "生成当前批次视频", exact: true })).toBeEnabled();
+  expect(state.writes.filter(write => write.path.endsWith("/videos/generate"))).toHaveLength(1);
+});
+
+test("shot episode changes protect drafts, clear empty episodes and submit only this episode's pending images", async ({ page }) => {
+  const state = await fixtures(page);
+  state.project.episodes = 3;
+  state.assets = state.assets.filter(asset => !["image_b", "image_e"].includes(asset.id));
+  await page.goto("/#/project/chain-project");
+  await page.getByRole("navigation", { name: "项目生产阶段" }).getByRole("button", { name: "分镜", exact: true }).click();
+  await expect(page.locator(".wb-shot-table tbody tr")).toHaveCount(4);
+  await inspector(page);
+  await page.getByRole("textbox", { name: "画面描述", exact: true }).fill("暂存的镜头修改");
+  if (test.info().project.name === "mobile") await page.keyboard.press("Escape");
+  const episode = page.getByRole("combobox", { name: "选择分镜剧集" });
+  page.once("dialog", dialog => dialog.dismiss());
+  await episode.selectOption("2");
+  await expect(episode).toHaveValue("1");
+  await inspector(page);
+  await expect(page.getByRole("textbox", { name: "画面描述", exact: true })).toHaveValue("暂存的镜头修改");
+  if (test.info().project.name === "mobile") await page.keyboard.press("Escape");
+  page.once("dialog", dialog => dialog.accept());
+  await episode.selectOption("3");
+  await expect(episode).toHaveValue("3");
+  await expect(page.getByText("第 3 集暂无镜头，请先在内容阶段拆解这一集。")).toBeVisible();
+  await page.reload();
+  await expect(episode).toHaveValue("3");
+  await page.getByRole("navigation", { name: "项目生产阶段" }).getByRole("button", { name: "成片", exact: true }).click();
+  await expect(page.getByRole("combobox", { name: "选择剧集", exact: true })).toHaveValue("3");
+  await expect(page.getByText("本集还没有分镜。请先拆解镜头、准备首帧，再生成视频。")).toBeVisible();
+  await page.getByRole("navigation", { name: "项目生产阶段" }).getByRole("button", { name: "分镜", exact: true }).click();
+  await expect(episode).toHaveValue("3");
+  await page.getByRole("tab", { name: "视频", exact: true }).click();
+  await inspector(page);
+  await expect(page.getByRole("textbox", { name: "画面描述", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "生成当前批次视频", exact: true })).toBeDisabled();
+  if (test.info().project.name === "mobile") await page.keyboard.press("Escape");
+  await episode.selectOption("2");
+  await page.getByRole("tab", { name: "镜头表", exact: true }).click();
+  await expect(page.locator(".wb-shot-table tbody tr")).toHaveCount(1);
+  await expect(page.locator(".wb-shot-table")).toContainText("镜头 e");
+  await page.getByRole("tab", { name: "分镜图", exact: true }).click();
+  await inspector(page);
+  page.once("dialog", async dialog => { expect(dialog.message()).toContain("第 2 集首帧请求范围 1 个"); await dialog.accept(); });
+  await page.getByRole("button", { name: "生成本集待生成首帧（1）", exact: true }).click();
+  await expect.poll(() => state.writes.filter(write => write.path.endsWith("/images/generate")).length).toBe(1);
+  expect(state.writes.find(write => write.path.endsWith("/images/generate"))?.body).toEqual({ shotIds: ["e"] });
+});
 
 test("delivery saves the displayed model before generation and submits only ready remaining shots in the current episode", async ({ page }) => {
   const state = await fixtures(page);
@@ -127,7 +203,7 @@ test("failed-shot retry is scoped to the visible episode; a successful generatio
 test("new drama defaults to a configured text route and an actual configured video model", async ({ page }) => {
   await fixtures(page);
   await page.goto("/#/wizard");
-  await page.getByRole("button", { name: /导入小说或剧本/ }).click();
+  await page.getByRole("button", { name: /开始小说改编/ }).click();
   await page.getByLabel("小说正文", { exact: true }).fill("第一章 雨后的旧书店\n她推开店门，发现了一封旧信。".repeat(4));
   await page.getByRole("button", { name: "下一步：全局设定", exact: true }).click();
   await page.getByRole("button", { name: "下一步：确认创建", exact: true }).click();

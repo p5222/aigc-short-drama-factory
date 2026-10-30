@@ -1,5 +1,7 @@
 import { createContext, useContext, useMemo, type Dispatch, type ReactNode } from "react";
 import type { ProjectWorkflow } from "@aifilm/shared";
+import type { StageGuidance } from "./readinessModel";
+import type { WorkbenchStage } from "./model";
 import {
   RELEASE_A_CAPABILITIES,
   type WorkbenchAction,
@@ -18,6 +20,8 @@ export interface WorkbenchContextValue {
   workflow?: ProjectWorkflow;
   theme: WorkbenchTheme;
   onThemeChange: (theme: WorkbenchTheme) => void;
+  stageGuidance?: StageGuidance;
+  onStageChange?: (stage: WorkbenchStage) => void;
 }
 
 export interface WorkbenchProviderProps extends Omit<WorkbenchContextValue, "capabilities"> {
@@ -33,7 +37,9 @@ export function WorkbenchProvider({
   saveState,
   workflow,
   theme,
-  onThemeChange
+  onThemeChange,
+  stageGuidance,
+  onStageChange
 }: WorkbenchProviderProps) {
   const value = useMemo<WorkbenchContextValue>(() => ({
     state,
@@ -42,8 +48,10 @@ export function WorkbenchProvider({
     saveState,
     workflow,
     theme,
-    onThemeChange
-  }), [dispatch, onThemeChange, saveState, state, theme, workflow]);
+    onThemeChange,
+    stageGuidance,
+    onStageChange
+  }), [dispatch, onThemeChange, saveState, state, theme, workflow, stageGuidance, onStageChange]);
 
   return <WorkbenchContext.Provider value={value}>{children}</WorkbenchContext.Provider>;
 }

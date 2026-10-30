@@ -386,8 +386,10 @@ export async function createPromptVersion(input: {
 }): Promise<PromptVersion> {
   const status = input.status ?? "draft";
   const key = input.key.trim().slice(0, 80);
-  if (status === "active") await prisma.promptVersion.updateMany({ where: { key, status: "active" }, data: { status: "archived" } });
-  const row = await prisma.promptVersion.create({
+  const row = await prisma.$transaction(async tx => {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`evaluation-prompt:${key}`}))`;
+  if (status === "active") await tx.promptVersion.updateMany({ where: { key, status: "active" }, data: { status: "archived" } });
+  return tx.promptVersion.create({
     data: {
       id: `prompt_version_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`,
       key,
@@ -401,6 +403,7 @@ export async function createPromptVersion(input: {
       notes: input.notes?.trim().slice(0, 800) ?? ""
     }
   });
+  });
   return mapPromptVersion(row);
 }
 
@@ -413,8 +416,10 @@ export async function updatePromptVersion(id: string, input: Partial<{
 }>): Promise<PromptVersion> {
   const existing = await prisma.promptVersion.findUnique({ where: { id } });
   if (!existing) throw new Error("提示词版本不存在。");
-  if (input.status === "active") await prisma.promptVersion.updateMany({ where: { key: existing.key, status: "active", NOT: { id } }, data: { status: "archived" } });
-  const row = await prisma.promptVersion.update({
+  const row = await prisma.$transaction(async tx => {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`evaluation-prompt:${existing.key}`}))`;
+  if (input.status === "active") await tx.promptVersion.updateMany({ where: { key: existing.key, status: "active", NOT: { id } }, data: { status: "archived" } });
+  return tx.promptVersion.update({
     where: { id },
     data: {
       ...(input.name !== undefined ? { name: input.name.trim().slice(0, 100) } : {}),
@@ -423,6 +428,7 @@ export async function updatePromptVersion(id: string, input: Partial<{
       ...(input.owner !== undefined ? { owner: cleanNullable(input.owner, 80) } : {}),
       ...(input.notes !== undefined ? { notes: input.notes.trim().slice(0, 800) } : {})
     }
+  });
   });
   return mapPromptVersion(row);
 }

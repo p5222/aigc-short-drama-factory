@@ -3,6 +3,7 @@ import test from "node:test";
 import type { AssetItem, CharacterProfile, GenerationTask, ModelPrice, ModelProvider, Project, ProjectWorkflow, ScriptDraft, StoryboardShot, TaskStatus, TaskType } from "@aifilm/shared";
 import { defaultImageUnitCredits, normalizeImageProviderId, resolveImageUnitCredits } from "@aifilm/shared";
 import { modelPrices, providers } from "../../../api/src/seed/catalogData.ts";
+import { buildStageGuidance, productionProgress } from "./readinessModel.ts";
 import {
   RELEASE_A_CAPABILITIES,
   buildAssetFeedbackTarget,
@@ -870,4 +871,60 @@ test("summarizes only real task type and status counts", () => {
     { type: "video", total: 1, byStatus: { failed: 1 } }
   ]);
   assert.equal("entityProgress" in summary[0], false);
+});
+
+test("configured empty episode remains selected across refresh and clears cross-episode selections", () => {
+  const storyboards = [shot("a", 1, 1), shot("b", 2, 1)];
+  const current = createWorkbenchState({ activeEpisodeNo: 1, activeShotId: "a", selectedShotIds: ["a"] });
+  const empty = workbenchReducer(current, { type: "set-episode", episodeNo: 3, episodeCount: 3, storyboards });
+  assert.equal(empty.activeEpisodeNo, 3);
+  assert.equal(empty.activeShotId, null);
+  assert.equal(empty.activeSceneKey, null);
+  assert.deepEqual(empty.selectedShotIds, []);
+  assert.equal(workbenchReducer(empty, { type: "reconcile-workflow", storyboards, episodeCount: 3 }).activeEpisodeNo, 3);
+  assert.equal(workbenchReducer(empty, { type: "reconcile-workflow", storyboards, episodeCount: 2 }).activeEpisodeNo, 1);
+});
+
+test("production guidance scopes counts to the selected episode and excludes historical or failed media", () => {
+  const data = { ...workflow([shot("a", 1, 1), shot("b", 1, 1), shot("c", 2, 1)]), script: script("已保存剧本"), characters: [],
+    assets: [
+      asset("image_a", "image", undefined, "/storage/a.png"),
+      { ...asset("image_b", "image", undefined, "/storage/b.png"), isHistorical: true },
+      asset("image_c", "image", undefined, "/storage/c.png"),
+      { ...asset("video_a", "video", undefined, "/storage/a.mp4"), status: "failed" as const },
+      asset("video_b", "video", undefined, "blob:https://example.test/local-only"),
+      asset("video_c", "video", undefined, "/storage/c.mp4"),
+      asset("image_deleted", "image", undefined, "/storage/deleted.png")
+    ] };
+  const first = productionProgress(data, 1);
+  assert.equal(first.shots, 2);
+  assert.equal(first.images, 1);
+  assert.equal(first.videos, 0);
+  assert.equal(productionProgress(data, 2).videos, 1);
+  assert.equal(productionProgress(data, null).images, 2);
+  assert.equal(buildStageGuidance(data, "shots", 1).scope, "第 1 集");
+  assert.equal(buildStageGuidance(data, "shots", 1).next?.stage, "delivery");
+});
+
+test("uploaded references do not complete character finalization and a failed selected identity is not replaced by an unrelated success", () => {
+  const data = { ...workflow([]), script: script("已保存剧本"), characters: [character("lin", "selected")], assets: [
+    asset("reference", "role_reference", "lin", "/storage/upload.png"),
+    { ...asset("old", "role", "lin", "/storage/old.png"), isHistorical: true }
+  ] };
+  assert.equal(productionProgress(data, null).roles, 0);
+  data.assets.push(asset("selected", "role_derivative", "lin", "/storage/selected.png"));
+  assert.equal(productionProgress(data, null).roles, 1);
+  data.assets[2].status = "failed";
+  data.assets.push(asset("another", "role", "lin", "/storage/another.png"));
+  assert.equal(productionProgress(data, null).roles, 0);
+  assert.equal(buildStageGuidance(data, "shots", 1).next?.stage, "assets");
+});
+
+test("an empty script or episode cannot present a completed stage or direct the creator to video", () => {
+  const data = { ...workflow([]), script: script("  "), characters: [], assets: [] };
+  assert.equal(buildStageGuidance(data, "content", 1).next, undefined);
+  assert.equal(buildStageGuidance(data, "shots", 1).checks.some(check => check.complete), false);
+  assert.equal(buildStageGuidance(data, "shots", 1).next, undefined);
+  data.script.content = "已保存的无人空镜剧本";
+  assert.equal(buildStageGuidance(data, "content", 1).next?.stage, "shots");
 });

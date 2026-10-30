@@ -83,7 +83,7 @@ export interface WorkbenchStateInitializers extends Partial<WorkbenchState> {
 export type WorkbenchAction =
   | { type: "set-stage"; stage: WorkbenchStage }
   | { type: "set-content-selection"; episodeNo: number | null; sceneKey: SceneKey | null; storyboards: StoryboardShot[] }
-  | { type: "set-episode"; episodeNo: number | null; storyboards: StoryboardShot[] }
+  | { type: "set-episode"; episodeNo: number | null; storyboards: StoryboardShot[]; episodeCount?: number }
   | { type: "set-scene"; sceneKey: SceneKey | null; storyboards: StoryboardShot[] }
   | { type: "set-asset"; asset: ActiveAsset | null }
   | { type: "set-shot"; shotId: string | null }
@@ -91,7 +91,7 @@ export type WorkbenchAction =
   | { type: "set-shot-mode"; mode: ShotMode }
   | { type: "set-dirty-entity"; entityKey: string | null }
   | { type: "set-inspector-open"; open: boolean }
-  | { type: "reconcile-workflow"; storyboards: StoryboardShot[] };
+  | { type: "reconcile-workflow"; storyboards: StoryboardShot[]; episodeCount?: number };
 
 export interface TaskTypeSummary {
   type: TaskType;
@@ -692,7 +692,7 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
       if (action.episodeNo === null) {
         return { ...state, activeEpisodeNo: null, activeSceneKey: null, activeShotId: null };
       }
-      return reconcileSelection({ ...state, activeEpisodeNo: action.episodeNo }, action.storyboards);
+      return reconcileSelection({ ...state, activeEpisodeNo: action.episodeNo, selectedShotIds: [] }, action.storyboards, action.episodeCount);
     }
     case "set-scene": {
       if (action.sceneKey === null) {
@@ -713,15 +713,16 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
     case "set-inspector-open":
       return { ...state, inspectorOpen: action.open };
     case "reconcile-workflow":
-      return reconcileSelection(state, action.storyboards);
+      return reconcileSelection(state, action.storyboards, action.episodeCount);
   }
 }
 
-export function reconcileSelection(state: WorkbenchState, storyboards: StoryboardShot[]): WorkbenchState {
+export function reconcileSelection(state: WorkbenchState, storyboards: StoryboardShot[], episodeCount = 0): WorkbenchState {
   const episodes = [...new Set(storyboards.map((shot) => shot.episodeNo))].sort((a, b) => a - b);
-  const activeEpisodeNo = state.activeEpisodeNo !== null && episodes.includes(state.activeEpisodeNo)
+  const activeEpisodeNo = state.activeEpisodeNo !== null && (episodes.includes(state.activeEpisodeNo)
+    || (state.activeEpisodeNo >= 1 && state.activeEpisodeNo <= episodeCount))
     ? state.activeEpisodeNo
-    : episodes[0] ?? null;
+    : episodes[0] ?? (episodeCount > 0 ? 1 : null);
 
   const episodeShots = activeEpisodeNo === null
     ? []

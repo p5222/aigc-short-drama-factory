@@ -264,6 +264,7 @@ test("collectDeliveryEpisodes dedupes episode numbers with a fallback range", ()
   shots[0]!.episodeNo = 2; shots[1]!.episodeNo = 1; shots[2]!.episodeNo = 2;
   assert.deepEqual(collectDeliveryEpisodes(shots), [1, 2]);
   assert.deepEqual(collectDeliveryEpisodes([], 3), [1, 2, 3]);
+  assert.deepEqual(collectDeliveryEpisodes(shots, 3), [1, 2, 3]);
 });
 
 test("waveformPoints is deterministic, bounded and polyline-ready", () => {

@@ -7,9 +7,9 @@ const FooterContext = createContext<HTMLElement | null>(null);
 export const AdminDialogFooterProvider = FooterContext.Provider;
 
 /** Sub2API modal proportions, with the application's shared focus and draft guard. */
-export function AdminDialog({ open, title, description, onClose, busy = false, wide = false, children, notice, trackChanges = false, closeLabel = "关闭弹窗" }: {
+export function AdminDialog({ open, title, description, onClose, busy = false, wide = false, children, notice, trackChanges = false, closeLabel = "关闭弹窗", cancelLabel = "取消" }: {
   open: boolean; title: string; description?: ReactNode; onClose: () => void; busy?: boolean;
-  wide?: boolean; children: ReactNode; notice?: ReactNode; closeLabel?: string; trackChanges?: boolean;
+  wide?: boolean; children: ReactNode; notice?: ReactNode; closeLabel?: string; cancelLabel?: string; trackChanges?: boolean;
 }) {
   const { dialogRef, titleId, requestClose } = useAdminDialog(open, onClose, busy);
   const descriptionId = useId();
@@ -24,7 +24,7 @@ export function AdminDialog({ open, title, description, onClose, busy = false, w
       <FooterContext.Provider value={footer}>
         <div className="admin-modal-body" onChangeCapture={event => { if (trackChanges && (event.target as HTMLElement).matches("input,select,textarea")) event.currentTarget.dataset.adminDirty = "true"; }}>{notice}{children}</div>
       </FooterContext.Provider>
-      <footer className="admin-modal-footer"><button className="admin-secondary-btn" type="button" disabled={busy} onClick={requestClose}>取消</button><div ref={setFooter} /></footer>
+      <footer className="admin-modal-footer"><button className="admin-secondary-btn" type="button" disabled={busy} onClick={requestClose}>{cancelLabel}</button><div ref={setFooter} /></footer>
     </section>
   </div>;
 }

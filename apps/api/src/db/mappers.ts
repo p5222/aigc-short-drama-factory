@@ -31,6 +31,7 @@ import type {
 import { getProviderQuotaSnapshot } from "../providers/modelQuota.js";
 import { providerEnvApiKey } from "../providers/credentials.js";
 import { isHistoricalAssetId } from "./mediaAssetIdentity.js";
+import { redeemCodeStatus } from "@aifilm/shared";
 
 export function mapProject(row: any): Project {
   return {
@@ -351,13 +352,7 @@ export function mapMembershipPlan(row: any): MembershipPlan {
 }
 
 export function mapRedeemCode(row: any): RedeemCode {
-  const now = new Date();
-  const status =
-    !row.enabled ? "disabled" :
-    row.startsAt && row.startsAt > now ? "scheduled" :
-    row.endsAt && row.endsAt < now ? "expired" :
-    row.usedCount >= row.maxRedemptions ? "used_up" :
-    "active";
+  const status = redeemCodeStatus({ ...row, batchEnabled: row.batch?.enabled });
   return {
     id: row.id,
     batchId: row.batchId ?? undefined,
@@ -367,6 +362,7 @@ export function mapRedeemCode(row: any): RedeemCode {
     maxRedemptions: row.maxRedemptions,
     usedCount: row.usedCount,
     enabled: row.enabled,
+    batchEnabled: row.batch?.enabled,
     startsAt: row.startsAt?.toISOString(),
     endsAt: row.endsAt?.toISOString(),
     status,

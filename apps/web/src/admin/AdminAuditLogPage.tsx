@@ -55,7 +55,7 @@ export function AdminAuditLogPage() {
     <AdminTablePage
       title="管理员操作记录"
       summary={`共匹配 ${total} 条。记录操作人、目标和执行结果；“结果待核对”表示已记录请求，但尚无完成结果，需核对实际数据。`}
-      actions={<button className="adm-icon-btn" type="button" disabled={loading} aria-label="刷新操作记录" onClick={() => setReload((value) => value + 1)}><RefreshCw /></button>}
+      actions={<button className="admin-secondary-btn" type="button" disabled={loading} aria-label="刷新操作记录" onClick={() => setReload((value) => value + 1)}><RefreshCw size={16} />刷新记录</button>}
       filters={<>
         <input aria-label="搜索操作目标" placeholder="搜索操作或目标路径" value={keyword} onChange={(event) => { setKeyword(event.target.value); setPage(1); }} />
         <input aria-label="操作人 ID" placeholder="按操作人 ID 筛选" value={actorId} onChange={(event) => { setActorId(event.target.value); setPage(1); }} />
