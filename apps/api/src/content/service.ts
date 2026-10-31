@@ -11,6 +11,10 @@ import { generateEpisodes } from "../production/episodeService.js";
 import { markContentOperationFailed, runBilledContentGeneration, saveContentOperationOutput, withContentGenerationOperation } from "./generationBilling.js";
 import { collectHandoffEntities, handoffEntityId } from "./productionHandoff.js";
 import { ContentMutationError, withIdleContentProject } from "./contentMutation.js";
+import { briefSchema } from "./creatorContracts.js";
+import { collectFactCandidates, invalidateSourceFacts, relevantFacts } from "./storyMemory.js";
+import { assembleContext } from "./contextBudget.js";
+import type { StoryFact } from "@aifilm/shared";
 
 const generatedChapterSchema = z.object({
   title: z.string().min(1), content: z.string().min(100), factUpdates: z.array(z.unknown()).default([]),
@@ -32,6 +36,8 @@ function mapProject(row: any): ContentProjectSummary {
     chapterCount: row._count.chapters,
     scriptCount: row._count.scripts,
     hasEntities: Boolean(row.entities)
+    , brief: briefSchema.safeParse(row.brief).success ? row.brief : null
+    , revision: row.revision
   };
 }
 
@@ -101,8 +107,12 @@ async function contentTextRuntime(project: { textProvider: string; textModel: st
 export async function updateContentModelRoute(userId: string, contentProjectId: string, input: { textProvider: string; textModel: string }) {
   const provider = await prisma.modelProvider.findFirst({ where: { id: input.textProvider, modality: "text", enabled: true } });
   if (!provider || !provider.models.includes(input.textModel)) throw new Error("所选文本模型不可用");
-  const result = await prisma.contentProject.updateMany({ where: { id: contentProjectId, userId }, data: input });
-  if (!result.count) throw new Error("内容项目不存在");
+  await withIdleContentProject(userId, contentProjectId, async tx => {
+    const project = await tx.contentProject.findUniqueOrThrow({ where: { id: contentProjectId } });
+    if (project.textProvider !== input.textProvider || project.textModel !== input.textModel) {
+      await tx.contentProject.update({ where: { id: contentProjectId }, data: { ...input, revision: { increment: 1 } } });
+    }
+  });
   return { textProvider: input.textProvider, textModel: input.textModel };
 }
 
@@ -232,10 +242,28 @@ async function generateContentChapterBatchUnlocked(userId: string, contentProjec
   let previousHandoff: unknown = project.chapters.filter((chapter, index, all) => all.findIndex((candidate) => candidate.chapterNo === chapter.chapterNo) === index).filter((chapter) => chapter.chapterNo < input.startChapter).at(-1)?.result ?? "这是第一章，无前章交接";
   try {
     for (const goal of goals) {
-      const prompt = await materializeProductionPrompt("chapter_generation", { outline, previousHandoff, chapterGoal: goal, characterState: outline.characters, targetWords: goal.targetWords ?? Math.round(Number((project.outlines[0]?.result as any)?.targetWords ?? 20000) / outline.chapters.length) });
+      const memory = await prisma.storyFact.findMany({ where: { contentProjectId, status: { in: ["candidate", "confirmed", "locked"] } }, orderBy: { validFrom: "desc" } });
+      const confirmedFacts = memory.filter(f => f.status === "locked" || relevantFacts([f] as StoryFact[], goal.chapterNo).length);
+      const candidates = memory.filter(f => f.status === "candidate" && f.validFrom < goal.chapterNo && (f.validTo === null || f.validTo >= goal.chapterNo));
+      const context = assembleContext([
+        { id: "outline", label: "故事大纲", content: outline, required: true },
+        { id: "previousHandoff", label: "前章交接", content: previousHandoff, required: true },
+        { id: "chapterGoal", label: "本章目标", content: goal, required: true },
+        { id: "characterState", label: "角色与确认事实", content: { characters: outline.characters, confirmedFacts, instruction: "确认事实不可违背；validFrom/validTo为故事时间，knownBy为知情范围。闪回使用对应时间事实。" }, required: true },
+        { id: "historicalFacts", label: "其他时间的确认事实（仅用于闪回与衔接）", content: memory.filter(f => f.status === "confirmed" && !confirmedFacts.some(current => current.id === f.id)), required: false, priority: 2 },
+        { id: "candidates", label: "历史章节候选事实（待核对）", content: candidates, required: false }
+      ], { budgetTokens: 96000, reservedOutputTokens: 7000, safetyTokens: 2500 });
+      const prompt = await materializeProductionPrompt("chapter_generation", { ...context.selected,
+        characterState: { ...context.selected.characterState as object, historicalFacts: context.selected.historicalFacts ?? [], unconfirmedCandidates: context.selected.candidates ?? [] },
+        targetWords: goal.targetWords ?? Math.round(Number((project.outlines[0]?.result as any)?.targetWords ?? 20000) / outline.chapters.length) });
       const generated = await runBilledContentGeneration(project, `内容第${goal.chapterNo}章正文`, async () => generatedChapterSchema.parse(await callTextModelJson<unknown>({ ...(await contentTextRuntime(project)), system: prompt.systemPrompt, prompt: prompt.userPrompt, maxTokens: 7000, label: `第${goal.chapterNo}章正文` })), async (tx, generated) => {
         const currentVersion = (await tx.storyChapter.aggregate({ where: { contentProjectId, chapterNo: goal.chapterNo }, _max: { version: true } }))._max.version ?? 0;
-        await tx.storyChapter.create({ data: { id: `chapter_${crypto.randomUUID()}`, contentProjectId, chapterNo: goal.chapterNo, title: generated.title, status: "confirmed", content: generated.content, result: JSON.parse(JSON.stringify({ factUpdates: generated.factUpdates, handoff: generated.handoff })) as Prisma.InputJsonValue, promptSnapshot: prompt.snapshot as unknown as Prisma.InputJsonValue, version: currentVersion + 1 } });
+        const chapterId = `chapter_${crypto.randomUUID()}`;
+        const prior = await tx.storyChapter.findFirst({ where: { contentProjectId, chapterNo: goal.chapterNo }, orderBy: { version: "desc" } });
+        if (prior) await invalidateSourceFacts(tx, contentProjectId, prior.id);
+        await tx.storyChapter.create({ data: { id: chapterId, contentProjectId, chapterNo: goal.chapterNo, title: generated.title, status: "confirmed", content: generated.content, result: JSON.parse(JSON.stringify({ factUpdates: generated.factUpdates, handoff: generated.handoff })) as Prisma.InputJsonValue, promptSnapshot: { ...prompt.snapshot, contextManifest: context.manifest } as unknown as Prisma.InputJsonValue, version: currentVersion + 1 } });
+        await collectFactCandidates(tx, contentProjectId, generated.factUpdates, { id: chapterId, version: currentVersion + 1, type: "chapter", storyTime: goal.chapterNo });
+        await tx.productionEpisode.updateMany({ where: { contentProjectId }, data: { status: "stale" } });
         return generated;
       });
       previousHandoff = generated.handoff;
@@ -267,7 +295,8 @@ export async function updateContentChapter(userId: string, contentProjectId: str
       result: { manualEdit: { baseChapterId: latest.id }, handoff: { source: "manual_edit", note: "前章已由作者修改，以以下正文为连续性依据。", content: input.content } }
     } });
     await tx.productionEpisode.updateMany({ where: { contentProjectId }, data: { status: "stale" } });
-    await tx.contentProject.update({ where: { id: contentProjectId }, data: { updatedAt: new Date() } });
+    await invalidateSourceFacts(tx, contentProjectId, latest.id);
+    await tx.contentProject.update({ where: { id: contentProjectId }, data: { updatedAt: new Date(), revision: { increment: 1 } } });
   });
   return getContentProductionPackage(userId, contentProjectId);
 }
@@ -312,13 +341,10 @@ export async function addSourceDocument(
   contentProjectId: string,
   input: { kind: string; title: string; content: string }
 ) {
-  const project = await prisma.contentProject.findFirst({
-    where: { id: contentProjectId, userId },
-    select: { id: true }
-  });
-  if (!project) throw new Error("内容项目不存在");
-
-  const source = await prisma.sourceDocument.create({
+  return withIdleContentProject(userId, contentProjectId, async tx => {
+  const previous = await tx.sourceDocument.findFirst({ where: { contentProjectId }, orderBy: { updatedAt: "desc" } });
+  if (previous?.content === input.content && previous.title === input.title && previous.kind === input.kind) return previous;
+  const source = await tx.sourceDocument.create({
     data: {
       id: `source_${crypto.randomUUID()}`,
       contentProjectId,
@@ -327,8 +353,12 @@ export async function addSourceDocument(
       content: input.content
     }
   });
-  await prisma.contentProject.update({ where: { id: contentProjectId }, data: { activeStep: "source", status: "draft" } });
+  if (previous) await invalidateSourceFacts(tx, contentProjectId, previous.id);
+  await tx.scriptVersion.updateMany({ where: { contentProjectId }, data: { status: "stale" } });
+  await tx.productionEpisode.updateMany({ where: { contentProjectId }, data: { status: "stale" } });
+  await tx.contentProject.update({ where: { id: contentProjectId }, data: { activeStep: "source", status: "draft", revision: { increment: 1 } } });
   return source;
+  });
 }
 
 export async function getContentProductionPackage(userId: string, contentProjectId: string): Promise<ContentProductionPackage> {
@@ -351,6 +381,8 @@ export async function getContentProductionPackage(userId: string, contentProject
   const outline = project.outlines[0];
   return {
     projectId: project.id,
+    brief: briefSchema.safeParse(project.brief).success ? project.brief as unknown as import("@aifilm/shared").CreatorBrief : null,
+    revision: project.revision,
     productionProjectId: project.productionProjectId ?? undefined,
     episodes: project.episodes.map((episode) => ({ ...episode, productionProjectId: episode.productionProjectId ?? undefined, status: episode.status as ContentStepStatus, scripts: episode.scripts.map((item) => ({ ...item, status: item.status as ContentStepStatus, structuredResult: item.structuredResult as Record<string, unknown>, promptSnapshot: item.promptSnapshot as Record<string, unknown>, createdAt: item.createdAt.toISOString() })), createdAt: episode.createdAt.toISOString(), updatedAt: episode.updatedAt.toISOString() })),
     source: source ? { id: source.id, kind: source.kind as "novel" | "short_story" | "idea" | "script", title: source.title, content: source.content, updatedAt: source.updatedAt.toISOString() } : undefined,
@@ -371,6 +403,8 @@ export async function generateContentProductionPackage(userId: string, contentPr
 }
 
 async function generateContentProductionPackageUnlocked(userId: string, contentProjectId: string, scope: number | "all" = "all") {
+  const current = await prisma.contentProject.findFirst({ where: { id: contentProjectId, userId } });
+  if (briefSchema.safeParse(current?.brief).success) throw new Error("短片项目请在首作工作室生成并确认剧本，再进入制作。");
   if (process.env.CONTENT_EPISODE_PIPELINE !== "legacy") {
     try {
       const project = await prisma.contentProject.findFirst({ where: { id: contentProjectId, userId }, include: { scripts: { orderBy: { version: "desc" }, take: 1 } } });
@@ -461,19 +495,29 @@ async function syncContentToProductionUnlocked(userId: string, contentProjectId:
   if (!content) throw new Error("内容项目不存在");
   const activeScript = content.scripts[0];
   if (!activeScript?.content.trim()) throw new Error("请先生成分集剧本");
-  const productionProjectId = content.productionProjectId ?? `proj_${crypto.randomUUID()}`;
+  const brief = briefSchema.safeParse(content.brief);
+  if (brief.success && activeScript.status !== "confirmed") throw new Error("请先核对并确认短剧本，再进入制作。");
+  const targetDuration = brief.success ? brief.data.durationSeconds : 180;
+  let productionProjectId = content.productionProjectId ?? `proj_${crypto.randomUUID()}`;
   const artStyle = (content.styleProfile as { name?: string } | null)?.name || "AI 自动匹配画风";
-  const entities = collectHandoffEntities({ script: activeScript.content, catalog: content.entities, outline: content.outlines[0]?.result, episodes: content.episodes.map((episode) => episode.scripts.find((script) => script.version === episode.activeScriptVersion)?.structuredResult) });
+  const entities = collectHandoffEntities({ script: activeScript.content, catalog: brief.success ? undefined : content.entities, outline: brief.success ? undefined : content.outlines[0]?.result, episodes: brief.success ? [activeScript.result] : content.episodes.map((episode) => episode.scripts.find((script) => script.version === episode.activeScriptVersion)?.structuredResult) });
+  const creatorInputHash = brief.success ? crypto.createHash("sha256").update(JSON.stringify({ script: activeScript.content, entities, artStyle, targetDuration })).digest("hex") : null;
   await saveContentOperationOutput(async (tx) => {
-    const existingProject = await tx.project.findUnique({ where: { id: productionProjectId }, include: { scripts: { orderBy: { createdAt: "desc" }, take: 1 } } });
+    let existingProject = await tx.project.findUnique({ where: { id: productionProjectId }, include: { scripts: { orderBy: { createdAt: "desc" }, take: 1 } } });
     if (existingProject && existingProject.userId !== userId) throw new Error("关联制作项目不可访问");
+    if (existingProject && creatorInputHash && (existingProject.scripts[0]?.promptSnapshot as Record<string, unknown> | undefined)?.creatorInputHash !== creatorInputHash) {
+      // A changed short film becomes a new production version. Preserve already
+      // generated references and shots rather than mixing them with new details.
+      productionProjectId = `proj_${crypto.randomUUID()}`;
+      existingProject = null;
+    }
     if (existingProject && existingProject.scripts[0]?.content !== activeScript.content && await tx.storyboard.count({ where: { projectId: productionProjectId } }) > 0) {
       throw new Error("关联项目已进入分镜制作，当前剧本与制作版本不同。请先保留现有制作版本，再建立新的内容项目进行改版。");
     }
     await tx.project.upsert({
       where: { id: productionProjectId },
-      create: { id: productionProjectId, userId, name: content.title, type: "漫剧改编", intro: "由内容创作同步", sourceType: "script", artStyle, videoRatio: "9:16", status: "scripting", episodes: Math.max(1, content.episodes.length), segmentProfile: "jimeng_15s", episodeDurationSeconds: 180, sourceCharactersPerEpisode: 20000, allowExpansion: false, textProvider: content.textProvider, textModel: content.textModel },
-      update: { name: content.title, episodes: Math.max(1, content.episodes.length), allowExpansion: false }
+      create: { id: productionProjectId, userId, name: content.title, type: "漫剧改编", intro: "由内容创作同步", sourceType: "script", artStyle, videoRatio: "9:16", status: "scripting", episodes: Math.max(1, content.episodes.length), segmentProfile: "jimeng_15s", episodeDurationSeconds: targetDuration, sourceCharactersPerEpisode: 20000, allowExpansion: false, textProvider: content.textProvider, textModel: content.textModel },
+      update: { name: content.title, episodes: Math.max(1, content.episodes.length), episodeDurationSeconds: targetDuration, allowExpansion: false }
     });
     const existingCharacters = await tx.character.findMany({ where: { projectId: productionProjectId } });
     for (const character of entities.characters) {
@@ -493,11 +537,35 @@ async function syncContentToProductionUnlocked(userId: string, contentProjectId:
     }
     const catalog = Object.fromEntries((["characters", "scenes", "props"] as const).map((kind) => [kind, entities[kind].map((item) => ({ id: handoffEntityId(kind, productionProjectId, item.name), name: item.name, description: item.description }))]));
     await tx.entityCatalog.upsert({ where: { contentProjectId }, create: { id: `entity_${crypto.randomUUID()}`, contentProjectId, characters: catalog.characters, scenes: catalog.scenes, props: catalog.props, promptSnapshot: { source: "saved_content_handoff", scriptVersion: activeScript.version } }, update: { characters: catalog.characters, scenes: catalog.scenes, props: catalog.props } });
+    if (content.parentContentId) {
+      const parent = await tx.contentProject.findFirst({ where: { id: content.parentContentId, userId } });
+      const origin = parent?.productionProjectId ? await tx.project.findFirst({ where: { id: parent.productionProjectId, userId, artStyle }, include: { characterSet: true, assets: true } }) : null;
+      if (origin) {
+        const currentAssets = await tx.asset.findMany({ where: { projectId: productionProjectId } });
+        const currentRoles = await tx.character.findMany({ where: { projectId: productionProjectId } });
+        for (const target of currentAssets.filter(asset => asset.status === "pending" && !asset.referenceUrl)) {
+          const currentRole = currentRoles.find(role => role.id === target.relatedCharacterId);
+          const originRole = currentRole ? origin.characterSet.find(role => role.name === currentRole.name) : undefined;
+          if (currentRole && originRole && (["appearance", "costume", "identity"] as const).some(field =>
+            currentRole[field] && currentRole[field] !== "unknown" && currentRole[field] !== originRole[field])) continue;
+          const source = origin.assets.find(asset => asset.type === target.type && ["role", "scene", "prop"].includes(asset.type)
+            && asset.status === "succeeded" && asset.referenceUrl && (originRole ? asset.relatedCharacterId === originRole.id : asset.name === target.name && asset.description === target.description));
+          if (!source) continue;
+          await tx.asset.update({ where: { id: target.id }, data: { referenceUrl: source.referenceUrl, status: "succeeded", prompt: source.prompt,
+            reusedFromAssetId: source.id, reusedFromUpdatedAt: source.updatedAt } });
+          if (currentRole && originRole) await tx.character.update({ where: { id: currentRole.id }, data: {
+            referenceAssetId: target.id, identity: originRole.identity, appearance: originRole.appearance, costume: originRole.costume,
+            personality: originRole.personality, prompt: originRole.prompt, negativePrompt: originRole.negativePrompt,
+            voiceId: originRole.voiceId, seed: originRole.seed, consistencyLevel: originRole.consistencyLevel
+          } });
+        }
+      }
+    }
     await tx.project.update({ where: { id: productionProjectId }, data: { characters: await tx.character.count({ where: { projectId: productionProjectId } }) } });
     await tx.scriptDraft.upsert({
-      where: { id: `script_${contentProjectId}_active` },
-      create: { id: `script_${contentProjectId}_active`, projectId: productionProjectId, name: `${content.title} 分集剧本`, content: activeScript.content, synopsis: "由内容创作逐集同步", version: activeScript.version },
-      update: { projectId: productionProjectId, name: `${content.title} 分集剧本`, content: activeScript.content, version: activeScript.version }
+      where: { id: brief.success ? `script_${contentProjectId}_${productionProjectId}` : `script_${contentProjectId}_active` },
+      create: { id: brief.success ? `script_${contentProjectId}_${productionProjectId}` : `script_${contentProjectId}_active`, projectId: productionProjectId, name: `${content.title} 分集剧本`, content: activeScript.content, synopsis: "由内容创作逐集同步", version: activeScript.version, ...(creatorInputHash ? { promptSnapshot: { creatorInputHash, sourceContentId: contentProjectId, sourceScriptVersion: activeScript.version } } : {}) },
+      update: { projectId: productionProjectId, name: `${content.title} 分集剧本`, content: activeScript.content, version: activeScript.version, ...(creatorInputHash ? { promptSnapshot: { creatorInputHash, sourceContentId: contentProjectId, sourceScriptVersion: activeScript.version } } : {}) }
     });
     await tx.productionEpisode.updateMany({ where: { contentProjectId }, data: { productionProjectId } });
     await tx.contentProject.update({ where: { id: contentProjectId }, data: { productionProjectId, activeStep: "entity", status: "confirmed" } });

@@ -150,6 +150,9 @@ import { syncContentToProduction } from "./content/service.js";
 import { ensureStorageBuckets, storageRoot } from "./storage/objectStorage.js";
 import { MEDIA_COOKIE, localMediaPath, isPublishedMedia, userCanReadMedia, resolveMediaSession, verifyProviderMediaUrl } from "./storage/mediaAccess.js";
 import { handleActivateEpisodeVersion, handleAddSource, handleAnalyzeContentProject, handleConfirmContentOutline, handleCreateContentProject, handleDeleteContentProject, handleDevelopContentProject, handleGenerateContentChapterBatch, handleGenerateContentOutline, handleGenerateContentPackage, handleGenerateEpisodes, handleGetContentPackage, handleGetContentVersions, handleListEpisodes, handleListEpisodeVersions, handleListContentProjects, handleRegenerateEpisode, handleUpdateContentChapter, handleUpdateContentModelRoute } from "./content/routes.js";
+import { creatorRouter } from "./content/creatorRoutes.js";
+import { exportOutcomeReport, reviewExportOutcome } from "./export/exportOutcome.js";
+import { creatorInsights } from "./content/creatorInsights.js";
 
 const app = express();
 app.set("trust proxy", parseTrustProxy(process.env.TRUST_PROXY, process.env.NODE_ENV === "production"));
@@ -1106,6 +1109,8 @@ app.use("/api/content", (req, res, next) => {
     .catch(next);
 });
 
+app.use("/api/content/creator", creatorRouter);
+
 app.get("/api/content/projects", asyncRoute(async (req, res) => {
   const userId = requestUserId(req);
   if (!userId) return res.status(401).json({ message: "请先登录。" });
@@ -1276,15 +1281,6 @@ app.patch(
     });
 
     res.json({ user: publicUser(user) });
-  })
-);
-
-app.post(
-  "/api/projects/:id/storyboards/:shotId/tail-frame",
-  asyncRoute(async (req, res) => {
-    const parsed = storyboardTailFrameSchema.safeParse(req.body ?? {});
-    if (!parsed.success) return res.status(400).json(parsed.error.flatten());
-    res.json(await captureStoryboardTailFrame(paramId(req.params.id), paramId(req.params.shotId), requestUserId(req), parsed.data.frameUrl, parsed.data.sourceVideoUrl));
   })
 );
 
@@ -1672,6 +1668,26 @@ app.get(
     res.json(await listExportJobs(requestUserId(req), paramId(req.params.id)));
   })
 );
+
+app.post("/api/projects/:id/creator-events", asyncRoute(async (req, res) => {
+  const userId = requestUserId(req)!;
+  const projectId = paramId(req.params.id);
+  const { event } = z.object({ event: z.enum(["creator_preview_viewed", "creator_export_viewed"]) }).strict().parse(req.body);
+  if (!await prisma.project.findFirst({ where: { id: projectId, userId } })) return res.status(404).json({ message: "项目不存在" });
+  await prisma.analyticsEvent.create({ data: { id: `event_${crypto.randomUUID()}`, userId, projectId, entityType: "project", entityId: projectId, eventName: event, sourceChannel: "creator_studio" } });
+  res.json({ ok: true });
+}));
+app.get("/api/projects/:id/export/jobs/:jobId/outcome", asyncRoute(async (req, res) => {
+  res.json(await exportOutcomeReport(requestUserId(req)!, paramId(req.params.id), paramId(req.params.jobId)));
+}));
+app.post("/api/projects/:id/export/jobs/:jobId/outcome", asyncRoute(async (req, res) => {
+  res.json(await reviewExportOutcome(requestUserId(req)!, paramId(req.params.id), paramId(req.params.jobId), req.body));
+}));
+app.post("/api/projects/:id/storyboards/:shotId/tail-frame", asyncRoute(async (req, res) => {
+  const parsed = storyboardTailFrameSchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json(parsed.error.flatten());
+  res.json(await captureStoryboardTailFrame(paramId(req.params.id), paramId(req.params.shotId), requestUserId(req), parsed.data.frameUrl, parsed.data.sourceVideoUrl));
+}));
 
 app.put("/api/projects/:id/delivery-edit", asyncRoute(async (req, res) => {
   const parsed = deliveryEditSaveSchema.safeParse(req.body ?? {});
@@ -2128,6 +2144,9 @@ app.get(
     res.json(await getAdminSummary(requestUserId(req)));
   })
 );
+app.get("/api/admin/creator-insights", requireAdminPermission("dashboard:read"), asyncRoute(async (_req, res) => {
+  res.json(await creatorInsights());
+}));
 
 app.get("/api/support/tickets", asyncRoute(async (req, res) => {
   const parsed = supportListSchema.safeParse(req.query);

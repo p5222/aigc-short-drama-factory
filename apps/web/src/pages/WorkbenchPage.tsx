@@ -7,8 +7,11 @@ import { ChevronDown, Megaphone, Pin } from "lucide-react";
 import { StudioIcon, studioStages, type StudioStage } from "../design-system/StudioIcon";
 import "./workbench-announcements.css";
 import "./workbench-workflow.css";
+import { CreatorWelcome, type ShortEntry } from "../content/CreatorWelcome";
 
 interface WorkbenchPageProps {
+  userId: string;
+  onStartShort: (entry: ShortEntry) => void;
   summary?: WorkbenchSummary;
   contentProjects?: ContentProjectSummary[];
   onOpenContent: (id: string) => void;
@@ -21,7 +24,7 @@ interface WorkbenchPageProps {
   onStartContent: () => void;
 }
 
-export function WorkbenchPage({ summary, contentProjects, onOpenContent, onRefresh, onStart, onOpen, onOpenTasks, onRecharge, onOpenWorks, onStartContent }: WorkbenchPageProps) {
+export function WorkbenchPage({ userId, onStartShort, summary, contentProjects, onOpenContent, onRefresh, onStart, onOpen, onOpenTasks, onRecharge, onOpenWorks, onStartContent }: WorkbenchPageProps) {
   const projects = summary?.recentProjects ?? [];
   const tasks = summary?.recentTasks ?? [];
   const actions = collectWorkbenchActions(summary?.actionProjects ?? projects, tasks);
@@ -43,6 +46,7 @@ export function WorkbenchPage({ summary, contentProjects, onOpenContent, onRefre
         </div>
         <div className="workbench-header-actions"><button className="ghost-button" onClick={onStartContent}><BookOpen size={17} />内容创作</button><button className="primary-button large" onClick={onStart}><Plus size={18} />新建漫剧</button></div>
       </header>
+      <CreatorWelcome key={userId} onStart={onStartShort} />
 
       {resumeStory ? <section className="workbench-resume studio-resume story-resume" aria-labelledby="workbench-story-resume-title">
         <div className="studio-resume-monogram" aria-hidden="true"><StudioIcon stage="content" size={32} /><span>故事手稿</span></div>

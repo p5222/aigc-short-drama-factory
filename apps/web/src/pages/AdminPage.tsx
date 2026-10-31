@@ -88,6 +88,7 @@ import { ModelRoutePicker } from "../components/ModelRoutePicker";
 import { ModelIdentity, ModelIcon, ProviderIcon } from "../components/ModelIdentity";
 import { providerModelFamily } from "../components/modelCatalog";
 import { ProviderHealth } from "../admin/ProviderHealth";
+import { CreatorInsightsPanel } from "../admin/CreatorInsightsPanel";
 import { groupAdminPrices, inspectAdminPrice, providerHealth } from "../admin/providerHealthModel";
 import { ModelLibrary } from "../components/ModelLibrary";
 import { CreditCenter } from "../admin/CreditCenter";
@@ -476,6 +477,7 @@ function DashboardSection({ summary, providers, modelPrices, onConfigure }: { su
       <p className="admin-list-note">待确认订单不是已收款；支付由签名回调或主动查单核对。失败任务请结合用户账单、模型配置和工单排查，不手动重复提交上游生成。</p>
       <div className="adm-inline-overview" aria-label="创作与服务统计"><span>注册用户 <strong>{summary?.users ?? "未读取"}</strong></span><span>创作项目 <strong>{summary?.projects ?? "未读取"}</strong></span><span>今日任务 <strong>{summary?.tasksToday ?? "未读取"}</strong></span><span title={`仅统计 ${summary?.completedTasks ?? "—"} 个成功或失败任务`}>已结束任务成功率 <strong>{formatAdminTaskSuccess(summary?.successRate, summary?.completedTasks)}</strong></span></div>
       <ProviderHealth providers={providers} prices={modelPrices} onConfigure={onConfigure} onPrices={() => navigateAdminHash("价格策略")} />
+      <CreatorInsightsPanel />
 
       <div className="adm-metric-heading"><h2>积分与收款</h2><span>实扣积分、现金实收和供应商成本分别核算</span></div>
       <div className="admin-product-metrics compact">

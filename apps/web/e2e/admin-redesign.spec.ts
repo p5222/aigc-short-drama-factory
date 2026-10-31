@@ -41,6 +41,7 @@ async function adminFixtures(page: Page) {
       "/templates": [{ id: "eval_script", name: "剧本质量评分", type: "script", version: "v1", enabled: true, summary: "从冲突、节奏和可拍摄性评估剧本。", content: "请评估剧本中的人物动机、情节推进与镜头表现，返回评分与修改建议。" }],
       "/admin/users": accounts,
       "/admin/summary": { users: 32, projects: 86, tasksToday: 28, totalTasks: 240, completedTasks: 230, successRate: 0.965, creditsConsumed: 32800, providerCost: null, paidRechargeCny: 580, refundCredits: 600 },
+      "/admin/creator-insights": { since: stamp, until: stamp, stages: [{ event: "creator_brief_saved", users: 6, events: 9 }], runs: [{ status: "unknown", count: 2 }], firstAccepted: { projects: 3, medianSeconds: 180 }, feedback: { acceptedEdits: 2, acceptedUnchanged: 1 } },
       "/admin/announcements": [announcement, { ...announcement, id: "second", title: "新用户创作指南", type: "guide", pinned: false }],
       "/admin/help-articles": [{ id: "help", title: "完成你的第一部漫剧", summary: "从导入原稿开始，了解每一步的准备内容。", content: "导入原稿后选择画面比例和风格，确认文本报价后开始创建。", category: "getting_started", tags: ["新手"], enabled: true, pinned: true, sortOrder: 1, createdAt: stamp, updatedAt: stamp }],
       "/admin/plans": [plan], "/admin/membership-plans": [{ ...plan, id: "member", name: "创作月度方案", monthlyPrice: 99, monthlyCredits: 12000, discountPercent: 10, priorityLevel: 1 }],
@@ -111,6 +112,12 @@ test("all admin modules with populated operational records fit desktop and mobil
     await expect(page.locator(".ui-page-heading h1")).toBeVisible();
     await expect(page.locator(".ui-state--loading")).toHaveCount(0);
     await capture(page, `module-${index}`);
+    if (module === "运营总览") {
+      const panel = page.getByRole("region", { name: "首作路径观察" });
+      await expect(panel).toContainText("3 分钟（中位数）");
+      await expect(panel).toContainText("结果待核对 2");
+      await expect(panel).toContainText("不能直接相除作为首作转化率");
+    }
     if (module === "平台公告") {
       await page.getByRole("button", { name: /^编辑公告 / }).first().click();
       await capture(page, "announcement-edit");

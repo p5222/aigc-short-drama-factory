@@ -6,6 +6,10 @@ import { callTextModelJson } from "../agents/generator.js";
 import { prisma } from "../db/client.js";
 import { runBilledContentGeneration, withContentGenerationOperation } from "../content/generationBilling.js";
 import { materializeProductionPrompt } from "../prompts/production.js";
+import { assembleContext } from "../content/contextBudget.js";
+import { briefSchema } from "../content/creatorContracts.js";
+import { relevantFacts } from "../content/storyMemory.js";
+import type { StoryFact } from "@aifilm/shared";
 
 const episodeResultSchema = z.object({
   title: z.string().min(1),
@@ -34,20 +38,29 @@ export function planSourceSlices(content: string, sourceType: EpisodeSourceType)
     const headings = [...content.matchAll(/^\s*第\s*([0-9一二三四五六七八九十百零〇两]+)\s*[集回](?:\s|[：:、.-]|$)/gm)];
     if (headings.length === maxEpisodes) {
       return headings.map((heading, index) => {
-        const start = heading.index ?? 0;
+        const start = index === 0 ? 0 : heading.index ?? 0;
         const end = headings[index + 1]?.index ?? content.length;
-        return { episodeNo: index + 1, start, end, content: content.slice(start, end).trim() };
+        return { episodeNo: index + 1, start, end, content: content.slice(start, end) };
       });
     }
   }
 
-  const slices: SourceSlice[] = [];
-  for (let index = 0; index < maxEpisodes; index += 1) {
-    const start = Math.floor((content.length * index) / maxEpisodes);
-    const end = index === maxEpisodes - 1 ? content.length : Math.floor((content.length * (index + 1)) / maxEpisodes);
-    slices.push({ episodeNo: index + 1, start, end, content: content.slice(start, end).trim() });
+  // Sentence/paragraph boundaries are preferred to arbitrary character offsets.
+  // Unpunctuated material remains whole: inventing a sentence boundary is unsafe.
+  const boundaries = [...content.matchAll(/(?:[。！？.!?]+[”’」』"']*\s*|\n[ \t]*\n)/gu)]
+    .map(match => match.index! + match[0].length).filter(end => end > 0 && end < content.length);
+  const count = Math.min(maxEpisodes, boundaries.length + 1);
+  const cuts = [0];
+  for (let index = 1; index < count; index += 1) {
+    const remaining = count - index - 1;
+    const available = boundaries.filter(end => end > cuts.at(-1)!);
+    const eligible = available.slice(0, available.length - remaining);
+    const target = content.length * index / count;
+    const end = eligible.reduce((best, current) => Math.abs(current - target) < Math.abs(best - target) ? current : best, eligible[0]!);
+    cuts.push(end);
   }
-  return slices;
+  cuts.push(content.length);
+  return cuts.slice(0, -1).map((start, index) => ({ episodeNo: index + 1, start, end: cuts[index + 1]!, content: content.slice(start, cuts[index + 1]) }));
 }
 
 function mapEpisode(row: any) {
@@ -102,12 +115,21 @@ export async function listEpisodes(userId: string, contentProjectId: string) {
 
 async function generateOne(userId: string, contentProjectId: string, episodeNo: number, force: boolean) {
   const { project, content, sourceType, sourceId } = await ownedProject(userId, contentProjectId);
+  if (briefSchema.safeParse(project.brief).success) throw new Error("短片请在首作工作室生成并确认剧本。");
   const slice = planSourceSlices(content, sourceType).find((item) => item.episodeNo === episodeNo);
   if (!slice) throw new Error(`第 ${episodeNo} 集超出素材可改编上限`);
   const existing = await prisma.productionEpisode.findUnique({ where: { contentProjectId_episodeNo: { contentProjectId, episodeNo } }, include: { scripts: true } });
   if (existing?.activeScriptVersion && existing.status !== "stale" && !force) return mapEpisode(existing);
 
-  const prompt = await materializeProductionPrompt("episode_adaptation", { episodeNo, duration: 180, content: slice.content, styleProfile: project.styleProfile });
+  const facts = await prisma.storyFact.findMany({ where: { contentProjectId, status: { in: ["confirmed", "locked"] } } });
+  const context = assembleContext([
+    { id: "allowedSource", label: "本集允许改编范围", content: slice.content, required: true },
+    { id: "facts", label: "适用设定与知情范围", content: relevantFacts(facts as StoryFact[], episodeNo), required: true },
+    { id: "before", label: "前集衔接背景（禁止改编）", content: content.slice(Math.max(0, slice.start - 800), slice.start), required: false },
+    { id: "after", label: "后集背景（禁止提前叙述）", content: content.slice(slice.end, Math.min(content.length, slice.end + 800)), required: false }
+  ], { budgetTokens: 96000, reservedOutputTokens: 8000, safetyTokens: 2500 });
+  const prompt = await materializeProductionPrompt("episode_adaptation", { episodeNo, duration: 180,
+    content: JSON.stringify({ ...context.selected, instruction: "仅改编allowedSource；before/after只是背景，不能挪用或提前揭示；facts须按故事时间与知情范围使用。" }), styleProfile: project.styleProfile });
   return runBilledContentGeneration(project, `内容第${episodeNo}集剧本`, async () => {
     const raw = await callTextModelJson<unknown>({ ...(await runtime(project)), system: prompt.systemPrompt, prompt: prompt.userPrompt, maxTokens: 8000, label: `第 ${episodeNo} 集剧本` });
     return episodeResultSchema.parse(raw);
@@ -115,7 +137,7 @@ async function generateOne(userId: string, contentProjectId: string, episodeNo: 
   const previous = await tx.episodeScriptVersion.aggregate({ where: { episode: { contentProjectId, episodeNo } }, _max: { version: true } });
   const nextVersion = (previous._max.version ?? 0) + 1;
   const episodeId = existing?.id ?? `episode_${crypto.randomUUID()}`;
-  const snapshot = { ...prompt.snapshot, sourceId, sourceStart: slice.start, sourceEnd: slice.end, sourceType, allowExpansion: false, episodeNo } as unknown as Prisma.InputJsonValue;
+  const snapshot = { ...prompt.snapshot, sourceId, sourceStart: slice.start, sourceEnd: slice.end, sourceType, allowExpansion: false, episodeNo, contextManifest: context.manifest } as unknown as Prisma.InputJsonValue;
 
     const episode = await tx.productionEpisode.upsert({
       where: { contentProjectId_episodeNo: { contentProjectId, episodeNo } },
@@ -135,7 +157,7 @@ export async function generateEpisodes(userId: string, contentProjectId: string,
 
 async function generateEpisodesUnlocked(userId: string, contentProjectId: string, scope: number | "all") {
   const { content, sourceType } = await ownedProject(userId, contentProjectId);
-  const maxEpisodes = analyzeProductionEpisodes(content, sourceType).maxEpisodes;
+  const maxEpisodes = planSourceSlices(content, sourceType).length;
   const completed = await prisma.productionEpisode.findMany({ where: { contentProjectId, activeScriptVersion: { gt: 0 }, status: { not: "stale" } }, select: { episodeNo: true } });
   if (completed.length >= maxEpisodes) return { maxEpisodes, generatedEpisodeNos: [], episodes: await listEpisodes(userId, contentProjectId) };
   const episodeNos = resolveNextEpisodeNumbers(maxEpisodes, completed.map((item) => item.episodeNo), scope);

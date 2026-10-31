@@ -8,6 +8,7 @@ import { buildModelCatalog, defaultModelRoute, modelIdentity } from "../componen
 import { chapterGenerationPlan, chapterNavigationStage, cleanModelText, contentEditorDirty, contentNavigationDecision, contentSourceForProject, reconcileContentEditor, isCurrentRequest, modeLabel, reconcileProjectId, sourceKindForMode, statusLabel, type ContentEditorDraft, type RequestToken } from "./model";
 import { BEFORE_CREATOR_NAVIGATION } from "../lib/creatorNavigation";
 import { InlineNotice, StatePanel } from "../design-system/ui";
+import { StoryMemoryDialog } from "./StoryMemoryDialog";
 
 const emptyStyle: StyleProfile = { key: "", name: "", category: "", summary: "", characterRules: [], sceneRules: [], lightingRules: [], cameraRules: [], materialRules: [], negativeRules: [] };
 const styleOptions: Array<Pick<StyleProfile, "key" | "name" | "category" | "summary">> = [
@@ -89,6 +90,7 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
   const [sourceTitle, setSourceTitle] = useState("");
   const [sourceContent, setSourceContent] = useState("");
   const [sourceOpen, setSourceOpen] = useState(false);
+  const [memoryOpen, setMemoryOpen] = useState(false);
   const [focusStage, setFocusStage] = useState<StageId | "">("");
   const [selectedChapterNo, setSelectedChapterNo] = useState(1);
   const [busy, setBusy] = useState<"create" | "save" | "generate" | "refresh" | "handoff" | "delete" | "">("");
@@ -694,9 +696,11 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
         {(message || error || serverBusy) && (!creating || !error) ? <div className="cw2-feedback"><InlineNotice tone={error ? "error" : busy || serverBusy ? "info" : "success"}>{error || (serverBusy ? "服务器正在生成，已完成内容会自动同步。" : message)}</InlineNotice></div> : null}
         {detailError && productionPackage ? <div className="cw2-feedback"><InlineNotice tone="warning">{detailError} 已保留上次读取的内容。<button type="button" className="cw2-link-button" onClick={() => setDetailReload(value => value + 1)}>重新读取</button></InlineNotice></div> : null}
         {selected && !creating && !sourceOpen && productionPackage ? <section className="cw2-stage-brief" aria-label="当前写作阶段说明"><dl><div><dt>本步输入</dt><dd>{stageBrief[viewStage].input}</dd></div><div><dt>本步产物</dt><dd>{stageBrief[viewStage].output}</dd></div></dl><p>{stageBrief[viewStage].next}</p><span>{hasUnsavedInput ? "有未保存修改 · 先保存再继续" : detailError ? "上次读取的内容 · 等待重新同步" : working ? "正在处理 · 已完成的内容会保留" : "当前内容已同步"}</span></section> : null}
+        {selected && !creating ? <div className="content-inline-actions"><button type="button" className="content-secondary-button" disabled={working || hasUnsavedInput} onClick={() => setMemoryOpen(true)}><UsersRound size={16} />故事设定与知情范围</button></div> : null}
         {stageView}
       </main>
       {sidePanel}
+      {memoryOpen && selected ? <StoryMemoryDialog key={selected.id} projectId={selected.id} onClose={() => setMemoryOpen(false)} onSaved={() => setDetailReload(value => value + 1)} /> : null}
     </div>
   </div>;
 }

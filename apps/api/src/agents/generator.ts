@@ -60,6 +60,7 @@ type TextRuntimeOptions = Pick<CreateProjectInput, "textProvider" | "textModel">
   baseUrl?: string;
   apiKey?: string;
   textModelPool?: string[];
+  singleSubmission?: boolean;
 };
 
 export interface GeneratedProjectContent {
@@ -335,6 +336,7 @@ async function callOpenAICompatible(body: Record<string, unknown>, options: Text
     try {
       return await callResponsesApi(body, options);
     } catch (error) {
+      if (options.singleSubmission) throw error;
       console.warn("[generator] Responses API failed, retrying chat completions on the same upstream:", error);
       return callChatCompletionsApi(body, options, "openai-upstream");
     }
@@ -366,7 +368,7 @@ async function callGeminiInteraction(body: Record<string, unknown>, options: Tex
         system_instruction: systemInstruction || undefined,
         generation_config: {
           temperature: typeof body.temperature === "number" ? body.temperature : 0.7,
-          max_output_tokens: Number(process.env.GEMINI_MAX_OUTPUT_TOKENS ?? body.max_tokens ?? 2400),
+          max_output_tokens: Number((options.singleSubmission ? body.max_tokens : process.env.GEMINI_MAX_OUTPUT_TOKENS) ?? body.max_tokens ?? 2400),
           thinking_level: process.env.GEMINI_THINKING_LEVEL || "low"
         }
       }
@@ -375,13 +377,14 @@ async function callGeminiInteraction(body: Record<string, unknown>, options: Tex
         contents: [{ role: "user", parts: userParts.length ? userParts : [{ text: "请输出 {\"ok\":true}" }] }],
         generationConfig: {
           temperature: typeof body.temperature === "number" ? body.temperature : 0.7,
-          maxOutputTokens: Number(process.env.GEMINI_MAX_OUTPUT_TOKENS ?? body.max_tokens ?? 2400),
+          maxOutputTokens: Number((options.singleSubmission ? body.max_tokens : process.env.GEMINI_MAX_OUTPUT_TOKENS) ?? body.max_tokens ?? 2400),
           responseMimeType: body.response_format ? "application/json" : undefined
         }
       };
 
   const response = await fetch(url, {
     method: "POST",
+    ...(options.singleSubmission ? { signal: AbortSignal.timeout(90_000) } : {}),
     headers: {
       "Content-Type": "application/json",
       "x-goog-api-key": runtime.apiKey
@@ -421,7 +424,8 @@ async function callChatCompletionsApi(
     try {
       const result = await postJsonWithFallback<TextModelResponse>({
         label: "Text model",
-        urls: endpointCandidates(runtime.baseUrl, "chat/completions"),
+        urls: options.singleSubmission ? endpointCandidates(runtime.baseUrl, "chat/completions").slice(0, 1) : endpointCandidates(runtime.baseUrl, "chat/completions"),
+        singleSubmission: options.singleSubmission,
         apiKey: runtime.apiKey,
         payload: {
           max_tokens: Number(process.env.TEXT_GENERATION_MAX_TOKENS ?? process.env.OPENAI_GENERATION_MAX_OUTPUT_TOKENS ?? 2400),
@@ -433,6 +437,7 @@ async function callChatCompletionsApi(
       recordTextUsage(result, runtime.provider, model);
       return result;
     } catch (error) {
+      if (options.singleSubmission) throw error;
       lastError = error;
       const fallback = await handleTextModelFallbackError(runtime.provider, model, error);
       if (fallback.shouldContinue) {
@@ -450,12 +455,14 @@ async function postJsonWithFallback<T>({
   label,
   urls,
   apiKey,
-  payload
+  payload,
+  singleSubmission
 }: {
   label: string;
   urls: string[];
   apiKey: string;
   payload: unknown;
+  singleSubmission?: boolean;
 }): Promise<T> {
   let lastStatus = 0;
   let lastText = "";
@@ -463,6 +470,7 @@ async function postJsonWithFallback<T>({
   for (const url of urls) {
     const response = await fetch(url, {
       method: "POST",
+      ...(singleSubmission ? { signal: AbortSignal.timeout(90_000) } : {}),
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${apiKey}`
@@ -495,7 +503,8 @@ async function callResponsesApi(body: Record<string, unknown>, options: TextRunt
 
   const result = await postJsonWithFallback<TextModelResponse>({
     label: "Responses model",
-    urls: endpointCandidates(runtime.baseUrl, "responses"),
+    urls: options.singleSubmission ? endpointCandidates(runtime.baseUrl, "responses").slice(0, 1) : endpointCandidates(runtime.baseUrl, "responses"),
+    singleSubmission: options.singleSubmission,
     apiKey: runtime.apiKey,
     payload: {
       model: runtime.model,
@@ -503,7 +512,7 @@ async function callResponsesApi(body: Record<string, unknown>, options: TextRunt
         role: message.role === "assistant" ? "assistant" : message.role === "system" ? "system" : "user",
         content: [{ type: "input_text", text: message.content }]
       })),
-      max_output_tokens: Number(process.env.OPENAI_GENERATION_MAX_OUTPUT_TOKENS ?? body.max_tokens ?? 2400),
+      max_output_tokens: Number((options.singleSubmission ? body.max_tokens : process.env.OPENAI_GENERATION_MAX_OUTPUT_TOKENS) ?? body.max_tokens ?? 2400),
       reasoning: { effort: process.env.OPENAI_REASONING_EFFORT || "medium" },
       store: process.env.OPENAI_DISABLE_RESPONSE_STORAGE === "true" ? false : undefined
     }

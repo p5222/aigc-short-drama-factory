@@ -463,9 +463,9 @@ export function App() {
     };
     switch (activePage) {
       case "workbench":
-        return <WorkbenchPage summary={summary} contentProjects={readResources.has("内容作品") ? contentProjects : undefined} onOpenContent={id => navigate({ page: "content", contentId: id })} onRefresh={() => void load().catch(() => undefined)} onStart={openFreshWizard} onStartContent={openFreshContent} onOpenWorks={() => setActivePage("scripts")} onOpen={(projectId) => void openProject(projectId)} onOpenTasks={(taskFilter, taskId) => navigate({ page: "tasks", taskFilter, taskId })} onRecharge={() => setActivePage("recharge")} />;
+        return <WorkbenchPage userId={user?.id ?? ""} onStartShort={entry => navigate({ page: "content", contentId: entry === "idea" ? "__short__" : `__short_${entry}__` })} summary={summary} contentProjects={readResources.has("内容作品") ? contentProjects : undefined} onOpenContent={id => navigate({ page: "content", contentId: id })} onRefresh={() => void load().catch(() => undefined)} onStart={openFreshWizard} onStartContent={openFreshContent} onOpenWorks={() => setActivePage("scripts")} onOpen={(projectId) => void openProject(projectId)} onOpenTasks={(taskFilter, taskId) => navigate({ page: "tasks", taskFilter, taskId })} onRecharge={() => setActivePage("recharge")} />;
       case "content":
-        return <ContentCreatorPage key={`${user?.id ?? "anonymous"}:${contentFocusId || "default"}`} providers={providers} modelPrices={modelPrices} initialSelectedId={contentFocusId} onProjectsChange={setContentProjects} onBack={() => setActivePage("scripts")} onEnterProduction={async (projectId) => {
+        return <ContentCreatorPage key={`${user?.id ?? "anonymous"}:${contentFocusId || "default"}`} userId={user?.id ?? ""} onSelect={id => navigate({ page: "content", contentId: id })} providers={providers} modelPrices={modelPrices} initialSelectedId={contentFocusId} onProjectsChange={setContentProjects} onBack={() => setActivePage("scripts")} onEnterProduction={async (projectId) => {
                 await openProject(projectId);
           void load().catch(() => undefined);
         }} />;

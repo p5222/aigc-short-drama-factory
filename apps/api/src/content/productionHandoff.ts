@@ -5,7 +5,7 @@ export type HandoffEntities = { characters: Entity[]; scenes: Entity[]; props: E
 const record = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const list = (value: unknown): unknown[] => Array.isArray(value) ? value : [];
 const text = (value: unknown): string => typeof value === "string" ? value.trim() : "";
-const nonSpeakers = /^(?:旁白|画外音|对白|台词|独白|场景\d*|地点|内景|外景|时间|人物|角色|动作|镜头|画面|音效|声音|音乐|字幕|转场|备注|剧情|标题|名称|Narrator|INT|EXT|VO|OS|SFX)$/i;
+const nonSpeakers = /^(?:旁白|画外音|对白|台词|独白|场景[零一二三四五六七八九十百\d]*|地点|内景|外景|时间|人物|角色|动作|镜头|画面|音效|声音|音乐|字幕|转场|备注|剧情|标题|名称|Narrator|INT|EXT|VO|OS|SFX)$/i;
 
 /** Extract only named entities present in saved source data; never create default people or places. */
 export function collectHandoffEntities(input: { script: string; catalog?: unknown; outline?: unknown; episodes?: unknown[] }): HandoffEntities {
@@ -30,7 +30,7 @@ export function collectHandoffEntities(input: { script: string; catalog?: unknow
   for (const line of input.script.split(/\r?\n/)) {
     const speaker = line.match(/^\s*(?:[-*]\s*)?([\p{L}\p{N}·]{1,20})(?:[（(][^）)]{0,40}[）)])?\s*[：:]\s*\S/u)?.[1];
     if (speaker) add("characters", speaker);
-    const location = line.match(/^\s*(?:场景(?:\s*\d+)?|地点|内景|外景|INT\.?|EXT\.?)\s*[：:\s]\s*([^\n，。；]{2,60})/i)?.[1];
+    const location = line.match(/^\s*(?:场景(?:\s*[零一二三四五六七八九十百\d]+)?|地点|内景|外景|INT\.?|EXT\.?)\s*[：:\s]\s*([^\n，。；]{2,60})/i)?.[1];
     if (location) add("scenes", location.replace(/\s*[-—·]\s*(?:日|夜|晨|黄昏).*$/, "").trim());
   }
   return result;
