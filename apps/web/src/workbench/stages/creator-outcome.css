@@ -1,0 +1,35 @@
+.story-preview { margin: 16px; color: var(--ds-text-primary); }
+.story-preview > button { gap: 10px; max-width: 100%; white-space: normal; }
+.story-preview > button small { color: var(--ds-text-secondary); }
+.story-preview-body { margin-top: 16px; padding: 16px; background: var(--ds-bg-subtle); border: 1px solid var(--ds-border-default); border-radius: 8px; }
+.story-preview-stage { position: relative; aspect-ratio: 16 / 9; min-height: 160px; overflow: hidden; background: #202224; color: #f7f5ef; }
+.story-preview-stage img { width: 100%; height: 100%; object-fit: contain; }
+.story-preview-label { position: absolute; top: 12px; left: 12px; font-size: 11px; background: #202224e6; border-radius: 4px; padding: 6px 8px; }
+.story-preview-subtitle { position: absolute; bottom: 12px; left: 10%; width: 80%; margin: 0; padding: 8px; box-sizing: border-box; background: #202224e6; text-align: center; font-size: 14px; line-height: 1.7; }
+.story-preview-missing { height: 100%; display: grid; place-content: center; padding: 30px; text-align: center; box-sizing: border-box; }
+.story-preview-missing p { font-size: 12px; line-height: 1.8; }
+.story-preview-controls { display: flex; align-items: center; gap: 14px; margin: 12px 0; }
+.story-preview-controls label { flex: 1; }
+.story-preview-controls input { width: 100%; accent-color: var(--ds-action-primary); }
+.story-preview-controls > span { font: 12px var(--ds-font-code); white-space: nowrap; }
+.story-preview-body > p { font-size: 12px; color: var(--ds-text-secondary); line-height: 1.8; }
+.export-outcome { display: grid; gap: 20px; color: var(--ds-text-primary); }
+.export-outcome p { font-size: 13px; line-height: 1.8; margin: 0; }
+.export-outcome fieldset { border: 1px solid var(--ds-border-default); border-radius: 6px; padding: 16px; display: grid; gap: 14px; }
+.export-outcome fieldset label { display: flex; gap: 10px; align-items: center; font-size: 13px; line-height: 1.7; }
+.export-outcome input[type="radio"] { width: 16px; height: 16px; accent-color: var(--ds-action-primary); }
+.export-outcome-note { display: grid; gap: 10px; font-size: 13px; }
+.export-outcome-note textarea { width: 100%; box-sizing: border-box; resize: vertical; border: 1px solid var(--ds-border-default); background: var(--ds-bg-surface); color: var(--ds-text-primary); border-radius: 6px; padding: 12px; font: inherit; line-height: 1.8; }
+.export-outcome-costs h3 { margin: 0 0 16px; font-size: 15px; }
+.export-outcome-costs dl { display: grid; gap: 12px; margin: 0 0 16px; }
+.export-outcome-costs dl > div { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 12px; font-size: 13px; line-height: 1.8; }
+.export-outcome-costs dt { color: var(--ds-text-secondary); }
+.export-outcome-costs dd { margin: 0; font-variant-numeric: tabular-nums; }
+.export-outcome-costs > p { font-size: 12px; color: var(--ds-text-secondary); }
+.export-outcome details { border-top: 1px solid var(--ds-border-default); padding-top: 16px; font-size: 13px; }
+.export-outcome summary { cursor: pointer; }
+.export-outcome article { padding: 16px 0; border-bottom: 1px solid var(--ds-border-default); }
+.export-outcome article p { margin: 8px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.export-outcome article small { color: var(--ds-text-secondary); }
+.dlv3-output-library > article > div:last-child { flex-wrap: wrap; }
+@media (max-width: 600px) { .story-preview { margin: 12px; } .story-preview-body { padding: 12px; } .story-preview-subtitle { font-size: 12px; bottom: 6px; } .export-outcome-note textarea { font-size: 16px; } }

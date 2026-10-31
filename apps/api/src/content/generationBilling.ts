@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { Prisma } from "@prisma/client";
-import { inspectModelPrice } from "@aifilm/shared";
+import { inspectModelPrice, type BillingUsage } from "@aifilm/shared";
 import { prisma } from "../db/client.js";
 import { lockTaskCredits, releaseTaskCredits, reserveTaskCredits, settleTaskCredits } from "../billing/taskCredits.js";
 import { quotePrice } from "../billing/pricing.js";
@@ -93,7 +93,11 @@ export async function withContentGenerationOperation<T>(userId: string, contentP
 }
 
 /** One persisted, priced task for each provider call. Save and settle atomically. */
-export async function runBilledContentGeneration<T, R>(project: ContentProjectRoute, title: string, generate: () => Promise<T>, save: (tx: Prisma.TransactionClient, result: T) => Promise<R>): Promise<R> {
+export async function runBilledContentGeneration<T, R>(project: ContentProjectRoute, title: string, generate: () => Promise<T>, save: (tx: Prisma.TransactionClient, result: T) => Promise<R>, options?: {
+  maximumCredits: number;
+  billingInput?: BillingUsage;
+  onReserved?: (tx: Prisma.TransactionClient, taskId: string, maximumCredits: number) => Promise<void>;
+}): Promise<R> {
   const operation = contexts.getStore();
   if (!operation || operation.userId !== project.userId || operation.contentProjectId !== project.id) throw new Error("内容生成缺少操作锁");
   const task = await prisma.$transaction(async (tx) => {
@@ -104,9 +108,12 @@ export async function runBilledContentGeneration<T, R>(project: ContentProjectRo
     const pricing = inspectModelPrice(rows, { providerId: provider.id, modality: "text", model: project.textModel });
     if (!pricing.price) throw new Error(pricing.state === "conflict" ? "所选文本模型存在多条启用价格，请联系管理员核对" : "所选文本模型尚未配置有效价格，请联系管理员");
     const price = pricing.price;
+    const estimate = await quotePrice(price, options?.billingInput, tx);
+    if (options && estimate > options.maximumCredits) throw new Error("本步报价超过已批准的费用上限，请重新核对报价。");
     const id = `content_text_${crypto.randomUUID()}`;
-    const row = await tx.generationTask.create({ data: { id, userId: project.userId, projectId: null, projectName: project.title, type: "text", title, provider: provider.id, model: project.textModel, status: "running", estimatedCredits: await quotePrice(price, undefined, tx), jobId: `${billingPrefix(operation)}${id}` } });
+    const row = await tx.generationTask.create({ data: { id, userId: project.userId, projectId: null, projectName: project.title, type: "text", title, provider: provider.id, model: project.textModel, status: "running", estimatedCredits: estimate, ...(options?.billingInput ? { requestPayload: { billingInput: options.billingInput } as unknown as Prisma.InputJsonValue } : {}), jobId: `${billingPrefix(operation)}${id}` } });
     await reserveTaskCredits(tx, { taskId: id, userId: project.userId, description: `${title}：冻结积分` });
+    await options?.onReserved?.(tx, id, estimate);
     return row;
   });
   try {

@@ -85,6 +85,43 @@ test("HTTP business boundaries: sessions, administrator writes, private media an
       sessions.push({ token: body.token, cookie: response.headers.get("set-cookie")!.split(";")[0]! });
     }
     const [owner, other, admin] = sessions as [typeof sessions[number], typeof sessions[number], typeof sessions[number]];
+    await t.test("creator state, private outcomes and tail frames require login and ownership; insights require administrator access", async () => {
+      const creator = "/api/content/creator";
+      const outcome = `/api/projects/${projectId}/export/jobs/missing/outcome`;
+      const tail = `/api/projects/${projectId}/storyboards/missing/tail-frame`;
+      for (const [path, method, body] of [
+        [`${creator}/preference`, "GET", undefined],
+        [`${creator}/projects`, "POST", {}],
+        [outcome, "GET", undefined], [outcome, "POST", {}],
+        [tail, "POST", {}],
+        [`/api/projects/${projectId}/creator-events`, "POST", { event: "creator_preview_viewed" }]
+      ] as const) assert.equal((await request(path, undefined, method, body)).status, 401, path);
+      const create = await request(`${creator}/projects`, owner.token, "POST", {
+        requestId: crypto.randomUUID(), title: "HTTP private story", textProvider: providerId, textModel: "test-model",
+        brief: { format: "short", material: "idea", intent: "小猫找到回家的路", durationSeconds: 30, audience: "所有观众", emotion: "温暖", mustKeep: "", fidelity: "faithful" }
+      });
+      assert.equal(create.status, 200, await create.clone().text());
+      const content = await create.json() as { id: string };
+      try {
+        assert.equal((await request(`${creator}/projects/${content.id}`, owner.token)).status, 200);
+        assert.equal((await request(`${creator}/projects/${content.id}`)).status, 401);
+        assert.equal((await request(`${creator}/projects/${content.id}`, other.token)).status, 404);
+        assert.equal((await request(`${creator}/projects/${content.id}/quote`, other.token, "POST", { maxCalls: 1 })).status, 404);
+        assert.equal((await request(`${creator}/projects/${content.id}/runs/missing/execute`, other.token, "POST", {})).status, 404);
+        assert.equal((await request(`/api/projects/${projectId}/creator-events`, other.token, "POST", { event: "creator_preview_viewed" })).status, 404);
+        for (const path of [outcome, tail]) {
+          const response = await request(path, other.token, path === tail ? "POST" : "GET", path === tail ? { frameUrl: mediaPath } : undefined);
+          assert.ok(response.status >= 400 && response.status < 500, `${path}: ${response.status}`);
+        }
+        assert.equal((await request("/api/admin/creator-insights")).status, 401);
+        assert.equal((await request("/api/admin/creator-insights", owner.token)).status, 403);
+        const insights = await request("/api/admin/creator-insights", admin.token);
+        assert.equal(insights.status, 200, await insights.clone().text());
+        assert.ok(Array.isArray((await insights.json() as { stages: unknown[] }).stages));
+      } finally {
+        await db.contentProject.delete({ where: { id: content.id } });
+      }
+    });
     await t.test("production prompts enforce administrator access, preview validation and publication revisions", async () => {
       const key = "episode_adaptation", path = `/api/admin/production-prompts/${key}`;
       assert.equal((await request("/api/admin/production-prompts")).status, 401);

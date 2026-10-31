@@ -498,6 +498,8 @@ export function mapAsset(row: any): AssetItem {
     referenceUrl: row.referenceUrl ?? undefined,
     status: row.status,
     relatedCharacterId: row.relatedCharacterId ?? undefined,
+    reusedFromAssetId: row.reusedFromAssetId ?? undefined,
+    reusedFromUpdatedAt: row.reusedFromUpdatedAt?.toISOString(),
     isHistorical: isHistoricalAssetId(row.id)
   };
 }

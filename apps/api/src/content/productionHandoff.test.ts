@@ -15,3 +15,9 @@ test("handoff entity identity is stable across repeated syncs and independent be
   assert.equal(handoffEntityId("role", "p", "小雨"), handoffEntityId("role", "p", "小雨"));
   assert.notEqual(handoffEntityId("role", "p", "小雨"), handoffEntityId("role", "q", "小雨"));
 });
+
+test("Chinese scene numbers identify locations without becoming characters", () => {
+  const entities = collectHandoffEntities({ script: "场景一：旧书店，日。\n场景十二：钟楼，夜。\n阿青：我们出发。", episodes: [{ characters: [{ name: "阿青", identity: "修表师" }] }] });
+  assert.deepEqual(entities.characters.map(item => item.name), ["阿青"]);
+  assert.deepEqual(entities.scenes.map(item => item.name), ["旧书店", "钟楼"]);
+});

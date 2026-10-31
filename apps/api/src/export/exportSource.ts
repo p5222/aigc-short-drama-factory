@@ -10,6 +10,7 @@ export interface ExportSourceSnapshot {
   scope: "project" | "selection";
   storyboardIds: string[];
   inputFingerprint: string;
+  durationSeconds?: number;
   deliveryEdit?: DeliveryEditReference;
 }
 
@@ -36,6 +37,7 @@ function captureWithAssets(workflow: ProjectWorkflow, type: ExportJob["type"], s
     shots: workflow.storyboards.map(({ status: _status, ...shot }) => ({ shot, video: assetInput(`video_${shot.id}`), image: assetInput(`image_${shot.id}`) }))
   } : type === "tts" ? { cues } : { subtitles };
   return { version: 1, type, projectId: workflow.project.id, scope, storyboardIds: workflow.storyboards.map(shot => shot.id),
+    durationSeconds: workflow.storyboards.reduce((sum, shot) => sum + (Number.isFinite(shot.duration) && shot.duration > 0 ? shot.duration : 0), 0),
     inputFingerprint: crypto.createHash("sha256").update(JSON.stringify(stable(input))).digest("hex"),
     ...(workflow.exportEdit ? { deliveryEdit: workflow.exportEdit } : {}) };
 }

@@ -48,6 +48,7 @@ model User {
   analyticsEvents AnalyticsEvent[]
   feedbacks    UserFeedback[]
   showcaseWorks ShowcaseWork[]
+  creatorPreference CreatorPreference?
   supportTickets SupportTicket[]
   supportRequests SupportTicketRequest[] @relation("SupportRequestActor")
   lastLoginAt  DateTime?
@@ -174,6 +175,8 @@ model Asset {
   referenceUrl       String?
   status             String
   relatedCharacterId String?
+  reusedFromAssetId  String?
+  reusedFromUpdatedAt DateTime?
   qualityReports     QualityReport[]
   feedbacks          UserFeedback[]
   createdAt          DateTime @default(now())
@@ -816,6 +819,7 @@ model ExportJob {
   errorReason String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+  outcome     ExportOutcome?
 
   @@index([userId])
   @@index([projectId])
@@ -953,6 +957,9 @@ model ContentProject {
   textModel          String   @default("gpt-5.5")
   productionProjectId String?
   importKey          String?  @unique
+  brief              Json     @default("{}")
+  revision           Int      @default(1)
+  parentContentId    String?
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
   sources            SourceDocument[]
@@ -962,9 +969,98 @@ model ContentProject {
   scripts            ScriptVersion[]
   entities           EntityCatalog?
   episodes           ProductionEpisode[]
+  facts              StoryFact[]
+  creatorRuns        CreatorRun[]
 
   @@index([userId, updatedAt])
   @@index([status])
+}
+
+model CreatorPreference {
+  userId       String   @id
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  guideVersion Int      @default(1)
+  guideState   String   @default("new")
+  updatedAt    DateTime @updatedAt
+}
+
+model ExportOutcome {
+  exportJobId       String   @id
+  exportJob         ExportJob @relation(fields: [exportJobId], references: [id], onDelete: Cascade)
+  userId            String
+  outputFingerprint String
+  verdict           String
+  note              String   @default("")
+  revision          Int      @default(1)
+  history           Json     @default("[]")
+  updatedAt         DateTime @updatedAt
+
+  @@index([userId])
+}
+
+// Append-only facts; an author revision supersedes a row without destroying evidence.
+model StoryFact {
+  id               String   @id
+  contentProjectId String
+  contentProject   ContentProject @relation(fields: [contentProjectId], references: [id], onDelete: Cascade)
+  subject          String
+  predicate        String
+  value            String
+  status           String   @default("candidate")
+  sourceType       String
+  sourceId         String
+  sourceVersion    Int
+  validFrom        Int      @default(1)
+  validTo          Int?
+  knownBy          String[]
+  supersedesId     String?
+  revision         Int      @default(1)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([contentProjectId, status, validFrom])
+  @@index([contentProjectId, sourceId])
+}
+
+model CreatorRun {
+  id               String   @id
+  userId           String
+  contentProjectId String
+  contentProject   ContentProject @relation(fields: [contentProjectId], references: [id], onDelete: Cascade)
+  requestId        String
+  inputHash        String
+  input            Json
+  inputRevision    Int
+  skillVersion     String
+  status           String   @default("pending")
+  maxCalls         Int      @default(1)
+  maximumCredits   Int
+  cancelRequested  Boolean  @default(false)
+  error            String?
+  steps            CreatorStep[]
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([userId, requestId])
+  @@index([contentProjectId, createdAt])
+}
+
+model CreatorStep {
+  id            String   @id
+  runId         String
+  run           CreatorRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  sequence      Int
+  tool          String
+  status        String   @default("pending")
+  taskId        String?
+  inputManifest Json     @default("{}")
+  output        Json     @default("{}")
+  findings      Json     @default("[]")
+  error         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([runId, sequence])
 }
 
 model ProductionEpisode {

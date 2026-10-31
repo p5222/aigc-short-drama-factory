@@ -5,6 +5,7 @@ export * from "./modelPricing.js";
 export * from "./creditPricing.js";
 export * from "./creditCenter.js";
 export * from "./deliveryEdit.js";
+export * from "./creatorAgent.js";
 
 export type ProjectStatus = "draft" | "planning" | "scripting" | "storyboarding" | "asseting" | "rendering" | "completed";
 
@@ -141,6 +142,8 @@ export interface AssetItem {
   status: TaskStatus;
   relatedCharacterId?: string;
   isHistorical?: boolean;
+  reusedFromAssetId?: string;
+  reusedFromUpdatedAt?: string;
 }
 
 export interface StoryboardShot {
@@ -718,11 +721,15 @@ export interface ContentProjectSummary {
   hasEntities: boolean;
   importKey?: string;
   episodes?: ProductionEpisode[];
+  brief?: import("./creatorAgent.js").CreatorBrief | null;
+  revision?: number;
 }
 
 export interface ContentProductionPackage {
   projectId: string;
   productionProjectId?: string;
+  brief?: import("./creatorAgent.js").CreatorBrief | null;
+  revision?: number;
   episodes?: ProductionEpisode[];
   source?: { id: string; kind: "novel" | "short_story" | "idea" | "script"; title: string; content: string; updatedAt: string };
   analysis?: { id: string; version: number; status: ContentStepStatus; result: Record<string, unknown>; createdAt: string };

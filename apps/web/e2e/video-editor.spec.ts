@@ -51,6 +51,7 @@ async function fixtures(page: Page) {
     return route.fulfill({ json: values[path] ?? [] });
   });
   return { historyId, writes: () => writes, setConflict: () => { conflict = true; }, failRefresh: () => { failRefresh = true; },
+    addImages: () => { for (const shot of storyboards) assets.push({ id: `image_${shot.id}`, projectId: project.id, type: "image", name: "现有图片夹具", description: "", prompt: "", referenceUrl: "/media/cineart-home/desert_poster.jpg", status: "succeeded" }); },
     replaceVideo: () => { assets[0].referenceUrl = "/storage/editor-replaced.mp4"; },
     quote: () => quoteRequest, exported: () => exportRequest };
 }
@@ -169,4 +170,49 @@ test("studio keeps generated clips accessible after final exports and previews h
   await screenshot(page, "studio-outputs", info.project.name);
   await page.getByRole("button", { name: "继续剪辑", exact: true }).click();
   await expect(page.getByLabel("镜头入点秒数")).toBeVisible();
+});
+
+test("storyboard preview follows shot timing and remains clearly labeled as static frames", async ({ page }, info) => {
+  const fixture = await fixtures(page); fixture.addImages();
+  await page.goto("/#/project/video-edit");
+  await page.getByRole("navigation", { name: "项目生产阶段" }).getByRole("button", { name: "分镜", exact: true }).click();
+  await page.getByRole("button", { name: /预览故事节奏/ }).click();
+  await expect(page.getByText("分镜预览 · 静帧按时长播放", { exact: true })).toBeVisible();
+  await expect(page.locator(".story-preview-stage img")).toBeVisible();
+  await expect.poll(() => page.locator(".story-preview-stage img").evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0);
+  await page.getByRole("button", { name: "播放分镜预览" }).click();
+  await expect.poll(() => page.getByLabel("分镜预览进度", { exact: true }).inputValue()).not.toBe("0");
+  await page.getByRole("button", { name: "暂停分镜预览" }).click();
+  await page.getByLabel("分镜预览进度", { exact: true }).fill("7");
+  await expect(page.locator(".story-preview-body")).toContainText("镜头 2");
+  await screenshot(page, "storyboard-preview", info.project.name);
+});
+
+test("export feedback binds the viewed version and preserves unknown costs", async ({ page }, info) => {
+  await fixtures(page);
+  let input: any;
+  let report: any = { exportJobId: "old-film", outputFingerprint: "a".repeat(64), reviewRevision: 0, review: null, history: [], durationSeconds: 15,
+    costs: { taskCount: 5, failedTaskCount: 2, unknownCostTasks: 1, unsettledTasks: 0, credits: 40, knownCredits: 40, costMicros: null, knownCostMicros: 1000, invoiceStatus: "unverified", creditsPerUsableSecond: null, reusedAssets: 1 } };
+  await page.route("**/api/projects/video-edit/export/jobs/old-film/outcome", async route => {
+    if (route.request().method() === "POST") {
+      input = route.request().postDataJSON();
+      report = { ...report, reviewRevision: 1, review: { verdict: input.verdict, note: input.note, revision: 1, updatedAt: new Date().toISOString() }, costs: { ...report.costs, creditsPerUsableSecond: 40 / 15 } };
+    }
+    return route.fulfill({ json: report });
+  });
+  await openEditor(page);
+  if (info.project.name === "mobile") await page.getByRole("button", { name: "打开检查器", exact: true }).click();
+  await page.getByRole("button", { name: "评价成片 old-film" }).click();
+  const dialog = page.getByRole("dialog", { name: "这版成片，可以使用了吗？" });
+  await expect(dialog).toContainText("未知（1 项缺少完整记录）");
+  await dialog.getByLabel("可用，达到我的交付要求").check();
+  await dialog.getByLabel("具体原因 / 下一版要改什么").fill("故事表达清楚，人物一致，节奏可以接受。");
+  await dialog.getByRole("button", { name: "保存作者反馈" }).click();
+  await expect(dialog.getByRole("status")).toContainText("作者反馈已保存");
+  expect(input.outputFingerprint).toBe("a".repeat(64));
+  expect(input.expectedRevision).toBe(0);
+  await expect(dialog).toContainText("2.67");
+  await screenshot(page, "export-author-outcome", info.project.name);
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
 });

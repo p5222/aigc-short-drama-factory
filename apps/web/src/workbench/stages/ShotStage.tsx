@@ -40,6 +40,7 @@ import {
   type ShotMode
 } from "../model";
 import { useWorkbench, type WorkbenchSaveState } from "../WorkbenchContext";
+import { StoryboardPreview } from "./StoryboardPreview";
 
 interface ShotStageProps {
   providers: ModelProvider[];
@@ -148,7 +149,7 @@ function LoadedShotStage({
     resolveVideoAssetStatus(videoMap.get(id)) !== "running"
     && /^(?:https?:\/\/|\/storage\/|data:image\/)/i.test(imageMap.get(id)?.referenceUrl ?? "")
   ), [assets, storyboards, videoMap, imageMap]);
-  const videoBatchIds = eligibleVideoShotIds.slice(0, VIDEO_BATCH_MAX);
+  const videoBatchIds = eligibleVideoShotIds.filter(id => !selectedIds.length || selectedIds.includes(id)).slice(0, VIDEO_BATCH_MAX);
   const eligibleVideoSet = new Set(videoBatchIds);
   const videoSeconds = storyboards
     .filter((shot) => eligibleVideoSet.has(shot.id))
@@ -358,6 +359,7 @@ function LoadedShotStage({
         </div>
         <small>{activeShot ? formatShot(activeShot, storyboards.indexOf(activeShot)) : "未选择镜头"}</small>
       </header>
+      <StoryboardPreview key={`${project.id}:${activeEpisode}`} projectId={project.id} shots={storyboards} imageMap={imageMap} />
       {state.shotMode === "table" ? storyboards.length ? <ShotTable storyboards={storyboards} activeShot={activeShot} onSelect={selectShot} /> : <p className="wb-empty-state">第 {activeEpisode} 集暂无镜头，请先在内容阶段拆解这一集。</p> : null}
       {state.shotMode === "image" ? <ShotImageCanvas shot={activeShot} imageUrl={activeImage?.referenceUrl} onPreview={() => activeImage?.referenceUrl && onPreview({ url: activeImage.referenceUrl, title: activeImage.name })} /> : null}
       {state.shotMode === "video" ? <ShotVideoCanvas shot={activeShot} videoUrl={activeVideo?.referenceUrl} status={resolveVideoAssetStatus(activeVideo)} onCaptureTailFrame={async (frameUrl, sourceVideoUrl) => { if (!activeShot) return; setPending("tail-frame"); setError(""); try { await api.captureStoryboardTailFrame(project.id, activeShot.id, frameUrl, sourceVideoUrl); await onRefresh(project.id); setMessage(activeShot.shotNo < storyboards.filter((item) => item.episodeNo === activeShot.episodeNo).length ? "尾帧已保存，并已作为下一镜头首帧。" : "尾帧已保存。" ); } catch (cause) { setError(errorText(cause, "尾帧保存失败，请重试。")); } finally { setPending(""); } }} /> : null}
@@ -379,7 +381,7 @@ function LoadedShotStage({
         <small>第 {activeEpisode} 集有 {eligibleVideoShotIds.length} 个待生成片段 · 本批 {videoBatchIds.length} 个，共 {videoSeconds}s · {videoUnit}，实际扣费以后端本批次结果为准</small>
         {!eligibleVideoShotIds.length ? <p>当前没有可生成片段。请先生成成功首帧，或等待现有视频任务完成。</p> : null}
         {latestVideoTask?.status === "failed" ? <p className="wb-action-feedback--error">项目视频任务失败：{latestVideoTask.errorReason || "未提供失败原因"}</p> : null}
-        <button className="wb-primary-button" type="button" disabled={!eligibleVideoShotIds.length || Boolean(pending) || refreshRequired || hasUnsavedDraft || !validVideoRoute} onClick={() => void generateVideos()}>{pending === "video" ? <Loader2 className="wb-spin" /> : <Film />}生成当前批次视频</button>
+        <button className="wb-primary-button" type="button" disabled={!videoBatchIds.length || Boolean(pending) || refreshRequired || hasUnsavedDraft || !validVideoRoute} onClick={() => void generateVideos()}>{pending === "video" ? <Loader2 className="wb-spin" /> : <Film />}{selectedIds.length ? `生成已选 ${videoBatchIds.length} 个视频` : "生成当前批次视频"}</button>
       </section> : null}
       {refreshRequired ? <button className="wb-secondary-button wb-shot-refresh" type="button" disabled={pending === "refresh" || hasUnsavedDraft} onClick={() => void retryRefresh()}>{pending === "refresh" ? <Loader2 className="wb-spin" /> : null}重试刷新</button> : null}
     </div>}
