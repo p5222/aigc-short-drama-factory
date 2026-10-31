@@ -6,6 +6,7 @@ import { prisma } from "../db/client.js";
 import { lockTaskCredits, releaseTaskCredits, reserveTaskCredits, settleTaskCredits } from "../billing/taskCredits.js";
 import { quotePrice } from "../billing/pricing.js";
 import { withTaskMeter } from "../billing/metering.js";
+import { ContentMutationError } from "./contentMutation.js";
 
 type ContentProjectRoute = { id: string; userId: string; title: string; textProvider: string; textModel: string };
 type Operation = { id: string; userId: string; contentProjectId: string };
@@ -56,7 +57,7 @@ export async function withContentGenerationOperation<T>(userId: string, contentP
     // before the first OperationTask exists; no row lock is held across a model call.
     await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtext(${`content-generation:${contentProjectId}`}))`;
     const project = await tx.contentProject.findFirst({ where: { id: contentProjectId, userId } });
-    if (!project) throw new Error("内容项目不存在");
+    if (!project) throw new ContentMutationError(404, "内容项目不存在");
     const active = await tx.generationTask.findMany({ where: { userId, jobId: { startsWith: operationPrefix(contentProjectId) }, status: { in: ["pending", "running"] } } });
     for (const candidate of active) {
       await tx.$queryRaw`SELECT "id" FROM "GenerationTask" WHERE "id" = ${candidate.id} FOR UPDATE`;

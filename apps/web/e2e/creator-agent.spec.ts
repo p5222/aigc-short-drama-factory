@@ -155,14 +155,14 @@ test("changing models requires saving before quote; fact and feedback drafts sur
   await page.getByRole("button", { name: "保存模型选择" }).click();
   await expect(page.getByRole("button", { name: "核对修订报价" })).toBeEnabled();
   expect(server.writes.find(write => write.path.endsWith("/model-route"))?.body.textModel).toBe("fixture-next");
-  await page.getByLabel("修订方向", { exact: true }).fill("让结尾更加自然");
+  await page.getByRole("textbox", { name: "修订方向", exact: true }).fill("让结尾更加自然");
   await page.getByRole("button", { name: "添加故事设定" }).click();
   await page.getByLabel("人物 / 对象").fill("邮差");
   await page.getByLabel("事实内容").fill("他不知道信里写了什么");
   await expect(page.getByRole("button", { name: "核对修订报价" })).toBeDisabled();
   page.on("dialog", dialog => dialog.accept());
   await page.reload();
-  await expect(page.getByLabel("修订方向", { exact: true })).toHaveValue("让结尾更加自然");
+  await expect(page.getByRole("textbox", { name: "修订方向", exact: true })).toHaveValue("让结尾更加自然");
   await page.getByRole("button", { name: "添加故事设定" }).click();
   await expect(page.getByLabel("人物 / 对象")).toHaveValue("邮差");
   await expect(page.getByLabel("事实内容")).toHaveValue("他不知道信里写了什么");
