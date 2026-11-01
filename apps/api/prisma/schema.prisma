@@ -900,6 +900,14 @@ model RedeemRedemption {
   @@index([createdAt, id])
 }
 
+model PlatformSetting {
+  key       String   @id
+  version   Int      @default(1)
+  values    Json
+  updatedBy String
+  updatedAt DateTime @updatedAt
+}
+
 model ModelProvider {
   id         String   @id
   name       String

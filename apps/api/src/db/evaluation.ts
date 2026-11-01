@@ -25,6 +25,7 @@ import type {
   UserFeedback
 } from "@aifilm/shared";
 import { callTextModelJson, hasTextModelConfig, textModelName, textProviderName } from "../agents/generator.js";
+import { providerRuntimeOptions } from "../providers/connection.js";
 import { prisma } from "./client.js";
 import { mapEvaluationDataset, mapEvaluationRun, mapExperimentRun, mapProject, mapPromptVersion, mapQualityReport, mapUserFeedback } from "./mappers.js";
 
@@ -1959,11 +1960,15 @@ async function runLlmEvaluators(
 
   for (const evaluator of options.evaluators) {
     try {
-      if (!hasTextModelConfig({ textProvider: evaluator.provider, textModel: evaluator.model })) {
+      const provider = await prisma.modelProvider.findUnique({ where: { id: evaluator.provider } });
+      if (!provider?.enabled || provider.modality !== "text" || !provider.models.includes(evaluator.model)) throw new Error("评测渠道或模型已停用");
+      const runtime = providerRuntimeOptions(provider);
+      if (!hasTextModelConfig({ textProvider: evaluator.provider, textModel: evaluator.model, ...runtime })) {
         failures.push(`${evaluator.provider}/${evaluator.model} 未配置可用 API Key 或 Base URL。`);
         continue;
       }
       const result = await callTextModelJson<LlmEvaluationOutput>({
+        ...runtime,
         textProvider: evaluator.provider,
         textModel: evaluator.model,
         system: "你是严谨的 AI 漫剧生产质检评测员。只输出合法 JSON，不输出 Markdown。",

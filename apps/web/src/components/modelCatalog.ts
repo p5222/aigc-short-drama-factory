@@ -7,7 +7,7 @@ export const modelFamilyNames: Record<ModelFamily, string> = {
   claude: "Anthropic Claude", seed: "豆包 Doubao · Seed", kling: "可灵 Kling", flux: "FLUX", minimax: "MiniMax",
   kimi: "Kimi", zhipu: "智谱 GLM", generic: "其他 / 私有模型"
 };
-export type ModelState = "configured" | "unknown" | "disabled" | "missing_key" | "cooling" | "limited" | "missing_price" | "price_conflict" | "invalid_price";
+export type ModelState = "configured" | "unknown" | "disabled" | "unsupported" | "missing_endpoint" | "missing_key" | "cooling" | "limited" | "missing_price" | "price_conflict" | "invalid_price";
 export interface CatalogModel {
   key: string;
   model: string;
@@ -35,10 +35,14 @@ const purposes: Record<ModelModality, string> = {
   embedding: "内容检索与语义匹配"
 };
 const stateLabels: Record<ModelState, string> = {
+  unsupported: "待配置协议",
+  missing_endpoint: "待配置地址",
   configured: "配置齐全", unknown: "连接待确认", disabled: "已停用", missing_key: "待配置",
   cooling: "冷却中", limited: "额度暂不可用", missing_price: "未配置价格", price_conflict: "价格配置冲突", invalid_price: "价格配置无效"
 };
 const stateDescriptions: Partial<Record<ModelState, string>> = {
+  unsupported: "当前渠道尚未接入受支持的接口协议，请管理员配置后再使用。",
+  missing_endpoint: "当前渠道缺少有效的接口根地址，请管理员在模型渠道中填写。",
   unknown: "连接状态尚未确认，实际调用时由服务器校验。",
   disabled: "渠道已停用，请选择其他渠道或联系管理员。",
   missing_key: "渠道尚未配置发起调用所需的服务端密钥。",
@@ -115,11 +119,15 @@ export function buildModelCatalog(providers: ModelProvider[], prices?: ModelPric
     const priceState: ModelState | undefined = prices === undefined || pricing.state === "ready" ? undefined
       : pricing.state === "missing" ? "missing_price" : pricing.state === "conflict" ? "price_conflict" : "invalid_price";
     const issues = [
+      provider.connectionSupported === false ? "unsupported" : undefined,
+      provider.endpointConfigured === false ? "missing_endpoint" : undefined,
       provider.apiKeyConfigured === false ? "missing_key" : undefined,
       quota?.coolingDown ? "cooling" : quota?.available === false ? "limited" : undefined,
       priceState
     ].filter((state): state is ModelState => Boolean(state)).map(state => stateLabels[state]);
     const state: ModelState = !provider.enabled ? "disabled"
+      : provider.connectionSupported === false ? "unsupported"
+      : provider.endpointConfigured === false ? "missing_endpoint"
       : provider.apiKeyConfigured === false ? "missing_key"
       : quota?.coolingDown ? "cooling"
       : quota?.available === false ? "limited"
@@ -144,7 +152,7 @@ export function searchModelCatalog(items: CatalogModel[], query: string): Catalo
 
 export function defaultModelRoute(providers: ModelProvider[], modality: ModelModality, prices?: ModelPrice[]): { providerId: string; model: string } {
   const items = buildModelCatalog(providers.filter(provider => provider.modality === modality), prices).filter(item => item.selectable);
-  const item = items.find(item => item.preferred) ?? items[0];
+  const item = items.find(item => item.provider.platformDefault && item.preferred) ?? items.find(item => item.provider.platformDefault) ?? items.find(item => item.preferred) ?? items[0];
   return { providerId: item?.provider.id ?? "", model: item?.model ?? "" };
 }
 

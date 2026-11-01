@@ -1,3 +1,5 @@
+import { readProviderConnection, isSupportedProviderProtocol } from "@aifilm/shared";
+import { decryptSettingSecret } from "../config/secrets.js";
 import type {
   AssetItem,
   CharacterProfile,
@@ -29,7 +31,8 @@ import type {
   AnalyticsEvent
 } from "@aifilm/shared";
 import { getProviderQuotaSnapshot } from "../providers/modelQuota.js";
-import { providerEnvApiKey } from "../providers/credentials.js";
+import { providerEnvApiKey, providerDefaultBaseUrl } from "../providers/credentials.js";
+import { validateProviderUrl } from "../providers/connection.js";
 import { isHistoricalAssetId } from "./mediaAssetIdentity.js";
 import { redeemCodeStatus } from "@aifilm/shared";
 
@@ -372,7 +375,9 @@ export function mapRedeemCode(row: any): RedeemCode {
 }
 
 export async function mapProvider(row: any): Promise<ModelProvider> {
-  const apiKey = typeof row.apiKey === "string" ? row.apiKey : "";
+  let endpointConfigured = false;
+  try { endpointConfigured = Boolean(validateProviderUrl(row.baseUrl || providerDefaultBaseUrl(row.id, row.modality) || "")); } catch { /* Expose status without returning the private URL. */ }
+  const apiKey = typeof row.apiKey === "string" ? decryptSettingSecret(row.apiKey, `provider:${row.id}`) : "";
   const envKey = providerEnvApiKey(row.id, row.modality);
   const effectiveKey = apiKey || envKey;
   const routing = readProviderRoutingState(row.capability, row.models);
@@ -401,7 +406,11 @@ export async function mapProvider(row: any): Promise<ModelProvider> {
       modelPool: routing.modelPool,
       activeModel,
       quotaStatus
-    }
+    },
+    connection: readProviderConnection(row.id, row.modality, row.capability),
+    connectionSupported: isSupportedProviderProtocol(readProviderConnection(row.id, row.modality, row.capability)?.protocol, row.modality),
+    endpointConfigured,
+    updatedAt: row.updatedAt?.toISOString()
   };
 }
 

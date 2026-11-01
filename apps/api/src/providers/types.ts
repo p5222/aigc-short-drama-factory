@@ -1,4 +1,4 @@
-import type { ModelModality, ProviderCapability } from "@aifilm/shared";
+import type { ModelModality, ProviderCapability, ProviderConnection } from "@aifilm/shared";
 
 export interface ProviderAdapter {
   id: string;
@@ -8,6 +8,7 @@ export interface ProviderAdapter {
 }
 
 export interface ImageGenerationInput {
+  connection?: ProviderConnection;
   prompt: string;
   negativePrompt?: string;
   referenceImageUrls?: string[];
@@ -31,6 +32,7 @@ export interface ImageGenerationResult {
 }
 
 export interface VideoGenerationInput {
+  connection?: ProviderConnection;
   prompt: string;
   imageUrl?: string;
   ratio?: "9:16" | "16:9" | "1:1";

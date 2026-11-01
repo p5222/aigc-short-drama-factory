@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { providerRuntimeOptions } from "../providers/connection.js";
 import type { Prisma } from "@prisma/client";
 import { analyzeProductionEpisodes, countEffectiveCharacters, resolveNextEpisodeNumbers, type EpisodeSourceType } from "@aifilm/shared";
 import { z } from "zod";
@@ -102,8 +103,7 @@ async function runtime(project: { textProvider: string; textModel: string }) {
   return {
     textProvider: project.textProvider,
     textModel: project.textModel,
-    apiKey: ["manjiao", "pipp"].includes(project.textProvider) ? undefined : provider?.apiKey ?? undefined,
-    baseUrl: provider?.baseUrl ?? undefined
+    ...providerRuntimeOptions(provider)
   };
 }
 

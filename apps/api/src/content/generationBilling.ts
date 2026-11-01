@@ -7,6 +7,7 @@ import { lockTaskCredits, releaseTaskCredits, reserveTaskCredits, settleTaskCred
 import { quotePrice } from "../billing/pricing.js";
 import { withTaskMeter } from "../billing/metering.js";
 import { ContentMutationError } from "./contentMutation.js";
+import { assertProductionMediaProvider } from "../billing/mediaTask.js";
 
 type ContentProjectRoute = { id: string; userId: string; title: string; textProvider: string; textModel: string };
 type Operation = { id: string; userId: string; contentProjectId: string };
@@ -105,6 +106,7 @@ export async function runBilledContentGeneration<T, R>(project: ContentProjectRo
     await lockActiveOperation(tx, operation);
     const provider = await tx.modelProvider.findFirst({ where: { id: project.textProvider, enabled: true, modality: "text" } });
     if (!provider?.models.includes(project.textModel)) throw new Error("所选文本模型不可用，请先切换模型");
+    assertProductionMediaProvider(provider, project.textProvider, project.textModel, "text");
     const rows = await tx.modelPrice.findMany({ where: { providerId: provider.id, modality: "text", model: project.textModel, enabled: true }, take: 2 });
     const pricing = inspectModelPrice(rows, { providerId: provider.id, modality: "text", model: project.textModel });
     if (!pricing.price) throw new Error(pricing.state === "conflict" ? "所选文本模型存在多条启用价格，请联系管理员核对" : "所选文本模型尚未配置有效价格，请联系管理员");

@@ -30,7 +30,7 @@ test("creation request replay and project deletion preserve tasks and ledger", {
     account: await db.creditAccount.findUniqueOrThrow({ where: { userId } })
   });
   try {
-    await db.modelProvider.create({ data: { id: providerId, name: "Creation fixture", modality: "text", models: ["fixture-text"], costHint: "isolated", enabled: true, capability: {} } });
+    await db.modelProvider.create({ data: { id: providerId, name: "Creation fixture", modality: "text", models: ["fixture-text"], costHint: "isolated", enabled: true, capability: { connection: { protocol: "openai-chat" } } } });
     await db.modelPrice.create({ data: { id: priceId, providerId, providerName: "Creation fixture", model: "fixture-text", modality: "text", unit: "text_run", unitCredits: 37 } });
 
     await t.test("concurrent identical requests and reordered JSON create and freeze once", async () => {

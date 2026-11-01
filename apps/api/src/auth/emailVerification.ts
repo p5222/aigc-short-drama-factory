@@ -23,8 +23,8 @@ export function registrationMailConfig(env: NodeJS.ProcessEnv = process.env) {
   return { host, port, secure, auth: { user, pass } };
 }
 
-export async function sendRegistrationEmail(email: string, code: string) {
-  const config = registrationMailConfig();
+export async function sendRegistrationEmail(email: string, code: string, env: NodeJS.ProcessEnv = process.env) {
+  const config = registrationMailConfig(env);
   if (!config) throw new EmailVerificationError(503, "邮箱验证服务暂未开通，请稍后再试或联系平台管理员。");
   const transport = nodemailer.createTransport({
     ...config, pool: false, requireTLS: !config.secure,
@@ -82,13 +82,13 @@ export class EmailVerificationService {
   constructor(
     private redis: Redis,
     private sendMail = sendRegistrationEmail,
-    private mailAvailable = () => Boolean(registrationMailConfig()),
+    private mailAvailable: () => boolean | Promise<boolean> = () => Boolean(registrationMailConfig()),
     private prefix = "registration:v1:"
   ) {}
 
-  policy() {
+  async policy() {
     return { emailDomain: "qq.com" as const, phoneRequired: true as const, smsRequired: false as const,
-      emailVerificationRequired: true as const, mailAvailable: this.mailAvailable(), codeTtlSeconds: CODE_TTL, resendAfterSeconds: COOLDOWN };
+      emailVerificationRequired: true as const, mailAvailable: await this.mailAvailable(), codeTtlSeconds: CODE_TTL, resendAfterSeconds: COOLDOWN };
   }
 
   private async operation<T>(action: () => Promise<T>): Promise<T> {
@@ -100,7 +100,7 @@ export class EmailVerificationService {
 
   async send(email: string, ip: string) {
     if (!QQ_EMAIL_PATTERN.test(email)) throw new EmailVerificationError(400, "请使用 qq.com 邮箱注册。");
-    if (!this.mailAvailable()) throw new EmailVerificationError(503, "邮箱验证服务暂未开通，请稍后再试或联系平台管理员。");
+    if (!await this.mailAvailable()) throw new EmailVerificationError(503, "邮箱验证服务暂未开通，请稍后再试或联系平台管理员。");
     return this.operation(async () => {
       const codeKey = this.prefix + "code:" + digest(email);
       const nonce = crypto.randomBytes(24).toString("hex");

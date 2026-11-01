@@ -24,6 +24,7 @@ export function inspectAdminPrice(price: ModelPrice, providers: ModelProvider[],
   const result = inspectModelPrice(prices, { providerId: provider.id, modality: provider.modality, model: price.model });
   if (result.state !== "ready") return { state: result.state, label: result.state === "conflict" ? "价格冲突" : "价格无效", detail: result.state === "conflict" ? "同一模型有多条启用价格" : "核对单价和计费单位" };
   if (!provider.enabled) return { state: "disabled_route", label: "渠道停用", detail: "价格已启用，渠道暂不接受新任务" };
+  if (provider.connectionSupported === false || provider.endpointConfigured === false) return { state: "incomplete_route", label: "连接配置不完整", detail: "需在模型路由核对协议和根地址" };
   if (provider.apiKeyConfigured !== true) return { state: "missing_key", label: provider.apiKeyConfigured === false ? "渠道未配置" : "连接待确认", detail: "需在模型路由核对密钥" };
   const quota = provider.routing?.quotaStatus?.find(item => item.model === price.model);
   if (quota?.coolingDown || quota?.available === false) return { state: "limited", label: quota.coolingDown ? "模型冷却中" : "额度暂不可用", detail: "价格有效，当前提交需等待额度恢复" };

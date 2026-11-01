@@ -51,6 +51,7 @@ async function screenshot(page: Page, name: string) {
   await page.screenshot({ path: `${process.env.PLAYWRIGHT_SCREENSHOT_DIR ?? "../../outputs/ui-redesign-20261025/screenshots"}/${name}-${test.info().project.name}.png`, fullPage: true });
 }
 async function newFromSidebar(page: Page) {
+  await expect(page.locator(".side-create")).toBeAttached();
   if (await page.getByRole("button", { name: "打开导航", exact: true }).isVisible()) await page.getByRole("button", { name: "打开导航", exact: true }).click();
   await page.locator(".side-create").click();
 }

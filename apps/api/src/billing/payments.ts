@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
-import type { PrismaClient } from "@prisma/client";
+import type { PrismaClient, Prisma } from "@prisma/client";
+import { effectiveWechatConfig, lockPaymentConfiguration } from "../config/platformSettings.js";
 import { prisma } from "../db/client.js";
 import { mapRechargeOrder } from "../db/mappers.js";
 import { handleRechargeCallback } from "../db/repository.js";
@@ -7,12 +8,12 @@ import { lockCreditAccount } from "./accountCredits.js";
 import { membershipOverview } from "./membership.js";
 import { moneyFen, PaymentError, WechatPay, wechatConfig, type WechatTransaction } from "./wechat.js";
 
-export function paymentAvailability() {
-  try { return { wechat: Boolean(wechatConfig()), membership: Boolean(wechatConfig()), autoRenew: false as const }; }
+export async function paymentAvailability() {
+  try { const ready = Boolean(await effectiveWechatConfig(true)); return { wechat: ready, membership: ready, autoRenew: false as const }; }
   catch { return { wechat: false, membership: false, autoRenew: false as const }; }
 }
-function gateway() {
-  const config = wechatConfig();
+async function gateway(acceptNewOrders = false, db: PrismaClient | Prisma.TransactionClient = prisma) {
+  const config = await effectiveWechatConfig(acceptNewOrders, db);
   if (!config) throw new PaymentError(503, "微信支付暂未开放，请使用店铺卡密或稍后重试。");
   return new WechatPay(config);
 }
@@ -22,9 +23,10 @@ export async function getMembership(userId: string, db: PrismaClient = prisma) {
 
 export type CheckoutInput = { planId: string; kind: "recharge" | "membership"; requestId: string };
 /** Persistent request identity prevents browser/network retries from creating new payable orders. */
-export async function createPaymentOrder(userId: string, input: CheckoutInput, db: PrismaClient = prisma) {
+export async function createPaymentOrder(userId: string, input: CheckoutInput, db: PrismaClient = prisma, beforeCreate?: (tx: Prisma.TransactionClient) => Promise<void>) {
   const requestHash = crypto.createHash("sha256").update(JSON.stringify({ planId: input.planId, kind: input.kind })).digest("hex");
   return db.$transaction(async tx => {
+    await beforeCreate?.(tx);
     await lockCreditAccount(tx, userId);
     const old = await tx.rechargeOrder.findUnique({ where: { userId_requestId: { userId, requestId: input.requestId } } });
     if (old) {
@@ -75,12 +77,16 @@ export async function acceptWechatTransaction(transaction: WechatTransaction) {
 }
 
 export async function startCheckout(userId: string, input: CheckoutInput) {
-  const pay = gateway();
-  const order = await createPaymentOrder(userId, input);
-  return prepareCheckout(order.id, userId, pay);
+  let pay: WechatPay | undefined;
+  const order = await createPaymentOrder(userId, input, prisma, async tx => {
+    await lockPaymentConfiguration(tx);
+    pay = await gateway(true, tx);
+  });
+  return prepareCheckout(order.id, userId, pay!);
 }
 
-export async function prepareCheckout(id: string, userId: string, pay = gateway()) {
+export async function prepareCheckout(id: string, userId: string, pay?: WechatPay) {
+  pay ??= await gateway(true);
   const order = await prisma.rechargeOrder.findFirst({ where: { id, userId, channel: "wechat", amountFen: { not: null } } });
   if (!order) throw new PaymentError(404, "订单不存在。");
   if (order.status !== "pending" || !order.expiresAt || order.expiresAt.getTime() < Date.now() + 60_000)
@@ -106,7 +112,8 @@ export async function prepareCheckout(id: string, userId: string, pay = gateway(
   return mapRechargeOrder(await prisma.rechargeOrder.findUniqueOrThrow({ where: { id } }));
 }
 
-export async function reconcilePayment(id: string, pay = gateway()) {
+export async function reconcilePayment(id: string, pay?: WechatPay) {
+  pay ??= await gateway();
   const order = await prisma.rechargeOrder.findUniqueOrThrow({ where: { id } });
   if (order.channel !== "wechat" || order.amountFen === null || order.status !== "pending") return mapRechargeOrder(order);
   // DB claim bounds upstream query rate across concurrent browsers and API replicas.
@@ -134,10 +141,12 @@ export async function reconcilePayment(id: string, pay = gateway()) {
 
 let reconciling = false;
 export async function recoverPayments() {
-  if (reconciling || !paymentAvailability().wechat) return;
+  if (reconciling) return;
   reconciling = true;
   try {
-    const pay = gateway();
+    const config = await effectiveWechatConfig();
+    if (!config) return;
+    const pay = new WechatPay(config);
     const orders = await prisma.rechargeOrder.findMany({
       where: { channel: "wechat", amountFen: { not: null }, status: "pending" },
       orderBy: [{ checkedAt: { sort: "asc", nulls: "first" } }, { createdAt: "asc" }], take: 20

@@ -1,4 +1,10 @@
 import "./config/env.js";
+import { providerRuntimeOptions } from "./providers/connection.js";
+import { providerProtocols } from "@aifilm/shared";
+import { SettingsError, readPlatformSettings, updatePlatformSettings, effectiveSettings, settingsEnvironment, effectiveWechatConfig } from "./config/platformSettings.js";
+import { testTtsConnection } from "./export/videoComposer.js";
+import { narrationRuntime } from "./export/narrationBilling.js";
+import { configurationReadiness } from "./config/readiness.js";
 import crypto from "node:crypto";
 import { access } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
@@ -12,7 +18,7 @@ import { createCharacterConsistencyPlan, createRelayGatewayPolicy, createWebNove
 import { getLingGuoAdapterMetadata } from "./agents/lingguoAdapter.js";
 import { getToonflowAdapterMetadata } from "./agents/toonflowAdapter.js";
 import { hashPassword, verifyPassword } from "./auth/password.js";
-import { EmailVerificationError, EmailVerificationService, QQ_EMAIL_PATTERN } from "./auth/emailVerification.js";
+import { EmailVerificationError, EmailVerificationService, QQ_EMAIL_PATTERN, registrationMailConfig, sendRegistrationEmail } from "./auth/emailVerification.js";
 import { mockCheckoutEnabled } from "./billing/checkoutPolicy.js";
 import { ContentMutationError } from "./content/contentMutation.js";
 import { activateProductionPrompt, getProductionPrompt, listProductionPrompts, previewProductionPrompt, ProductionPromptError, productionPromptActivateSchema, productionPromptPreviewSchema, productionPromptSaveSchema, saveProductionPrompt } from "./prompts/production.js";
@@ -175,7 +181,9 @@ const isProduction = process.env.NODE_ENV === "production";
 const mockPaymentEnabled = mockCheckoutEnabled(process.env);
 const registrationRedis = new RedisClient({ ...queueConnection, maxRetriesPerRequest: 1, enableOfflineQueue: false, commandTimeout: 5000 });
 registrationRedis.on("error", () => { /* Requests fail closed; do not log credentials. */ });
-const emailVerification = new EmailVerificationService(registrationRedis);
+const emailVerification = new EmailVerificationService(registrationRedis,
+  async (email, code) => sendRegistrationEmail(email, code, await settingsEnvironment("email")),
+  async () => Boolean(registrationMailConfig(await settingsEnvironment("email"))));
 
 app.disable("x-powered-by");
 app.use((req, res, next) => {
@@ -200,7 +208,7 @@ app.use(createRateLimitMiddleware(rateLimiter, rateLimitMax));
 // Raw bytes must reach signature verification before JSON parsing or session auth.
 app.post("/api/billing/wechat/notify", express.raw({ type: "application/json", limit: "64kb" }), async (req, res) => {
   try {
-    const config = wechatConfig();
+    const config = await effectiveWechatConfig();
     if (!config) return res.status(503).json({ code: "FAIL", message: "Payment unavailable" });
     if (!Buffer.isBuffer(req.body)) return res.status(400).json({ code: "FAIL", message: "Invalid body" });
     const headers = new Headers();
@@ -357,6 +365,13 @@ const providerRoutingSchema = z.object({
 });
 
 const providerUpdateSchema = z.object({
+  connection: z.object({
+    protocol: z.enum(providerProtocols.map(item => item.id)),
+    resolution: z.enum(["480p", "720p", "1080p"]).optional(),
+    defaultVoice: z.string().trim().min(1).max(100).optional(),
+    language: z.string().trim().min(1).max(60).optional()
+  }).strict().optional(),
+  expectedUpdatedAt: z.string().datetime().optional(),
   name: z.string().min(1).optional(),
   modality: z.enum(["text", "image", "video", "tts", "embedding"]).optional(),
   enabled: z.boolean().optional(),
@@ -369,6 +384,7 @@ const providerUpdateSchema = z.object({
 });
 
 const providerCreateSchema = z.object({
+  connection: providerUpdateSchema.shape.connection,
   id: z.string().min(2).max(80).optional(),
   name: z.string().min(1),
   modality: z.enum(["text", "image", "video", "tts", "embedding"]),
@@ -1000,10 +1016,10 @@ app.get(
   })
 );
 
-app.get("/api/auth/registration-policy", (_req, res) => {
+app.get("/api/auth/registration-policy", asyncRoute(async (_req, res) => {
   res.setHeader("Cache-Control", "no-store");
-  res.json(emailVerification.policy());
-});
+  res.json(await emailVerification.policy());
+}));
 app.post("/api/auth/email/send", asyncRoute(async (req, res) => {
   const parsed = registrationEmailSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json(parsed.error.flatten());
@@ -1880,7 +1896,7 @@ app.get(
   })
 );
 
-app.get("/api/billing/availability", (_req, res) => res.json(paymentAvailability()));
+app.get("/api/billing/availability", asyncRoute(async (_req, res) => res.json(await paymentAvailability())));
 app.get("/api/billing/membership", asyncRoute(async (req, res) => res.json(await getMembership(requestUserId(req)!))));
 app.post("/api/billing/checkout", asyncRoute(async (req, res) => {
   const parsed = z.object({
@@ -2021,7 +2037,7 @@ app.post(
       throw new Error("该渠道不包含当前文本模型");
     }
     try {
-      res.json(await testTextModelConnection({ ...parsed.data, baseUrl: provider?.baseUrl ?? undefined, apiKey: provider?.apiKey ?? undefined }));
+      res.json(await testTextModelConnection({ ...parsed.data, ...providerRuntimeOptions(provider), singleSubmission: true }));
     } catch (error) {
       res.json({
         ok: false,
@@ -2048,7 +2064,7 @@ app.post(
     if (provider?.models.length && parsed.data.imageModel && !provider.models.includes(parsed.data.imageModel)) {
       throw new Error("该渠道不包含当前生图模型");
     }
-    res.json(await testImageModelConnection({ provider: parsed.data.imageProvider, model: parsed.data.imageModel, baseUrl: provider?.baseUrl ?? undefined, apiKey: provider?.apiKey ?? undefined }));
+    res.json(await testImageModelConnection({ provider: parsed.data.imageProvider, model: parsed.data.imageModel, ...providerRuntimeOptions(provider) }));
   })
 );
 
@@ -2056,7 +2072,7 @@ app.post(
   "/api/settings/video-model-test",
   requireAdminPermission("models:manage"),
   asyncRoute(async (req, res) => {
-    const parsed = z.object({ videoProvider: z.string().optional(), videoModel: z.string().optional() }).safeParse(req.body ?? {});
+    const parsed = z.object({ videoProvider: z.string().optional(), videoModel: z.string().optional(), mode: z.enum(["config", "real"]).optional(), imageUrl: z.string().max(4000).optional() }).safeParse(req.body ?? {});
     if (!parsed.success) return res.status(400).json(parsed.error.flatten());
     const provider = parsed.data.videoProvider
       ? await prisma.modelProvider.findUnique({ where: { id: parsed.data.videoProvider } })
@@ -2066,9 +2082,47 @@ app.post(
     if (provider?.models.length && parsed.data.videoModel && !provider.models.includes(parsed.data.videoModel)) {
       throw new Error("该渠道不包含当前视频模型");
     }
-    res.json(await testVideoModelConnection({ provider: parsed.data.videoProvider, model: parsed.data.videoModel, baseUrl: provider?.baseUrl ?? undefined, apiKey: provider?.apiKey ?? undefined }));
+    res.json(await testVideoModelConnection({ provider: parsed.data.videoProvider, model: parsed.data.videoModel, mode: parsed.data.mode, imageUrl: parsed.data.imageUrl, ...providerRuntimeOptions(provider) }));
   })
 );
+
+app.get("/api/settings/default-routes", asyncRoute(async (_req, res) => {
+  res.json(await effectiveSettings("routing"));
+}));
+app.get("/api/admin/configuration-readiness", requireAdminPermission("settings:manage"), asyncRoute(async (_req, res) => {
+  res.json(await configurationReadiness());
+}));
+app.get("/api/admin/settings/:group", requireAdminPermission("settings:manage"), asyncRoute(async (req, res) => {
+  const group = z.enum(["routing", "email", "payment"]).parse(req.params.group);
+  res.json(await readPlatformSettings(group));
+}));
+app.patch("/api/admin/settings/:group", requireAdminPermission("settings:manage"), asyncRoute(async (req, res) => {
+  const group = z.enum(["routing", "email", "payment"]).parse(req.params.group);
+  const input = z.object({ expectedVersion: z.number().int().min(0), values: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])) }).strict().parse(req.body);
+  res.json(await updatePlatformSettings(group, input, requestAuthUser(req)!.id));
+}));
+app.post("/api/admin/settings/email/test", requireAdminPermission("settings:manage"), asyncRoute(async (_req, res) => {
+  const config = registrationMailConfig(await settingsEnvironment("email"));
+  if (!config) throw new SettingsError(400, "请先保存完整的 SMTP 配置。");
+  const { default: nodemailer } = await import("nodemailer");
+  const transport = nodemailer.createTransport({ ...config, requireTLS: !config.secure, connectionTimeout: 10000,
+    greetingTimeout: 10000, socketTimeout: 15000, tls: { minVersion: "TLSv1.2", rejectUnauthorized: true } });
+  try {
+    await transport.verify();
+    res.json({ ok: true, mode: "connection", message: "SMTP 加密连接和认证通过。收件箱投递还需用真实注册流程验证。" });
+  } catch { throw new SettingsError(400, "SMTP 连接或认证失败，请核对服务器、端口、发件邮箱和授权码。"); }
+  finally { transport.close(); }
+}));
+app.post("/api/admin/settings/payment/test", requireAdminPermission("settings:manage"), asyncRoute(async (_req, res) => {
+  if (!await effectiveWechatConfig()) throw new SettingsError(400, "请先保存完整的微信商户配置。");
+  res.json({ ok: true, mode: "config", message: "商户标识、RSA 密钥、API v3 密钥和回调格式通过本地校验。尚未向微信创建订单或验证真实收款。" });
+}));
+app.post("/api/settings/tts-model-test", requireAdminPermission("models:manage"), asyncRoute(async (req, res) => {
+  const input = z.object({ ttsProvider: z.string(), ttsModel: z.string() }).parse(req.body);
+  const provider = await prisma.modelProvider.findUnique({ where: { id: input.ttsProvider } });
+  if (!provider?.enabled || provider.modality !== "tts" || !provider.models.includes(input.ttsModel)) throw new SettingsError(400, "请选择已启用的配音渠道和模型。");
+  res.json(await testTtsConnection(narrationRuntime(provider, input.ttsModel)));
+}));
 
 app.get(
   "/api/templates",
@@ -2945,6 +2999,7 @@ app.post("/api/admin/credits/verify-cost", creditAdminRead, creditAdminAction(re
 }));
 
 app.use((error: unknown, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  if (error instanceof SettingsError) return res.status(error.status).json({ message: error.message });
   if (error instanceof EmailVerificationError) {
     if (error.retryAfter) res.setHeader("Retry-After", String(error.retryAfter));
     return res.status(error.status).json({ message: error.message, retryAfterSeconds: error.retryAfter });

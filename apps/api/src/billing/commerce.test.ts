@@ -223,15 +223,19 @@ test("PostgreSQL commerce and startup configuration are idempotent", { skip: !da
       assert.equal(balances.items.length, 100);
     });
     await t.test("provider secrets stay server-side and masked edits preserve the credential", async () => {
+      process.env.PLATFORM_SETTINGS_KEY = "12".repeat(32);
       const id = `audit-provider-${crypto.randomUUID()}`; providerIds.push(id);
       const key = `test-only-${crypto.randomUUID()}`;
-      await repository.createProvider({ id, name: "Test provider", modality: "image", models: ["test-image"], apiKey: key, baseUrl: "https://provider.invalid/v1", unitCredits: 5 });
+      await repository.createProvider({ id, name: "Test provider", modality: "image", models: ["test-image"], connection: { protocol: "openai-image" }, apiKey: key, baseUrl: "https://provider.invalid/v1", unitCredits: 5 });
       await db.modelProvider.update({ where: { id }, data: { capability: { customSecret: key, supportsSeed: true } } });
       const publicProvider = (await repository.listProviders()).find((row) => row.id === id)!;
       assert.equal("baseUrl" in publicProvider, false); assert.equal("apiKeyPreview" in publicProvider, false);
       assert.equal(JSON.stringify(publicProvider).includes(key), false); assert.equal("customSecret" in publicProvider.capability, false);
       await repository.updateProvider(id, { apiKey: "********masked" });
-      assert.equal((await db.modelProvider.findUniqueOrThrow({ where: { id } })).apiKey, key);
+      const encrypted = (await db.modelProvider.findUniqueOrThrow({ where: { id } })).apiKey!;
+      assert.match(encrypted, /^enc:v1:/);
+      const { decryptSettingSecret } = await import("../config/secrets.js");
+      assert.equal(decryptSettingSecret(encrypted, `provider:${id}`), key);
       await assert.rejects(repository.updateProvider(id, { baseUrl: "https://embedded:password@provider.invalid" }), /不能嵌入/);
       assert.equal((await db.modelProvider.findUniqueOrThrow({ where: { id } })).baseUrl, "https://provider.invalid/v1");
       const price = await db.modelPrice.findFirstOrThrow({ where: { providerId: id } });
