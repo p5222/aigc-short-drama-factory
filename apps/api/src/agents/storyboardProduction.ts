@@ -1,11 +1,13 @@
 import type { AssetItem, CharacterProfile, ProjectWorkflow, StoryboardShot } from "@aifilm/shared";
 import { renderProfiledVideoPrompt } from "../production/storyboardProfiles.js";
 import { isHistoricalAssetId } from "../db/mediaAssetIdentity.js";
+import { materializeMediaPrompt } from "../prompts/runtime.js";
+import type { PromptDefinition } from "../prompts/catalog.js";
 
 type AssetLookup = Map<string, Pick<AssetItem, "id" | "name" | "type" | "description" | "prompt" | "referenceUrl" | "relatedCharacterId">>;
 
 const imageQualityGuard = [
-  "4K ultra-high-definition",
+  "clear production reference detail",
   "clean and noise-free",
   "stable composition",
   "sharp and well-defined subject",
@@ -82,12 +84,16 @@ export function buildCharacterIdentityBoardPrompt(input: {
   basePrompt: string;
   referenceUrl?: string;
   assetName?: string;
+  definition?: PromptDefinition;
 }) {
   const referenceInstruction = input.referenceUrl
     ? "Use the provided image as the identity source. First extract the visual signature: face shape, eye spacing, nose, mouth, hairstyle, hair color, outfit silhouette, outfit colors, posture language and age impression; then preserve that exact same identity across every panel."
     : "Create the identity from the character card only, then keep the same face, hairstyle, outfit colors, body proportions and posture language across every panel.";
 
-  return [
+  return materializeMediaPrompt("character_identity_board", {
+    character: [input.assetName, input.character, input.basePrompt],
+    referenceInstruction, styleProfile: input.projectArtStyle || "保持参考风格"
+  }, input.definition) + "\n" + [
     input.assetName ? `Only create the character identity board for "${input.assetName}".` : "",
     referenceInstruction,
     input.basePrompt,
@@ -105,26 +111,28 @@ export function buildStoryboardFirstFramePrompt(input: {
   workflow: ProjectWorkflow;
   shot: StoryboardShot;
   assetById?: AssetLookup;
+  definition?: PromptDefinition;
 }) {
   const assetById = input.assetById ?? new Map(input.workflow.assets.map((asset) => [asset.id, asset]));
   const references = resolveStoryboardReferenceAssets(input.workflow, input.shot, assetById);
   const roleRefs = references.filter((asset) => asset.type === "role" || asset.type === "role_derivative");
   const sceneRefs = references.filter((asset) => asset.type === "scene" || asset.type === "prop");
   const blocking = describeShotBlocking(input.shot);
-  return [
+  const description = [
     "Generate a video-model-ready director storyboard first frame, not a finished comic panel.",
     roleRefs.length ? `Character identity references: ${roleRefs.map(referenceLabel).join("; ")}. Preserve the exact same face, hairstyle, outfit colors, body proportions and posture language.` : "Use the locked character card traits; do not invent new character appearance.",
     sceneRefs.length ? `Scene and prop references: ${sceneRefs.map(referenceLabel).join("; ")}. Preserve location, lighting direction, spatial anchors and key props.` : `Scene: ${input.shot.scene}.`,
     `Project style: ${input.workflow.project.artStyle}; target ratio: ${input.workflow.project.videoRatio}.`,
-    `Camera: ${input.shot.shotSize}, ${input.shot.cameraAngle}, ${input.shot.cameraMovement || "stable camera"}.`,
+    `Camera framing: ${input.shot.shotSize}, ${input.shot.cameraAngle}.`,
     `Blocking: ${blocking}.`,
     `Original shot image prompt: ${input.shot.imagePrompt || input.shot.pictureDesc}.`,
-    `Visible action: ${input.shot.action || input.shot.pictureDesc}.`,
+    `Upcoming action (show only its starting pose): ${input.shot.action || input.shot.pictureDesc}.`,
     `Emotion: ${input.shot.emotion || "controlled dramatic expression"}.`,
     `First-frame requirement: clear composition, complete subject, readable action starting point, suitable as image-to-video first frame.`,
     `Avoid: ${fixedVisualAvoid}.`,
     imageQualityGuard
   ].join("\n");
+  return materializeMediaPrompt("storyboard_first_frame", { shot: description }, input.definition);
 }
 
 export function buildSeedanceVideoPrompt(input: {
@@ -132,6 +140,7 @@ export function buildSeedanceVideoPrompt(input: {
   shot: StoryboardShot;
   firstFrameAsset?: Pick<AssetItem, "name" | "referenceUrl" | "description">;
   assetById?: AssetLookup;
+  definition?: PromptDefinition;
 }) {
   const assetById = input.assetById ?? new Map(input.workflow.assets.map((asset) => [asset.id, asset]));
   const references = resolveStoryboardReferenceAssets(input.workflow, input.shot, assetById);
@@ -139,14 +148,22 @@ export function buildSeedanceVideoPrompt(input: {
   const blocking = describeShotBlocking(input.shot);
   const firstAnchor = buildFirstFrameAnchor(input.shot, input.firstFrameAsset);
   const lastAnchor = buildLastFrameAnchor(input.shot);
-  const handoff = buildContinuityHandoff(input.shot);
-  return renderProfiledVideoPrompt({
+  const handoff = inheritedFirstFrame?.referenceUrl ? `从已提供的承接帧继续，保持该图中的空间和人物状态。` : undefined;
+  const motion = renderProfiledVideoPrompt({
     profile: input.workflow.project.segmentProfile ?? "jimeng_15s",
     shot: { ...input.shot, referenceAssetIds: references.map((asset) => asset.id) },
     previousEndState: handoff,
     firstFramePrompt: `${inheritedFirstFrame ? `继承上一镜头尾帧资产 ${inheritedFirstFrame.name}；` : ""}${firstAnchor}；站位：${blocking}`,
     lastFramePrompt: lastAnchor
   });
+  return materializeMediaPrompt("shot_motion", { shot: motion }, input.definition);
+}
+
+export function buildEnvironmentPrompt(asset: Pick<AssetItem, "type" | "name" | "description" | "prompt" | "referenceUrl">, style: string, definition?: PromptDefinition) {
+  return materializeMediaPrompt(asset.type === "prop" ? "prop_reference_image" : "scene_environment_image", {
+    scene: { name: asset.name, description: asset.description, authorPrompt: asset.prompt, hasReference: Boolean(asset.referenceUrl) },
+    styleProfile: style || "保持参考风格"
+  }, definition);
 }
 
 export function createSceneCards(workflow: ProjectWorkflow): SceneCard[] {

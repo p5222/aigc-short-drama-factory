@@ -448,16 +448,19 @@ async function generateContentProductionPackageUnlocked(userId: string, contentP
       targetEpisodes: Math.max(1, Math.min(20, Math.ceil(Math.max(source.content.length, 800) / 2000)))
     };
     const plan = createToonflowScriptPlan(input);
+    const productionPrompt = await materializeProductionPrompt(input.sourceType === "script" ? "existing_script_structure" : "novel_to_script", {
+      content: input.content, episodes: input.targetEpisodes, ratio: input.videoRatio, styleProfile: project.styleProfile
+    });
     await runBilledContentGeneration(project, "内容剧本结构化", async () => {
     const generated = await callTextModelJson<{ synopsis?: string; script?: string; characters?: ToonflowCharacterCard[] }>({
       ...(await contentTextRuntime(project)),
-      system: "你是漫角内容创作编剧。严格执行用户提示，只输出合法 JSON。",
-      prompt: plan.prompt,
+      system: productionPrompt.systemPrompt,
+      prompt: productionPrompt.userPrompt,
       maxTokens: 8000,
       label: source.kind === "script" ? "剧本结构化" : "小说转剧本"
     });
     assertUsableScriptOutput(generated, input.sourceType);
-    const scriptContent = generated.script!.trim();
+    const scriptContent = input.sourceType === "script" ? input.content.trim() : generated.script!.trim();
     const characters = (generated.characters ?? []).map((item, index) => ({
       id: `character_${index + 1}`,
       name: item.name.trim(),
@@ -467,7 +470,7 @@ async function generateContentProductionPackageUnlocked(userId: string, contentP
     return { generated, scriptContent, characters, scenes };
     }, async (tx, { generated, scriptContent, characters, scenes }) => {
     const nextVersion = (await tx.scriptVersion.aggregate({ where: { contentProjectId }, _max: { version: true } }))._max.version ?? 0;
-    const snapshot = JSON.parse(JSON.stringify({ key: source.kind === "script" ? "script_structure" : "novel_to_script", plan, sourceId: source.id })) as Prisma.InputJsonValue;
+    const snapshot = JSON.parse(JSON.stringify({ ...productionPrompt.snapshot, plan, sourceId: source.id })) as Prisma.InputJsonValue;
       await tx.scriptVersion.create({ data: { id: `content_script_${crypto.randomUUID()}`, contentProjectId, version: nextVersion + 1, status: "confirmed", content: scriptContent, result: { synopsis: generated.synopsis ?? "" }, promptSnapshot: snapshot } });
       await tx.entityCatalog.upsert({
         where: { contentProjectId },

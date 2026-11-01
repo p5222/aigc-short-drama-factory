@@ -22,7 +22,7 @@ test("production drafts preserve required variables, contracts and data boundari
   const { validateProductionDraft, previewProductionPrompt } = await import("./production.js");
   for (const builtin of promptCatalog) {
     const draft = { systemPrompt: builtin.systemPrompt, userTemplate: builtin.userTemplate };
-    assert.equal(validateProductionDraft(builtin.key, draft).version, "1.1.0");
+    assert.equal(validateProductionDraft(builtin.key, draft).version, builtin.version);
     const variables = Object.fromEntries(builtin.variables.map(key => [key, "测试数据"]));
     assert.ok(previewProductionPrompt(builtin.key, draft, variables).characters > 0);
     assert.match(builtin.systemPrompt, /待处理数据/);
@@ -54,7 +54,7 @@ test("PostgreSQL production prompts: atomic publication, immutable versions, run
       const results = await Promise.all([service.saveProductionPrompt(key, draft, owner), service.saveProductionPrompt(key, draft, owner)]);
       first = results[0]!;
       assert.deepEqual(results[0], results[1]);
-      assert.equal((await service.resolveProductionPrompt(key)).version, "1.1.0");
+      assert.equal((await service.resolveProductionPrompt(key)).version, definition.version);
       assert.equal((await service.getProductionPrompt(key)).totalVersions, 1);
       await assert.rejects(service.saveProductionPrompt(key, { ...draft, notes: "不同内容" }, owner), /请求的内容已改变/);
       second = await service.saveProductionPrompt(key, { ...draft, systemPrompt: `${definition.systemPrompt}\n版本乙标记`, notes: "版本乙", requestId: crypto.randomUUID() }, owner);
@@ -69,16 +69,16 @@ test("PostgreSQL production prompts: atomic publication, immutable versions, run
       assert.equal(snapshot.version, detail.effective.version);
       assert.match(snapshot.systemPrompt, /版本[甲乙]标记/);
       await service.activateProductionPrompt(key, { versionId: null, expectedRevision: 1 });
-      assert.equal((await service.resolveProductionPrompt(key)).version, "1.1.0");
+      assert.equal((await service.resolveProductionPrompt(key)).version, definition.version);
       assert.match(snapshot.version, /custom/);
       await assert.rejects(service.saveProductionPrompt(key, { ...draft, requestId: crypto.randomUUID() }, owner), /其他管理员更新/);
       assert.deepEqual(await service.saveProductionPrompt(key, draft, owner), first);
     });
     await t.test("foreign versions and reference templates cannot publish; lab active rows do not affect production", async () => {
       await assert.rejects(service.activateProductionPrompt(otherKey, { versionId: first.id, expectedRevision: 0 }), /不属于/);
-      await assert.rejects(service.activateProductionPrompt("storyboard_core", { versionId: null, expectedRevision: 0 }), /设计参考/);
+      await assert.rejects(service.activateProductionPrompt("scene_environment_sheet", { versionId: null, expectedRevision: 0 }), /设计参考/);
       await db.promptVersion.create({ data: { id: labId, key, name: "Lab only", stage: "script", purpose: "generation", version: owner, content: "lab marker", status: "active" } });
-      assert.equal((await service.resolveProductionPrompt(key)).version, "1.1.0");
+      assert.equal((await service.resolveProductionPrompt(key)).version, definition.version);
       const missing = { systemPrompt: definition.systemPrompt, userTemplate: definition.userTemplate };
       assert.throws(() => service.previewProductionPrompt(key, missing, {}), /缺少变量/);
     });
@@ -88,7 +88,13 @@ test("PostgreSQL production prompts: atomic publication, immutable versions, run
       await assert.rejects(service.resolveProductionPrompt(key), /不兼容/);
       assert.match((await service.getProductionPrompt(key)).compatibilityError!, /生成已阻止/);
       await service.activateProductionPrompt(key, { versionId: null, expectedRevision: 3 });
-      assert.equal((await service.resolveProductionPrompt(key)).version, "1.1.0");
+      assert.equal((await service.resolveProductionPrompt(key)).version, definition.version);
+    });
+    await t.test("prose-only upgrades preserve compatible custom templates", async () => {
+      await db.productionPromptVersion.update({ where: { id: second.id }, data: { definition: JSON.parse(JSON.stringify({ ...definition, version: `1.1.0+custom.${second.number}`, systemPrompt: `${definition.systemPrompt}\nLEGACY_CUSTOM_KEPT` })) } });
+      await service.activateProductionPrompt(key, { versionId: second.id, expectedRevision: 4 });
+      assert.match((await service.resolveProductionPrompt(key)).systemPrompt, /LEGACY_CUSTOM_KEPT/);
+      await service.activateProductionPrompt(key, { versionId: null, expectedRevision: 5 });
     });
     await t.test("failed and concurrent experiment activations retain one valid active version", async () => {
       const lab = await import("../db/evaluation.js");
@@ -122,7 +128,7 @@ test("PostgreSQL production prompts: atomic publication, immutable versions, run
           const input: CreateProjectInput = { title: "雨夜书店", content: "第1场 书店\n林晚：这封信是谁的？", genre: "都市", sourceType, mode: "nine_grid", videoRatio: "9:16", artStyle: "二维", textProvider: "openai-compatible", textModel: "prompt-audit", apiKey: "test-only", baseUrl: `http://127.0.0.1:${address.port}/v1` };
           const result = await generateProjectScriptContent(`audit_${sourceType}`, input);
           assert.equal(result.mode, "real"); // Real adapter; upstream here is explicitly a local fixture.
-          assert.equal(result.promptSnapshot?.version, "1.1.0+custom.1");
+          assert.equal(result.promptSnapshot?.version, `${builtin.version}+custom.1`);
           assert.match(requests.at(-1)!.messages.find(item => item.role === "system")!.content, /ADAPTER_VERSION_MARKER/);
           if (sourceType === "script") assert.equal(result.script.content, input.content);
         }

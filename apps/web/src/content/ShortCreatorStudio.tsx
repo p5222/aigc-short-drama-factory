@@ -1,16 +1,18 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, Check, ClipboardList, RefreshCw, Save, Sparkles } from "lucide-react";
 import type { ContentProjectSummary, CreatorAgentState, CreatorBrief, CreatorQuote, CreatorScriptDetails, ModelPrice, ModelProvider, StoryFact } from "@aifilm/shared";
+import { appendRevisionFeedback, briefQuestions, creativeBriefFields, estimateSpeechSeconds, scriptRevisionRecipes } from "@aifilm/shared";
 import { creatorApi } from "../lib/creatorApi";
 import { contentApi } from "../lib/contentApi";
 import { BEFORE_CREATOR_NAVIGATION } from "../lib/creatorNavigation";
 import { ModelRoutePicker } from "../components/ModelRoutePicker";
 import { buildModelCatalog, defaultModelRoute } from "../components/modelCatalog";
 import { StatePanel } from "../design-system/ui";
+import { CreativeGuide } from "../components/CreativeGuide";
 import type { ShortEntry } from "./CreatorWelcome";
 import "./short-creator.css";
 
-const initialBrief: CreatorBrief = { format: "short", intent: "", material: "idea", durationSeconds: 30, audience: "喜欢短故事的观众", emotion: "温暖与惊喜", mustKeep: "", fidelity: "faithful" };
+const initialBrief: CreatorBrief = { format: "short", intent: "", material: "idea", durationSeconds: 30, audience: "喜欢短故事的观众", emotion: "由故事决定", mustKeep: "", fidelity: "faithful" };
 const sample = "深夜便利店里，店员为一位每天买两份饭的老人多留一双筷子。直到某天老人只买了一份，店员才发现，另一份一直是留给流浪猫的。结尾让猫第一次走进灯光里。";
 const styles = [{ key: "anime_jp", name: "日系动漫", category: "动漫 · 2D", summary: "清晰线条，赛璐珞上色" }, { key: "donghua_3d", name: "3D 国漫", category: "国漫 · 3D", summary: "东方美学，柔和光影" }, { key: "cinematic_real", name: "电影写实", category: "写实 · 影视", summary: "自然光影，电影叙事" }];
 const statusNames: Record<string, string> = { pending: "计划已保存", running: "正在创作", awaiting_review: "等待作者审阅", needs_repair: "需要修订", completed: "作者已确认", failed: "已停止", unknown: "结果待核对", canceled: "已结束", draft: "待审阅", confirmed: "作者已确认", stale: "依据已变化", succeeded: "已完成" };
@@ -49,6 +51,7 @@ export function ShortCreatorStudio({ userId, project, entry, providers, modelPri
   const [nextIntent, setNextIntent] = useState("");
   const [factOpen, setFactOpen] = useState(false);
   const [briefExpanded, setBriefExpanded] = useState(true);
+  const [questionsOpen, setQuestionsOpen] = useState(false);
   const [dirtyFacts, setDirtyFacts] = useState<Set<string>>(() => new Set());
   const alive = useRef(true);
   const inFlight = useRef(false);
@@ -100,6 +103,11 @@ export function ShortCreatorStudio({ userId, project, entry, providers, modelPri
 
   function change(update: Partial<Draft>) { setForm(value => ({ ...value, ...update, requestId: crypto.randomUUID() })); setQuote(null); }
   function changeBrief(update: Partial<CreatorBrief>) { change({ brief: { ...form.brief, ...update } }); }
+  function useRevisionRecipe(text: string) {
+    const next = appendRevisionFeedback(feedback, text);
+    if (next === null) { setNotice("修订方向接近字数上限，请先精简已有内容，再添加建议。"); return; }
+    setFeedback(next); setQuote(null); setNotice("修订建议已加入，请按你的故事调整，再核对报价。");
+  }
   function factDirty(id: string, dirty = true) { setDirtyFacts(previous => { const value = new Set(previous); if (dirty) value.add(id); else value.delete(id); return value; }); }
   async function saveFactDraft(input: Parameters<typeof creatorApi.fact>[1], fact?: StoryFact) {
     await act("fact", async () => {
@@ -170,6 +178,13 @@ export function ShortCreatorStudio({ userId, project, entry, providers, modelPri
               {!project ? <label>作品标题<input required maxLength={160} value={form.title} onChange={event => change({ title: event.target.value })} placeholder="给这个故事起个名字" /></label> : null}
               <div className="short-form-row"><label>我的素材<select disabled={Boolean(project)} value={form.brief.material} onChange={event => changeBrief({ material: event.target.value as CreatorBrief["material"] })}><option value="idea">一句灵感</option><option value="story">已有故事</option><option value="script">已有剧本</option></select></label><label>目标时长<select value={form.brief.durationSeconds} onChange={event => changeBrief({ durationSeconds: Number(event.target.value) as 30 | 60 })}><option value={30}>30 秒 · 一个瞬间</option><option value={60}>60 秒 · 一个小故事</option></select></label></div>
               <label>故事与创作意图<textarea required minLength={2} maxLength={3000} rows={5} value={form.brief.intent} onChange={event => changeBrief({ intent: event.target.value })} placeholder="例如：一个总是迟到的邮差，今天必须在日落前送出最后一封信…" /></label>
+              <CreativeGuide stage="short" />
+              <details className="short-details short-brief-questions" open={questionsOpen} onToggle={event => setQuestionsOpen(event.currentTarget.open)}>
+                <summary>把故事说得更具体（可选）</summary>
+                <p className="creator-caption">按需回答。不确定的内容可以留空，补充这些信息不调用模型。</p>
+                {creativeBriefFields.map(field => <label key={field.key}>{field.label}<textarea rows={2} maxLength={500} value={form.brief[field.key] ?? ""} placeholder={field.example} onChange={event => changeBrief({ [field.key]: event.target.value })} /><span className="creator-caption">{field.question}</span></label>)}
+              </details>
+              <div className="short-brief-assist"><button type="button" className="ghost-button" onClick={() => { setQuestionsOpen(true); setNotice(briefQuestions(form.brief).length ? `可以继续想一想：${briefQuestions(form.brief).slice(0, 3).join(" ")}` : "创作边界已补充。保存后，模型会结合这些要求生成。"); }}>帮我补充创作要求</button><span className="creator-caption">先选你最在意的一点回答，其余可以继续创作时补充。</span></div>
               {!project && form.brief.material !== "idea" ? <label>粘贴已有{form.brief.material === "script" ? "剧本" : "故事"}<textarea required minLength={20} maxLength={12000} rows={8} value={form.source} onChange={event => change({ source: event.target.value })} /></label> : null}
               <div className="short-form-row"><label>主要观众<input maxLength={200} value={form.brief.audience} onChange={event => changeBrief({ audience: event.target.value })} /></label><label>想留下的情绪<input maxLength={200} value={form.brief.emotion} onChange={event => changeBrief({ emotion: event.target.value })} /></label></div>
               <details className="short-details"><summary>必须保留的细节与改编尺度</summary><label>必须保留<textarea rows={3} maxLength={2000} value={form.brief.mustKeep} onChange={event => changeBrief({ mustKeep: event.target.value })} placeholder="人物关系、关键台词、结局…" /></label><label>改编尺度<select value={form.brief.fidelity} onChange={event => changeBrief({ fidelity: event.target.value as CreatorBrief["fidelity"] })}><option value="faithful">忠于原意</option><option value="inspired">允许围绕意图再创作</option></select></label></details>
@@ -183,8 +198,13 @@ export function ShortCreatorStudio({ userId, project, entry, providers, modelPri
           <div className="short-section-heading"><span className="section-kicker">03 / 剧本审阅 · V{latest.version}</span><h2>故事的最后决定，交给你。</h2><p>{statusNames[latest.status] ?? latest.status} · 可以直接改写，也可以填写修订方向。</p></div>
           {editor && editor.scriptId !== latest.id ? <p className="short-alert">服务器已有新版本。本地草稿已保留，请先复制需要的内容，再载入最新版本。<button type="button" className="ghost-button" onClick={() => { if (window.confirm("载入最新剧本会替换当前本地草稿，确认继续？")) setEditor(null); }}>载入最新版本</button></p> : null}
           <label>短片剧本<textarea aria-label="短片剧本" className="short-script" rows={18} maxLength={14000} value={currentContent} disabled={Boolean(busy) || Boolean(activeRun)} onChange={event => setEditor({ ...editor, scriptId: editor?.scriptId ?? latest.id, content: event.target.value, note: editor?.note ?? "" })} /></label>
+          {latest.storyDesign ? <details className="short-details short-story-design"><summary>查看故事因果与节拍 · {latest.storyDesign.beats.reduce((sum, beat) => sum + beat.seconds, 0)} 秒</summary>
+            <p className="creator-caption">{scriptDirty || briefDirty || latest.status === "stale" ? "正文、清单或意图已有变化，以下是原版本依据，需重新核对。保存改写后会清除过时节拍。" : "以下是生成时整理的故事依据，供你对照正文判断；朗读时间是规则估算。"}</p>
+            <dl>{([["goal", "主角目标"], ["obstacle", "阻碍"], ["choice", "人物选择"], ["payoff", "结尾回报"]] as const).map(([key, label]) => <div key={key}><dt>{label}</dt><dd>{latest.storyDesign![key]}</dd></div>)}</dl>
+            <ol>{latest.storyDesign.beats.map((beat, index) => <li key={index}><div><strong>{beat.action}</strong><span>{beat.seconds} 秒 · 朗读约 {estimateSpeechSeconds(beat.spokenText)} 秒</span></div><blockquote>{beat.evidence}</blockquote>{beat.spokenText ? <p>台词：{beat.spokenText}</p> : <p>动作或留白，无台词</p>}</li>)}</ol>
+          </details> : null}
           {latest.details ? <details className="short-details"><summary>核对角色、场景与剧本估时</summary><p className="creator-caption">改写正文后，请同步修改这里的制作清单。确认后的清单会用于准备角色和场景。</p><ScriptDetailsEditor value={editor?.details ?? latest.details} disabled={Boolean(busy) || Boolean(activeRun)} onChange={details => setEditor({ scriptId: editor?.scriptId ?? latest.id, content: currentContent, note: editor?.note ?? "", details })} /></details> : null}
-          <div className="short-checks" aria-label="剧本检查结果">{latest.findings.map((finding, index) => <p key={`${finding.code}:${index}`} data-blocking={finding.severity === "blocking"}><strong>{finding.layer === "structure" ? "结构" : finding.layer === "continuity" ? "连续性" : "作者审阅"}</strong>{finding.message}</p>)}</div>
+          <div className="short-checks" aria-label="剧本检查结果">{latest.findings.map((finding, index) => <p key={`${finding.code}:${index}`} data-blocking={finding.severity === "blocking"}><strong>{finding.layer === "structure" ? "结构" : finding.layer === "continuity" ? "连续性" : finding.layer === "craft" ? "叙事与节奏" : "作者审阅"}</strong>{finding.message}{finding.evidence ? <span className="creator-caption">依据：{finding.evidence}</span> : null}</p>)}</div>
           <label>本次修改或接受的理由（可选）<textarea disabled={Boolean(busy) || Boolean(activeRun)} rows={2} maxLength={2000} value={editor?.note ?? ""} onChange={event => setEditor({ ...editor, scriptId: editor?.scriptId ?? latest.id, content: currentContent, note: event.target.value })} /></label>
           <div className="short-actions"><button type="button" className="ghost-button" disabled={Boolean(busy) || Boolean(activeRun) || !canReview || !scriptDirty} onClick={() => void act("save", () => review(false))}><Save size={16} />保存修改版本</button><button type="button" className="primary-button" disabled={Boolean(busy) || Boolean(activeRun) || !canReview || latest.status === "confirmed" && !scriptDirty || latest.findings.some(f => f.severity === "blocking")} onClick={() => void act("review", () => review(true))}><Check size={16} />确认原意与人物关系</button></div>
           {latest.status === "confirmed" && !scriptDirty && !briefDirty ? <div className="short-handoff"><div><strong>剧本已确认，开始把故事变成画面。</strong><p>准备角色与分镜，查看动态预览后选择要制作的视频镜头。已交接短片有改动时，会新建制作版本并保留旧版。</p></div><button type="button" className="primary-button" disabled={Boolean(busy) || dirtyFacts.size > 0 || routeDirty} onClick={() => void act("handoff", async () => { const result = await contentApi.syncProduction(project!.id); if (alive.current) { allowNavigation.current = true; await onEnterProduction(result.productionProjectId); } })}>进入制作<ArrowRight size={16} /></button></div> : null}
@@ -198,6 +218,7 @@ export function ShortCreatorStudio({ userId, project, entry, providers, modelPri
           {project ? <>
             <details className="short-details"><summary>剧本模型与渠道</summary><ModelRoutePicker label="修订剧本模型" modality="text" providers={providers} modelPrices={modelPrices} value={form.route} disabled={Boolean(busy) || Boolean(activeRun) || scriptDirty || briefDirty} onChange={(providerId, model) => change({ route: { providerId, model } })} /><button type="button" className="ghost-button" disabled={Boolean(busy) || Boolean(activeRun) || !modelReady || !routeDirty || scriptDirty || briefDirty} onClick={() => void act("route", async () => { await contentApi.updateModelRoute(project.id, { textProvider: form.route.providerId, textModel: form.route.model }); if (alive.current) setSavedRoute(form.route); await refresh(); await reloadList(); if (alive.current) setNotice("模型已保存，请重新核对报价。"); })}>保存模型选择</button><p className="creator-caption">模型变更需重新报价，不自动切换到其他付费模型。</p></details>
             <label>修订方向{latest ? "" : "（可选）"}<textarea maxLength={2000} rows={3} value={feedback} disabled={Boolean(busy) || Boolean(activeRun)} placeholder="例如：保留结尾，让主角的选择更清楚" onChange={event => { setFeedback(event.target.value); setQuote(null); }} /></label>
+            {latest ? <div className="short-revision-recipes" aria-label="定向修订建议"><p className="creator-caption">先选本轮要解决的问题，建议会加入上方修订方向。</p><div>{scriptRevisionRecipes.map(recipe => <button key={recipe.label} type="button" className="ghost-button" disabled={Boolean(busy) || Boolean(activeRun)} onClick={() => useRevisionRecipe(recipe.text)}>{recipe.label}</button>)}</div><p className="creator-caption">例如：第2场的字条没有交代内容。补出能支持主角选择的线索，保留人物关系和原结局。</p></div> : null}
             <label>自动修复额度<select value={maxCalls} disabled={Boolean(busy) || Boolean(activeRun)} onChange={event => { setMaxCalls(Number(event.target.value)); setQuote(null); }}><option value={1}>只生成一次，我来审阅</option><option value={2}>检查未通过时，最多再修复一次</option></select></label>
             {quote ? <div className="short-quote" aria-live="polite"><span>本次积分上限</span><strong>{quote.maximumCredits.toLocaleString()}<small>积分</small></strong><p>最多 {quote.maxCalls} 次模型调用，每次上限 {quote.perCallCredits}。实际消耗按结算记录显示。</p><p className="creator-caption">模型：{quote.model}</p><button type="button" className="primary-button" disabled={Boolean(busy) || Boolean(activeRun) || briefDirty || scriptDirty || routeDirty || dirtyFacts.size > 0} onClick={() => void act("generate", generate)}><Sparkles size={16} />确认上限并{latest ? "修订" : "生成"}</button><details className="short-details"><summary>本次使用的资料</summary><p>输入保守估算 {quote.context.estimatedInputTokens.toLocaleString()} tokens；与供应商实际用量分开记录。</p>{quote.context.sources.map(source => <p key={source.id}>{source.label} · {source.required ? "必需" : "可选"} · {source.included ? "已纳入" : "未纳入"}</p>)}</details></div> : <button type="button" className="primary-button" disabled={Boolean(busy) || Boolean(activeRun) || briefDirty || scriptDirty || routeDirty || dirtyFacts.size > 0} onClick={() => void act("quote", async () => { const value = await creatorApi.quote(project.id, runInput); if (alive.current) setQuote(value); })}>核对{latest ? "修订" : "生成"}报价<ArrowRight size={16} /></button>}
             {(briefDirty || scriptDirty || routeDirty || dirtyFacts.size > 0) ? <p className="creator-caption">先保存当前剧本、意图、模型或设定修改，再核对报价。</p> : null}

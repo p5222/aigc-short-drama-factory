@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { resolveStoryboardReferenceAssets } from "./storyboardProduction.js";
+import { buildStoryboardFirstFramePrompt, buildEnvironmentPrompt, resolveStoryboardReferenceAssets } from "./storyboardProduction.js";
 
 test("first frame resolves approved character and scene references by names", () => {
   const workflow = {
@@ -14,4 +14,15 @@ test("first frame resolves approved character and scene references by names", ()
   } as any;
   const shot = { characters: ["林晚", "七日前"], scene: "关键场景：黎明前的青黑屋内", referenceAssetIds: [] } as any;
   assert.deepEqual(resolveStoryboardReferenceAssets(workflow, shot).map((asset) => asset.id), ["role_lw_turnaround", "scene_room"]);
+});
+
+test("media prompts preserve author instructions and distinguish props from environments", () => {
+  const prop = buildEnvironmentPrompt({ type: "prop", name: "旧钥匙", description: "黄铜钥匙", prompt: "钥匙柄有一道缺口" }, "水彩");
+  assert.match(prop, /单件关键道具/); assert.match(prop, /一道缺口/);
+  const workflow = { project: { artStyle: "水彩", videoRatio: "9:16" }, assets: [], characters: [] } as any;
+  const shot = { characters: [], scene: "门厅", shotSize: "近景", cameraAngle: "平视", cameraMovement: "环绕", imagePrompt: "手停在门把手前", action: "打开门", referenceAssetIds: [] } as any;
+  const frame = buildStoryboardFirstFramePrompt({ workflow, shot });
+  assert.match(frame, /手停在门把手前/);
+  assert.match(frame, /starting pose/);
+  assert.doesNotMatch(frame, /平视, 环绕/);
 });

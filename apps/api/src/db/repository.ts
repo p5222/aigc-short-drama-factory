@@ -12,6 +12,9 @@ import sharp from "sharp";
 import type { AdminSummary, AdminUserRow, AssetItem, BatchGenerationResult, CreateProjectInput, CreationEstimate, GenerationTask, HelpArticle, ModelModality, PlatformAnnouncement, ProjectWorkflow, SegmentProfile, StoryboardExportRow, StoryboardShot, WorkbenchSummary } from "@aifilm/shared";
 import { textModelName, textProviderName } from "../agents/generator.js";
 import { buildSeedanceVideoPrompt, buildStoryboardFirstFramePrompt, createStoryboardProductionPackage, resolveStoryboardReferenceAssets } from "../agents/storyboardProduction.js";
+import { resolveProductionPrompt, recordAppliedPrompt } from "../prompts/production.js";
+import { materializeMediaPrompt } from "../prompts/runtime.js";
+import type { PromptDefinition } from "../prompts/catalog.js";
 import { estimateCreation } from "../agents/workflow.js";
 import { calculateOfficialCredits, officialSampleUsage, estimateImageCredits, inspectModelPrice, isPersistedPlayableVideoReference, normalizeImageOutputQuality, normalizeImageOutputSize, normalizeImageProviderId, resolveImageUnitCredits } from "@aifilm/shared";
 import { hashPassword } from "../auth/password.js";
@@ -1357,10 +1360,12 @@ export async function runProjectImageTasks(
   const estimatedCredits = (nineGrid ? 1 : shots.length) * unitCredits;
   const source = captureMediaSource(workflow, "image", shots.map(shot => shot.id));
   return runMediaTask({ userId, projectId, projectName: workflow.project.name, type: "image", scope: "image", provider, model, estimatedCredits, source, title: nineGrid ? "九宫格分镜图生成" : "分镜图生成" }, async (billing) => {
+    const definition = await resolveProductionPrompt("storyboard_first_frame");
+    await recordAppliedPrompt(billing.taskId, definition);
     const successes: Array<{ shot: StoryboardShot; url: string }> = [];
     const failures: string[] = [];
     if (nineGrid) {
-      const results = await generateNineGridSheetImages(projectId, workflow, shots, provider, model, [model], assetById, size, quality);
+      const results = await generateNineGridSheetImages(projectId, workflow, shots, provider, model, [model], assetById, size, quality, definition);
       for (const [index, result] of results.entries()) {
         if (!result.imageUrl) throw new Error("真实九宫格模型未返回图片");
         const url = await persistImageReference(result.imageUrl, `shot-${projectId}-${shots[index]!.shotNo}`);
@@ -1371,7 +1376,7 @@ export async function runProjectImageTasks(
       await Promise.all(shots.map(async (shot, index) => {
         try {
           const result = await generateImage({
-            prompt: buildStoryboardFirstFramePrompt({ workflow, shot, assetById }),
+            prompt: buildStoryboardFirstFramePrompt({ workflow, shot, assetById, definition }),
             negativePrompt: "字幕, 水印, Logo, 低清晰度, 畸形手, 多余手指, 换脸, 同款分身, 过暗, 欠曝, 模糊",
             referenceImageUrls: resolveStoryboardReferenceAssets(workflow, shot, assetById).map((asset) => asset.referenceUrl).filter(Boolean) as string[],
             ratio: workflow.project.videoRatio, seed: 30000 + index, provider, model, modelPool: [model], size, quality,
@@ -1441,9 +1446,11 @@ export async function runProjectVideoTasks(
         } else if (typeof checkpoint.remoteTaskId === "string") {
           generated = await queryVideoTaskResult({ taskId: checkpoint.remoteTaskId, provider: runtimeProvider, model: runtimeModel, baseUrl: runtimeConfig?.baseUrl ?? undefined, apiKey: runtimeConfig?.apiKey ?? undefined });
         } else {
+          const definition = await resolveProductionPrompt("shot_motion");
+          await recordAppliedPrompt(billing.taskId, definition);
           await billing.checkpoint({ submissionStarted: true, provider: runtimeProvider, model: runtimeModel, shotId: shot.id });
           generated = await generateVideo({
-            prompt: buildSeedanceVideoPrompt({ workflow, shot, firstFrameAsset: images.get(shot.id), assetById: new Map(workflow.assets.map((asset) => [asset.id, asset])) }),
+            prompt: buildSeedanceVideoPrompt({ workflow, shot, firstFrameAsset: images.get(shot.id), assetById: new Map(workflow.assets.map((asset) => [asset.id, asset])), definition }),
             imageUrl: images.get(shot.id)?.referenceUrl, ratio: workflow.project.videoRatio, duration: shot.duration,
             provider: runtimeProvider, model: runtimeModel, modelPool: [runtimeModel], baseUrl: runtimeConfig?.baseUrl ?? undefined, apiKey: runtimeConfig?.apiKey ?? undefined,
             onTaskSubmitted: async (remote) => {
@@ -1874,12 +1881,18 @@ async function generateNineGridSheetImages(
   imageModelPool: string[],
   assetById: Map<string, AssetItem>,
   imageSize: string,
-  imageQuality: string
+  imageQuality: string,
+  definition: PromptDefinition
 ): Promise<ImageGenerationResult[]> {
   const results: ImageGenerationResult[] = [];
   for (let groupIndex = 0; groupIndex < shots.length; groupIndex += 9) {
     const group = shots.slice(groupIndex, groupIndex + 9);
-    const sheetPrompt = buildNineGridSheetPrompt(group, workflow.project.artStyle, workflow.project.videoRatio, assetById);
+    const shotDescriptions = group.map(shot => buildReferencedShotPrompt(shot.imagePrompt, shot.referenceAssetIds, assetById));
+    const sheetPrompt = [
+      materializeMediaPrompt("storyboard_first_frame", { shot: shotDescriptions }, definition),
+      "以上静态首帧约束分别应用于每个格子；本次请求把九张首帧排成下述总图供系统裁切。",
+      buildNineGridSheetPrompt(group, workflow.project.artStyle, workflow.project.videoRatio, assetById)
+    ].join("\n");
     const sheet = await generateImage({
       prompt: sheetPrompt,
       negativePrompt: "字幕, 水印, Logo, 漫画格文字, 对话框, 低清晰度, 畸形手, 多余手指, 换脸, 同款分身",

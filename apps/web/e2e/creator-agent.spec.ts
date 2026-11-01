@@ -5,6 +5,10 @@ import { join } from "node:path";
 const brief = { format: "short", material: "idea", intent: "一个邮差在日落前送出最后一封信", durationSeconds: 30, audience: "喜欢短故事的观众", emotion: "温暖", mustKeep: "", fidelity: "faithful" };
 const script = "场景一：邮局，黄昏。邮差取下墙上最后一封信，发现地址是多年前拆除的老屋。他沿着河边跑向老街，在夕阳落下之前敲开一扇木门。场景二：老屋门前，黄昏。一位老人接过信，读出年轻时没能说出口的名字。邮差微笑，把帽子抱在胸前。风吹动信纸，河面映着最后一道金光。";
 const details = { estimatedSeconds: 30, characters: [{ name: "邮差", identity: "邮差", appearance: "短发", costume: "蓝色外套", personality: "善良" }], scenes: [{ location: "邮局", description: "老邮局", characters: ["邮差"] }], props: [] };
+const storyDesign = { goal: "送出最后一封信", obstacle: "地址已经改变", choice: "继续寻找收信人", payoff: "老人终于收到信", beats: [
+  { seconds: 15, action: "发现旧地址", evidence: "邮差取下墙上最后一封信", spokenText: "" },
+  { seconds: 15, action: "完成投递", evidence: "一位老人接过信", spokenText: "" }
+] };
 async function fixture(page: Page, options: { saved?: boolean; preferenceFails?: boolean; unknown?: boolean; conflict?: boolean; theme?: string } = {}) {
   await page.addInitScript(theme => { localStorage.setItem("aifilm_auth_token", "creator-agent-fixture"); localStorage.setItem("manjiao-theme", theme); }, options.theme ?? "light");
   const provider = { id: "fixture", name: "文本验收渠道", modality: "text", models: ["fixture-text", "fixture-next"], enabled: true, apiKeyConfigured: true, capability: { ratios: [] } };
@@ -12,7 +16,7 @@ async function fixture(page: Page, options: { saved?: boolean; preferenceFails?:
   let exists = Boolean(options.saved), preference = { guideVersion: 1, guideState: "new", hasProjects: exists };
   const project: any = { id: "short-fixture", title: "日落前的信", brief: { ...brief }, revision: 1, mode: "original", activeStep: "source", status: "draft", styleProfile: { key: "anime_jp" }, textProvider: "fixture", textModel: "fixture-text", updatedAt: "2026-10-31T00:00:00Z", sourceCount: 1, chapterCount: 0, scriptCount: options.saved ? 1 : 0 };
   const context = { estimator: "utf8_upper_bound_v1", budgetTokens: 16000, estimatedInputTokens: 1200, reservedOutputTokens: 5000, safetyTokens: 500, sources: [{ id: "brief", label: "创作意图", required: true, estimatedTokens: 200, included: true }] };
-  const state: any = { brief: project.brief, revision: 1, parentContentId: null, facts: [], runs: [], scripts: options.saved ? [{ id: "script-1", version: 1, status: "draft", content: script, details, createdAt: project.updatedAt, findings: [{ code: "author_review", layer: "author", severity: "warning", message: "请核对原意、因果与人物知情范围后确认。" }] }] : [], nextAction: options.saved ? "review" : "script" };
+  const state: any = { brief: project.brief, revision: 1, parentContentId: null, facts: [], runs: [], scripts: options.saved ? [{ id: "script-1", version: 1, status: "draft", content: script, details, storyDesign, createdAt: project.updatedAt, findings: [{ code: "author_review", layer: "author", severity: "warning", message: "请核对原意、因果与人物知情范围后确认。" }] }] : [], nextAction: options.saved ? "review" : "script" };
   if (options.unknown) state.runs = [{ id: "run-unknown", requestId: "unknown", status: "unknown", maxCalls: 1, maximumCredits: 10, inputRevision: 1, skillVersion: "short-film/1.0.0", cancelRequested: false, error: "供应商结果待核对", createdAt: project.updatedAt, steps: [], feedback: "" }];
   const writes: Array<{ path: string; body: any }> = [];
   await page.route("**/api/**", async route => {
@@ -166,4 +170,45 @@ test("changing models requires saving before quote; fact and feedback drafts sur
   await page.getByRole("button", { name: "添加故事设定" }).click();
   await expect(page.getByLabel("人物 / 对象")).toHaveValue("邮差");
   await expect(page.getByLabel("事实内容")).toHaveValue("他不知道信里写了什么");
+});
+test("optional creative questions save production boundaries without calling a model", async ({ page }, info) => {
+  const server = await fixture(page);
+  await page.goto("/#/content/__short__");
+  await page.getByLabel("作品标题").fill("门边的晚饭");
+  await page.getByLabel("故事与创作意图").fill("一个店员把最后一份饭留给流浪猫。");
+  await page.getByRole("button", { name: "帮我补充创作要求" }).click();
+  await expect(page.getByRole("status")).toContainText("谁必须");
+  await page.getByLabel("主角与具体目标").fill("店员在关门前送出最后一份饭");
+  await page.getByLabel("制作边界").fill("一个地点，不要追逐");
+  await page.getByLabel("不想出现的处理").fill("不要旁白解释");
+  await screenshot(page, "creative-brief", info.project.name);
+  await page.getByRole("button", { name: "保存并查看创作计划" }).click();
+  await expect(page).toHaveURL(/short-fixture$/);
+  const saved = server.writes.find(write => write.path === "/content/creator/projects")!.body;
+  expect(saved.brief.productionLimits).toBe("一个地点，不要追逐");
+  expect(saved.brief.protagonistGoal).toBe("店员在关门前送出最后一份饭");
+  expect(server.writes.some(write => /quote|execute|runs/.test(write.path))).toBe(false);
+});
+for (const theme of ["light", "dark"]) test(`targeted revision preserves feedback, expires quote and shows story evidence (${theme})`, async ({ page }, info) => {
+  const server = await fixture(page, { saved: true, theme });
+  await page.goto("/#/content/short-fixture");
+  await page.getByRole("textbox", { name: "修订方向", exact: true }).fill("保留最后的微笑。");
+  await page.getByRole("button", { name: "核对修订报价" }).click();
+  await expect(page.getByText("本次积分上限", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "补足因果", exact: true }).click();
+  await expect(page.getByText("本次积分上限", { exact: true })).toHaveCount(0);
+  const feedback = page.getByRole("textbox", { name: "修订方向", exact: true });
+  await expect(feedback).toHaveValue(/^保留最后的微笑。[\s\S]*线索/);
+  const value = await feedback.inputValue();
+  await page.getByRole("button", { name: "补足因果", exact: true }).click();
+  await expect(feedback).toHaveValue(value);
+  await page.getByText("查看故事因果与节拍 · 30 秒", { exact: true }).click();
+  await expect(page.locator(".short-story-design blockquote")).toHaveCount(2);
+  await screenshot(page, `creative-review-${theme}`, info.project.name);
+  await page.getByLabel("短片剧本", { exact: true }).fill(`${script}老人抬头看向门外。`);
+  await expect(page.getByText(/以下是原版本依据/)).toBeVisible();
+  expect(server.writes.some(write => write.path.endsWith("/execute"))).toBe(false);
+  page.on("dialog", dialog => dialog.accept());
+  await page.reload();
+  await expect(feedback).toHaveValue(value);
 });

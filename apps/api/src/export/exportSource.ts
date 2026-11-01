@@ -26,7 +26,11 @@ export function captureExportSource(workflow: ProjectWorkflow, type: ExportJob["
 }
 
 function captureWithAssets(workflow: ProjectWorkflow, type: ExportJob["type"], scope: ExportSourceSnapshot["scope"], assets: Map<string, ProjectWorkflow["assets"][number]>): ExportSourceSnapshot {
-  const cues = type === "subtitle" ? undefined : buildVoiceCues(workflow).map(cue => ({ ...cue, voice: cue.text ? cue.voice || "Cherry" : undefined }));
+  // Keep the durable fingerprint about synthesis inputs; cue metadata is not a reason to stale a paid export.
+  const cues = type === "subtitle" ? undefined : buildVoiceCues(workflow).map(cue => ({
+    shotId: cue.shotId, duration: cue.duration, speaker: cue.speaker,
+    voice: cue.text ? cue.voice || "Cherry" : undefined, text: cue.text
+  }));
   const subtitles = type === "tts" ? undefined : buildExportSrt(workflow);
   const assetInput = (id: string) => {
     const asset = assets.get(id);

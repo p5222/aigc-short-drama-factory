@@ -19,9 +19,14 @@ async function fixtures(page: Page) {
   const assets = [...storyboards.map(shot => ({ id: `video_${shot.id}`, projectId: project.id, type: "video", name: "视频", description: "", prompt: "", referenceUrl: `/storage/editor-${shot.id}.mp4`, status: "succeeded" })),
     { id: historyId, projectId: project.id, type: "video", name: "历史视频", description: "", prompt: "", referenceUrl: "/storage/editor-history.mp4", status: "succeeded" }];
   let edits: any[] = [], jobs: any[] = [{ id: "old-film", projectId: project.id, type: "video_export", status: "succeeded", sourceStatus: "stale", outputKind: "mp4", outputUrl: "/storage/editor-old.mp4", storyboardIds: ["a", "b", "c"], createdAt: project.updatedAt, updatedAt: project.updatedAt }];
-  let writes = 0, conflict = false, failRefresh = false, quoteRequest: any, exportRequest: any;
+  let writes = 0, conflict = false, failRefresh = false, quoteRequest: any, exportRequest: any, shotRequest: any;
   await page.route("**/api/**", async route => {
     const path = new URL(route.request().url()).pathname.replace(/^\/api/, "");
+    if (path === "/projects/video-edit/storyboards/a" && route.request().method() === "PATCH") {
+      shotRequest = route.request().postDataJSON();
+      Object.assign(storyboards[0], shotRequest);
+      return route.fulfill({ json: storyboards[0] });
+    }
     if (path.endsWith("/delivery-edit") && route.request().method() === "PUT") {
       writes++;
       const input = route.request().postDataJSON();
@@ -53,7 +58,7 @@ async function fixtures(page: Page) {
   return { historyId, writes: () => writes, setConflict: () => { conflict = true; }, failRefresh: () => { failRefresh = true; },
     addImages: () => { for (const shot of storyboards) assets.push({ id: `image_${shot.id}`, projectId: project.id, type: "image", name: "现有图片夹具", description: "", prompt: "", referenceUrl: "/media/cineart-home/desert_poster.jpg", status: "succeeded" }); },
     replaceVideo: () => { assets[0].referenceUrl = "/storage/editor-replaced.mp4"; },
-    quote: () => quoteRequest, exported: () => exportRequest };
+    quote: () => quoteRequest, exported: () => exportRequest, shotEdited: () => shotRequest };
 }
 
 async function openEditor(page: Page) {
@@ -186,6 +191,31 @@ test("storyboard preview follows shot timing and remains clearly labeled as stat
   await page.getByLabel("分镜预览进度", { exact: true }).fill("7");
   await expect(page.locator(".story-preview-body")).toContainText("镜头 2");
   await screenshot(page, "storyboard-preview", info.project.name);
+});
+
+test("production guide accompanies separately saved dialogue, narration and visual prompts", async ({ page }, info) => {
+  const state = await fixtures(page);
+  await page.goto("/#/project/video-edit");
+  await expect(page.getByRole("navigation", { name: "项目生产阶段" })).toBeVisible();
+  await page.getByRole("navigation", { name: "项目生产阶段" }).getByRole("button", { name: "分镜", exact: true }).click();
+  await page.locator(".creative-guide summary").click();
+  await expect(page.locator(".creative-guide")).toContainText("首帧写状态，视频写变化");
+  await expect(page.locator(".creative-guide")).toContainText("角色名：台词");
+  if (info.project.name === "mobile") await page.getByRole("button", { name: "打开检查器", exact: true }).click();
+  const dialogue = "店员：饭还热着。\n老人：谢谢。";
+  await page.getByRole("textbox", { name: "对白（按角色分行）", exact: true }).fill(dialogue);
+  await page.getByRole("textbox", { name: "旁白", exact: true }).fill("雨已经停了。");
+  await page.getByLabel("图片提示词", { exact: true }).fill("店员托着饭盒，尚未递出。");
+  await page.getByLabel("视频提示词", { exact: true }).fill("缓慢放下饭盒，固定机位。");
+  await page.getByRole("button", { name: "保存镜头", exact: true }).click();
+  await expect.poll(() => state.shotEdited()?.dialogue).toBe(dialogue);
+  expect(state.shotEdited().voiceOver).toBe("雨已经停了。");
+  expect(state.shotEdited().imagePrompt).toContain("尚未递出");
+  expect(state.shotEdited().videoPrompt).toContain("缓慢放下");
+  await page.reload();
+  if (info.project.name === "mobile") await page.getByRole("button", { name: "打开检查器", exact: true }).click();
+  await expect(page.getByRole("textbox", { name: "对白（按角色分行）", exact: true })).toHaveValue(dialogue);
+  await expect(page.getByRole("textbox", { name: "旁白", exact: true })).toHaveValue("雨已经停了。");
 });
 
 test("export feedback binds the viewed version and preserves unknown costs", async ({ page }, info) => {

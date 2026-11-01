@@ -5,6 +5,8 @@ import { CREATOR_GUIDE_VERSION, CREATOR_SKILL_VERSION, inspectModelPrice, type C
 import { prisma } from "../db/client.js";
 import { callTextModelJson } from "../agents/generator.js";
 import { materializeProductionPrompt } from "../prompts/production.js";
+import { materializePrompt } from "../prompts/runtime.js";
+import type { PromptDefinition } from "../prompts/catalog.js";
 import { quotePrice } from "../billing/pricing.js";
 import { assembleContext, estimateContextTokens } from "./contextBudget.js";
 import { briefSchema, checkCreatorScript, creatorRunInput, creatorScriptSchema, creatorTools } from "./creatorContracts.js";
@@ -225,8 +227,10 @@ export async function executeCreatorRun(userId: string, contentProjectId: string
         let prompt = object(input.prompt);
         if (previous) {
           const prior = object(previous.output);
-          prompt = await materializeProductionPrompt("creator_short_script", { context: input.context,
-            repair: { author: input.feedback || "", findings: previous.findings, previousResult: prior.raw ?? prior.script, instruction: "只修复检查指出的问题；保留其余内容，不修改作者锁定事实。" } });
+          prompt = materializePrompt("creator_short_script", { context: input.context,
+            repair: { author: input.feedback || "", findings: previous.findings, previousResult: prior.raw ?? prior.script, instruction: "只修复检查指出的问题；保留其余内容，不修改作者锁定事实。" } }, object(input.prompt).snapshot as PromptDefinition);
+          // JSONB may reorder contract keys; replay the exact approved system text.
+          prompt.systemPrompt = object(input.prompt).systemPrompt;
         }
         const estimatedInputTokens = estimateContextTokens(`${prompt.systemPrompt}\n${prompt.userPrompt}`);
         const manifest = { ...input.manifest, estimatedInputTokens };
@@ -243,7 +247,10 @@ export async function executeCreatorRun(userId: string, contentProjectId: string
           const live = await tx.creatorRun.findUniqueOrThrow({ where: { id: runId } });
           const currentProject = await tx.contentProject.findUniqueOrThrow({ where: { id: contentProjectId } });
           if (currentProject.revision !== live.inputRevision) fail("输入版本已变化，旧结果不会覆盖当前作品。");
-          const checked = checkCreatorScript(raw, input.brief.durationSeconds, input.facts);
+          const checked = checkCreatorScript(raw, input.brief.durationSeconds, input.facts, {
+            requireDesign: object(object(input.prompt).snapshot).version?.startsWith("2."),
+            originalSpeechBudget: input.brief.material === "idea" && !input.brief.mustKeep?.trim()
+          });
           const blocked = checked.findings.some(finding => finding.severity === "blocking");
           let scriptId: string | undefined;
           if (checked.script) {
@@ -330,6 +337,8 @@ export async function reviewCreatorScript(userId: string, contentProjectId: stri
     const brief = briefSchema.parse(project.brief);
     const facts = await tx.storyFact.findMany({ where: { contentProjectId } });
     const result: Record<string, any> = { ...object(previous.result), ...input.details };
+    // Evidence offsets and timing authored for the previous text cannot validate a manual edit.
+    if (input.content !== previous.content || input.details && input.details.estimatedSeconds !== result.storyDesign?.beats?.reduce((sum: number, beat: { seconds: number }) => sum + beat.seconds, 0)) delete result.storyDesign;
     const checked = checkCreatorScript({ ...result, script: input.content }, brief.durationSeconds, facts as StoryFact[]);
     if (input.approve && checked.findings.some(f => f.severity === "blocking")) fail("结构或锁定设定检查尚未通过，请先完成修订。");
     const scriptId = `content_script_${crypto.randomUUID()}`;
@@ -374,6 +383,7 @@ export async function getCreatorState(userId: string, contentProjectId: string):
     facts: project.facts as StoryFact[],
     scripts: project.scripts.map(script => ({ id: script.id, version: script.version, status: script.status, content: script.content,
       createdAt: script.createdAt.toISOString(), findings: object(script.result).findings ?? [],
+      storyDesign: object(script.result).storyDesign,
       details: creatorScriptSchema.pick({ estimatedSeconds: true, characters: true, scenes: true, props: true }).safeParse(script.result).success
         ? creatorScriptSchema.pick({ estimatedSeconds: true, characters: true, scenes: true, props: true }).parse(script.result) : undefined,
       authorReview: object(script.result).authorReview })),

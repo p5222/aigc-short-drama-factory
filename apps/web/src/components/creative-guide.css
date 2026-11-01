@@ -1,0 +1,14 @@
+.creative-guide { min-width: 0; color: var(--ds-text-primary); border: 1px solid var(--ds-border-default); border-radius: 8px; background: var(--ds-bg-surface); margin: 12px 0; font-size: 13px; flex-shrink: 0; }
+.creative-guide > summary { cursor: pointer; padding: 14px 16px; line-height: 1.7; overflow-wrap: anywhere; }
+.creative-guide > summary > span { color: var(--ds-action-primary); margin-right: 12px; font-size: 11px; }
+.creative-guide > summary > strong { font-weight: 550; }
+.creative-guide-body { padding: 0 18px 18px; }
+.creative-guide-body p { color: var(--ds-text-secondary); font-size: 13px; line-height: 1.9; margin: 0 0 14px; overflow-wrap: anywhere; }
+.creative-guide-body p > strong { display: block; color: var(--ds-text-primary); font-weight: 550; }
+.creative-guide-body blockquote { padding: 12px 16px; margin: 0 0 14px; border-inline-start: 2px solid var(--ds-action-primary); background: var(--ds-bg-subtle); white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.9; user-select: text; }
+.creative-guide-body button { display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px; min-height: 36px; cursor: pointer; border: 1px solid var(--ds-border-default); border-radius: 5px; background: var(--ds-bg-surface); color: var(--ds-text-primary); font: inherit; }
+.creative-guide summary:focus-visible, .creative-guide button:focus-visible { outline: 2px solid var(--ds-action-primary); outline-offset: 2px; }
+.creative-guide-notice { display: block; margin-top: 10px; color: var(--ds-action-primary); font-size: 12px; line-height: 1.7; }
+.cw2-stage > .creative-guide { margin: 12px clamp(16px, 3vw, 32px); }
+.dlv2-side > .creative-guide { margin: 12px; }
+@media (max-width: 600px) { .creative-guide-body { padding: 0 14px 16px; } .creative-guide > summary > span { display: block; } }

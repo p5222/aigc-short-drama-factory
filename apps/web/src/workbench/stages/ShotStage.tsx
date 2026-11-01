@@ -56,7 +56,7 @@ interface ShotStageProps {
 
 const editableFields = [
   "pictureDesc", "action", "shotSize", "cameraAngle", "cameraMovement", "duration",
-  "characters", "scene", "emotion", "dialogue", "imagePrompt", "videoPrompt"
+  "characters", "scene", "emotion", "dialogue", "voiceOver", "imagePrompt", "videoPrompt"
 ] as const;
 const failedImageModels = new Set(["wanx-v1", "wan2.5-t2i-preview"]);
 // 与服务端 videoGenerateSchema 的请求上限一致。
@@ -455,6 +455,8 @@ function ShotEditor({ state, onEdit, onSave, disabled }: { state: ShotDraftState
     <label><span>角色绑定</span><input value={(draft.characters ?? []).join(" / ")} onChange={(event) => onEdit({ characters: event.target.value.split(/[、,/]/).map((item) => item.trim()).filter(Boolean) })} /></label>
     <label><span>场景绑定</span><input value={String(draft.scene ?? "")} onChange={(event) => onEdit({ scene: event.target.value })} /></label>
     <label><span>动作</span><textarea value={String(draft.action ?? "")} onChange={(event) => onEdit({ action: event.target.value })} /></label>
+    <label><span>对白（按角色分行）</span><textarea value={String(draft.dialogue ?? "")} placeholder={"店员：今天也给你留着。\n老人：谢谢。"} onChange={(event) => onEdit({ dialogue: event.target.value })} /></label>
+    <label><span>旁白</span><textarea value={String(draft.voiceOver ?? "")} placeholder="没有旁白请留空" onChange={(event) => onEdit({ voiceOver: event.target.value })} /></label>
     <label><span>图片提示词</span><textarea value={String(draft.imagePrompt ?? "")} onChange={(event) => onEdit({ imagePrompt: event.target.value })} /></label>
     <label><span>视频提示词</span><textarea value={String(draft.videoPrompt ?? "")} onChange={(event) => onEdit({ videoPrompt: event.target.value })} /></label>
     <button className="wb-primary-button" type="button" disabled={disabled || (state.status !== "dirty" && state.status !== "error")} onClick={() => void onSave()}>{state.status === "saving" ? <Loader2 className="wb-spin" /> : <Save />}保存镜头</button>
