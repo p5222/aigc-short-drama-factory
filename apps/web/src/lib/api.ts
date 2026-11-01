@@ -30,6 +30,10 @@
   MembershipStatus,
   ModelPrice,
   ModelProvider,
+  ProviderConnection,
+  PlatformSettingView,
+  PlatformSettingUpdate,
+  SettingGroup,
   ModelTestResult,
   PaymentRecord,
   PagedResult,
@@ -119,6 +123,20 @@ export interface AdminContentProject {
   counts: { sources: number; analyses: number; outlines: number; chapters: number; scripts: number };
 }
 
+export type ProviderUpdateInput = Partial<Pick<ModelProvider, "name" | "modality" | "enabled" | "models" | "costHint">> & {
+  baseUrl?: string | null; iconUrl?: string | null; apiKey?: string | null;
+  connection?: ProviderConnection; expectedUpdatedAt?: string;
+  routing?: { mode?: "auto" | "manual"; preferredModel?: string; modelPool?: string[] };
+};
+export type ProviderCreateInput = Pick<ModelProvider, "name" | "modality" | "enabled" | "models" | "costHint"> & {
+  id?: string; baseUrl?: string; iconUrl?: string; apiKey?: string; connection?: ProviderConnection;
+  routing?: ProviderUpdateInput["routing"]; unitCredits?: number; vendorCostCny?: number;
+};
+export interface ConfigurationReadiness {
+  items: Array<{ id: string; title: string; state: "ready" | "missing" | "paused"; detail: string; module: string }>;
+  checkedAt: string; scope: "configuration";
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return requestJson<T>(path, options);
 }
@@ -132,6 +150,12 @@ async function requestBlob(path: string, options?: RequestInit): Promise<Blob> {
 }
 
 export const api = {
+  configurationReadiness: () => request<ConfigurationReadiness>("/admin/configuration-readiness"),
+  platformSettings: (group: SettingGroup) => request<PlatformSettingView>(`/admin/settings/${group}`),
+  savePlatformSettings: (group: SettingGroup, input: PlatformSettingUpdate) =>
+    request<PlatformSettingView>(`/admin/settings/${group}`, { method: "PATCH", body: JSON.stringify(input) }),
+  testPlatformSettings: (group: "email" | "payment") =>
+    request<{ ok: boolean; mode: string; message: string }>(`/admin/settings/${group}/test`, { method: "POST" }),
   adminContentProjects: () => request<AdminContentProject[]>("/admin/content-projects"),
   login: (input: { account: string; password: string }) =>
     request<AuthResult>("/auth/login", {
@@ -454,24 +478,14 @@ export const api = {
     }),
   updateProvider: (
     id: string,
-    input: Partial<Pick<ModelProvider, "name" | "modality" | "enabled" | "baseUrl" | "iconUrl" | "models" | "costHint">> & {
-      apiKey?: string | null;
-      routing?: { mode?: "auto" | "manual"; preferredModel?: string; modelPool?: string[] };
-    }
+    input: ProviderUpdateInput
   ) =>
     request<ModelProvider>(`/admin/providers/${id}`, {
       method: "PATCH",
       body: JSON.stringify(input)
     }),
   createProvider: (
-    input: Pick<ModelProvider, "name" | "modality" | "enabled" | "baseUrl" | "models" | "costHint"> & {
-      id?: string;
-      iconUrl?: string;
-      apiKey?: string;
-      routing?: { mode?: "auto" | "manual"; preferredModel?: string; modelPool?: string[] };
-      unitCredits?: number;
-      vendorCostCny?: number;
-    }
+    input: ProviderCreateInput
   ) =>
     request<ModelProvider>("/admin/providers", {
       method: "POST",
@@ -601,11 +615,13 @@ export const api = {
       method: "POST",
       body: JSON.stringify(input ?? {})
     }),
-  videoModelTest: (input?: Pick<CreateProjectInput, "videoProvider" | "videoModel">) =>
+  videoModelTest: (input?: Pick<CreateProjectInput, "videoProvider" | "videoModel"> & { mode?: "config" | "real"; imageUrl?: string }) =>
     request<VideoModelTestResult>("/settings/video-model-test", {
       method: "POST",
       body: JSON.stringify(input ?? {})
     }),
+  ttsModelTest: (input: { ttsProvider: string; ttsModel: string }) =>
+    request<ModelTestResult>("/settings/tts-model-test", { method: "POST", body: JSON.stringify(input) }),
   relayGatewayPolicy: () => request<RelayGatewayPolicy>("/admin/relay-gateway/policy"),
   writingAgentPlan: (input: WritingAgentInput) =>
     request<WritingAgentOutput>("/agents/writing/plan", {

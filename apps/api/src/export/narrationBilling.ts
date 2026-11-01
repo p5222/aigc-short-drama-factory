@@ -1,4 +1,7 @@
 import crypto from "node:crypto";
+import { readProviderConnection, assertProviderConnection } from "@aifilm/shared";
+import { effectiveSettings } from "../config/platformSettings.js";
+import { configuredRuntime, providerRuntimeOptions } from "../providers/connection.js";
 import type { PrismaClient } from "@prisma/client";
 import type { ProjectWorkflow } from "@aifilm/shared";
 import { prisma } from "../db/client.js";
@@ -30,24 +33,26 @@ async function narrationPlan(workflow: ProjectWorkflow, userId: string, db: Pris
   let configurationError: string | undefined;
   let exactCredits: number | undefined;
   if (characters) {
-    const provider = await db.modelProvider.findUnique({ where: { id: "dashscope-tts" } });
-    if (!provider || provider.modality !== "tts" || !provider.models.length) throw new Error("请管理员启用并配置 dashscope-tts 配音渠道");
-    if (!provider.enabled) configurationError = "请管理员启用并配置 dashscope-tts 配音渠道";
+    const defaults = await effectiveSettings("routing", db);
+    const provider = await db.modelProvider.findUnique({ where: { id: String(defaults.ttsProvider || "dashscope-tts") } });
+    if (!provider || provider.modality !== "tts" || !provider.models.length) throw new Error("请管理员启用并配置默认配音渠道");
+    if (!provider.enabled) configurationError = "请管理员启用默认配音渠道";
     const model = readProviderRoutingState(provider.capability, provider.models).preferredModel;
     if (!model || !provider.models.includes(model)) throw new Error("配音模型未配置");
-    const price = await db.modelPrice.findFirst({ where: { providerId: provider.id, model, modality: "tts", enabled: true } });
+    const prices = await db.modelPrice.findMany({ where: { providerId: provider.id, model, modality: "tts", enabled: true }, take: 2 });
+    if (prices.length > 1) throw new Error("配音模型存在重复生效价格，请管理员只保留一条价格。");
+    const price = prices[0];
     if (!price || price.unit !== "tts_character" || !Number.isSafeInteger(price.unitCredits) || price.unitCredits < 0) configurationError = "配音模型尚未配置有效的按字符积分价格";
-    const apiKey = provider.apiKey || providerEnvApiKey("dashscope-tts");
+    const apiKey = providerRuntimeOptions(provider).apiKey;
     if (!apiKey) configurationError = "配音渠道缺少 API Key，请管理员完成配置";
-    const baseUrl = provider.baseUrl || "https://dashscope.aliyuncs.com/api/v1";
-    runtime = { providerId: "dashscope-tts", apiKey: apiKey ?? "", baseUrl, model, defaultVoice: process.env.DASHSCOPE_TTS_DEFAULT_VOICE || process.env.TTS_VOICE || "Cherry" };
+    runtime = narrationRuntime(provider, model);
     unitCredits = price?.unitCredits ?? 0;
     if (price?.billing) exactCredits = await quotePrice(price, { characters }, db);
     providerName = provider.name;
   }
   const fingerprint = crypto.createHash("sha256").update(JSON.stringify({ version: 1, projectId: workflow.project.id,
     provider: runtime?.providerId ?? "silence", model: runtime?.model ?? "silence", baseUrl: runtime?.baseUrl,
-    language: process.env.DASHSCOPE_TTS_LANGUAGE_TYPE || process.env.TTS_LANGUAGE || "Chinese",
+    language: runtime?.language || process.env.DASHSCOPE_TTS_LANGUAGE_TYPE || process.env.TTS_LANGUAGE || "Chinese",
     cues: cues.map(cue => ({ text: cue.text, duration: cue.duration, voice: cue.voice || runtime?.defaultVoice })) })).digest("hex");
   const assetId = `audio_tts_${fingerprint}`;
   const cached = await readCachedNarration(assetId, workflow.project.id, db);
@@ -57,6 +62,16 @@ async function narrationPlan(workflow: ProjectWorkflow, userId: string, db: Pris
   const quote: NarrationQuote = { providerId: runtime?.providerId ?? "silence", providerName, model: runtime?.model ?? "silence", characters,
     estimatedCredits: cached ? 0 : credits, unitCredits, unit: "tts_character", cached: Boolean(cached), cueCount: cues.filter(cue => cue.text).length };
   return { runtime, quote, fingerprint, assetId, cached };
+}
+
+export function narrationRuntime(provider: { id: string; modality: string; capability: unknown; baseUrl: string | null; apiKey: string | null }, model: string): TtsRuntime {
+  const connection = readProviderConnection(provider.id, provider.modality, provider.capability);
+  assertProviderConnection(connection, "tts");
+  const runtime = configuredRuntime({ ...providerRuntimeOptions(provider), connection, provider: provider.id, model }, "tts");
+  return { providerId: provider.id, protocol: "dashscope-tts", apiKey: runtime.apiKey,
+    baseUrl: runtime.baseUrl, model,
+    defaultVoice: connection.defaultVoice || process.env.DASHSCOPE_TTS_DEFAULT_VOICE || process.env.TTS_VOICE || "Cherry",
+    language: connection.language || process.env.DASHSCOPE_TTS_LANGUAGE_TYPE || process.env.TTS_LANGUAGE || "Chinese" };
 }
 
 async function readCachedNarration(assetId: string, projectId: string, db: PrismaClient): Promise<TtsAudioAsset | null> {

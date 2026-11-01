@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { providerRuntimeOptions } from "../providers/connection.js";
 import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { CREATOR_GUIDE_VERSION, CREATOR_SKILL_VERSION, inspectModelPrice, type CreatorAgentState, type CreatorBrief, type CreatorFinding, type CreatorQuote, type StoryFact } from "@aifilm/shared";
@@ -239,9 +240,8 @@ export async function executeCreatorRun(userId: string, contentProjectId: string
         if (!provider || !provider.models.includes(project.textModel)) throw new ContentMutationError(409, "报价模型当前不可用，未替换模型。");
         const stepId = `creator_step_${crypto.randomUUID()}`;
         await runBilledContentGeneration(project, previous ? "定向修订短剧本" : "生成短剧本", async () => callTextModelJson<unknown>({
-          textProvider: project.textProvider, textModel: project.textModel, baseUrl: provider.baseUrl ?? undefined,
+          textProvider: project.textProvider, textModel: project.textModel, ...providerRuntimeOptions(provider),
           singleSubmission: true,
-          apiKey: ["manjiao", "pipp"].includes(project.textProvider) ? undefined : provider.apiKey ?? undefined,
           system: String(prompt.systemPrompt), prompt: String(prompt.userPrompt), maxTokens: creatorTools[tool].maxOutputTokens, label: "首作短剧本"
         }), async (tx, raw) => {
           const live = await tx.creatorRun.findUniqueOrThrow({ where: { id: runId } });

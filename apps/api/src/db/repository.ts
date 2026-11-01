@@ -1,4 +1,8 @@
 import crypto from "node:crypto";
+import { assertProviderConnection, readProviderConnection, storedProviderConnection, type ProviderConnection } from "@aifilm/shared";
+import { providerRuntimeOptions, validateProviderUrl } from "../providers/connection.js";
+import { encryptSettingSecret } from "../config/secrets.js";
+import { applyDefaultModelRoutes, effectiveSettings } from "../config/platformSettings.js";
 import { normalizeRedeemCode, redeemCodeStatus, type RedeemBatchInput, type RedeemHistoryPage } from "@aifilm/shared";
 import type { ExportJob as ExportJobRow, Prisma, PrismaClient } from "@prisma/client";
 import { adminUserQuery, type AdminUserPageOptions } from "./adminUserQuery.js";
@@ -31,7 +35,7 @@ import { assertVideoExportReady } from "../export/exportRequirements.js";
 import { probeFfmpeg } from "../export/videoComposer.js";
 import { generateImage } from "../providers/dashscopeImage.js";
 import type { ImageGenerationResult, VideoGenerationResult } from "../providers/types.js";
-import { generateVideo, queryVideoTaskResult, videoBillingInput } from "../providers/video.js";
+import { generateVideo, queryVideoTaskResult, videoBillingInput, videoRuntimeSnapshot } from "../providers/video.js";
 import { persistImageBuffer, persistImageReference, persistVideoReference, readStoredAsset } from "../storage/objectStorage.js";
 import { prisma } from "./client.js";
 import { AnnouncementScheduleError, assertAnnouncementSchedule } from "./announcementSafety.js";
@@ -762,6 +766,8 @@ export async function resetAdminUserPassword(id: string, password: string) {
 
 export async function listProviders(includeAdminMetadata = false) {
   const providers = await Promise.all((await prisma.modelProvider.findMany({ orderBy: { createdAt: "asc" } })).map((row) => mapProvider(row)));
+  const defaults = await effectiveSettings("routing");
+  for (const provider of providers) provider.platformDefault = defaults[`${provider.modality}Provider`] === provider.id;
   if (includeAdminMetadata) return providers;
   return providers.map((provider) => {
     const { baseUrl: _baseUrl, apiKeyPreview: _apiKeyPreview, ...publicProvider } = provider;
@@ -963,12 +969,15 @@ export async function updateProvider(
     models: string[];
     costHint: string;
     routing: { mode?: "auto" | "manual"; preferredModel?: string | null; modelPool?: string[] };
+    connection: ProviderConnection;
+    expectedUpdatedAt: string;
   }>
 ) {
   const updated = await prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT "id" FROM "ModelProvider" WHERE "id" = ${id} FOR UPDATE`;
     const existing = await tx.modelProvider.findUnique({ where: { id } });
     if (!existing) throw new Error("模型渠道不存在");
+    if (data.expectedUpdatedAt && existing.updatedAt.toISOString() !== data.expectedUpdatedAt) throw new ProjectRequestError(409, "渠道配置已被其他管理员修改，请刷新后重新编辑。");
     const cleanData = cleanProviderData(existing, data);
     const provider = await tx.modelProvider.update({ where: { id }, data: cleanData });
     await ensureProviderPriceRows(provider.id, provider.name, provider.modality, provider.models, undefined, undefined, tx);
@@ -989,6 +998,7 @@ export async function createProvider(
     models: string[];
     costHint?: string;
     routing?: { mode?: "auto" | "manual"; preferredModel?: string | null; modelPool?: string[] };
+    connection?: ProviderConnection;
     unitCredits?: number;
     vendorCostCny?: number;
   }
@@ -998,6 +1008,8 @@ export async function createProvider(
   if (!models.length) throw new Error("至少填写一个模型 ID");
   const modality = normalizeModality(data.modality);
   if (!data.name.trim()) throw new Error("渠道名称不能为空");
+  if (data.connection) assertProviderConnection(data.connection, modality);
+  else if (!readProviderConnection(providerId, modality) && data.enabled !== false) throw new Error("自定义渠道需要先选择受支持的接口协议。");
   validateModelPriceAmounts(data.unitCredits, data.vendorCostCny);
   const provider = await prisma.$transaction(async (tx) => {
   const created = await tx.modelProvider.create({
@@ -1008,9 +1020,9 @@ export async function createProvider(
       enabled: data.enabled ?? true,
       baseUrl: normalizeProviderBaseUrl(data.baseUrl),
       iconUrl: data.iconUrl?.trim() || null,
-      apiKey: data.apiKey?.trim() || null,
+      apiKey: data.apiKey?.trim() ? encryptSettingSecret(data.apiKey.trim(), `provider:${providerId}`) : null,
       models,
-      capability: buildProviderCapability(defaultProviderCapability(modality), models, data.routing) as any,
+      capability: { ...buildProviderCapability(defaultProviderCapability(modality), models, data.routing), ...(data.connection ? { connection: data.connection } : {}) } as any,
       costHint: data.costHint?.trim() || "后台手动接入模型渠道。"
     }
   });
@@ -1227,7 +1239,8 @@ export async function redeemExperienceCode(userId = DEMO_USER_ID, rawCode: strin
 
 type CreationQuoteInput = Parameters<typeof estimateCreation>[0];
 
-async function resolveCreationTextInput<T extends CreationQuoteInput>(input: T, db: Pick<Prisma.TransactionClient, "modelProvider"> = prisma) {
+async function resolveCreationTextInput<T extends CreationQuoteInput>(input: T, db: Pick<Prisma.TransactionClient, "modelProvider" | "platformSetting"> = prisma) {
+  input = await applyDefaultModelRoutes(input, db);
   const providerId = input.textProvider || process.env.TEXT_PROVIDER;
   const provider = providerId ? await db.modelProvider.findUnique({ where: { id: providerId } }) : null;
   const model = input.textModel || readProviderRoutingState(provider?.capability, provider?.models ?? []).preferredModel || textModelName(input);
@@ -1380,7 +1393,7 @@ export async function runProjectImageTasks(
             negativePrompt: "字幕, 水印, Logo, 低清晰度, 畸形手, 多余手指, 换脸, 同款分身, 过暗, 欠曝, 模糊",
             referenceImageUrls: resolveStoryboardReferenceAssets(workflow, shot, assetById).map((asset) => asset.referenceUrl).filter(Boolean) as string[],
             ratio: workflow.project.videoRatio, seed: 30000 + index, provider, model, modelPool: [model], size, quality,
-            baseUrl: config?.baseUrl ?? undefined, apiKey: config?.apiKey ?? undefined
+            ...providerRuntimeOptions(config)
           });
           if (!result.imageUrl && !isMockImageProvider(provider)) throw new Error("真实生图渠道未返回图片");
           const source = result.imageUrl || createSvgDataUrl(`镜头 ${shot.shotNo}`, shot.pictureDesc, workflow.project.artStyle);
@@ -1427,7 +1440,7 @@ export async function runProjectVideoTasks(
   for (const shot of shots) {
     try {
       if (!pendingShots.has(shot.id)) assertProductionMediaProvider(config, provider, model, "video");
-      const billingInput = videoBillingInput(provider, shot.duration, workflow.project.videoRatio as "9:16" | "16:9" | "1:1");
+      const billingInput = videoBillingInput(provider, shot.duration, workflow.project.videoRatio as "9:16" | "16:9" | "1:1", storedProviderConnection(config?.capability));
       const price = await readGenerationPrice(prisma, provider, model, "video");
       const estimatedCredits = price?.billing ? await quotePrice(price, billingInput) : billingInput.seconds! * unitCredits;
       const result = await runMediaTask({
@@ -1440,19 +1453,30 @@ export async function runProjectVideoTasks(
         const runtimeProvider = typeof checkpoint.provider === "string" ? checkpoint.provider : provider;
         const runtimeModel = typeof checkpoint.model === "string" ? checkpoint.model : model;
         const runtimeConfig = runtimeProvider === provider ? config : await prisma.modelProvider.findUnique({ where: { id: runtimeProvider } });
+        const runtimeOptions = providerRuntimeOptions(runtimeConfig);
+        const effectiveRuntime = videoRuntimeSnapshot({ ...runtimeOptions, provider: runtimeProvider, model: runtimeModel });
+        runtimeOptions.baseUrl = effectiveRuntime.baseUrl;
+        runtimeOptions.connection = effectiveRuntime.connection;
+        if (checkpoint.connection) runtimeOptions.connection = checkpoint.connection as ProviderConnection;
+        if (typeof checkpoint.baseUrl === "string") {
+          if (checkpoint.baseUrl !== runtimeOptions.baseUrl) throw new Error("视频提交后渠道地址已变化，请恢复原地址再查询旧任务，避免将凭据发送到错误地址。");
+          runtimeOptions.baseUrl = checkpoint.baseUrl;
+        }
         let generated: VideoGenerationResult;
         if (typeof checkpoint.remoteVideoUrl === "string") {
           generated = { taskId: String(checkpoint.remoteTaskId || "stored-result"), status: "succeeded", videoUrl: checkpoint.remoteVideoUrl, provider: runtimeProvider, model: runtimeModel };
         } else if (typeof checkpoint.remoteTaskId === "string") {
-          generated = await queryVideoTaskResult({ taskId: checkpoint.remoteTaskId, provider: runtimeProvider, model: runtimeModel, baseUrl: runtimeConfig?.baseUrl ?? undefined, apiKey: runtimeConfig?.apiKey ?? undefined });
+          generated = await queryVideoTaskResult({ taskId: checkpoint.remoteTaskId, provider: runtimeProvider, model: runtimeModel, ...runtimeOptions });
         } else {
           const definition = await resolveProductionPrompt("shot_motion");
           await recordAppliedPrompt(billing.taskId, definition);
-          await billing.checkpoint({ submissionStarted: true, provider: runtimeProvider, model: runtimeModel, shotId: shot.id });
+          checkpoint = { ...checkpoint, submissionStarted: true, provider: runtimeProvider, model: runtimeModel, shotId: shot.id,
+            connection: runtimeOptions.connection, baseUrl: runtimeOptions.baseUrl };
+          await billing.checkpoint(checkpoint);
           generated = await generateVideo({
             prompt: buildSeedanceVideoPrompt({ workflow, shot, firstFrameAsset: images.get(shot.id), assetById: new Map(workflow.assets.map((asset) => [asset.id, asset])), definition }),
             imageUrl: images.get(shot.id)?.referenceUrl, ratio: workflow.project.videoRatio, duration: shot.duration,
-            provider: runtimeProvider, model: runtimeModel, modelPool: [runtimeModel], baseUrl: runtimeConfig?.baseUrl ?? undefined, apiKey: runtimeConfig?.apiKey ?? undefined,
+            provider: runtimeProvider, model: runtimeModel, modelPool: [runtimeModel], ...runtimeOptions,
             onTaskSubmitted: async (remote) => {
               checkpoint = { ...checkpoint, remoteTaskId: remote.taskId, provider: remote.provider, model: remote.model, shotId: shot.id };
               await billing.checkpoint(checkpoint);
@@ -1490,7 +1514,8 @@ export async function runProjectVideoTasks(
 }
 
 async function resolveVideoCreditPerSecond(provider: string, model: string) {
-  const price = await readGenerationPrice(prisma, videoProviderId(provider), model, "video");
+  const id = await prisma.modelProvider.count({ where: { id: provider } }) ? provider : videoProviderId(provider);
+  const price = await readGenerationPrice(prisma, id, model, "video");
   return price ? await quotePrice(price) : videoCreditPerSecond(provider);
 }
 
@@ -1885,6 +1910,7 @@ async function generateNineGridSheetImages(
   definition: PromptDefinition
 ): Promise<ImageGenerationResult[]> {
   const results: ImageGenerationResult[] = [];
+  const config = await prisma.modelProvider.findUnique({ where: { id: imageProvider } });
   for (let groupIndex = 0; groupIndex < shots.length; groupIndex += 9) {
     const group = shots.slice(groupIndex, groupIndex + 9);
     const shotDescriptions = group.map(shot => buildReferencedShotPrompt(shot.imagePrompt, shot.referenceAssetIds, assetById));
@@ -1894,6 +1920,7 @@ async function generateNineGridSheetImages(
       buildNineGridSheetPrompt(group, workflow.project.artStyle, workflow.project.videoRatio, assetById)
     ].join("\n");
     const sheet = await generateImage({
+      ...providerRuntimeOptions(config),
       prompt: sheetPrompt,
       negativePrompt: "字幕, 水印, Logo, 漫画格文字, 对话框, 低清晰度, 畸形手, 多余手指, 换脸, 同款分身",
       referenceImageUrls: uniqueReferenceUrls(group, assetById),
@@ -2021,14 +2048,11 @@ function defaultProviderCapability(modality: string) {
 function normalizeProviderBaseUrl(value?: string | null) {
   const clean = value?.trim();
   if (!clean) return null;
-  let url: URL;
-  try { url = new URL(clean); } catch { throw new Error("渠道地址必须是有效的 HTTP(S) URL"); }
-  if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.hash) throw new Error("渠道地址只支持 HTTP(S)，且不能嵌入账号密码或片段");
-  return clean;
+  return validateProviderUrl(clean);
 }
 
 function cleanProviderData(
-  current: { modality: string; models: string[]; capability: unknown },
+  current: { id: string; modality: string; models: string[]; capability: unknown },
   data: Partial<{
     name: string;
     modality: string;
@@ -2039,6 +2063,7 @@ function cleanProviderData(
     models: string[];
     costHint: string;
     routing: { mode?: "auto" | "manual"; preferredModel?: string | null; modelPool?: string[] };
+    connection: ProviderConnection;
   }>
 ) {
   const clean: Partial<{ name: string; modality: string; enabled: boolean; baseUrl: string | null; iconUrl: string | null; apiKey: string | null; models: string[]; costHint: string; capability: any }> = {};
@@ -2048,17 +2073,20 @@ function cleanProviderData(
   if (data.enabled !== undefined) clean.enabled = data.enabled;
   if (data.baseUrl !== undefined) clean.baseUrl = normalizeProviderBaseUrl(data.baseUrl);
   if (data.iconUrl !== undefined) clean.iconUrl = data.iconUrl?.trim() || null;
-  if (data.apiKey !== undefined && !/^\*{3,}/.test(data.apiKey ?? "")) clean.apiKey = data.apiKey?.trim() || null;
+  if (data.apiKey !== undefined && !/^\*{3,}/.test(data.apiKey ?? "")) clean.apiKey = data.apiKey?.trim() ? encryptSettingSecret(data.apiKey.trim(), `provider:${current.id}`) : null;
   if (data.models !== undefined) clean.models = [...new Set(data.models.map((model) => model.trim()).filter(Boolean))];
   if (data.costHint !== undefined) clean.costHint = data.costHint.trim();
   if (clean.name === "") throw new Error("渠道名称不能为空");
   if (clean.models && clean.models.length === 0) throw new Error("至少保留一个模型 ID");
   const nextModels = clean.models ?? current.models;
-  if (data.modality !== undefined || data.models !== undefined || data.routing !== undefined) {
+  const connection = data.connection ?? storedProviderConnection(current.capability);
+  if (connection) assertProviderConnection(connection, nextModality);
+  if (data.enabled === true) assertProviderConnection(connection ?? readProviderConnection(current.id, nextModality), nextModality);
+  if (data.modality !== undefined || data.models !== undefined || data.routing !== undefined || data.connection !== undefined) {
     const capabilityBase = data.modality !== undefined
       ? defaultProviderCapability(nextModality)
       : providerCapabilityBase(current.capability, nextModality);
-    clean.capability = buildProviderCapability(capabilityBase, nextModels, data.routing, current.capability);
+    clean.capability = { ...buildProviderCapability(capabilityBase, nextModels, data.routing, current.capability), ...(connection ? { connection } : {}) };
   }
   return clean;
 }
@@ -2165,13 +2193,14 @@ async function readGenerationPrice(db: Pick<Prisma.TransactionClient, "modelPric
 }
 
 async function resolveImageBaseCreditPerShot(provider: string, model: string) {
-  const providerId = normalizeImageProviderId(provider);
+  const providerId = await prisma.modelProvider.count({ where: { id: provider } }) ? provider : normalizeImageProviderId(provider);
   const price = await readGenerationPrice(prisma, providerId, model, "image");
   return resolveImageUnitCredits(price ? [price] : [], provider, model);
 }
 
 async function resolveImageCreditPerShot(provider: string, model: string, size?: string, quality?: string) {
-  const price = await readGenerationPrice(prisma, normalizeImageProviderId(provider), model, "image");
+  const providerId = await prisma.modelProvider.count({ where: { id: provider } }) ? provider : normalizeImageProviderId(provider);
+  const price = await readGenerationPrice(prisma, providerId, model, "image");
   if (price?.billing) return quotePrice(price, { images: 1 });
   const baseCredits = await resolveImageBaseCreditPerShot(provider, model);
   return estimateImageCredits(baseCredits, size, quality);
@@ -2221,7 +2250,7 @@ function videoProviderId(provider: string) {
   if (provider === "dashscope" || provider === "dashscope-video" || provider === "wanxiang" || provider === "wanx") return "dashscope-video";
   if (provider === "doubao" || provider === "doubao-seedance" || provider === "seedance") return "doubao-seedance";
   if (provider === "embedded" || provider === "embedded-video" || provider === "local-video" || provider === "local-mjpeg") return "embedded-video";
-  return "mock-video";
+  return provider;
 }
 
 function currentImageProviderName(provider: string) {

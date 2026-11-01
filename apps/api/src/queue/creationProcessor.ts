@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { providerRuntimeOptions } from "../providers/connection.js";
 import type { Prisma } from "@prisma/client";
 import { DelayedError, type Job } from "bullmq";
 import type { CreateProjectInput } from "@aifilm/shared";
@@ -103,8 +104,7 @@ export async function processCreationJob(
       // A paid task uses the quoted model. Automatic fallback must not charge
       // one model's price while delivering another model's output.
       textModelPool: [selectedTextModel].filter((value): value is string => Boolean(value)),
-      baseUrl: configuredProvider?.baseUrl ?? undefined,
-      apiKey: configuredProvider?.apiKey ?? undefined
+      ...providerRuntimeOptions(configuredProvider)
     };
     const realConfig = hasTextModelConfig(runtimeInput);
     if (process.env.NODE_ENV === "production" && !realConfig) throw new Error("文本模型尚未配置，无法开始正式生成。请联系管理员配置可用模型。");

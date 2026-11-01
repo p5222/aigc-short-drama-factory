@@ -7,7 +7,7 @@ import { providerEnvApiKey } from "./credentials.js";
 
 test("catalog credential readiness agrees with generation credentials", async t => {
   const keys = [
-    "AIFILM_LOAD_ENV_FILES", "OBJECT_STORAGE_LOCAL_DIR", "MANJIAO_TEXT_API_KEY", "MANJIAO_IMAGE_API_KEY",
+    "AIFILM_LOAD_ENV_FILES", "OBJECT_STORAGE_LOCAL_DIR", "MANJIAO_TEXT_API_KEY", "MANJIAO_IMAGE_API_KEY", "PIPP_TEXT_API_KEY",
     "DEEPSEEK_API_KEY", "DASHSCOPE_API_KEY", "DASHSCOPE_TEXT_API_KEY", "BAILIAN_TEXT_API_KEY",
     "DASHSCOPE_TTS_API_KEY", "TTS_API_KEY", "DOUBAO_TEXT_API_KEY", "DOUBAO_API_KEY", "ARK_API_KEY",
     "VOLCENGINE_API_KEY", "OPENAI_API_KEY", "OPENAI_IMAGE_API_KEY", "OPENAI_COMPATIBLE_API_KEY"
@@ -27,7 +27,7 @@ test("catalog credential readiness agrees with generation credentials", async t 
   const chat = () => new Response(JSON.stringify({ choices: [{ message: { content: '{"ready":true}' } }] }));
   try {
     await t.test("Manjiao and DeepSeek environment keys enable the catalog and authenticate requests", async () => {
-      for (const [id, key] of [["manjiao", "MANJIAO_TEXT_API_KEY"], ["deepseek", "DEEPSEEK_API_KEY"]]) {
+      for (const [id, key] of [["manjiao", "MANJIAO_TEXT_API_KEY"], ["pipp", "PIPP_TEXT_API_KEY"], ["deepseek", "DEEPSEEK_API_KEY"]]) {
         process.env[key!] = "fixture-text-0123";
         assert.equal((await mapProvider(row(id!, "text"))).apiKeyConfigured, true);
         let calls = 0;

@@ -6,6 +6,8 @@ export * from "./creditPricing.js";
 export * from "./creditCenter.js";
 export * from "./deliveryEdit.js";
 export * from "./creatorAgent.js";
+export * from "./providerConnection.js";
+export * from "./platformSettings.js";
 
 export type ProjectStatus = "draft" | "planning" | "scripting" | "storyboarding" | "asseting" | "rendering" | "completed";
 
@@ -560,6 +562,11 @@ export interface ModelProvider {
   capability: ProviderCapability;
   costHint: string;
   routing?: ModelProviderRouting;
+  connection?: import("./providerConnection.js").ProviderConnection;
+  connectionSupported?: boolean;
+  endpointConfigured?: boolean;
+  platformDefault?: boolean;
+  updatedAt?: string;
 }
 
 export interface ModelPrice {
@@ -1402,7 +1409,7 @@ export interface VisualPipelineDescriptor {
   defaultModel?: string;
   envKeys: string[];
   capability: string[];
-  status: "ready" | "missing_key" | "disabled" | "not_configured";
+  status: "ready" | "missing_key" | "disabled" | "not_configured" | "not_integrated";
   message: string;
 }
 

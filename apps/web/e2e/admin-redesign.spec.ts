@@ -10,7 +10,7 @@ const accounts = Array.from({ length: 32 }, (_, i) => ({
   projects: 9 - i % 10, createdAt: `2026-10-${String(25 - i % 20).padStart(2, "0")}T02:15:00.000Z`,
   updatedAt: stamp, lastLoginAt: i % 3 ? stamp : undefined
 }));
-const providers = ["text", "image", "video"].map((modality, i) => ({ id: `design-${modality}`, name: ["文字创作", "视觉资产", "动态影像"][i], modality, enabled: true, apiKeyConfigured: true, models: [`design-${modality}-model`], capability: { ratios: ["16:9", "9:16"] }, routing: { mode: "auto" }, updatedAt: stamp }));
+const providers = ["text", "image", "video"].map((modality, i) => ({ id: `design-${modality}`, name: ["文字创作", "视觉资产", "动态影像"][i], modality, enabled: true, apiKeyConfigured: true, models: [`design-${modality}-model`], capability: { ratios: ["16:9", "9:16"] }, connection: { protocol: ["openai-chat", "openai-image", "dashscope-video"][i] }, routing: { mode: "auto" }, updatedAt: stamp }));
 const ticket = { id: "support-design", userId: "design-user-0", userName: "林初", subject: "如何调整分镜中的角色形象", category: "generation", status: "waiting_staff", version: 1, createdAt: stamp, updatedAt: stamp };
 const announcement = { id: "announcement", title: "创作工作台更新 · 更清晰的制作流程", body: "现在可以从原稿、全局设定到确认创建逐步完成准备。已创建的作品可在工作台继续制作。", type: "update", enabled: true, pinned: true, createdAt: stamp, updatedAt: stamp };
 const plan = { id: "starter", name: "创作体验包", price: 29, credits: 3000, bonusCredits: 200, badge: "适合初次创作", features: ["文本、图片与视频共用积分", "按实际使用量扣费"], shopUrl: "", enabled: true };

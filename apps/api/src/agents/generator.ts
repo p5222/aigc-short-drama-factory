@@ -8,6 +8,8 @@ import { resolveProductionPrompt } from "../prompts/production.js";
 import type { PromptDefinition } from "../prompts/catalog.js";
 import { recordTextUsage } from "../billing/metering.js";
 import { splitSpeech } from "./speechTimeline.js";
+import { inferProviderProtocol, type ProviderConnection } from "@aifilm/shared";
+import { configuredRuntime } from "../providers/connection.js";
 
 interface PipelineCharacter {
   name: string;
@@ -58,6 +60,7 @@ type TextModelResponse = {
 };
 
 type TextRuntimeOptions = Pick<CreateProjectInput, "textProvider" | "textModel"> & {
+  connection?: ProviderConnection;
   baseUrl?: string;
   apiKey?: string;
   textModelPool?: string[];
@@ -187,13 +190,7 @@ export async function generateProjectStoryboards(
 
 export async function testTextModelConnection(options: TextRuntimeOptions = {}) {
   if (!hasTextModelConfig(options)) {
-    return {
-      ok: true,
-      mode: "local" as const,
-      provider: "Local Generator",
-      model: "local-storyboard-v1",
-      message: "未检测到文本模型 API Key，当前会使用本地结构化生成器跑通完整流程。"
-    };
+    throw new Error("文本渠道缺少 API Key，请在后台保存密钥后再测试真实连接。");
   }
 
   const started = Date.now();
@@ -351,25 +348,19 @@ async function callOpenAICompatible(body: Record<string, unknown>, options: Text
   const provider = options.textProvider || defaultTextProviderId();
   // Enforce the same selected-model contract for chat, Google and Responses.
   resolveTextModelCandidates(options, provider, textModelName(options));
-  if (provider === "google-ai-studio") {
+  if (options.connection?.protocol === "gemini-text" || (!options.connection && provider === "google-ai-studio")) {
     return callGeminiInteraction(body, options);
   }
 
   if (shouldUseResponsesApi(options, provider)) {
-    try {
-      return await callResponsesApi(body, options);
-    } catch (error) {
-      if (options.singleSubmission) throw error;
-      console.warn("[generator] Responses API failed, retrying chat completions on the same upstream:", error);
-      return callChatCompletionsApi(body, options, "openai-upstream");
-    }
+    return callResponsesApi(body, options);
   }
 
   return callChatCompletionsApi(body, options);
 }
 
 async function callGeminiInteraction(body: Record<string, unknown>, options: TextRuntimeOptions = {}) {
-  const runtime = resolveTextRuntime({ ...options, textProvider: "google-ai-studio" });
+  const runtime = resolveTextRuntime(options);
   if (!runtime.apiKey) throw new Error("Missing GEMINI_API_KEY for Google AI Studio");
   if (!runtime.baseUrl) throw new Error("Missing base URL for Google AI Studio");
 
@@ -508,7 +499,7 @@ async function postJsonWithFallback<T>({
       try {
         return JSON.parse(lastText) as T;
       } catch {
-        if (url !== urls[urls.length - 1]) continue;
+        throw new Error(`${label} returned an unreadable response; result unknown, automatic resubmission stopped.`);
       }
     }
 
@@ -519,7 +510,7 @@ async function postJsonWithFallback<T>({
 }
 
 async function callResponsesApi(body: Record<string, unknown>, options: TextRuntimeOptions = {}) {
-  const runtime = resolveTextRuntime(options, "openai-upstream");
+  const runtime = resolveTextRuntime(options);
   if (!runtime.apiKey) throw new Error("Missing API key for OpenAI responses upstream");
   if (!runtime.baseUrl) throw new Error("Missing base URL for OpenAI responses upstream");
 
@@ -987,8 +978,10 @@ function balanceJsonText(value: string) {
 }
 
 export function hasTextModelConfig(options: TextRuntimeOptions = {}) {
-  const runtime = resolveTextRuntime(options);
-  return Boolean(runtime.apiKey && runtime.baseUrl);
+  try {
+    const runtime = resolveTextRuntime(options);
+    return Boolean(runtime.apiKey && runtime.baseUrl);
+  } catch { return false; }
 }
 
 export function textModelName(options: Pick<CreateProjectInput, "textProvider" | "textModel"> = {}) {
@@ -1034,7 +1027,8 @@ function providerDisplayName(providerId: string) {
   return names[providerId] ?? providerId;
 }
 
-export function shouldUseResponsesApi(options: Pick<CreateProjectInput, "textProvider"> = {}, resolvedProvider?: string) {
+export function shouldUseResponsesApi(options: Pick<CreateProjectInput, "textProvider"> & { connection?: ProviderConnection } = {}, resolvedProvider?: string) {
+  if (options.connection) return options.connection.protocol === "openai-responses";
   const provider = options.textProvider || "";
   return resolvedProvider === "openai-upstream" || (provider === "openai-upstream") || (!provider && !resolvedProvider && process.env.OPENAI_TEXT_WIRE_API === "responses");
 }
@@ -1056,6 +1050,8 @@ function defaultTextProviderId() {
 function resolveTextRuntime(options: TextRuntimeOptions = {}, providerOverride?: string) {
   const provider = providerOverride || options.textProvider || defaultTextProviderId();
   const model = runtimeTextModelName(options, provider);
+  if (options.connection) return configuredRuntime({ ...options, provider, model }, "text");
+  if (!inferProviderProtocol(provider, "text")) throw new Error("文本渠道尚未配置受支持的接口协议，请在后台选择协议。");
 
   if (provider === "dashscope-text" || provider === "bailian-text") {
     return {
@@ -1078,6 +1074,12 @@ function resolveTextRuntime(options: TextRuntimeOptions = {}, providerOverride?:
       baseUrl: options.baseUrl || process.env.ZML_BASE_URL || "https://api.zmlmfling.com",
       model: options.textModel || process.env.ZML_TEXT_MODEL || model
     };
+  }
+
+  if (provider === "pipp") {
+    return { provider, apiKey: options.apiKey || providerEnvApiKey(provider),
+      baseUrl: options.baseUrl || process.env.PIPP_TEXT_BASE_URL || "https://ripp.best",
+      model: options.textModel || process.env.PIPP_TEXT_MODEL || model };
   }
 
   if (provider === "manjiao") {
@@ -1126,8 +1128,11 @@ function resolveTextRuntime(options: TextRuntimeOptions = {}, providerOverride?:
     };
   }
 
+  if (provider !== "deepseek") return {
+    provider, apiKey: options.apiKey || providerEnvApiKey(provider), baseUrl: options.baseUrl, model
+  };
   return {
-    provider: "deepseek",
+    provider,
     apiKey: options.apiKey || providerEnvApiKey("deepseek"),
     baseUrl: options.baseUrl || process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com",
     model
@@ -1179,7 +1184,7 @@ async function handleTextModelFallbackError(provider: string, model: string, err
   }
   if (isTextTransientError(message)) {
     await coolDownModel(provider, model, message);
-    return { shouldContinue: true, message: `${model}: transient upstream failure, switching to the next candidate. ${message}` };
+    return { shouldContinue: false, message: `${model}: upstream result unknown; automatic resubmission stopped. ${message}` };
   }
   return { shouldContinue: false, message };
 }
@@ -1389,9 +1394,11 @@ function buildVideoPrompt(shot: PipelineStoryboard, pictureDesc: string, input: 
 }
 
 function normalizeDuration(duration: unknown, line: string) {
+  const supplied = Number(duration);
+  if (Number.isFinite(supplied) && supplied >= 1 && supplied <= 15) return supplied;
   const raw = Number(duration) || 4;
   const textSeconds = line ? Math.ceil(line.replace(/[^一-龥A-Za-z0-9]/g, "").length / 3) + 1 : raw;
-  return Math.min(Math.max(raw, textSeconds, 2), 12);
+  return Math.min(Math.max(raw, textSeconds, 2), 15);
 }
 
 function stableSeed(projectId: string, name: string, index: number) {

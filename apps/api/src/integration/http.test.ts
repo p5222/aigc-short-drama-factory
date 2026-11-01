@@ -9,7 +9,7 @@ import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
 import { PrismaClient } from "@prisma/client";
-import type { SupportTicketList, SupportTicketMutationResult, SupportTicketDetail } from "@aifilm/shared";
+import type { PlatformSettingView, ModelProvider, SupportTicketList, SupportTicketMutationResult, SupportTicketDetail } from "@aifilm/shared";
 import { hashPassword } from "../auth/password.js";
 import { releaseTaskCredits, reserveTaskCredits } from "../billing/taskCredits.js";
 
@@ -42,7 +42,7 @@ test("HTTP business boundaries: sessions, administrator writes, private media an
   await mkdir(resolve(root, "images"));
   await writeFile(resolve(root, "images", `${run}.png`), bytes);
   await db.asset.create({ data: { id: `api_asset_${run}`, projectId, type: "image", name: "Private image", description: "Test fixture", prompt: "", referenceUrl: mediaPath, status: "succeeded" } });
-  await db.modelProvider.create({ data: { id: providerId, name: "Private route", costHint: "test", modality: "text", enabled: true, models: ["test-model"], baseUrl: "https://private.example.test", apiKey: "never-disclose-test-secret", capability: {} } });
+  await db.modelProvider.create({ data: { id: providerId, name: "Private route", costHint: "test", modality: "text", enabled: true, models: ["test-model"], baseUrl: "https://private.example.test", apiKey: "never-disclose-test-secret", capability: { connection: { protocol: "openai-chat" } } } });
   await db.modelPrice.createMany({ data: [
     { id: `api_text_price_${run}`, providerId, providerName: "Private route", model: "test-model", modality: "text", unit: "text_run", unitCredits: 37 },
     { id: `api_other_price_${run}`, providerName: "Other route", model: "test-model", modality: "text", unit: "text_run", unitCredits: 1 },
@@ -53,6 +53,7 @@ test("HTTP business boundaries: sessions, administrator writes, private media an
   const child = spawn(process.execPath, ["--import", pathToFileURL(require.resolve("tsx")).href, "src/server.ts"], {
     cwd: resolve(import.meta.dirname, "../.."), stdio: ["ignore", "pipe", "pipe"], env: {
       ...process.env, AIFILM_LOAD_ENV_FILES: "false", NODE_ENV: "test", DATABASE_URL: databaseUrl!,
+      PLATFORM_SETTINGS_KEY: "ab".repeat(32),
       DEEPSEEK_API_KEY: "", WECHAT_PAY_ENABLED: "false",
       REGISTRATION_SMTP_USER: "", REGISTRATION_SMTP_PASSWORD: "",
       REDIS_URL: redisUrl.toString(), API_PORT: String(port), PUBLIC_API_BASE_URL: base,
@@ -85,6 +86,48 @@ test("HTTP business boundaries: sessions, administrator writes, private media an
       sessions.push({ token: body.token, cookie: response.headers.get("set-cookie")!.split(";")[0]! });
     }
     const [owner, other, admin] = sessions as [typeof sessions[number], typeof sessions[number], typeof sessions[number]];
+    await t.test("configuration endpoints enforce permissions, encrypted secret storage, CAS and explicit restore", async () => {
+      const path = "/api/admin/settings/email";
+      for (const target of [path, "/api/admin/configuration-readiness"]) {
+        assert.equal((await request(target)).status, 401);
+        assert.equal((await request(target, owner.token)).status, 403);
+      }
+      assert.equal((await request(path, owner.token, "PATCH", { expectedVersion: 0, values: {} })).status, 403);
+      for (const target of ["/api/admin/settings/email/test", "/api/admin/settings/payment/test", "/api/settings/tts-model-test"]) {
+        assert.equal((await request(target, owner.token, "POST", {})).status, 403);
+      }
+      const initial = await (await request(path, admin.token)).json() as PlatformSettingView;
+      try {
+        const result = await request(path, admin.token, "PATCH", { expectedVersion: initial.version, values: { user: "fixture@qq.com", password: "http-secret-replacement" } });
+        assert.equal(result.status, 200, await result.clone().text());
+        const saved = await result.json() as PlatformSettingView;
+        assert.equal(saved.version, initial.version + 1); assert.equal(saved.secrets.password, true);
+        assert.equal("password" in saved.values, false);
+        const row = await db.platformSetting.findUniqueOrThrow({ where: { key: "email" } });
+        assert.match(String((row.values as Record<string, unknown>).password), /^enc:v1:/);
+        assert.ok(!JSON.stringify(row).includes("http-secret-replacement"));
+        assert.equal((await request(path, admin.token, "PATCH", { expectedVersion: initial.version, values: { host: "stale.invalid" } })).status, 409);
+        assert.equal((await request(path, admin.token, "PATCH", { expectedVersion: saved.version, values: { NODE_ENV: "production" } })).status, 400);
+        const restored = await request(path, admin.token, "PATCH", { expectedVersion: saved.version, values: { password: null, user: null } });
+        assert.equal(restored.status, 200); assert.equal((await restored.json() as PlatformSettingView).secrets.password, false);
+        const logs = await (await request("/api/admin/audit-logs", admin.token)).text();
+        assert.ok(!logs.includes("http-secret-replacement"));
+      } finally { await db.platformSetting.deleteMany({ where: { key: "email" } }); }
+    });
+    await t.test("provider updates expose no secrets, use optimistic versions and clear nullable overrides", async () => {
+      const path = `/api/admin/providers/${providerId}`;
+      const before = await db.modelProvider.findUniqueOrThrow({ where: { id: providerId } });
+      const result = await request(path, admin.token, "PATCH", { expectedUpdatedAt: before.updatedAt.toISOString(), connection: { protocol: "openai-chat" }, apiKey: "changed-channel-secret", iconUrl: null });
+      assert.equal(result.status, 200, await result.clone().text());
+      const saved = await result.json() as ModelProvider;
+      assert.equal(saved.connection?.protocol, "openai-chat"); assert.ok(!JSON.stringify(saved).includes("changed-channel-secret"));
+      assert.equal((await request(path, admin.token, "PATCH", { expectedUpdatedAt: before.updatedAt.toISOString(), name: "stale" })).status, 409);
+      const restored = await request(path, admin.token, "PATCH", { expectedUpdatedAt: saved.updatedAt, apiKey: null, baseUrl: null });
+      assert.equal(restored.status, 200);
+      const cleared = await restored.json() as ModelProvider;
+      assert.equal(cleared.apiKeyConfigured, false); assert.equal(cleared.endpointConfigured, false);
+      await db.modelProvider.update({ where: { id: providerId }, data: { apiKey: before.apiKey, baseUrl: before.baseUrl, capability: before.capability as object } });
+    });
     await t.test("creator state, private outcomes and tail frames require login and ownership; insights require administrator access", async () => {
       const creator = "/api/content/creator";
       const outcome = `/api/projects/${projectId}/export/jobs/missing/outcome`;

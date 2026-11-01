@@ -59,11 +59,13 @@ export interface TtsAudioAsset {
 }
 
 export interface TtsRuntime {
-  providerId: "dashscope-tts";
+  providerId: string;
+  protocol?: "dashscope-tts";
   apiKey: string;
   baseUrl: string;
   model: string;
   defaultVoice: string;
+  language?: string;
 }
 
 type TtsSynthesisDependencies = {
@@ -525,7 +527,7 @@ async function synthesizeNarrationWav(
     const samples = new Array(Math.max(1, Math.ceil(totalDuration(workflow) * 24000))).fill(0);
     return { buffer: pcm16Wav(samples, 24000), provider: "silence", ext: "wav", warnings: [] };
   }
-  if (!runtime || runtime.providerId !== "dashscope-tts") throw new Error("配音必须先获取有效渠道报价并冻结预算，请从项目导出入口操作。");
+  if (!runtime || (runtime.protocol ?? runtime.providerId) !== "dashscope-tts") throw new Error("配音必须先获取有效渠道报价并冻结预算，请从项目导出入口操作。");
   return createDashScopeTtsNarration(session, cues, runtime, dependencies);
 }
 
@@ -791,7 +793,7 @@ async function createDashScopeTtsNarration(session: ExportSession, cues: ReturnT
   if (!voicedCues.length) {
     return {
       buffer: pcm16Wav(new Array(24_000).fill(0), 24_000),
-      provider: "dashscope-tts",
+      provider: options.providerId,
       ext: "wav" as const,
       warnings: ["当前项目没有可配音台词，已生成 1 秒静音音轨用于保持导出链路完整。"]
     };
@@ -807,7 +809,7 @@ async function createDashScopeTtsNarration(session: ExportSession, cues: ReturnT
     duration: cue.duration
   }));
   await writeSessionText(session, "dashscope-tts-request.json", JSON.stringify({
-    provider: "dashscope-tts",
+    provider: options.providerId,
     endpoint: runtime.endpoint,
     model: runtime.model,
     requests
@@ -830,14 +832,14 @@ async function createDashScopeTtsNarration(session: ExportSession, cues: ReturnT
 
   return {
     buffer: pcm16Wav(samples, sampleRate),
-    provider: "dashscope-tts",
+    provider: options.providerId,
     ext: "wav" as const,
     warnings: []
   };
 }
 
 function resolveDashScopeTtsRuntime(options: TtsRuntime) {
-  const apiKey = options.apiKey || providerEnvApiKey("dashscope-tts");
+  const apiKey = options.apiKey || providerEnvApiKey(options.providerId);
   if (!apiKey) throw new Error("Missing DASHSCOPE_TTS_API_KEY or DASHSCOPE_API_KEY for DashScope TTS");
   const baseUrl =
     options.baseUrl ||
@@ -851,7 +853,8 @@ function resolveDashScopeTtsRuntime(options: TtsRuntime) {
     baseUrl,
     endpoint: endpointFromBase(baseUrl, process.env.DASHSCOPE_TTS_PATH || "/services/aigc/multimodal-generation/generation"),
     model: options.model,
-    defaultVoice: options.defaultVoice
+    defaultVoice: options.defaultVoice,
+    language: options.language || process.env.DASHSCOPE_TTS_LANGUAGE_TYPE || process.env.TTS_LANGUAGE || "Chinese"
   };
 }
 
@@ -875,7 +878,7 @@ async function requestDashScopeTtsCue(
         input: {
           text,
           voice,
-          language_type: process.env.DASHSCOPE_TTS_LANGUAGE_TYPE || process.env.TTS_LANGUAGE || "Chinese"
+          language_type: runtime.language
         }
       }),
       signal: controller.signal
@@ -894,6 +897,14 @@ async function requestDashScopeTtsCue(
   } finally {
     clearTimeout(timeout);
   }
+}
+
+export async function testTtsConnection(options: TtsRuntime) {
+  const started = Date.now();
+  const wav = parsePcm16Wav(await requestDashScopeTtsCue(resolveDashScopeTtsRuntime(options), "欢迎来到漫角。", options.defaultVoice));
+  if (!wav.samples.length) throw new Error("配音测试未返回有效声音数据。");
+  return { ok: true, mode: "real" as const, provider: options.providerId, model: options.model,
+    latencyMs: Date.now() - started, message: `已收到真实 WAV 音频，时长 ${(wav.samples.length / wav.sampleRate).toFixed(1)} 秒。请在作品中进一步验收音色与台词表现。` };
 }
 
 function dashScopeApiBaseFromTextBase(baseUrl?: string) {
@@ -1036,9 +1047,8 @@ function inferConfiguredTtsProvider() {
 
 function resolveCueVoice(workflow: ProjectWorkflow, speaker: string) {
   const map = parseVoiceMap(process.env.DASHSCOPE_TTS_VOICE_MAP || process.env.TTS_VOICE_MAP);
-  if (map[speaker]) return map[speaker];
   const character = workflow.characters.find((item) => item.name === speaker);
-  return character?.voiceId || process.env.DASHSCOPE_TTS_DEFAULT_VOICE || process.env.TTS_VOICE;
+  return character?.voiceId || map[speaker];
 }
 
 function parseVoiceMap(value?: string) {
@@ -1062,7 +1072,9 @@ function ttsProviderNote(provider: string) {
   if (provider === "vibevoice") return "当前使用自托管 VibeVoice-TTS 兼容服务生成长文本多说话人配音。";
   if (provider === "longcat-audiodit") return "当前使用 LongCat-AudioDiT 开源扩散式 TTS 生成角色台词配音；可通过 prompt map 为角色绑定参考音频和文本。";
   if (provider === "windows-sapi") return "当前使用 Windows 系统语音合成生成与镜头时长对齐的 WAV；生产部署可切换到开源 TTS 服务。";
-  return "当前内置 scratch-local-wav 会生成与镜头时长对齐的占位配音 WAV；接入开源 TTS 服务后可复用同一 cue 清单替换音频。";
+  if (provider === "silence") return "当前镜头没有对白或旁白，使用静音音轨。";
+  if (provider === "scratch-local-wav") return "当前为本地占位音轨，不能用于需要真实语音的成片。";
+  return "当前使用后台配置的配音渠道生成语音，音轨按逐句清单对齐并进入字幕与 MP4 合成。";
 }
 
 async function createWindowsSapiNarrationWav(session: ExportSession, cues: ReturnType<typeof buildVoiceCues>) {

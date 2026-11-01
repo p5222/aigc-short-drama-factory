@@ -5,6 +5,8 @@ import { assertIndependentImageBatch, lockMediaProject, mediaSourceIsCurrent, Me
 import { lockTaskCredits, releaseTaskCredits, reserveTaskCredits, settleTaskCredits } from "./taskCredits.js";
 import { withTaskMeter, flushTaskMeter } from "./metering.js";
 import type { BillingUsage } from "@aifilm/shared";
+import { readProviderConnection, assertProviderConnection } from "@aifilm/shared";
+import { providerRuntimeOptions, configuredRuntime } from "../providers/connection.js";
 
 type MediaTaskInput = {
   userId: string; projectId: string; projectName: string; type: string; scope: string;
@@ -20,14 +22,20 @@ export type MediaTaskContext = {
 };
 
 export function assertProductionMediaProvider(
-  provider: { enabled: boolean; modality: string; models: string[] } | null,
+  provider: { enabled: boolean; modality: string; models: string[]; capability?: unknown; apiKey?: string | null; baseUrl?: string | null } | null,
   providerId: string, model: string, modality: "text" | "image" | "video"
 ) {
   if (provider && (!provider.enabled || provider.modality !== modality || !provider.models.includes(model))) {
     throw new Error("所选模型已停用或不属于当前渠道，请重新选择可用模型。");
   }
-  if (process.env.NODE_ENV === "production" && (!provider || /mock|embedded|local/i.test(providerId))) {
+  if (process.env.NODE_ENV === "production" && (!provider || /^(mock|embedded|local)(-|$)/i.test(providerId))) {
     throw new Error("正式生成需要已启用的真实模型渠道，当前配置不可用于生产。");
+  }
+  if (provider && !/^(mock|embedded|local)(-|$)/i.test(providerId)) assertProviderConnection(readProviderConnection(providerId, modality, provider.capability), modality);
+  if (provider && process.env.NODE_ENV === "production") {
+    const runtime = providerRuntimeOptions({ ...provider, id: providerId });
+    if (!runtime.apiKey) throw new Error("所选渠道缺少 API Key，请管理员配置后再生成。");
+    configuredRuntime({ ...runtime, connection: readProviderConnection(providerId, modality, provider.capability), provider: providerId, model }, modality);
   }
 }
 

@@ -20,14 +20,15 @@ export type CanonicalImageProviderId =
   | "openai-compatible-image"
   | "mock-image";
 
-export function normalizeImageProviderId(provider?: string | null): CanonicalImageProviderId {
+export function normalizeImageProviderId(provider?: string | null): string {
   if (provider === "dashscope" || provider === "dashscope-image") return "dashscope-image";
   if (provider === "google" || provider === "google-ai-studio" || provider === "google-gemini-image") return "google-gemini-image";
   if (provider === "zml" || provider === "zml-image" || provider === "zml-relay") return "zml-image";
   if (provider === "ripp" || provider === "ripp-image") return "ripp-image";
   if (provider === "doubao" || provider === "doubao-seedream") return "doubao-seedream";
   if (provider === "openai-compatible" || provider === "openai-compatible-image" || provider === "relay" || provider === "relay-image") return "openai-compatible-image";
-  return "mock-image";
+  if (!provider || ["mock", "mock-image", "mock-image-v1"].includes(provider)) return "mock-image";
+  return provider;
 }
 
 export function defaultImageUnitCredits(provider?: string | null): number {
@@ -55,7 +56,8 @@ export function resolveImageUnitCredits(
   model: string
 ): number {
   const providerId = normalizeImageProviderId(provider);
-  return prices.find((price) => (
+  const exact = prices.find(price => price.enabled && price.modality === "image" && price.providerId === provider && price.model === model);
+  return exact?.unitCredits ?? prices.find((price) => (
     price.enabled
     && price.modality === "image"
     && price.providerId === providerId

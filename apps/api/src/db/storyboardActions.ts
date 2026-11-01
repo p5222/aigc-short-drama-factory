@@ -1,4 +1,6 @@
 import crypto from "node:crypto";
+import { providerRuntimeOptions } from "../providers/connection.js";
+import { inspectModelPrice } from "@aifilm/shared";
 import type { PrismaClient } from "@prisma/client";
 import { assertProductionMediaProvider, runMediaTask } from "../billing/mediaTask.js";
 import { quotePrice } from "../billing/pricing.js";
@@ -77,8 +79,7 @@ export async function runProjectStoryboardTasks(
   const runtimeInput = {
     ...input,
     textModelPool: [textModelName(input)],
-    baseUrl: textProviderConfig?.baseUrl ?? undefined,
-    apiKey: textProviderConfig?.apiKey ?? undefined
+    ...providerRuntimeOptions(textProviderConfig)
   };
 
   assertProductionMediaProvider(textProviderConfig, input.textProvider || "", textModelName(input), "text");
@@ -260,8 +261,7 @@ export async function regenerateStoryboardShotImage(projectId: string, shotId: s
     modelPool: [imageModel],
     size: imageSize,
     quality: imageQuality,
-    baseUrl: imageProviderConfig?.baseUrl ?? undefined,
-    apiKey: imageProviderConfig?.apiKey ?? undefined
+    ...providerRuntimeOptions(imageProviderConfig)
   }).catch((error) => {
     if (isMockImageProvider(imageProvider)) {
       console.warn("[image] single shot mock fallback:", error);
@@ -316,8 +316,7 @@ export async function generateSceneEnvironmentImage(projectId: string, assetId: 
     modelPool: [imageModel],
     size: imageSize,
     quality: imageQuality,
-    baseUrl: imageProviderConfig?.baseUrl ?? undefined,
-    apiKey: imageProviderConfig?.apiKey ?? undefined
+    ...providerRuntimeOptions(imageProviderConfig)
   }).catch((error) => {
     if (isMockImageProvider(imageProvider)) {
       console.warn("[image] scene environment mock fallback:", error);
@@ -405,8 +404,7 @@ export async function generateCharacterReferenceImages(projectId: string, userId
       modelPool: [imageModel],
       size: imageSize,
       quality: imageQuality,
-      baseUrl: imageProviderConfig?.baseUrl ?? undefined,
-      apiKey: imageProviderConfig?.apiKey ?? undefined
+      ...providerRuntimeOptions(imageProviderConfig)
     }).catch((error) => {
       if (isMockImageProvider(imageProvider)) {
         console.warn("[image] character reference mock fallback:", error);
@@ -508,13 +506,20 @@ export async function deleteCharacterReferenceImageV2(projectId: string, charact
   return removeCharacterReferenceInputs(projectId, characterId, userId);
 }
 async function resolveTextRunCredits(input: CreateProjectInput) {
-  const price = await prisma.modelPrice.findFirst({ where: { providerId: input.textProvider, modality: "text", model: textModelName(input), enabled: true } });
+  const rows = await prisma.modelPrice.findMany({ where: { providerId: input.textProvider, modality: "text", model: textModelName(input), enabled: true }, take: 2 });
+  const inspected = inspectModelPrice(rows, { providerId: input.textProvider || null, modality: "text", model: textModelName(input) });
+  if (["conflict", "invalid"].includes(inspected.state)) throw new Error("文本模型价格冲突或无效，请管理员核对。");
+  const price = inspected.price;
   if (!price && process.env.NODE_ENV === "production") throw new Error("该文本模型尚未配置价格，请联系管理员。");
   return price ? await quotePrice(price) : 50;
 }
 
 async function resolveImageCredits(provider: string, model: string, size?: string, quality?: string) {
-  const price = await prisma.modelPrice.findFirst({ where: { providerId: normalizeImageProviderId(provider), model, enabled: true } });
+  const providerId = await prisma.modelProvider.count({ where: { id: provider } }) ? provider : normalizeImageProviderId(provider);
+  const rows = await prisma.modelPrice.findMany({ where: { providerId, modality: "image", model, enabled: true }, take: 2 });
+  const inspected = inspectModelPrice(rows, { providerId, modality: "image", model });
+  if (["conflict", "invalid"].includes(inspected.state)) throw new Error("图片模型价格冲突或无效，请管理员核对。");
+  const price = inspected.price;
   if (!price && process.env.NODE_ENV === "production") throw new Error("该图片模型尚未配置价格，请联系管理员。");
   if (price?.billing) return quotePrice(price, { images: 1 });
   return estimateImageCredits(resolveImageUnitCredits(price ? [price] : [], provider, model), size, quality);

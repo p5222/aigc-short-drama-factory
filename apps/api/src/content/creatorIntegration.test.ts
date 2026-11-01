@@ -47,7 +47,7 @@ test("creator run persistence, costs, recovery and author acceptance with real P
   };
   try {
     await db.user.create({ data: { id: userId, name: "Creator integration fixture", credit: { create: { id: `credit_${userId}`, balance: 1000 } } } });
-    await db.modelProvider.create({ data: { id: providerId, name: "Fixture text", modality: "text", enabled: true, models: ["fixture-text"], apiKey: "fixture-only", baseUrl: "https://creator-fixture.invalid/v1", capability: {}, costHint: "test",
+    await db.modelProvider.create({ data: { id: providerId, name: "Fixture text", modality: "text", enabled: true, models: ["fixture-text"], apiKey: "fixture-only", baseUrl: "https://creator-fixture.invalid/v1", capability: { connection: { protocol: "openai-chat" } }, costHint: "test",
       prices: { create: { id: `price_${crypto.randomUUID()}`, providerName: "Fixture", modality: "text", model: "fixture-text", unit: "text_run", unitCredits: 10 } } } });
 
     await t.test("create and execute retries reuse committed output and charge exactly once", async () => {

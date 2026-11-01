@@ -21,7 +21,7 @@ test("content generation billing and durable project operation lease", { skip: !
     const providerId = `audit_content_provider_${crypto.randomUUID()}`;
     users.push(userId); providers.push(providerId);
     await db.user.create({ data: { id: userId, name: "Content billing test", credit: { create: { id: `account_${crypto.randomUUID()}`, balance } } } });
-    await db.modelProvider.create({ data: { id: providerId, name: "Fixture text model", modality: "text", enabled: true, models: ["fixture-text"], capability: {}, costHint: "Test only", prices: { create: { id: `price_${crypto.randomUUID()}`, providerName: "Fixture", modality: "text", model: "fixture-text", unit: "text_run", unitCredits: 30 } } } });
+    await db.modelProvider.create({ data: { id: providerId, name: "Fixture text model", modality: "text", enabled: true, models: ["fixture-text"], capability: { connection: { protocol: "openai-chat" } }, costHint: "Test only", prices: { create: { id: `price_${crypto.randomUUID()}`, providerName: "Fixture", modality: "text", model: "fixture-text", unit: "text_run", unitCredits: 30 } } } });
     const project = await db.contentProject.create({ data: { id: `audit_content_project_${crypto.randomUUID()}`, userId, title: "Content test", mode: "original", textProvider: providerId, textModel: "fixture-text" } });
     projects.push(project.id);
     return { project, account: () => db.creditAccount.findUniqueOrThrow({ where: { userId } }) };

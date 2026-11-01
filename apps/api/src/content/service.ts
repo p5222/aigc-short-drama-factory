@@ -1,4 +1,6 @@
 import crypto from "node:crypto";
+import { providerRuntimeOptions } from "../providers/connection.js";
+import { applyDefaultModelRoutes } from "../config/platformSettings.js";
 import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 import type { ContentProductionPackage, ContentProjectMode, ContentProjectSummary, ContentStepStatus, StyleProfile } from "@aifilm/shared";
@@ -99,8 +101,7 @@ async function contentTextRuntime(project: { textProvider: string; textModel: st
   return {
     textProvider: project.textProvider || "manjiao",
     textModel: project.textModel || "gpt-5.5",
-    apiKey: ["manjiao", "pipp"].includes(project.textProvider) ? undefined : provider?.apiKey ?? undefined,
-    baseUrl: provider?.baseUrl ?? undefined
+    ...providerRuntimeOptions(provider)
   };
 }
 
@@ -318,6 +319,7 @@ export async function createContentProject(
   userId: string,
   input: { title: string; mode: ContentProjectMode; styleProfile?: StyleProfile; textProvider?: string; textModel?: string }
 ) {
+  input = await applyDefaultModelRoutes(input);
   const row = await prisma.contentProject.create({
     data: {
       id: `content_${crypto.randomUUID()}`,
@@ -517,9 +519,12 @@ async function syncContentToProductionUnlocked(userId: string, contentProjectId:
     if (existingProject && existingProject.scripts[0]?.content !== activeScript.content && await tx.storyboard.count({ where: { projectId: productionProjectId } }) > 0) {
       throw new Error("关联项目已进入分镜制作，当前剧本与制作版本不同。请先保留现有制作版本，再建立新的内容项目进行改版。");
     }
+    const modelRoutes = existingProject ? {} : await applyDefaultModelRoutes({
+      textProvider: content.textProvider || undefined, textModel: content.textModel || undefined
+    }, tx);
     await tx.project.upsert({
       where: { id: productionProjectId },
-      create: { id: productionProjectId, userId, name: content.title, type: "漫剧改编", intro: "由内容创作同步", sourceType: "script", artStyle, videoRatio: "9:16", status: "scripting", episodes: Math.max(1, content.episodes.length), segmentProfile: "jimeng_15s", episodeDurationSeconds: targetDuration, sourceCharactersPerEpisode: 20000, allowExpansion: false, textProvider: content.textProvider, textModel: content.textModel },
+      create: { id: productionProjectId, userId, name: content.title, type: "漫剧改编", intro: "由内容创作同步", sourceType: "script", artStyle, videoRatio: "9:16", status: "scripting", episodes: Math.max(1, content.episodes.length), segmentProfile: "jimeng_15s", episodeDurationSeconds: targetDuration, sourceCharactersPerEpisode: 20000, allowExpansion: false, ...modelRoutes },
       update: { name: content.title, episodes: Math.max(1, content.episodes.length), episodeDurationSeconds: targetDuration, allowExpansion: false }
     });
     const existingCharacters = await tx.character.findMany({ where: { projectId: productionProjectId } });

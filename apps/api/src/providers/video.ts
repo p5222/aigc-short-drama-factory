@@ -7,11 +7,14 @@ import { signProviderMediaUrl } from "../storage/mediaAccess.js";
 import { blockModelUntilNextDay, coolDownModel, getModelQuotaDecision, recordModelSubmission } from "./modelQuota.js";
 import { providerEnvApiKey } from "./credentials.js";
 import type { BillingUsage } from "@aifilm/shared";
+import { assertProviderConnection, readProviderConnection, type ProviderConnection } from "@aifilm/shared";
+import { configuredRuntime } from "./connection.js";
 
 /** The quote and actual payload share the same provider normalization. */
-export function videoBillingInput(provider: string, duration: number, ratio: "9:16" | "16:9" | "1:1"): BillingUsage {
-  if (provider === "dashscope-video") return { seconds: Math.max(3, Math.min(5, duration)), resolution: dashScopeVideoResolution(ratio) };
-  if (provider === "doubao-seedance") return { seconds: Math.max(1, Math.min(15, duration)), resolution: process.env.DOUBAO_SEEDANCE_RESOLUTION || process.env.VIDEO_RESOLUTION || "1080p" };
+export function videoBillingInput(provider: string, duration: number, ratio: "9:16" | "16:9" | "1:1", connection?: ProviderConnection): BillingUsage {
+  const adapter = videoProtocolAdapter({ provider, connection });
+  if (adapter === "dashscope-video") return { seconds: Math.max(3, Math.min(5, duration)), resolution: connection?.resolution?.toUpperCase() || dashScopeVideoResolution(ratio) };
+  if (adapter === "doubao-seedance") return { seconds: Math.max(1, Math.min(15, duration)), resolution: connection?.resolution || process.env.DOUBAO_SEEDANCE_RESOLUTION || process.env.VIDEO_RESOLUTION || "1080p" };
   return { seconds: Math.max(1, duration) };
 }
 
@@ -53,7 +56,7 @@ interface AsyncTaskResponse {
 }
 
 export async function generateVideo(input: VideoGenerationInput): Promise<VideoGenerationResult> {
-  const provider = normalizeVideoProvider(input.provider || process.env.VIDEO_PROVIDER || "mock-video");
+  const provider = videoProtocolAdapter(input);
   try {
     if (provider === "dashscope-video") return await generateDashScopeVideo(input);
     if (provider === "doubao-seedance") return await generateDoubaoSeedanceVideo(input);
@@ -72,14 +75,7 @@ export async function generateVideo(input: VideoGenerationInput): Promise<VideoG
     };
   }
 
-  return {
-    taskId: `mock_video_${Date.now()}`,
-    status: "succeeded",
-    videoUrl: undefined,
-    provider: "Mock Video Adapter",
-    model: "mock-video-v1",
-    message: "本地视频草稿适配器未调用真实模型。"
-  };
+  throw new Error("视频渠道尚未配置受支持的接口协议，请在后台选择协议。");
 }
 
 async function generateEmbeddedVideo(input: VideoGenerationInput, provider: string): Promise<VideoGenerationResult> {
@@ -100,8 +96,8 @@ async function generateEmbeddedVideo(input: VideoGenerationInput, provider: stri
   };
 }
 
-export async function queryVideoTaskResult(input: Pick<VideoGenerationInput, "provider" | "model" | "baseUrl" | "apiKey"> & { taskId: string }) {
-  const provider = normalizeVideoProvider(input.provider || process.env.VIDEO_PROVIDER || "mock-video");
+export async function queryVideoTaskResult(input: Pick<VideoGenerationInput, "provider" | "model" | "baseUrl" | "apiKey" | "connection"> & { taskId: string }) {
+  const provider = videoProtocolAdapter(input);
   const runtime = resolveVideoRuntime(input, provider);
   if (!runtime.apiKey && provider !== "mock-video") throw new Error(runtime.missingKeyMessage);
   if (provider === "dashscope-video") {
@@ -153,12 +149,12 @@ export async function queryVideoTaskResult(input: Pick<VideoGenerationInput, "pr
   };
 }
 
-export async function testVideoModelConnection(options: { provider?: string; model?: string; baseUrl?: string; apiKey?: string } = {}) {
+export async function testVideoModelConnection(options: Pick<VideoGenerationInput, "provider" | "model" | "baseUrl" | "apiKey" | "connection"> & { mode?: "config" | "real"; imageUrl?: string } = {}) {
   const started = Date.now();
-  const provider = normalizeVideoProvider(options.provider || process.env.VIDEO_PROVIDER || "mock-video");
+  const provider = videoProtocolAdapter(options);
   const model = options.model || currentVideoModel(provider);
-  const runtime = resolveVideoRuntime({ provider, model, baseUrl: options.baseUrl, apiKey: options.apiKey, prompt: "test" });
-  const configOnly = process.env.VIDEO_MODEL_TEST_MODE !== "real";
+  const runtime = resolveVideoRuntime({ ...options, model, prompt: "test" }, provider);
+  const configOnly = options.mode ? options.mode === "config" : process.env.VIDEO_MODEL_TEST_MODE !== "real";
 
   try {
     if (configOnly) {
@@ -169,12 +165,13 @@ export async function testVideoModelConnection(options: { provider?: string; mod
         provider: runtime.name,
         model: runtime.model,
         latencyMs: Date.now() - started,
-        message: `视频模型配置已就绪：${runtime.baseUrl}。如需真实提交测试，将 VIDEO_MODEL_TEST_MODE 改为 real。`
+        message: "协议、模型和密钥配置检查通过；尚未提交供应商任务。可选择真实测试验证生成。"
       };
     }
 
     const result = await generateVideo({
-      provider,
+      ...options,
+      provider: options.provider || provider,
       model,
       baseUrl: options.baseUrl,
       apiKey: options.apiKey,
@@ -208,6 +205,7 @@ export async function testVideoModelConnection(options: { provider?: string; mod
 }
 
 async function generateDashScopeVideo(input: VideoGenerationInput): Promise<VideoGenerationResult> {
+  const channelId = input.provider || "dashscope-video";
   const runtime = resolveVideoRuntime(input, "dashscope-video");
   if (!runtime.apiKey) throw new Error(runtime.missingKeyMessage);
   if (!input.imageUrl) throw new Error("通义万相图生视频需要先生成分镜图 URL。");
@@ -217,14 +215,14 @@ async function generateDashScopeVideo(input: VideoGenerationInput): Promise<Vide
   const skipped: string[] = [];
   let lastError: unknown;
   for (const model of candidates) {
-    const decision = await getModelQuotaDecision("dashscope-video", model);
+    const decision = await getModelQuotaDecision(channelId, model);
     if (!decision.available) {
       skipped.push(decision.reason ?? `${model}: 本地额度保护已跳过。`);
       continue;
     }
     try {
       const result = await submitDashScopeVideo(input, runtime, model, imageUrl);
-      await recordModelSubmission("dashscope-video", model);
+      await recordModelSubmission(channelId, model);
       return {
         ...result,
         model,
@@ -232,7 +230,7 @@ async function generateDashScopeVideo(input: VideoGenerationInput): Promise<Vide
       };
     } catch (error) {
       lastError = error;
-      const fallback = await handleModelFallbackError("dashscope-video", model, error);
+      const fallback = await handleModelFallbackError(channelId, model, error);
       if (fallback.shouldContinue) {
         skipped.push(fallback.message);
         continue;
@@ -275,7 +273,7 @@ async function submitDashScopeVideo(
   const data = parseProviderJson(text, "DashScope video") as AsyncTaskResponse;
   const taskId = data.output?.task_id || data.task_id || data.request_id || `dashscope_video_${Date.now()}`;
   const directUrl = extractVideoUrl(data);
-  if (data.output?.task_id || data.task_id) await input.onTaskSubmitted?.({ taskId, provider: "dashscope-video", model });
+  if (data.output?.task_id || data.task_id) await input.onTaskSubmitted?.({ taskId, provider: input.provider || "dashscope-video", model });
   if (directUrl) {
     return { taskId, status: "succeeded", videoUrl: directUrl, provider: runtime.name, model };
   }
@@ -302,6 +300,7 @@ async function submitDashScopeVideo(
 }
 
 async function generateDoubaoSeedanceVideo(input: VideoGenerationInput): Promise<VideoGenerationResult> {
+  const channelId = input.provider || "doubao-seedance";
   const runtime = resolveVideoRuntime(input, "doubao-seedance");
   if (!runtime.apiKey) throw new Error(runtime.missingKeyMessage);
   const imageUrl = input.imageUrl ? await providerReadableImageUrl(input.imageUrl, "doubao-seedance") : undefined;
@@ -310,14 +309,14 @@ async function generateDoubaoSeedanceVideo(input: VideoGenerationInput): Promise
   let lastError: unknown;
 
   for (const model of candidates) {
-    const decision = await getModelQuotaDecision("doubao-seedance", model);
+    const decision = await getModelQuotaDecision(channelId, model);
     if (!decision.available) {
       skipped.push(decision.reason ?? `${model}: 本地额度保护已跳过。`);
       continue;
     }
     try {
       const result = await submitDoubaoSeedanceVideo(input, runtime, model, imageUrl);
-      await recordModelSubmission("doubao-seedance", model);
+      await recordModelSubmission(channelId, model);
       return {
         ...result,
         model,
@@ -325,7 +324,7 @@ async function generateDoubaoSeedanceVideo(input: VideoGenerationInput): Promise
       };
     } catch (error) {
       lastError = error;
-      const fallback = await handleModelFallbackError("doubao-seedance", model, error);
+      const fallback = await handleModelFallbackError(channelId, model, error);
       if (fallback.shouldContinue) {
         skipped.push(fallback.message);
         continue;
@@ -378,7 +377,7 @@ async function submitDoubaoSeedanceVideo(
   const data = parseProviderJson(text, "Doubao Seedance video") as AsyncTaskResponse;
   const taskId = data.id || data.task_id || data.data?.id || data.data?.task_id || `doubao_video_${Date.now()}`;
   if (!data.id && !data.task_id && !data.data?.id && !data.data?.task_id) throw new Error("Doubao Seedance response did not include task_id");
-  await input.onTaskSubmitted?.({ taskId, provider: "doubao-seedance", model });
+  await input.onTaskSubmitted?.({ taskId, provider: input.provider || "doubao-seedance", model });
   const directUrl = extractVideoUrl(data);
   const taskResult: VideoGenerationResult = directUrl
     ? { taskId, status: "succeeded" as const, videoUrl: directUrl }
@@ -496,7 +495,13 @@ async function pollDashScopeVideoTask({
   };
 }
 
+export function videoRuntimeSnapshot(input: Partial<VideoGenerationInput>) {
+  const runtime = resolveVideoRuntime(input);
+  return { baseUrl: runtime.baseUrl, connection: input.connection || readProviderConnection(input.provider || "", "video") };
+}
+
 function resolveVideoRuntime(input: Partial<VideoGenerationInput>, forcedProvider?: string) {
+  if (input.connection) return configuredRuntime(input, "video");
   const provider = normalizeVideoProvider(forcedProvider || input.provider || process.env.VIDEO_PROVIDER || "mock-video");
   if (provider === "dashscope-video") {
     return {
@@ -516,6 +521,7 @@ function resolveVideoRuntime(input: Partial<VideoGenerationInput>, forcedProvide
       missingKeyMessage: "缺少豆包/火山方舟视频模型 Key，请配置 DOUBAO_API_KEY、ARK_API_KEY 或 VOLCENGINE_API_KEY。"
     };
   }
+  if (!["mock-video", "embedded-video"].includes(provider)) throw new Error("视频渠道尚未配置受支持的接口协议。");
   return {
     name: provider === "embedded-video" ? "内嵌最小视频生成器" : "视频生成可插拔接口",
     apiKey: "",
@@ -529,7 +535,14 @@ function normalizeVideoProvider(provider: string) {
   if (["dashscope", "dashscope-video", "wanxiang", "wanx", "qwen-video"].includes(provider)) return "dashscope-video";
   if (["doubao", "doubao-seedance", "seedance", "volcengine", "ark"].includes(provider)) return "doubao-seedance";
   if (["embedded", "embedded-video", "local-video", "local-mjpeg"].includes(provider)) return "embedded-video";
-  return "mock-video";
+  if (["mock", "mock-video", "mock-video-v1"].includes(provider)) return "mock-video";
+  return provider;
+}
+
+function videoProtocolAdapter(input: Partial<VideoGenerationInput>) {
+  if (!input.connection) return normalizeVideoProvider(input.provider || process.env.VIDEO_PROVIDER || "mock-video");
+  assertProviderConnection(input.connection, "video");
+  return input.connection.protocol === "seedance-video" ? "doubao-seedance" : "dashscope-video";
 }
 
 function currentVideoModel(provider: string) {
@@ -541,6 +554,7 @@ function currentVideoModel(provider: string) {
 
 function resolveModelCandidates(input: VideoGenerationInput, provider: string, preferredModel: string) {
   if (input.modelPool !== undefined) return uniqueStrings([preferredModel, ...input.modelPool]);
+  if (input.model || input.connection) return [preferredModel];
   const envPool =
     provider === "doubao-seedance"
       ? process.env.DOUBAO_SEEDANCE_MODEL_POOL
@@ -579,7 +593,7 @@ async function handleModelFallbackError(provider: string, model: string, error: 
   }
   if (isTransientProviderError(message)) {
     await coolDownModel(provider, model, message);
-    return { shouldContinue: true, message: `${model}: 上游临时失败，已切换下一个模型。${message}` };
+    return { shouldContinue: false, message: `${model}: 上游结果未知，已停止自动重试，请核对原任务。${message}` };
   }
   return { shouldContinue: false, message };
 }
@@ -595,22 +609,20 @@ function buildAllModelsFailedMessage(providerName: string, skipped: string[], la
 }
 
 function buildDoubaoSeedancePrompt(input: VideoGenerationInput) {
+  const billed = videoBillingInput("doubao-seedance", input.duration ?? Number(process.env.DOUBAO_SEEDANCE_DURATION ?? 5), input.ratio ?? "9:16", input.connection);
   const flags = [
-    `--resolution ${process.env.DOUBAO_SEEDANCE_RESOLUTION || process.env.VIDEO_RESOLUTION || "1080p"}`,
-    `--duration ${Math.max(1, Math.min(15, input.duration ?? Number(process.env.DOUBAO_SEEDANCE_DURATION ?? 5)))}`,
+    `--resolution ${billed.resolution}`,
+    `--duration ${billed.seconds}`,
+    `--ratio ${input.ratio ?? "9:16"}`,
     `--camerafixed ${process.env.DOUBAO_SEEDANCE_CAMERA_FIXED || "false"}`,
     `--watermark ${process.env.DOUBAO_SEEDANCE_WATERMARK || "false"}`
   ];
-  const text = input.prompt.trim();
-  const missingFlags = flags.filter((flag) => {
-    const key = flag.split(" ")[0];
-    return !new RegExp(`${escapeRegExp(key)}\\b`, "i").test(text);
-  });
-  return [text, ...missingFlags].join(" ");
+  const text = input.prompt.replace(/--(?:resolution|duration|ratio|camerafixed|watermark)\s+\S+/gi, "").trim();
+  return [text, ...flags].join(" ");
 }
 
 function buildDashScopeVideoPayload(input: VideoGenerationInput, model: string, imageUrl: string) {
-  const billed = videoBillingInput("dashscope-video", input.duration ?? 5, input.ratio ?? "9:16");
+  const billed = videoBillingInput("dashscope-video", input.duration ?? 5, input.ratio ?? "9:16", input.connection);
   const duration = billed.seconds;
   const parameters = {
     resolution: billed.resolution,

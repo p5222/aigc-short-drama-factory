@@ -1,0 +1,44 @@
+.configuration-center { display: grid; gap: 24px; }
+.configuration-overview,.configuration-form { border: 1px solid var(--adm-border); border-radius: 14px; background: var(--adm-surface); padding: 24px; min-width: 0; }
+.configuration-heading,.configuration-form-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin-bottom: 22px; }
+.configuration-heading h2,.configuration-form-head h3 { margin: 5px 0; font-size: 20px; color: var(--adm-text); letter-spacing: -.4px; }
+.configuration-heading p,.configuration-form-head p { margin: 0; color: var(--adm-muted); font-size: 13px; }
+.configuration-eyebrow { font-size: 10px; color: var(--adm-accent); letter-spacing: .12em; font-weight: 650; }
+.configuration-readiness { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 0; border: 1px solid var(--adm-border); border-radius: 10px; overflow: hidden; }
+.configuration-check { display: flex; gap: 10px; padding: 17px; border-bottom: 1px solid var(--adm-border); background: var(--adm-surface-2); color: var(--adm-muted); min-width: 0; }
+.configuration-check > svg { flex-shrink: 0; margin-top: 2px; }
+.configuration-check.is-ready > svg { color: var(--adm-accent); }
+.configuration-check strong { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; color: var(--adm-text); font-size: 13px; }
+.configuration-check small { font-size: 10px; font-weight: 500; color: var(--adm-muted); }
+.configuration-check p { margin: 7px 0 0; font-size: 11px; line-height: 1.7; overflow-wrap: anywhere; }
+.configuration-footnote { color: var(--adm-muted); font-size: 11px; margin-bottom: 0; }
+.configuration-shortcuts { display: flex; flex-wrap: wrap; gap: 24px; margin-top: 16px; }
+.configuration-shortcuts button { display: inline-flex; align-items: center; gap: 6px; border: 0; padding: 0; background: transparent; color: var(--adm-accent); font-size: 12px; cursor: pointer; }
+.configuration-workspace { display: grid; grid-template-columns: 220px minmax(0,1fr); align-items: start; gap: 24px; }
+.configuration-workspace nav { display: grid; gap: 6px; }
+.configuration-workspace nav button { text-align: left; padding: 16px; background: transparent; border: 1px solid transparent; border-radius: 10px; color: var(--adm-text); cursor: pointer; }
+.configuration-workspace nav button.active { background: var(--adm-accent-soft); border-color: var(--adm-border); color: var(--adm-accent); }
+.configuration-workspace nav strong,.configuration-workspace nav span { display: block; }
+.configuration-workspace nav span { margin-top: 5px; color: var(--adm-muted); font-size: 11px; }
+.configuration-form-head small { color: var(--adm-muted); }
+.configuration-fields { border: 0; padding: 0; margin: 24px 0; display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 24px; min-width: 0; }
+.configuration-field { display: grid; align-content: start; gap: 8px; min-width: 0; }
+.configuration-field.wide { grid-column: 1 / -1; }
+.configuration-field label { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 13px; color: var(--adm-text); }
+.configuration-field label small { color: var(--adm-muted); font-size: 10px; font-weight: 400; }
+.configuration-field input,.configuration-field textarea,.configuration-field select { border: 1px solid var(--adm-border); border-radius: 8px; padding: 10px 12px; font: inherit; font-size: 13px; background: var(--adm-surface-2); color: var(--adm-text); width: 100%; min-width: 0; box-sizing: border-box; }
+.configuration-field textarea { resize: vertical; overflow-wrap: anywhere; }
+.configuration-secret { -webkit-text-security: disc; }
+.configuration-field p { display: flex; align-items: start; gap: 5px; margin: 0; font-size: 11px; color: var(--adm-muted); overflow-wrap: anywhere; }
+.configuration-field p svg { flex-shrink: 0; }
+.configuration-reset-btn,.configuration-reset button { justify-self: start; border: 0; padding: 0; background: transparent; color: var(--adm-accent); font-size: 11px; cursor: pointer; }
+.configuration-reset { display: grid; gap: 6px; padding: 10px; background: var(--adm-accent-soft); border-radius: 6px; color: var(--adm-muted); font-size: 11px; }
+.configuration-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; border-top: 1px solid var(--adm-border); padding-top: 20px; }
+.configuration-actions small { color: var(--adm-muted); font-size: 11px; }
+.provider-connection-fields { display: contents; }
+.provider-connection-fields small { color: var(--adm-muted); font-size: 11px; font-weight: 400; }
+.provider-real-test { display: grid; gap: 12px; padding: 16px; border: 1px solid var(--adm-border); border-radius: 10px; background: var(--adm-surface-2); }
+.provider-real-test small { color: var(--adm-muted); font-size: 12px; }
+.provider-real-test button { justify-self: start; }
+@media (max-width:1200px) { .configuration-readiness { grid-template-columns: repeat(2,minmax(0,1fr)); } .configuration-workspace { grid-template-columns: 180px minmax(0,1fr); gap: 16px; } }
+@media (max-width:680px) { .configuration-workspace { grid-template-columns: minmax(0,1fr); } .configuration-workspace nav { grid-template-columns: repeat(3,minmax(0,1fr)); gap: 4px; } .configuration-workspace nav button { padding: 10px 8px; } .configuration-workspace nav span { display: none; } .configuration-workspace nav strong { font-size: 12px; } .configuration-heading { flex-direction: column; gap: 12px; } .configuration-fields { grid-template-columns: minmax(0,1fr); gap: 20px; } .configuration-overview,.configuration-form { padding: 16px; } .configuration-check { padding: 12px; gap: 7px; } .configuration-check strong { font-size: 12px; } }

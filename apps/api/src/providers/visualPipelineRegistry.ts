@@ -11,7 +11,7 @@ export interface VisualPipelineDescriptor {
   defaultModel?: string;
   envKeys: string[];
   capability: string[];
-  status: "ready" | "missing_key" | "disabled" | "not_configured";
+  status: "ready" | "missing_key" | "disabled" | "not_configured" | "not_integrated";
   message: string;
 }
 
@@ -166,12 +166,14 @@ const pipelineCatalog: Array<Omit<VisualPipelineDescriptor, "status" | "message"
 
 export function listVisualPipelines(providers: ModelProvider[] = []): VisualPipelineDescriptor[] {
   return pipelineCatalog.map((item) => {
+    // These entries document possible integrations; no production task dispatch uses them.
+    const integrated = !["sora", "runway", "comfyui", "svd", "wav2lip", "sadtalker", "edge-tts"].includes(item.id);
     const provider = providers.find((candidate) => item.providerAliases.includes(candidate.id) || item.providerAliases.some((alias) => candidate.name.toLowerCase().includes(alias)));
     const hasProviderConfig = Boolean(provider?.enabled && (provider.apiKeyConfigured || provider.baseUrl));
     const hasEnvKey = Boolean(item.keyEnv && process.env[item.keyEnv]);
     const hasLocalBaseUrl = Boolean(item.baseUrlEnv && process.env[item.baseUrlEnv]);
     const noKeyRequired = ["edge-tts", "easyvoice", "voicebox", "vibevoice", "longcat-audiodit", "comfyui", "svd", "wav2lip", "sadtalker"].includes(item.id);
-    const status: VisualPipelineDescriptor["status"] = provider?.enabled === false
+    const status: VisualPipelineDescriptor["status"] = !integrated ? "not_integrated" : provider?.enabled === false
       ? "disabled"
       : hasProviderConfig || hasEnvKey || (noKeyRequired && hasLocalBaseUrl)
         ? "ready"
@@ -203,7 +205,7 @@ export async function testVisualPipeline(
   const descriptor = listVisualPipelines(providers).find((item) => item.id === pipelineId);
   if (!descriptor) throw new Error("未知视觉/配音插件：" + pipelineId);
   if (descriptor.status === "disabled") return { ...descriptor, ok: false, latencyMs: Date.now() - started, message: `${descriptor.name} 已停用。` };
-  if (descriptor.status === "not_configured" || descriptor.status === "missing_key") {
+  if (descriptor.status === "not_configured" || descriptor.status === "missing_key" || descriptor.status === "not_integrated") {
     return { ...descriptor, ok: false, latencyMs: Date.now() - started };
   }
 
@@ -224,11 +226,12 @@ export async function testVisualPipeline(
     ...descriptor,
     ok: true,
     latencyMs: Date.now() - started,
-    message: `${descriptor.name} 配置可用。真实生成会在对应 TTS/图生视频/合成任务中提交。`
+    message: `${descriptor.name} 配置检查通过；本次未提交真实生成，实际输出仍需单独验证。`
   };
 }
 
 function pipelineStatusMessage(status: VisualPipelineDescriptor["status"], baseUrl?: string, model?: string) {
+  if (status === "not_integrated") return "此协议尚未接入生产任务，填写 Key 不会启用生成。请使用模型渠道中已支持的协议。";
   if (status === "ready") return `配置已就绪：${[baseUrl, model].filter(Boolean).join(" / ")}`;
   if (status === "disabled") return "后台渠道已停用。";
   if (status === "missing_key") return `已发现 Base URL 或渠道记录，但缺少 Key/服务凭据：${baseUrl || "未配置 Base URL"}`;

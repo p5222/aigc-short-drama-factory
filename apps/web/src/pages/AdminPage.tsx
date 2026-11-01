@@ -63,8 +63,10 @@ import type {
   VisualPipelineDescriptor,
   VisualPipelineTestResult
 } from "@aifilm/shared";
-import { creditPriceUnit } from "@aifilm/shared";
-import { api, type AdminContentProject } from "../lib/api";
+import { creditPriceUnit, providerProtocols, type ProviderConnection } from "@aifilm/shared";
+import { api, type AdminContentProject, type ProviderCreateInput, type ProviderUpdateInput } from "../lib/api";
+import { AdminConfiguration } from "../admin/AdminConfiguration";
+import { initialProviderDraft, ProviderConnectionFields } from "../admin/ProviderConnectionFields";
 import { HttpError } from "../lib/httpClient";
 import { AdminEvaluationPage, AdminMasterDetail, AdminTablePage } from "../admin";
 import { closeAfterAdminSuccess, createAdminActionRunner, createCreditAdjustmentAttempt, isValidCreditAdjustment, isValidModelPriceDraft, runAdminBatch, type AdminActionResult } from "../admin/adminActionModel";
@@ -74,7 +76,7 @@ import { fetchAdminUserPage } from "../admin/adminApi";
 import type { AdminColumn } from "../admin/AdminTablePage";
 import { AdminAuditLogPage } from "../admin/AdminAuditLogPage";
 import { formatAdminMoney, formatAdminTaskSuccess, qualityMetricAvailability } from "../admin/adminMetricsModel";
-import { providerTestAvailability, testSavedProvider } from "../admin/adminProviderTestModel";
+import { providerTestAvailability, testSavedProvider, type ProviderTestOptions } from "../admin/adminProviderTestModel";
 import { scopedAdminNotice } from "../admin/adminNoticeModel";
 import { announcementDateInput, announcementScheduleStatus, announcementStatusLabels, buildAnnouncementSchedule, selectAnnouncementRows } from "../admin/announcementScheduleModel";
 import { SupportAdminPanel } from "../support/SupportTicketPanel";
@@ -107,9 +109,10 @@ type PipelineTestState = {
   result?: VisualPipelineTestResult;
 };
 
-const adminModules = ["运营总览", "用户管理", "平台公告", "支持工单", "创作现场管理", "创作质量中心", "提示词评分", "兑换码", "套餐会员", "订阅会员", "积分中心", "模型路由", "价格策略", "操作记录"];
+const adminModules = ["运营总览", "用户管理", "平台公告", "支持工单", "创作现场管理", "创作质量中心", "提示词评分", "兑换码", "套餐会员", "订阅会员", "积分中心", "平台配置", "模型路由", "价格策略", "操作记录"];
 
 const moduleCopy: Record<string, { title: string; subtitle: string }> = {
+  平台配置: { title: "平台配置", subtitle: "设置创作默认渠道、注册邮件和支付，让服务按已保存配置运行。" },
   积分中心: { title: "积分中心", subtitle: "维护成本与计价政策，核对账户资金、任务结算和真实账单。" },
   操作记录: { title: "操作记录", subtitle: "查看管理员配置和运营操作的执行记录，用于核对变更、排查失败。" },
   运营总览: { title: "运营总览", subtitle: "查看用户、积分、模型成本和任务健康度。" },
@@ -251,10 +254,13 @@ export function AdminPage({
     catch (reason) { setError(reason instanceof Error ? reason.message : "后台数据刷新失败"); }
   }
 
-  async function runModelTest(provider: ModelProvider, model: string, dirty = false) {
+  async function runModelTest(provider: ModelProvider, model: string, dirty = false, options: ProviderTestOptions = {}) {
     const testKey = `${provider.id}:${model}`;
     if ([...providerTestPending.current].some((key) => key.startsWith(`${provider.id}:`))) return;
     providerTestPending.current.add(testKey);
+    if ((provider.modality !== "video" || options.videoMode === "real") && !await confirmAdminAction("将使用已保存的渠道提交一次真实测试，可能产生供应商费用。结果未知时请先核对供应商任务记录。", { title: "运行真实测试", confirmLabel: "开始测试" })) {
+      providerTestPending.current.delete(testKey); return;
+    }
     setMessage("");
     setError("");
     setTestResult(null);
@@ -262,7 +268,7 @@ export function AdminPage({
     setVideoTestResult(null);
     setProviderTests((current) => ({ ...current, [testKey]: { loading: true } }));
     try {
-      const result = await testSavedProvider(provider, model, api, { dirty });
+      const result = await testSavedProvider(provider, model, api, { ...options, dirty });
       if (provider.modality === "image") setImageTestResult(result as ImageModelTestResult);
       else if (provider.modality === "video") setVideoTestResult(result as VideoModelTestResult);
       else if (provider.modality === "text") setTestResult(result as ModelTestResult);
@@ -410,6 +416,7 @@ export function AdminPage({
           onDelete={(id) => runAction(() => api.deleteMembershipPlan(id), "会员方案已停用。")}
         />
       ) : null}
+      {activeModule === "平台配置" ? <AdminConfiguration providers={providers} onRefresh={onRefresh} /> : null}
       {activeModule === "模型路由" ? (
         <ProvidersSection
           requestedProvider={requestedProvider}
@@ -437,7 +444,7 @@ export function AdminPage({
             return saved;
           }}
           onDelete={(id) => runAction(() => api.deleteProvider(id), "模型渠道已删除；存在价格记录时自动停用。")}
-          onTest={(provider, model, dirty) => void runModelTest(provider, model, dirty)}
+          onTest={(provider, model, dirty, options) => void runModelTest(provider, model, dirty, options)}
         />
       ) : null}
       {activeModule === "价格策略" ? (
@@ -3454,10 +3461,10 @@ function ProvidersSection({
   onLoadRelayPolicy: () => void;
   onLoadPluginStatus: () => void;
   onTestPipeline: (pipelineId: string) => void;
-  onCreate: (input: Pick<ModelProvider, "name" | "modality" | "enabled" | "baseUrl" | "models" | "costHint"> & { id?: string; iconUrl?: string; apiKey?: string; routing?: { mode?: "auto" | "manual"; preferredModel?: string; modelPool?: string[] }; unitCredits?: number; vendorCostCny?: number }) => void;
-  onSave: (id: string, input: Partial<Pick<ModelProvider, "name" | "modality" | "enabled" | "baseUrl" | "iconUrl" | "models" | "costHint">> & { apiKey?: string | null; routing?: { mode?: "auto" | "manual"; preferredModel?: string; modelPool?: string[] } }) => void;
+  onCreate: (input: ProviderCreateInput) => AdminActionResult;
+  onSave: (id: string, input: ProviderUpdateInput) => AdminActionResult;
   onDelete: (id: string) => void;
-  onTest: (provider: ModelProvider, model: string, dirty?: boolean) => void;
+  onTest: (provider: ModelProvider, model: string, dirty?: boolean, options?: ProviderTestOptions) => void;
 }) {
   const [keyword, setKeyword] = useState("");
   const [modality, setModality] = useState("all");
@@ -3656,7 +3663,7 @@ function OpenSourcePipelinePanel({
                     <small>{result?.message || pipeline.message}</small>
                   </div>
                   <div className="admin-pipeline-meta">
-                    <span className={`admin-pipeline-status ${result ? (result.ok ? "ready" : "failed") : pipeline.status}`}>{result ? (result.ok ? "可用" : "失败") : pipelineStatusLabel(pipeline.status)}</span>
+                    <span className={`admin-pipeline-status ${result ? (result.ok ? "ready" : "failed") : pipeline.status}`}>{result ? (result.ok ? "配置通过" : "未通过") : pipelineStatusLabel(pipeline.status)}</span>
                     <button className="admin-icon-btn" disabled={test?.loading} onClick={() => onTest(pipeline.id)} title="测试配置">
                       {test?.loading ? <Loader2 className="spin-icon" size={15} /> : <PlayCircle size={15} />}<span>测试配置</span>
                     </button>
@@ -4502,41 +4509,24 @@ function ProviderRow({
   autoOpen?: boolean;
   onEditorClose?: () => void;
   testStates: Record<string, ProviderTestState>;
-  onSave: (id: string, input: Partial<Pick<ModelProvider, "name" | "modality" | "enabled" | "baseUrl" | "iconUrl" | "models" | "costHint">> & { apiKey?: string | null; routing?: { mode?: "auto" | "manual"; preferredModel?: string; modelPool?: string[] } }) => void;
+  onSave: (id: string, input: ProviderUpdateInput) => AdminActionResult;
   onDelete: (id: string) => void;
-  onTest: (provider: ModelProvider, model: string, dirty?: boolean) => void;
+  onTest: (provider: ModelProvider, model: string, dirty?: boolean, options?: ProviderTestOptions) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   useEffect(() => { if (autoOpen) setExpanded(true); }, [autoOpen]);
   const detailsId = useId();
   const testHintId = useId();
-  const [draft, setDraft] = useState({
-    name: provider.name,
-    modality: provider.modality,
-    enabled: provider.enabled,
-    baseUrl: provider.baseUrl ?? "",
-    iconUrl: provider.iconUrl ?? "",
-    apiKey: "",
-    models: provider.models.join(", "),
-    costHint: provider.costHint,
-    routingMode: provider.routing?.mode ?? "auto",
-    preferredModel: provider.routing?.preferredModel ?? provider.models[0] ?? ""
-  });
+  const [baseline, setBaseline] = useState(provider);
+  const [draft, setDraft] = useState(() => initialProviderDraft(provider));
+  const dirty = JSON.stringify(draft) !== JSON.stringify(initialProviderDraft(baseline));
+  const dirtyRef = useRef(dirty); dirtyRef.current = dirty;
+  const latestProvider = useRef(provider); latestProvider.current = provider;
+  const [testImageUrl, setTestImageUrl] = useState("");
+  function resetDraft() { setBaseline(latestProvider.current); setDraft(initialProviderDraft(latestProvider.current)); }
   useEffect(() => {
-    setDraft({
-      name: provider.name,
-      modality: provider.modality,
-      enabled: provider.enabled,
-      baseUrl: provider.baseUrl ?? "",
-      iconUrl: provider.iconUrl ?? "",
-      apiKey: "",
-      models: provider.models.join(", "),
-      costHint: provider.costHint,
-      routingMode: provider.routing?.mode ?? "auto",
-      preferredModel: provider.routing?.preferredModel ?? provider.models[0] ?? ""
-    });
-    setSelectedModel(provider.models[0] ?? "");
-  }, [expanded, provider.id, provider.name, provider.modality, provider.enabled, provider.baseUrl, provider.iconUrl, provider.costHint, provider.models.join(" | "), provider.routing?.mode, provider.routing?.preferredModel]);
+    if (!dirtyRef.current) resetDraft();
+  }, [provider]);
   const models = splitModelText(draft.models);
   const draftProvider: ModelProvider = { ...provider, name: draft.name, modality: draft.modality, enabled: draft.enabled, models, routing: { ...provider.routing, mode: draft.routingMode, preferredModel: draft.preferredModel, modelPool: models, quotaStatus: provider.routing?.quotaStatus ?? [] } };
   const [selectedModel, setSelectedModel] = useState(models[0] ?? "");
@@ -4552,17 +4542,6 @@ function ProviderRow({
       setSelectedModel(models[0] ?? "");
     }
   }, [draft.preferredModel, models.join(" | "), selectedModel]);
-  const dirty =
-    draft.enabled !== provider.enabled ||
-    draft.name !== provider.name ||
-    draft.modality !== provider.modality ||
-    draft.baseUrl !== (provider.baseUrl ?? "") ||
-    draft.iconUrl !== (provider.iconUrl ?? "") ||
-    Boolean(draft.apiKey) ||
-    draft.models !== provider.models.join(", ") ||
-    draft.costHint !== provider.costHint ||
-    draft.routingMode !== (provider.routing?.mode ?? "auto") ||
-    draft.preferredModel !== (provider.routing?.preferredModel ?? provider.models[0] ?? "");
   const testReadiness = providerTestAvailability(provider, selectedModel, { dirty, pending: providerTesting });
   const capability = [
     provider.capability.supportsReferenceImage ? "参考图" : "",
@@ -4596,7 +4575,7 @@ function ProviderRow({
         <div className="admin-row-actions">
           <button className="admin-text-btn primary" type="button" aria-label={`展开${provider.name}渠道`} onClick={() => setExpanded(true)}>编辑渠道</button>
           <button className="admin-secondary-btn compact admin-provider-test-button" type="button" title={testReadiness.reason} aria-label={`测试${provider.name}已保存配置`} aria-describedby={testHintId} disabled={!testReadiness.available} onClick={() => onTest(provider, selectedModel, dirty)}>
-            {providerTesting ? <Loader2 className="spin-icon" size={16} /> : <PlayCircle size={16} />}<span>{providerTesting ? "测试中" : ["tts", "embedding"].includes(provider.modality) ? "暂不支持测试" : "测试已保存配置"}</span>
+            {providerTesting ? <Loader2 className="spin-icon" size={16} /> : <PlayCircle size={16} />}<span>{providerTesting ? "测试中" : provider.modality === "embedding" ? "暂不支持测试" : provider.modality === "video" ? "检查视频配置" : "测试已保存配置"}</span>
           </button>
           <button className="admin-icon-btn danger" title="删除/停用" onClick={async () => { if (await confirmAdminAction("确认删除该模型渠道？如果存在价格策略会自动停用保留关联。", { title: "删除模型渠道", confirmLabel: "删除／停用" })) void onDelete(provider.id); }}>
             <span>移除渠道</span>
@@ -4613,7 +4592,7 @@ function ProviderRow({
       <p id={testHintId} className={`admin-provider-test-hint${dirty ? " unsaved" : ""}`}>{testReadiness.reason}</p>
       <ProviderInlineTestResult state={dirty ? undefined : testState} />
 
-      <AdminModal open={expanded} title={`编辑${provider.name}渠道`} description="修改模型连接、路由和状态，保存后生效。" onClose={() => { setExpanded(false); onEditorClose?.(); }} wide>
+      <AdminModal open={expanded} title={`编辑${provider.name}渠道`} description="修改模型连接、路由和状态，保存后生效。" onClose={() => { if (providerTesting) return; resetDraft(); setExpanded(false); onEditorClose?.(); }} wide>
         <div id={detailsId} className="admin-provider-expanded admin-editor-grid" data-admin-dirty={dirty || undefined}>
           <label>
             <span>渠道名称</span>
@@ -4621,7 +4600,7 @@ function ProviderRow({
           </label>
           <label>
             <span>模型类型</span>
-            <select value={draft.modality} onChange={(event) => setDraft({ ...draft, modality: event.target.value as ModelProvider["modality"] })}>
+            <select value={draft.modality} onChange={(event) => setDraft({ ...draft, modality: event.target.value as ModelProvider["modality"], connection: undefined })}>
               <option value="text">文本</option>
               <option value="image">生图</option>
               <option value="video">视频</option>
@@ -4629,6 +4608,7 @@ function ProviderRow({
               <option value="embedding">向量</option>
             </select>
           </label>
+          <ProviderConnectionFields modality={draft.modality} value={draft.connection} onChange={connection => setDraft({ ...draft, connection })} />
           <label>
             <span>渠道说明</span>
             <input value={draft.costHint} onChange={(event) => setDraft({ ...draft, costHint: event.target.value })} />
@@ -4646,7 +4626,9 @@ function ProviderRow({
           </label>
           <label>
             <span>API Key</span>
-            <input type="password" value={draft.apiKey} onChange={(event) => setDraft({ ...draft, apiKey: event.target.value })} placeholder={provider.apiKeyConfigured ? "留空表示不修改" : "填写服务端密钥"} />
+            <input type="password" autoComplete="new-password" disabled={draft.resetKey} value={draft.apiKey} onChange={(event) => setDraft({ ...draft, apiKey: event.target.value })} placeholder={provider.apiKeyConfigured ? "留空表示不修改" : "填写服务端密钥"} />
+            <button type="button" className="admin-text-btn" onClick={() => setDraft({ ...draft, apiKey: "", resetKey: !draft.resetKey })}>{draft.resetKey ? "撤销密钥恢复" : "清除后台密钥，恢复服务器配置"}</button>
+            {draft.resetKey ? <small>保存后清除后台密钥；自定义渠道如无服务器密钥将无法调用。</small> : null}
           </label>
           <label className="wide">
             <span>模型列表</span>
@@ -4656,6 +4638,12 @@ function ProviderRow({
             <span>待测试模型</span>
             <ModelRoutePicker label="选择待测试模型" modality={draft.modality} providers={[draftProvider]} modelPrices={modelPrices} value={{ providerId: provider.id, model: selectedModel }} onChange={(_, model) => setSelectedModel(model)} allowUnavailable disabled={providerTesting} />
           </div>
+          {provider.modality === "video" ? <div className="wide provider-real-test">
+            <label><span>真实测试首帧 URL{provider.connection?.protocol === "dashscope-video" ? "（必填）" : "（可选）"}</span><input value={testImageUrl} onChange={event => setTestImageUrl(event.target.value)} placeholder="https://… 已生成的分镜图片" /></label>
+            <button type="button" className="admin-secondary-btn" disabled={!testReadiness.available || (provider.connection?.protocol === "dashscope-video" && !testImageUrl.trim())} onClick={() => onTest(provider, selectedModel, dirty, { videoMode: "real", imageUrl: testImageUrl.trim() || undefined })}>提交真实视频测试</button>
+            <small>提交一次短视频生成，可能产生供应商费用。排队中仅代表提交成功。</small>
+          </div> : null}
+          <div className="wide"><ProviderInlineTestResult state={dirty ? undefined : testState} /></div>
           <div className="admin-provider-routing-panel wide">
             <div className="admin-provider-routing-head">
               <div>
@@ -4690,7 +4678,11 @@ function ProviderRow({
             </div>
           </div>
         </div>
-        <AdminDialogActions><button className="admin-secondary-btn" type="button" onClick={() => setDraft({ ...draft, enabled: !draft.enabled })}>{draft.enabled ? <ToggleRight size={18} /> : <ToggleLeft size={18} />}{draft.enabled ? "设为停用" : "设为启用"}</button><button className="admin-primary-btn" disabled={!dirty || !draft.name.trim() || !models.length} onClick={() => onSave(provider.id, { name: draft.name, modality: draft.modality, enabled: draft.enabled, baseUrl: draft.baseUrl || undefined, iconUrl: draft.iconUrl || undefined, apiKey: draft.apiKey || undefined, models, costHint: draft.costHint, routing: { mode: draft.routingMode as "auto" | "manual", preferredModel: draft.preferredModel || models[0] || undefined, modelPool: models } })}>保存渠道</button></AdminDialogActions>
+        <AdminDialogActions><button className="admin-secondary-btn" type="button" disabled={providerTesting} onClick={() => setDraft({ ...draft, enabled: !draft.enabled })}>{draft.enabled ? <ToggleRight size={18} /> : <ToggleLeft size={18} />}{draft.enabled ? "设为停用" : "设为启用"}</button>
+          <button className="admin-primary-btn" disabled={providerTesting || !dirty || !draft.name.trim() || !models.length || (draft.enabled && !draft.connection)} onClick={async () => {
+            const result = await onSave(provider.id, { name: draft.name, modality: draft.modality, enabled: draft.enabled, baseUrl: draft.baseUrl || null, iconUrl: draft.iconUrl || null, apiKey: draft.resetKey ? null : draft.apiKey || undefined, models, costHint: draft.costHint, connection: draft.connection, expectedUpdatedAt: baseline.updatedAt, routing: { mode: draft.routingMode, preferredModel: draft.preferredModel || models[0] || undefined, modelPool: models } });
+            if (result !== false) { resetDraft(); }
+          }}>保存渠道</button></AdminDialogActions>
       </AdminModal>
       </fieldset>
     </article>
@@ -4700,7 +4692,7 @@ function ProviderRow({
 function ProviderCreator({
   onCreate
 }: {
-  onCreate: (input: Pick<ModelProvider, "name" | "modality" | "enabled" | "baseUrl" | "models" | "costHint"> & { id?: string; iconUrl?: string; apiKey?: string; routing?: { mode?: "auto" | "manual"; preferredModel?: string; modelPool?: string[] }; unitCredits?: number; vendorCostCny?: number }) => AdminActionResult;
+  onCreate: (input: ProviderCreateInput) => AdminActionResult;
 }) {
   const [draft, setDraft] = useState({
     id: "",
@@ -4709,16 +4701,17 @@ function ProviderCreator({
     baseUrl: "",
     iconUrl: "",
     apiKey: "",
+    connection: undefined as ProviderConnection | undefined,
     models: "model-name",
     unitCredits: "8",
     vendorCostCny: "0.02",
     costHint: "后台手动接入渠道，支持测试连接和价格联动。"
   });
   const presets = [
-    { label: "文本中转", id: "custom-text", name: "OpenAI 兼容文本", modality: "text", models: "gpt-5.5, deepseek-chat", unitCredits: "8", vendorCostCny: "0.02" },
-    { label: "生图渠道", id: "custom-image", name: "自定义生图渠道", modality: "image", models: "gpt-image-2, qwen-image", unitCredits: "12", vendorCostCny: "0.08" },
-    { label: "视频渠道", id: "custom-video", name: "自定义视频渠道", modality: "video", models: "seedance-i2v, wanx-i2v", unitCredits: "16", vendorCostCny: "0.16" },
-    { label: "配音渠道", id: "custom-tts", name: "自定义配音渠道", modality: "tts", models: "tts-v1", unitCredits: "1", vendorCostCny: "0.002" }
+    { label: "文本中转", id: "custom-text", name: "OpenAI 兼容文本", modality: "text", protocol: "openai-chat", models: "deepseek-chat", unitCredits: "8", vendorCostCny: "0.02" },
+    { label: "生图渠道", id: "custom-image", name: "OpenAI 兼容生图", modality: "image", protocol: "openai-image", models: "gpt-image-2", unitCredits: "12", vendorCostCny: "0.08" },
+    { label: "视频渠道", id: "custom-video", name: "通义万相视频", modality: "video", protocol: "dashscope-video", models: "wan2.6-i2v", unitCredits: "16", vendorCostCny: "0.16" },
+    { label: "配音渠道", id: "custom-tts", name: "Qwen 配音", modality: "tts", protocol: "dashscope-tts", models: "qwen3-tts-flash", unitCredits: "1", vendorCostCny: "0.002" }
   ];
   function applyPreset(preset: typeof presets[number]) {
     setDraft((current) => ({
@@ -4726,13 +4719,15 @@ function ProviderCreator({
       id: preset.id,
       name: preset.name,
       modality: preset.modality,
+      connection: { protocol: preset.protocol as ProviderConnection["protocol"] },
+      baseUrl: providerProtocols.find(item => item.id === preset.protocol)?.baseUrl ?? "",
       models: preset.models,
       unitCredits: preset.unitCredits,
       vendorCostCny: preset.vendorCostCny
     }));
   }
   return (
-    <div className="admin-channel-create-layout" data-admin-dirty={Boolean(draft.id || draft.baseUrl || draft.iconUrl || draft.apiKey || draft.name !== "自定义模型渠道" || draft.modality !== "text" || draft.models !== "model-name" || draft.unitCredits !== "8" || draft.vendorCostCny !== "0.02") || undefined}>
+    <div className="admin-channel-create-layout" data-admin-dirty={Boolean(draft.connection || draft.id || draft.baseUrl || draft.iconUrl || draft.apiKey || draft.name !== "自定义模型渠道" || draft.modality !== "text" || draft.models !== "model-name" || draft.unitCredits !== "8" || draft.vendorCostCny !== "0.02") || undefined}>
       <aside className="admin-channel-presets">
         <strong>接入模板</strong>
         <span>先选能力类型，再补 URL、Key 和模型池。</span>
@@ -4753,12 +4748,11 @@ function ProviderCreator({
           <div className="admin-channel-field-grid">
             <label><span>渠道 ID</span><input value={draft.id} onChange={(event) => setDraft({ ...draft, id: event.target.value })} placeholder="例如：zml-text，可选" /></label>
             <label><span>渠道名称</span><input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder="例如：ZML 中转文本" /></label>
-            <label><span>模型类型</span><select value={draft.modality} onChange={(event) => setDraft({ ...draft, modality: event.target.value })}>
+            <label><span>模型类型</span><select value={draft.modality} onChange={(event) => setDraft({ ...draft, modality: event.target.value, connection: undefined })}>
               <option value="text">文本</option>
               <option value="image">生图</option>
               <option value="video">视频</option>
               <option value="tts">配音</option>
-              <option value="embedding">向量</option>
             </select></label>
             <label><span>模型图标</span><input value={draft.iconUrl} onChange={(event) => setDraft({ ...draft, iconUrl: event.target.value })} placeholder="图片 URL，可选" /></label>
           </div>
@@ -4766,13 +4760,15 @@ function ProviderCreator({
         <section className="admin-channel-create-card">
           <h3>接入配置</h3>
           <div className="admin-channel-field-grid">
+            <ProviderConnectionFields modality={draft.modality} value={draft.connection} onChange={connection => setDraft({ ...draft, connection })} />
             <label className="wide"><span>Base URL</span><input value={draft.baseUrl} onChange={(event) => setDraft({ ...draft, baseUrl: event.target.value })} placeholder="例如：https://api.example.com/v1" /></label>
-            <label><span>API Key</span><input type="password" value={draft.apiKey} onChange={(event) => setDraft({ ...draft, apiKey: event.target.value })} placeholder="留空则使用环境变量" /></label>
+            <label><span>API Key</span><input type="password" autoComplete="new-password" value={draft.apiKey} onChange={(event) => setDraft({ ...draft, apiKey: event.target.value })} placeholder="可稍后补齐；自定义渠道不借用其他渠道密钥" /></label>
             <label className="wide"><span>模型池</span><textarea value={draft.models} onChange={(event) => setDraft({ ...draft, models: event.target.value })} placeholder="每行或逗号一个模型，例如 gpt-5.5, qwen-image" /></label>
           </div>
         </section>
         <section className="admin-channel-create-card">
-          <h3>计费联动</h3>
+          <h3>计费联动 · 每{unitLabel(defaultUnitLabelValue(draft.modality))}</h3>
+          <p className="admin-muted">模板金额仅供起步，请按供应商实际账单核对价格和成本。</p>
           <div className="admin-channel-field-grid">
             <label><span>默认积分单价</span><input type="number" value={draft.unitCredits} onChange={(event) => setDraft({ ...draft, unitCredits: event.target.value })} placeholder="例如：8" /></label>
             <label><span>供应商成本</span><input type="number" step="0.001" value={draft.vendorCostCny} onChange={(event) => setDraft({ ...draft, vendorCostCny: event.target.value })} placeholder="例如：0.02" /></label>
@@ -4781,7 +4777,7 @@ function ProviderCreator({
         </section>
       <AdminDialogActions><button
         className="admin-primary-btn"
-        disabled={!draft.name.trim() || !splitModelText(draft.models).length}
+        disabled={!draft.name.trim() || !splitModelText(draft.models).length || !draft.connection || !draft.baseUrl.trim() || !isValidModelPriceDraft(draft.unitCredits, draft.vendorCostCny)}
         onClick={() => onCreate({
           id: draft.id || undefined,
           name: draft.name,
@@ -4790,6 +4786,7 @@ function ProviderCreator({
           baseUrl: draft.baseUrl || undefined,
           iconUrl: draft.iconUrl || undefined,
           apiKey: draft.apiKey || undefined,
+          connection: draft.connection,
           models: splitModelText(draft.models),
           costHint: draft.costHint,
           unitCredits: Number(draft.unitCredits),
@@ -4992,6 +4989,9 @@ function ProviderInlineTestResult({ state }: { state?: ProviderTestState }) {
         <strong>{state.result.provider} / {state.result.model}</strong>
       </div>
       <p>{state.result.message}</p>
+      <small>{state.result.mode === "config" ? "配置检查 · 未提交生成" : state.result.mode === "queued" ? "任务已提交 · 等待供应商完成，请勿重复测试" : state.result.mode === "real" ? "真实调用结果" : state.result.mode === "failed" ? "未通过；结果未知时先核对供应商记录" : "本地结果"}</small>
+      {"taskId" in state.result && state.result.taskId ? <p>供应商任务：{state.result.taskId}</p> : null}
+      {"videoUrl" in state.result && state.result.videoUrl ? <video controls preload="metadata" src={state.result.videoUrl} style={{ width: "100%", maxHeight: 300 }} /> : null}
       {imageUrl ? <img src={imageUrl} alt="模型测试预览" /> : null}
     </div>
   );
@@ -5217,6 +5217,7 @@ function pipelineKindLabel(kind: VisualPipelineDescriptor["kind"]) {
 function pipelineStatusLabel(status: VisualPipelineDescriptor["status"]) {
   const labels: Record<VisualPipelineDescriptor["status"], string> = {
     ready: "已配置",
+    not_integrated: "尚未接入",
     missing_key: "缺少 Key",
     disabled: "已停用",
     not_configured: "未配置"

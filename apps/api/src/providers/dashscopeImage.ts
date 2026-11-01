@@ -1,11 +1,11 @@
 ﻿import type { ImageGenerationInput, ImageGenerationResult } from "./types.js";
 import { normalizeImageOutputQuality, normalizeImageOutputSize } from "@aifilm/shared";
 
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
-import { storageRoot } from "../storage/objectStorage.js";
+import { readStoredAsset } from "../storage/objectStorage.js";
 import { blockModelUntilNextDay, coolDownModel, getModelQuotaDecision, recordModelSubmission } from "./modelQuota.js";
 import { providerEnvApiKey } from "./credentials.js";
+import { assertProviderConnection } from "@aifilm/shared";
+import { configuredRuntime } from "./connection.js";
 
 interface DashScopeResponse {
   output?: {
@@ -80,31 +80,33 @@ interface GeminiImageResponse {
 }
 
 export async function generateDashScopeImage(input: ImageGenerationInput): Promise<ImageGenerationResult> {
-  const apiKey = input.apiKey || providerEnvApiKey("dashscope-image");
+  const channelId = input.provider || "dashscope-image";
+  const custom = input.connection ? configuredRuntime(input, "image") : undefined;
+  const apiKey = custom?.apiKey ?? (input.apiKey || providerEnvApiKey("dashscope-image"));
   if (!apiKey) throw new Error("Missing DASHSCOPE_API_KEY");
 
-  const baseUrl = input.baseUrl || process.env.DASHSCOPE_BASE_URL || "https://dashscope.aliyuncs.com/api/v1";
-  const preferredModel = normalizeDashScopeImageModel(input.model || process.env.DASHSCOPE_IMAGE_MODEL || "qwen-image");
+  const baseUrl = custom?.baseUrl || input.baseUrl || process.env.DASHSCOPE_BASE_URL || "https://dashscope.aliyuncs.com/api/v1";
+  const preferredModel = input.model || process.env.DASHSCOPE_IMAGE_MODEL || "qwen-image";
   const candidates = resolveDashScopeImageCandidates(input, preferredModel);
   const skipped: string[] = [];
   let lastError: unknown;
 
   for (const model of candidates) {
-    const decision = await getModelQuotaDecision("dashscope-image", model);
+    const decision = await getModelQuotaDecision(channelId, model);
     if (!decision.available) {
       skipped.push(decision.reason ?? `${model}: local quota guard skipped this candidate.`);
       continue;
     }
     try {
       const result = await submitDashScopeImage(input, { apiKey, baseUrl }, model);
-      await recordModelSubmission("dashscope-image", model);
+      await recordModelSubmission(channelId, model);
       return {
         ...result,
         model
       };
     } catch (error) {
       lastError = error;
-      const fallback = await handleDashScopeImageFallbackError(model, error);
+      const fallback = await handleDashScopeImageFallbackError(model, error, channelId);
       if (fallback.shouldContinue) {
         skipped.push(fallback.message);
         continue;
@@ -117,7 +119,7 @@ export async function generateDashScopeImage(input: ImageGenerationInput): Promi
 }
 
 export async function generateImage(input: ImageGenerationInput): Promise<ImageGenerationResult> {
-  const provider = normalizeImageProvider(input.provider || process.env.IMAGE_PROVIDER || "mock");
+  const provider = imageProtocolAdapter(input);
 
   if (provider === "dashscope") return generateDashScopeImage(input);
   if (provider === "google-gemini-image") return generateGeminiImage(input);
@@ -125,6 +127,7 @@ export async function generateImage(input: ImageGenerationInput): Promise<ImageG
   if (provider === "doubao-seedream") return generateOpenAICompatibleImage(input, "doubao-seedream");
   if (provider === "openai-compatible") return generateOpenAICompatibleImage(input, provider);
 
+  if (provider !== "mock") throw new Error("生图渠道尚未配置受支持的接口协议，请在后台选择协议。");
   return {
     taskId: `mock_image_${Date.now()}`,
     status: "succeeded",
@@ -140,6 +143,11 @@ async function submitDashScopeImage(
   model: string
 ): Promise<ImageGenerationResult & { message?: string }> {
   const useAsyncImageSynthesis = shouldUseDashScopeAsyncSynthesis(model);
+  const references = input.referenceImageUrls?.filter(Boolean) ?? [];
+  if (references.length && useAsyncImageSynthesis) throw new Error("当前文生图模型不接受参考图，请选择 Qwen 图像编辑或图文生成模型。");
+  const maxReferences = model.startsWith("qwen-image-2.1") ? 10 : model === "qwen-image-edit" ? 1 : 3;
+  if (references.length > maxReferences) throw new Error(`当前 Qwen 模型最多接受 ${maxReferences} 张参考图，请减少引用后重试。`);
+  const referenceImageUrls = await Promise.all(references.map(imageReferenceForProvider));
   const url = useAsyncImageSynthesis
     ? dashScopeEndpoint(runtime.baseUrl, "services/aigc/text2image/image-synthesis")
     : dashScopeEndpoint(runtime.baseUrl, "services/aigc/multimodal-generation/generation");
@@ -151,7 +159,7 @@ async function submitDashScopeImage(
       Authorization: `Bearer ${runtime.apiKey}`,
       ...(useAsyncImageSynthesis ? { "X-DashScope-Async": "enable" } : {})
     },
-    body: JSON.stringify(buildDashScopeImagePayload(input, model, useAsyncImageSynthesis))
+    body: JSON.stringify(buildDashScopeImagePayload({ ...input, referenceImageUrls }, model, useAsyncImageSynthesis))
   });
 
   if (!response.ok) {
@@ -209,7 +217,7 @@ function buildDashScopeImagePayload(input: ImageGenerationInput, model: string, 
   return {
     model,
     input: {
-      messages: [{ role: "user", content: [{ text: input.prompt }] }]
+      messages: [{ role: "user", content: [...(input.referenceImageUrls ?? []).map(image => ({ image })), { text: input.prompt }] }]
     },
     parameters: commonParameters
   };
@@ -221,6 +229,12 @@ async function generateGeminiImage(input: ImageGenerationInput): Promise<ImageGe
   if (!runtime.baseUrl) throw new Error("Missing base URL for Google AI Studio image provider");
 
   const prompt = [input.prompt, input.negativePrompt ? `Negative prompt: ${input.negativePrompt}` : ""].filter(Boolean).join("\n\n");
+  // Interactions ImageContent uses uri for remote images, or data + mime_type for inline media.
+  const references = await Promise.all((input.referenceImageUrls?.filter(Boolean) ?? []).map(async reference => {
+    const image = await imageReferenceForProvider(reference);
+    const inline = image.match(/^data:([^;]+);base64,(.+)$/);
+    return inline ? { type: "image", mime_type: inline[1], data: inline[2] } : { type: "image", uri: image };
+  }));
   const response = await fetch(geminiEndpoint(runtime.baseUrl, "interactions"), {
     method: "POST",
     headers: {
@@ -229,7 +243,7 @@ async function generateGeminiImage(input: ImageGenerationInput): Promise<ImageGe
     },
     body: JSON.stringify({
       model: runtime.model,
-      input: prompt,
+      input: references.length ? [...references, { type: "text", text: prompt }] : prompt,
       response_format: {
         type: "image",
         mime_type: "image/png",
@@ -274,18 +288,16 @@ async function generateOpenAICompatibleImage(input: ImageGenerationInput, provid
   try {
     return await withImageProviderQueue(`${provider}:${baseUrl}:${model}`, providerName, async () => {
     const referenceImages = input.referenceImageUrls?.filter(Boolean) ?? [];
-    const shouldTryImageEdit = referenceImages.length > 0 && provider !== "zml-image" && process.env.IMAGE_EDIT_WITH_REFERENCES !== "false";
+    const shouldTryImageEdit = referenceImages.length > 0 && provider !== "doubao-seedream";
     if (shouldTryImageEdit) {
       const editData = await postImageEditWithFallback({
         urls: endpointCandidates(baseUrl, "images/edits"),
         apiKey,
         model,
         prompt: input.prompt,
-        size: openAIImageSizeFromRatio(input.ratio ?? "9:16"),
+        size: imageSizeFromInput(provider, input),
+        quality: imageQuality(model, input.quality),
         referenceImageUrls: referenceImages
-      }).catch((error) => {
-        if (String(error.message || error).includes("Image edit endpoint unavailable")) return undefined;
-        throw error;
       });
       const editFirst = editData?.data?.[0];
       const editImageUrl = editFirst?.url || (editFirst?.b64_json ? `data:image/png;base64,${editFirst.b64_json}` : undefined);
@@ -300,12 +312,14 @@ async function generateOpenAICompatibleImage(input: ImageGenerationInput, provid
       }
     }
 
+    const seedreamImages = provider === "doubao-seedream" ? await Promise.all(referenceImages.map(imageReferenceForProvider)) : [];
     const data = await postImageJsonWithFallback({
       urls: endpointCandidates(baseUrl, "images/generations"),
       apiKey,
       payload: cleanPayload({
         model,
         prompt: input.prompt,
+        ...(seedreamImages.length ? { image: seedreamImages.length === 1 ? seedreamImages[0] : seedreamImages } : {}),
         n: 1,
         size: imageSizeFromInput(provider, input),
         response_format: supportsImageResponseFormat(model) ? "b64_json" : undefined,
@@ -330,12 +344,12 @@ async function generateOpenAICompatibleImage(input: ImageGenerationInput, provid
   }
 }
 
-export async function testImageModelConnection(options: Pick<ImageGenerationInput, "provider" | "model" | "baseUrl" | "apiKey"> = {}) {
+export async function testImageModelConnection(options: Pick<ImageGenerationInput, "provider" | "model" | "baseUrl" | "apiKey" | "connection"> = {}) {
   const started = Date.now();
-  const provider = normalizeImageProvider(options.provider || process.env.IMAGE_PROVIDER || "mock");
+  const provider = imageProtocolAdapter(options);
   const runtime = resolveImageRuntime(
     {
-      provider,
+      ...options,
       model: options.model,
       baseUrl: options.baseUrl,
       apiKey: options.apiKey,
@@ -351,6 +365,7 @@ export async function testImageModelConnection(options: Pick<ImageGenerationInpu
   ].join(", ");
   try {
     const result = await generateImage({
+      ...options,
       provider: options.provider,
       model: options.model,
       baseUrl: options.baseUrl,
@@ -363,7 +378,7 @@ export async function testImageModelConnection(options: Pick<ImageGenerationInpu
     const latencyMs = Date.now() - started;
 
     return {
-      ok: true,
+      ok: Boolean(result.imageUrl),
       mode: result.imageUrl ? "real" as const : result.provider?.includes("Mock") ? "local" as const : "queued" as const,
       provider: result.provider || runtime.name,
       model: result.model || runtime.model,
@@ -391,6 +406,7 @@ export async function testImageModelConnection(options: Pick<ImageGenerationInpu
 }
 
 function resolveImageRuntime(input: ImageGenerationInput, provider: string) {
+  if (input.connection) return configuredRuntime(input, "image");
   if (provider === "google-gemini-image") {
     return {
       name: "Google AI Studio / Gemini Image",
@@ -452,7 +468,15 @@ function normalizeImageProvider(provider: string) {
   if (["manjiao", "manjiao-image", "manjiao-relay"].includes(provider)) return "manjiao-image";
   if (["doubao", "doubao-seedream", "seedream", "Doubao-Seedream-5.0-lite", "doubao-seedream-5-0-lite-260128"].includes(provider)) return "doubao-seedream";
   if (["openai-compatible", "openai-compatible-image", "relay", "relay-image", "image2", "gpt-image2", "openai-image"].includes(provider)) return "openai-compatible";
-  return "mock";
+  if (["mock", "mock-image", "mock-image-v1"].includes(provider)) return "mock";
+  return provider;
+}
+
+function imageProtocolAdapter(input: Partial<ImageGenerationInput>) {
+  if (!input.connection) return normalizeImageProvider(input.provider || process.env.IMAGE_PROVIDER || "mock");
+  assertProviderConnection(input.connection, "image");
+  const adapters = { "openai-image": "openai-compatible", "dashscope-image": "dashscope", "seedream-image": "doubao-seedream", "gemini-image": "google-gemini-image" };
+  return adapters[input.connection.protocol as keyof typeof adapters];
 }
 
 function normalizeGeminiImageModel(model: string) {
@@ -478,7 +502,8 @@ function normalizeDashScopeImageModel(model: string) {
 }
 
 function resolveDashScopeImageCandidates(input: ImageGenerationInput, preferredModel: string) {
-  if (input.modelPool !== undefined) return uniqueStrings([preferredModel, ...input.modelPool]).map(normalizeDashScopeImageModel);
+  if (input.modelPool !== undefined) return uniqueStrings([preferredModel, ...input.modelPool]);
+  if (input.model || input.connection) return [preferredModel];
   return uniqueStrings([
     preferredModel,
     ...(input.modelPool ?? []),
@@ -490,23 +515,23 @@ function shouldUseDashScopeAsyncSynthesis(model: string) {
   return ["qwen-image", "qwen-image-plus"].includes(model);
 }
 
-async function handleDashScopeImageFallbackError(model: string, error: unknown) {
+async function handleDashScopeImageFallbackError(model: string, error: unknown, provider = "dashscope-image") {
   const message = formatProviderError(error);
   if (isDashScopeImageQuotaError(message)) {
-    await blockModelUntilNextDay("dashscope-image", model, message);
+    await blockModelUntilNextDay(provider, model, message);
     return { shouldContinue: true, message: `${model}: free quota exhausted, blocked until next day and switching. ${message}` };
   }
   if (isDashScopeImageRateLimitError(message)) {
-    await coolDownModel("dashscope-image", model, message, Number(process.env.IMAGE_MODEL_RATE_LIMIT_COOLDOWN_MS ?? process.env.VIDEO_MODEL_RATE_LIMIT_COOLDOWN_MS ?? 120_000));
+    await coolDownModel(provider, model, message, Number(process.env.IMAGE_MODEL_RATE_LIMIT_COOLDOWN_MS ?? process.env.VIDEO_MODEL_RATE_LIMIT_COOLDOWN_MS ?? 120_000));
     return { shouldContinue: true, message: `${model}: hit rate/concurrency limits, cooling down and switching. ${message}` };
   }
   if (isDashScopeImageModelUnavailableError(message)) {
-    await coolDownModel("dashscope-image", model, message, Number(process.env.IMAGE_MODEL_UNAVAILABLE_COOLDOWN_MS ?? 300_000));
+    await coolDownModel(provider, model, message, Number(process.env.IMAGE_MODEL_UNAVAILABLE_COOLDOWN_MS ?? 300_000));
     return { shouldContinue: true, message: `${model}: model unavailable or not authorized, skipping. ${message}` };
   }
   if (isDashScopeImageTransientError(message)) {
-    await coolDownModel("dashscope-image", model, message);
-    return { shouldContinue: true, message: `${model}: transient upstream failure, switching to the next candidate. ${message}` };
+    await coolDownModel(provider, model, message);
+    return { shouldContinue: false, message: `${model}: upstream result unknown; automatic resubmission stopped. ${message}` };
   }
   return { shouldContinue: false, message };
 }
@@ -751,7 +776,7 @@ async function postImageJsonWithFallback({
       try {
         return JSON.parse(lastText) as OpenAIImageResponse;
       } catch {
-        if (url !== urls[urls.length - 1]) continue;
+        throw new Error("Image response was unreadable; result unknown, automatic resubmission stopped.");
       }
     }
 
@@ -767,6 +792,7 @@ async function postImageEditWithFallback({
   model,
   prompt,
   size,
+  quality,
   referenceImageUrls
 }: {
   urls: string[];
@@ -774,6 +800,7 @@ async function postImageEditWithFallback({
   model: string;
   prompt: string;
   size: string;
+  quality?: string;
   referenceImageUrls: string[];
 }): Promise<OpenAIImageResponse> {
   let lastStatus = 0;
@@ -784,9 +811,11 @@ async function postImageEditWithFallback({
     form.set("model", model);
     form.set("prompt", prompt);
     form.set("size", size);
+    if (quality) form.set("quality", quality);
     form.set("n", "1");
 
-    const blobs = await Promise.all(referenceImageUrls.slice(0, 4).map((imageUrl, index) => imageUrlToBlob(imageUrl, index)));
+    if (referenceImageUrls.length > 16) throw new Error("单次生图最多引用 16 张参考图，请减少引用后重试。");
+    const blobs = await Promise.all(referenceImageUrls.map((imageUrl, index) => imageUrlToBlob(imageUrl, index)));
     blobs.forEach((blob, index) => {
       form.append("image[]", blob, `reference-${index + 1}.png`);
     });
@@ -806,7 +835,7 @@ async function postImageEditWithFallback({
   }
 
   if ([404, 405].includes(lastStatus)) {
-    throw new Error(`Image edit endpoint unavailable: ${lastStatus} ${lastText.slice(0, 180)}`);
+    throw new Error(`Image edit endpoint unavailable: ${lastStatus}，当前渠道不支持参考图编辑，未退回纯文生图。请更换支持图片编辑的渠道。`);
   }
   throw new Error(`Image edit request failed: ${lastStatus} ${lastText.slice(0, 180)}`);
 }
@@ -889,6 +918,12 @@ function compactJson(value: unknown) {
   }
 }
 
+async function imageReferenceForProvider(imageUrl: string) {
+  if (!imageUrl.startsWith("/storage/")) return imageUrl;
+  const blob = await imageUrlToBlob(imageUrl, 0);
+  return `data:${blob.type};base64,${Buffer.from(await blob.arrayBuffer()).toString("base64")}`;
+}
+
 async function imageUrlToBlob(imageUrl: string, index: number) {
   if (imageUrl.startsWith("data:")) {
     const match = imageUrl.match(/^data:(.+?);base64,(.+)$/);
@@ -896,9 +931,8 @@ async function imageUrlToBlob(imageUrl: string, index: number) {
     return new Blob([Buffer.from(match[2], "base64")], { type: match[1] || "image/png" });
   }
   if (imageUrl.startsWith("/storage/")) {
-    const relativePath = imageUrl.replace(/^\/storage\//, "").replace(/\.\./g, "");
-    const buffer = await readFile(resolve(storageRoot, relativePath));
-    return new Blob([buffer], { type: mimeTypeFromPath(relativePath) });
+    const buffer = await readStoredAsset(imageUrl);
+    return new Blob([buffer], { type: mimeTypeFromPath(imageUrl.split(/[?#]/)[0]!) });
   }
   const response = await fetchWithTimeout(imageUrl, {}, Number(process.env.IMAGE_REFERENCE_FETCH_TIMEOUT_MS ?? 30_000));
   if (!response.ok) throw new Error(`Reference image fetch failed: ${response.status} ${imageUrl.slice(0, 80)}`);
