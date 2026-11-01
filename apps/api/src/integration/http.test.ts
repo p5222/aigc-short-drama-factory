@@ -143,7 +143,7 @@ test("HTTP business boundaries: sessions, administrator writes, private media an
         assert.equal((await request(`${path}/activate`, admin.token, "POST", { versionId: saved.id, expectedRevision: detail.revision })).status, 200);
         assert.equal((await request(`${path}/activate`, admin.token, "POST", { versionId: null, expectedRevision: detail.revision })).status, 409);
         assert.equal((await request(`${path}/activate`, admin.token, "POST", { versionId: null, expectedRevision: detail.revision + 1 })).status, 200);
-        assert.equal((await request("/api/admin/production-prompts/storyboard_core/activate", admin.token, "POST", { versionId: null, expectedRevision: 0 })).status, 400);
+        assert.equal((await request("/api/admin/production-prompts/hit_story_analysis/activate", admin.token, "POST", { versionId: null, expectedRevision: 0 })).status, 400);
       } finally {
         await db.productionPromptState.deleteMany({ where: { key } });
         await db.productionPromptVersion.deleteMany({ where: { owner: ids[2]! } });
