@@ -17,13 +17,19 @@ test("creator run persistence, costs, recovery and author acceptance with real P
   const userId = `audit_creator_${crypto.randomUUID()}`, providerId = `audit_creator_provider_${crypto.randomUUID()}`;
   const valid = { title: "旧书店的信", synopsis: "修表师读到父亲留下的线索", script: "场景一：旧书店，日。阿青轻轻推门，门铃响起。他抚平信纸，凝视纸上的钟楼图案。阿青：原来你一直在等我。场景二：钟楼前，日。阿青握着怀表，钟声响起。他停下脚步，将信贴近胸口，然后坚定地走向钟楼。画面渐暗，钟声延续。",
     estimatedSeconds: 30, characters: [{ name: "阿青", identity: "修表师", appearance: "短发", costume: "蓝色外套", personality: "细心" }],
-    scenes: [{ location: "旧书店", description: "旧书架和门铃", characters: ["阿青"] }], props: [], factUpdates: [] };
+    scenes: [{ location: "旧书店", description: "旧书架和门铃", characters: ["阿青"] }], props: [], factUpdates: [],
+    storyDesign: { goal: "寻找父亲线索", obstacle: "线索在旧信里", choice: "前往钟楼", payoff: "找到新的方向", beats: [
+      { seconds: 15, action: "辨认旧信上的图案", evidence: "他抚平信纸，凝视纸上的钟楼图案。", spokenText: "原来你一直在等我。" },
+      { seconds: 15, action: "走向钟楼", evidence: "他停下脚步，将信贴近胸口，然后坚定地走向钟楼。", spokenText: "" }
+    ] } };
   let calls = 0, respond: () => Promise<Response>;
+  const sentSystems: string[] = [];
   const response = (value: unknown) => new Response(JSON.stringify({ id: `fixture_${calls}`, choices: [{ message: { content: JSON.stringify(value) } }],
     usage: { prompt_tokens: 200, completion_tokens: 100, prompt_tokens_details: { cached_tokens: 50 } } }), { status: 200, headers: { "content-type": "application/json" } });
   globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     assert.match(String(input), /^https:\/\/creator-fixture\.invalid\/v1\/chat\/completions$/);
     assert.equal(JSON.parse(String(init?.body)).model, "fixture-text");
+    sentSystems.push(JSON.parse(String(init?.body)).messages.find((message: { role: string }) => message.role === "system").content);
     calls++;
     return respond();
   }) as typeof fetch;
@@ -85,6 +91,37 @@ test("creator run persistence, costs, recovery and author acceptance with real P
       await agent.executeCreatorRun(userId, projectId, runId);
       assert.equal(calls - before, 2);
     });
+    await t.test("repair keeps the plan's prompt snapshot even if an administrator publishes a new version", async () => {
+      const prompts = await import("../prompts/production.js");
+      const key = "creator_short_script";
+      const original = await prompts.getProductionPrompt(key);
+      assert.equal(original.activeVersionId, null);
+      const { projectId } = await create();
+      const { runId } = await plan(projectId, 2);
+      const before = sentSystems.length;
+      const candidate = await prompts.saveProductionPrompt(key, { systemPrompt: `${original.builtin.systemPrompt}\nLATER_TEMPLATE_SHOULD_NOT_LEAK`, userTemplate: original.builtin.userTemplate, notes: "冻结快照回归", expectedRevision: original.revision, requestId: crypto.randomUUID() }, userId);
+      try {
+        respond = async () => {
+          if (sentSystems.length === before + 1) {
+            await prompts.activateProductionPrompt(key, { versionId: candidate.id, expectedRevision: original.revision });
+            return response({ ...valid, estimatedSeconds: 90 });
+          }
+          return response(valid);
+        };
+        const state = await agent.executeCreatorRun(userId, projectId, runId);
+        assert.equal(state.runs[0].status, "awaiting_review");
+        assert.equal(sentSystems.length - before, 2);
+        assert.equal(sentSystems[before], sentSystems[before + 1]);
+        assert.doesNotMatch(sentSystems[before + 1], /LATER_TEMPLATE_SHOULD_NOT_LEAK/);
+        const old = state.scripts[0];
+        const edited = await agent.reviewCreatorScript(userId, projectId, { expectedScriptId: old.id, expectedRevision: state.revision, content: `${old.content}\n钟楼的灯慢慢亮起。`, approve: false });
+        assert.equal(edited.scripts[0].storyDesign, undefined, "manual rewrite clears evidence for the old text");
+      } finally {
+        const current = await prompts.getProductionPrompt(key);
+        await prompts.activateProductionPrompt(key, { versionId: null, expectedRevision: current.revision });
+        await db.productionPromptVersion.delete({ where: { id: candidate.id } });
+      }
+    });
     await t.test("one-call budget with blocking findings ends in reviewable repair state", async () => {
       const { projectId } = await create();
       const { runId } = await plan(projectId);
@@ -123,6 +160,18 @@ test("creator run persistence, costs, recovery and author acceptance with real P
       await agent.acknowledgeUnknownRun(userId, projectId, runId, { supplierChecked: true });
       assert.equal((await agent.getCreatorState(userId, projectId)).runs[0]?.status, "canceled");
       assert.equal((await db.creditAccount.findUniqueOrThrow({ where: { userId } })).frozenBalance, 0);
+    });
+    await t.test("token-limited responses stop after one call and cannot become usable drafts", async () => {
+      const { projectId } = await create();
+      const { runId } = await plan(projectId, 2);
+      const before = calls;
+      respond = async () => new Response(JSON.stringify({ choices: [{ finish_reason: "length", message: { content: '{"title":"尚未完成' } }],
+        usage: { prompt_tokens: 100, completion_tokens: 5000 } }));
+      const state = await agent.executeCreatorRun(userId, projectId, runId);
+      assert.equal(calls - before, 1);
+      assert.equal(state.scripts.length, 0);
+      assert.equal(state.runs[0].status, "unknown");
+      assert.match(state.runs[0].error ?? "", /token 上限/);
     });
     await t.test("pending cancellation and stale inputs make zero external calls", async () => {
       const { projectId } = await create();

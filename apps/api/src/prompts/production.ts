@@ -56,7 +56,9 @@ export function validateProductionDraft(key: string, draft: ProductionPromptDraf
 function checkedStored(key: string, row: VersionRow): ProductionPromptDefinition {
   const reference = builtin(key);
   const stored = row.definition as unknown as ProductionPromptDefinition;
-  if (row.key !== key || stored.key !== key || stored.version !== `${reference.version}+custom.${row.number}` ||
+  // Prose-only baseline upgrades do not invalidate intentionally activated drafts.
+  // Output contracts and variables must still match exactly.
+  if (row.key !== key || stored.key !== key || !new RegExp(`^\\d+\\.\\d+\\.\\d+\\+custom\\.${row.number}$`).test(stored.version) ||
       ["variables", "outputSchema", "validationRules", "negativeRules"].some(field =>
         !isDeepStrictEqual(stored[field as keyof ProductionPromptDefinition], reference[field as keyof ProductionPromptDefinition]))) {
     throw new ProductionPromptError("已保存版本与当前输出契约不兼容，请在提示词工作室重新保存版本", 409);
@@ -167,6 +169,13 @@ export async function resolveProductionPrompt(key: string) {
   const version = await prisma.productionPromptVersion.findUnique({ where: { id: state.activeVersionId } });
   if (!version) throw new ProductionPromptError("生效提示词版本缺失", 409);
   return checkedStored(key, version);
+}
+export async function recordAppliedPrompt(taskId: string, definition: ProductionPromptDefinition) {
+  await prisma.analyticsEvent.create({ data: {
+    id: `event_${crypto.randomUUID()}`, taskId, eventName: "production_prompt_applied",
+    entityType: "prompt", entityId: definition.key, sourceChannel: "production",
+    properties: JSON.parse(JSON.stringify(definition)) as Prisma.InputJsonValue
+  } });
 }
 export async function materializeProductionPrompt(key: string, variables: Record<string, unknown>) {
   return materializePrompt(key, variables, await resolveProductionPrompt(key));

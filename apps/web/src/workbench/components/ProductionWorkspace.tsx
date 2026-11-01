@@ -4,6 +4,7 @@ import { Inspector } from "./Inspector";
 import { MediaCanvas } from "./MediaCanvas";
 import { useWorkbench } from "../WorkbenchContext";
 import { StageGuide } from "./StageGuide";
+import { CreativeGuide } from "../../components/CreativeGuide";
 
 interface ProductionWorkspaceProps {
   rail: ReactNode;
@@ -34,7 +35,7 @@ export function ProductionWorkspace({
   return (
     <main className="wb-workspace" data-stage={state.activeStage}>
       <EntityRail open={railOpen} onClose={onCloseRail}>{rail}</EntityRail>
-      <MediaCanvas>{stageGuidance ? <StageGuide /> : <div className="wb-stage-intro"><div><strong>{stage.title}</strong><p>{stage.detail}</p></div><span>{stage.stat}</span></div>}{canvas}</MediaCanvas>
+      <MediaCanvas>{stageGuidance ? <StageGuide /> : <div className="wb-stage-intro"><div><strong>{stage.title}</strong><p>{stage.detail}</p></div><span>{stage.stat}</span></div>}<CreativeGuide key={state.activeStage} stage={state.activeStage} />{canvas}</MediaCanvas>
       <Inspector open={inspectorOpen} onClose={onCloseInspector}>{inspector}</Inspector>
     </main>
   );

@@ -7,6 +7,7 @@ import { materializePrompt } from "../prompts/runtime.js";
 import { resolveProductionPrompt } from "../prompts/production.js";
 import type { PromptDefinition } from "../prompts/catalog.js";
 import { recordTextUsage } from "../billing/metering.js";
+import { splitSpeech } from "./speechTimeline.js";
 
 interface PipelineCharacter {
   name: string;
@@ -49,7 +50,7 @@ interface PipelineOutput {
 }
 
 type TextModelResponse = {
-  choices?: Array<{ message?: { content?: string } }>;
+  choices?: Array<{ finish_reason?: string; message?: { content?: string } }>;
   output_text?: string;
   output?: Array<{ content?: Array<{ text?: string; type?: string }> }>;
   steps?: Array<{ type?: string; content?: Array<{ type?: string; text?: string }> }>;
@@ -83,6 +84,7 @@ export interface GeneratedProjectStoryboardContent {
   mode: "real" | "local";
   assets: AssetItem[];
   storyboards: StoryboardShot[];
+  promptSnapshot?: Record<string, unknown>;
 }
 
 export async function generateProjectContent(projectId: string, input: CreateProjectInput): Promise<GeneratedProjectContent> {
@@ -155,28 +157,11 @@ export async function generateProjectStoryboards(
       return {
         mode: "real",
         assets: normalized.assets.filter((asset) => asset.type !== "role"),
-        storyboards: normalized.storyboards
+        storyboards: normalized.storyboards,
+        promptSnapshot: output.promptSnapshot
       };
     } catch (error) {
-      console.warn("[storyboard] real model failed, falling back to local storyboards:", error);
-      const local = generateLocalOutput(input);
-      const normalized = normalizeOutput(
-        projectId,
-        input,
-        {
-          ...local,
-          synopsis: script.synopsis || local.synopsis,
-          script: script.content || local.script,
-          characters: baseCharacters,
-          storyboards: local.storyboards
-        },
-        "local"
-      );
-      return {
-        mode: "local",
-        assets: normalized.assets.filter((asset) => asset.type !== "role"),
-        storyboards: normalized.storyboards
-      };
+      throw new Error("真实分镜生成失败，未保存替代分镜：" + errorMessage(error));
     }
   }
 
@@ -304,16 +289,21 @@ async function generateStoryboardsWithModel(
   input: CreateProjectInput,
   script: Pick<ScriptDraft, "synopsis" | "content">,
   characters: PipelineCharacter[]
-): Promise<{ storyboards: PipelineStoryboard[] }> {
+): Promise<{ storyboards: PipelineStoryboard[]; promptSnapshot: Record<string, unknown> }> {
+  const definition = await resolveProductionPrompt("storyboard_core");
+  const rendered = materializePrompt("storyboard_core", {
+    script: script.content, characters, scenes: extractSceneNames(script.content, input.genre),
+    ratio: input.videoRatio, styleProfile: input.artStyle || "按已确认资产"
+  }, definition);
   const data = await callOpenAICompatible({
     temperature: 0.68,
     response_format: { type: "json_object" },
     messages: [
       {
         role: "system",
-        content: "You are a professional storyboard director and AI visual prompt engineer. Write in Simplified Chinese. Output valid JSON only."
+        content: rendered.systemPrompt
       },
-      { role: "user", content: buildStoryboardPrompt(input, script, characters) }
+      { role: "user", content: `${rendered.userPrompt}\n${buildStoryboardPrompt(input, script, characters)}` }
     ]
   }, input);
 
@@ -321,7 +311,40 @@ async function generateStoryboardsWithModel(
   if (!content) throw new Error("Model returned empty content");
 
   const parsed = parseModelJson<{ storyboards?: PipelineStoryboard[] }>(content, "分镜模型");
-  return { storyboards: parsed.storyboards ?? [] };
+  if (!parsed.storyboards?.length) throw new Error("模型未返回有效分镜");
+  assertStoryboardContent(parsed.storyboards, script.content, characters.map(character => character.name));
+  return { storyboards: parsed.storyboards, promptSnapshot: structuredClone(definition) as unknown as Record<string, unknown> };
+}
+
+export function assertStoryboardContent(shots: PipelineStoryboard[], script: string, names: string[]) {
+  const clean = (value: string) => value.replace(/[\s，。！？；：、“”‘’,.!?;:"'（）()【】]/g, "");
+  const source = clean(script.replace(/（[^）]*）|\([^)]*\)|【[^】]*】/g, ""));
+  const seen = new Set<string>();
+  const spoken: string[] = [];
+  let speechCursor = 0;
+  for (const [index, shot] of shots.entries()) {
+    if (!Number.isFinite(shot.duration) || shot.duration < 1 || shot.duration > 15) throw new Error(`第${index + 1}镜时长无效，请按1至15秒拆镜`);
+    if (!Array.isArray(shot.characters) || shot.characters.some(name => !names.includes(name))) throw new Error(`第${index + 1}镜引用了未确认角色`);
+    for (const field of ["scene", "pictureDesc", "imagePrompt", "videoPrompt"] as const) if (typeof shot[field] !== "string" || !shot[field].trim()) throw new Error(`第${index + 1}镜缺少${field}`);
+    for (const speech of [shot.dialogue, shot.voiceOver]) {
+      if (typeof speech !== "string") throw new Error(`第${index + 1}镜对白或旁白格式错误`);
+      for (const cue of splitSpeech(speech, names, "对白")) {
+        const text = clean(cue.text);
+        const at = source.indexOf(text, speechCursor);
+        if (text && at < 0) throw new Error(`第${index + 1}镜的对白或旁白无法在确认剧本中按顺序定位，可能新增、重复或倒置了台词`);
+        if (text) { spoken.push(text); speechCursor = at + text.length; }
+      }
+    }
+    const key = `${shot.episodeNo ?? 1}:${shot.sceneNo}:${shot.shotNo}`;
+    if (seen.has(key)) throw new Error("模型返回了重复镜号");
+    seen.add(key);
+  }
+  const mapped = spoken.join("");
+  for (const line of script.split(/\r?\n/)) {
+    const match = line.trim().match(/^([^：:（(]{1,120})(?:（[^）]*）|\([^)]*\))?[：:]/);
+    if (!match || ![...names, "旁白", "画外音"].includes(match[1].trim())) continue;
+    for (const cue of splitSpeech(line, names, "对白")) if (clean(cue.text) && !mapped.includes(clean(cue.text))) throw new Error("确认剧本中的对白或旁白未完整分配到镜头，请补齐原句");
+  }
 }
 
 async function callOpenAICompatible(body: Record<string, unknown>, options: TextRuntimeOptions = {}) {
@@ -430,6 +453,7 @@ async function callChatCompletionsApi(
         payload: {
           max_tokens: Number(process.env.TEXT_GENERATION_MAX_TOKENS ?? process.env.OPENAI_GENERATION_MAX_OUTPUT_TOKENS ?? 2400),
           ...body,
+          ...structuredTextProviderOptions(runtime.provider, model, Boolean(body.response_format)),
           model
         }
       });
@@ -538,7 +562,15 @@ function geminiModelEndpoint(baseUrl: string, model: string, method: string) {
   return `${versioned}/models/${model}:${method}`;
 }
 
+export function structuredTextProviderOptions(provider: string, model: string, structuredJson: boolean) {
+  // DeepSeek V4 defaults to thinking, which shares max_tokens with the final JSON.
+  // Keep structured creative output within its configured output budget.
+  return provider === "deepseek" && /^deepseek-(?:v4(?:[.-]|$)|flash(?:-|$))/.test(model) && structuredJson
+    ? { thinking: { type: "disabled" } } : {};
+}
+
 function getModelContent(data: TextModelResponse) {
+  if (data.choices?.[0]?.finish_reason === "length") throw new Error("模型输出达到本次 token 上限，未返回完整内容；请精简要求或选择适合当前预算的模型，核对费用后再试。");
   if (data.choices?.[0]?.message?.content) return data.choices[0].message.content;
   if (data.output_text) return data.output_text;
   const stepText =

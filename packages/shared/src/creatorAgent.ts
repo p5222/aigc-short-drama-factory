@@ -7,6 +7,11 @@ export interface CreatorBrief {
   emotion: string;
   mustKeep: string;
   fidelity: "faithful" | "inspired";
+  protagonistGoal?: string;
+  obstacle?: string;
+  ending?: string;
+  productionLimits?: string;
+  avoid?: string;
 }
 export interface StoryFact {
   id: string;
@@ -32,7 +37,7 @@ export interface ContextManifest {
 }
 export interface CreatorFinding {
   code: string;
-  layer: "structure" | "continuity" | "author";
+  layer: "structure" | "continuity" | "craft" | "author";
   severity: "warning" | "blocking";
   message: string;
   evidence?: string;
@@ -75,6 +80,7 @@ export interface CreatorAgentState {
     id: string; version: number; status: string; content: string; createdAt: string;
     findings: CreatorFinding[];
     details?: CreatorScriptDetails;
+    storyDesign?: import("./creativeQuality.js").StoryDesign;
     authorReview?: { approved: boolean; note: string; baseScriptId: string };
   }>;
   nextAction: "brief" | "script" | "review" | "production";
@@ -88,7 +94,7 @@ export interface CreatorQuote {
   inputRevision: number;
   context: ContextManifest;
 }
-export const CREATOR_SKILL_VERSION = "short-film/1.0.0";
+export const CREATOR_SKILL_VERSION = "short-film/1.1.0";
 export const CREATOR_GUIDE_VERSION = 1;
 
 export interface ExportOutcomeReport {

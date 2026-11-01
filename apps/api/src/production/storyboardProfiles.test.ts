@@ -16,6 +16,15 @@ test("renders only the selected profile without contaminated example content", (
     lastFramePrompt: "银簪刀稳定在掌心"
   });
   assert.match(prompt, /^10秒/);
-  assert.match(prompt, /\[7-10秒\]/);
+  assert.match(prompt, /在10秒内自然完成一次/);
   assert.doesNotMatch(prompt, /班长|递笔|晚自习|15秒/);
+});
+
+test("motion prompt honors shot duration and the author's edited prompt", () => {
+  const prompt = renderProfiledVideoPrompt({ profile: "jimeng_15s",
+    shot: { duration: 4, videoPrompt: "手指停在信封封口，镜头固定", pictureDesc: "书桌", action: "抬起信封", dialogue: "", environmentSound: "", soundEffect: "", shotSize: "近景", cameraMovement: "固定", scene: "书房", characters: ["阿青"], referenceAssetIds: [] },
+    firstFramePrompt: "信封放在桌上", lastFramePrompt: "信封停在半空" });
+  assert.match(prompt, /^4秒/);
+  assert.match(prompt, /手指停在信封封口/);
+  assert.doesNotMatch(prompt, /15秒|60帧|4K|首个片段|下一段继承/);
 });

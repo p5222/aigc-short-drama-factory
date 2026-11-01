@@ -1,6 +1,8 @@
 import type { ProjectWorkflow, StoryboardShot } from "@aifilm/shared";
+import { buildSpeechTimeline } from "./speechTimeline.js";
 
 export interface LingGuoVoiceCue {
+  cueId: string;
   shotId: string;
   shotNo: string;
   speaker: string;
@@ -47,16 +49,14 @@ export interface LingGuoProductionManifest {
 }
 
 export function createLingGuoProductionManifest(workflow: ProjectWorkflow, ffmpegReady: boolean): LingGuoProductionManifest {
-  const voiceCues = workflow.storyboards.map((shot) => createVoiceCue(shot, workflow));
-  const subtitles = workflow.storyboards.map((shot, index) => {
-    const startSeconds = workflow.storyboards.slice(0, index).reduce((sum, item) => sum + item.duration, 0);
-    const endSeconds = startSeconds + shot.duration;
+  const voiceCues = buildSpeechTimeline(workflow);
+  const subtitles = voiceCues.filter(cue => cue.text).map((cue, index) => {
     return {
       index: index + 1,
-      start: formatSrtTime(startSeconds),
-      end: formatSrtTime(endSeconds),
-      text: shot.dialogue || shot.voiceOver || "",
-      shotId: shot.id
+      start: formatSrtTime(cue.start),
+      end: formatSrtTime(cue.end),
+      text: cue.text,
+      shotId: cue.shotId
     };
   });
   const assetById = new Map(workflow.assets.map((asset) => [asset.id, asset]));
@@ -70,7 +70,7 @@ export function createLingGuoProductionManifest(workflow: ProjectWorkflow, ffmpe
       videoUrl: videoAsset?.referenceUrl,
       duration: shot.duration,
       transition: suggestTransition(shot, workflow.storyboards[index + 1]),
-      subtitle: shot.dialogue || shot.voiceOver || "",
+      subtitle: voiceCues.filter(cue => cue.shotId === shot.id && cue.text).map(cue => cue.text).join("\n"),
       audioPrompt: buildAudioPrompt(shot)
     };
   });
@@ -108,18 +108,14 @@ export function buildLingGuoTtsManifest(workflow: ProjectWorkflow) {
     projectName: workflow.project.name,
     source: "LingGuo-Drama inspired TTS manifest",
     provider: process.env.TTS_PROVIDER || "manifest-only",
-    items: workflow.storyboards.map((shot) => createVoiceCue(shot, workflow))
+    items: buildSpeechTimeline(workflow)
   };
 }
 
 export function buildLingGuoSrt(workflow: ProjectWorkflow) {
-  return workflow.storyboards
-    .map((shot, index) => {
-      const startSeconds = workflow.storyboards.slice(0, index).reduce((sum, item) => sum + item.duration, 0);
-      const endSeconds = startSeconds + shot.duration;
-      const text = shot.dialogue || shot.voiceOver || "";
-      if (!text) return "";
-      return [String(index + 1), `${formatSrtTime(startSeconds)} --> ${formatSrtTime(endSeconds)}`, normalizeSubtitleText(text), ""].join("\n");
+  return buildSpeechTimeline(workflow).filter(cue => cue.text)
+    .map((cue, index) => {
+      return [String(index + 1), `${formatSrtTime(cue.start)} --> ${formatSrtTime(cue.end)}`, cue.text, ""].join("\n");
     })
     .filter(Boolean)
     .join("\n");
@@ -134,29 +130,6 @@ export function getLingGuoAdapterMetadata() {
     capabilities: ["TTS 配音清单", "SRT 字幕", "FFmpeg 合成清单", "转场建议", "Wav2Lip/SadTalker 外部服务预留", "视频模型插件注册"],
     requiredEnv: ["TTS_PROVIDER 可选", "LIPSYNC_PROVIDER 可选", "FFMPEG_BIN 可选"]
   };
-}
-
-function createVoiceCue(shot: StoryboardShot, workflow: ProjectWorkflow): LingGuoVoiceCue {
-  const text = shot.dialogue || shot.voiceOver || "";
-  const speaker = inferSpeaker(shot, text);
-  const character = workflow.characters.find((item) => item.name === speaker) ?? workflow.characters.find((item) => shot.characters.includes(item.name));
-  return {
-    shotId: shot.id,
-    shotNo: `${shot.episodeNo}-${shot.sceneNo}-${shot.shotNo}`,
-    speaker,
-    text,
-    emotion: shot.emotion || "平稳",
-    duration: shot.duration,
-    suggestedVoiceId: character?.voiceId,
-    audioRole: shot.dialogue ? "dialogue" : shot.voiceOver ? "voice_over" : "silence"
-  };
-}
-
-function inferSpeaker(shot: StoryboardShot, text: string) {
-  const match = text.match(/^([\u4e00-\u9fa5A-Za-z0-9_]{1,12})[：:]/);
-  if (match?.[1]) return match[1];
-  if (shot.voiceOver) return "旁白";
-  return shot.characters[0] || "旁白";
 }
 
 function buildAudioPrompt(shot: StoryboardShot) {
@@ -175,10 +148,6 @@ function suggestTransition(current: StoryboardShot, next?: StoryboardShot): Ling
     return { type: "flash", duration: 0.18, reason: "危机/冲击镜头，用闪白增强节奏" };
   }
   return { type: "none", duration: 0, reason: "同场连续动作，直接剪切" };
-}
-
-function normalizeSubtitleText(value: string) {
-  return value.replace(/^[\u4e00-\u9fa5A-Za-z0-9_]{1,12}[：:]/, "").trim();
 }
 
 function formatSrtTime(totalSeconds: number) {

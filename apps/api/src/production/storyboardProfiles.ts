@@ -18,29 +18,24 @@ export function profileFor(profile: SegmentProfile) {
 
 export function renderProfiledVideoPrompt(input: {
   profile: SegmentProfile;
-  shot: Pick<StoryboardShot, "pictureDesc" | "action" | "dialogue" | "environmentSound" | "soundEffect" | "shotSize" | "cameraMovement" | "scene" | "characters" | "referenceAssetIds">;
+  shot: Pick<StoryboardShot, "pictureDesc" | "action" | "dialogue" | "environmentSound" | "soundEffect" | "shotSize" | "cameraMovement" | "scene" | "characters" | "referenceAssetIds"> & Partial<Pick<StoryboardShot, "duration" | "videoPrompt" | "voiceOver">>;
   previousEndState?: string;
   firstFramePrompt: string;
   lastFramePrompt: string;
 }) {
   const profile = profileFor(input.profile);
   const action = input.shot.action || input.shot.pictureDesc;
-  const timeline = profile.timingBands.map(([start, end], index) => {
-    const detail = index === 0
-      ? `承接首帧，建立${input.shot.scene}内的人物站位与动作起点`
-      : index === profile.timingBands.length - 1
-        ? `完成“${action}”，稳定停在指定尾帧状态`
-        : `连续推进“${action}”，保持人物身份、服装、光向和道具位置`;
-    return `[${start}-${end}秒] ${input.shot.shotSize}，${input.shot.cameraMovement || "稳定运镜"}；${detail}。`;
-  });
+  const duration = input.shot.duration ?? profile.durationSeconds;
+  if (!Number.isFinite(duration) || duration < 1 || duration > 15) throw new Error("镜头时长须在1至15秒内，请先拆分镜头。");
   return [
-    `${profile.durationSeconds}秒，4K，60帧，画面连贯，无字幕、无水印、无Logo。`,
+    `${duration}秒连续镜头。${input.shot.shotSize}；${input.shot.cameraMovement || "固定机位"}。`,
     `角色资产：${input.shot.referenceAssetIds.join("、") || input.shot.characters.join("、")}。`,
     `首帧：${input.firstFramePrompt}`,
-    input.previousEndState ? `承接上一片段结束状态：${input.previousEndState}` : "首个片段，建立人物与空间关系。",
-    ...timeline,
-    input.shot.dialogue ? `中文对白：${input.shot.dialogue}；只生成语音，禁止字幕。` : "",
-    [input.shot.environmentSound, input.shot.soundEffect].filter(Boolean).length ? `声音：${[input.shot.environmentSound, input.shot.soundEffect].filter(Boolean).join("；")}。` : "",
+    input.previousEndState ? `承接上一片段结束状态：${input.previousEndState}` : "以本镜已提供的首帧作为空间和人物状态依据。",
+    `主体动作：${action}。在${duration}秒内自然完成一次，结尾短暂停稳。`,
+    input.shot.videoPrompt ? `作者确认的运动描述：${input.shot.videoPrompt}` : "",
+    input.shot.dialogue || input.shot.voiceOver ? "本镜包含后期配音，表演节奏为说话与反应留时。" : "",
+    [input.shot.environmentSound, input.shot.soundEffect].filter(Boolean).length ? `声音设计参考（后期核对）：${[input.shot.environmentSound, input.shot.soundEffect].filter(Boolean).join("；")}。` : "",
     `尾帧：${input.lastFramePrompt}`,
     "当前剧本是唯一剧情来源，不新增人物、场景、道具、动作或心理活动。"
   ].filter(Boolean).join("\n");

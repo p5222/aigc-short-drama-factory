@@ -5,7 +5,9 @@ import { quotePrice } from "../billing/pricing.js";
 import type { BatchGenerationResult, CreateProjectInput, StoryboardShot } from "@aifilm/shared";
 import { estimateImageCredits, normalizeImageOutputQuality, normalizeImageOutputSize, normalizeImageProviderId, resolveImageUnitCredits } from "@aifilm/shared";
 import { generateProjectStoryboards, textModelName, textProviderName } from "../agents/generator.js";
-import { buildCharacterIdentityBoardPrompt, buildStoryboardFirstFramePrompt, resolveStoryboardReferenceAssets } from "../agents/storyboardProduction.js";
+import { buildCharacterIdentityBoardPrompt, buildStoryboardFirstFramePrompt, buildEnvironmentPrompt, resolveStoryboardReferenceAssets } from "../agents/storyboardProduction.js";
+import { resolveProductionPrompt, recordAppliedPrompt } from "../prompts/production.js";
+import type { PromptDefinition } from "../prompts/catalog.js";
 import { generateImage } from "../providers/dashscopeImage.js";
 import type { ImageGenerationResult } from "../providers/types.js";
 import { persistImageReference } from "../storage/objectStorage.js";
@@ -87,6 +89,9 @@ export async function runProjectStoryboardTasks(
   if (process.env.NODE_ENV === "production" && generated.mode !== "real") throw new Error("真实分镜生成未成功，未使用占位分镜交付。");
 
   const result = await billing.complete(credits, async (tx, credits) => {
+    if (generated.promptSnapshot) await tx.analyticsEvent.create({ data: { id: `event_${crypto.randomUUID()}`, userId, projectId, taskId: billing.taskId,
+      eventName: "storyboard_prompt_applied", entityType: "prompt", entityId: "storyboard_core",
+      properties: generated.promptSnapshot as import("@prisma/client").Prisma.InputJsonValue, sourceChannel: "production" } });
     const generatedEpisodes = [...new Set(generated.storyboards.map((shot) => shot.episodeNo))];
     const replacedShots = await tx.storyboard.findMany({ where: { projectId, episodeNo: { in: generatedEpisodes } }, select: { id: true } });
     if (replacedShots.length) {
@@ -242,8 +247,10 @@ export async function regenerateStoryboardShotImage(projectId: string, shotId: s
   const source = captureMediaSource(workflow, "image", [shot.id]);
   return runMediaTask({ userId, projectId, projectName: workflow.project.name, estimatedCredits: credits, type: "image", scope: "image", title: "分镜首帧重新生成", provider: imageProvider, model: imageModel, source }, async (billing) => {
   const resolvedReferences = resolveStoryboardReferenceAssets(workflow, shot, assetById);
+  const definition = await resolveProductionPrompt("storyboard_first_frame");
+  await recordAppliedPrompt(billing.taskId, definition);
   const imageResult = await generateImage({
-    prompt: buildStoryboardFirstFramePrompt({ workflow, shot, assetById }),
+    prompt: buildStoryboardFirstFramePrompt({ workflow, shot, assetById, definition }),
     negativePrompt: "subtitle, watermark, logo, low quality, deformed hands, extra fingers, face drift, duplicate person",
     referenceImageUrls: resolvedReferences.map((asset) => asset.referenceUrl).filter(Boolean) as string[],
     ratio: workflow.project.videoRatio,
@@ -295,13 +302,9 @@ export async function generateSceneEnvironmentImage(projectId: string, assetId: 
 
   const source = captureReferenceSource(workflow, [asset.id]);
   return runMediaTask({ userId, projectId, projectName: workflow.project.name, estimatedCredits: credits, type: "image", scope: "image", title: "场景参考图生成", provider: imageProvider, model: imageModel, source }, async (billing) => {
-  const prompt = [
-    "为 AI 漫剧生产生成一张 16:9 场景环境概念图。",
-    `场景：${asset.name}。`,
-    asset.description || asset.prompt,
-    `美术风格：${workflow.project.artStyle}。`,
-    "只表现环境、空间层次、材质、光线、天气和可持续复用的机位方向；不要出现人物、字幕、Logo、水印或拼贴分格。"
-  ].filter(Boolean).join("\n");
+  const definition = await resolveProductionPrompt(asset.type === "prop" ? "prop_reference_image" : "scene_environment_image");
+  const prompt = buildEnvironmentPrompt(asset, workflow.project.artStyle, definition);
+  await recordAppliedPrompt(billing.taskId, definition);
   const imageResult = await generateImage({
     prompt,
     negativePrompt: "people, person, character, portrait, subtitle, text, watermark, logo, collage, split screen, low quality, blurry",
@@ -378,6 +381,8 @@ export async function generateCharacterReferenceImages(projectId: string, userId
 
   const source = captureReferenceSource(workflow, selectedJobs.map(job => job.asset.id));
   return runMediaTask({ userId, projectId, projectName: workflow.project.name, estimatedCredits: credits, type: "character", scope: "character", title: "角色参考图生成", provider: imageProvider, model: imageModel, source }, async (billing) => {
+  const definition = await resolveProductionPrompt("character_identity_board");
+  await recordAppliedPrompt(billing.taskId, definition);
   const imageResults: ImageGenerationResult[] = [];
   const storedImageUrls: Array<string | undefined> = [];
   const successfulJobs: CharacterReferenceJob[] = [];
@@ -390,7 +395,7 @@ export async function generateCharacterReferenceImages(projectId: string, userId
       .map((item) => item.referenceUrl!)
       .slice(0, 4);
     const result = await generateImage({
-      prompt: buildCharacterReferencePrompt(asset.prompt, mode, identityReferenceUrl, asset.name),
+      prompt: buildCharacterReferencePrompt(asset.prompt, mode, identityReferenceUrl, asset.name, definition),
       negativePrompt: "text, labels, watermark, logo, three different people, face drift, different identity, different outfit, duplicate character, deformed hands, extra fingers, low quality, dark lighting, blurry, cropped body",
       referenceImageUrls: [...(identityReferenceUrl ? [identityReferenceUrl] : []), ...uploadedReferenceUrls].slice(0, 5),
       ratio: "16:9",
@@ -430,7 +435,7 @@ export async function generateCharacterReferenceImages(projectId: string, userId
         where: { id: `${asset.id}_turnaround` },
         update: {
           description: `${asset.description} 的${viewLabel}，一张图包含正面全身、3/4侧面、背面和大头照，后续分镜图会引用该身份板保持角色稳定。`,
-          prompt: buildCharacterReferencePrompt(asset.prompt, mode, asset.referenceUrl, asset.name),
+          prompt: buildCharacterReferencePrompt(asset.prompt, mode, asset.referenceUrl, asset.name, definition),
           referenceUrl,
           status: "succeeded"
         },
@@ -440,7 +445,7 @@ export async function generateCharacterReferenceImages(projectId: string, userId
           type: "role_derivative",
           name: `${asset.name} ${viewLabel}`,
           description: `${asset.description} 的${viewLabel}，一张图包含正面全身、3/4侧面、背面和大头照，后续分镜图会引用该身份板保持角色稳定。`,
-          prompt: buildCharacterReferencePrompt(asset.prompt, mode, asset.referenceUrl, asset.name),
+          prompt: buildCharacterReferencePrompt(asset.prompt, mode, asset.referenceUrl, asset.name, definition),
           referenceUrl,
           status: "succeeded",
           relatedCharacterId: asset.relatedCharacterId
@@ -473,7 +478,7 @@ export async function generateCharacterReferenceImages(projectId: string, userId
     await tx.project.update({ where: { id: projectId }, data: { status: "asseting", imageAssets: totalImageAssets, creditsSpent: { increment: credits } } });
     return { created: selectedJobs.length };
   }, { status: failures.length ? "failed" : "succeeded", errorReason: failures.length ? `已保留成功的 ${successfulJobs.length} 张参考图，仅成功项扣费。${failures.join("；")}` : null,
-    onStale: tx => persistStaleReferenceOutputs(tx, projectId, billing.taskId, selectedJobs.map(({ asset, mode }, index) => ({ name: asset.name, type: "role_derivative", prompt: buildCharacterReferencePrompt(asset.prompt, mode, asset.referenceUrl, asset.name), url: storedImageUrls[index] || imageResults[index]?.imageUrl || createSvgDataUrl(asset.name, asset.description, workflow.project.artStyle) }))) });
+    onStale: tx => persistStaleReferenceOutputs(tx, projectId, billing.taskId, selectedJobs.map(({ asset, mode }, index) => ({ name: asset.name, type: "role_derivative", prompt: buildCharacterReferencePrompt(asset.prompt, mode, asset.referenceUrl, asset.name, definition), url: storedImageUrls[index] || imageResults[index]?.imageUrl || createSvgDataUrl(asset.name, asset.description, workflow.project.artStyle) }))) });
 
   const project = await prisma.project.findFirstOrThrow({ where: { id: projectId, userId } });
   return { project: mapProject(project), task: mapTask(result.task), assetsCreated: result.created };
@@ -551,8 +556,9 @@ function isMockImageProvider(provider: string) {
   return provider === "mock" || provider === "mock-image" || provider === "mock-image-v1";
 }
 
-function buildCharacterReferencePrompt(basePrompt: string, mode: CharacterReferenceJob["mode"], referenceUrl?: string, characterName?: string) {
+function buildCharacterReferencePrompt(basePrompt: string, mode: CharacterReferenceJob["mode"], referenceUrl?: string, characterName?: string, definition?: PromptDefinition) {
   return buildCharacterIdentityBoardPrompt({
+    definition,
     character: {
       id: characterName || "character_identity",
       projectId: "",

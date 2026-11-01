@@ -1,3 +1,4 @@
+import { CreativeGuide } from "../../components/CreativeGuide";
 import {
   AlertTriangle,
   ArrowLeft,
@@ -774,6 +775,7 @@ export function DeliveryStage({
             <strong>参数与轨道</strong>
             <button ref={inspectorCloseRef} className="dlv2-drawer-close" type="button" aria-label="收起参数面板" onClick={onCloseInspector}><X size={14} /></button>
           </header>
+          <CreativeGuide stage="delivery" />
 
           <section className="dlv2-card">
             <header className="dlv2-card-head"><SlidersHorizontal size={14} /><strong>视频生成参数</strong></header>

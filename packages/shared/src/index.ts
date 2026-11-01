@@ -1625,6 +1625,8 @@ export const productionPipeline = [
   "合成导出"
 ] as const;
 
+export * from "./creativeQuality.js";
+
 export const roleConsistencyRules = [
   "角色先生成稳定身份卡，再生成参考资产，后续分镜只引用角色资产，不在分镜里重新发明外貌。",
   "角色提示词必须包含身份、五官气质、发型、服装主色、稳定配饰和负面约束。",

@@ -4,6 +4,7 @@ import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AssetItem, ProjectWorkflow, StoryboardShot } from "@aifilm/shared";
 import { buildLingGuoSrt, buildLingGuoTtsManifest, createLingGuoProductionManifest } from "../agents/lingguoAdapter.js";
+import { buildSpeechTimeline } from "../agents/speechTimeline.js";
 import { persistAudioBuffer, persistVideoReference, storageRoot } from "../storage/objectStorage.js";
 import { generateEmbeddedMjpegVideo, writeEmbeddedExportBundle } from "./embeddedVideo.js";
 import { buildSrt } from "./subtitleTools.js";
@@ -83,20 +84,7 @@ export interface VideoCompositionResult {
 }
 
 export function buildExportSrt(workflow: ProjectWorkflow) {
-  const fromAdapter = buildLingGuoSrt(workflow);
-  if (fromAdapter.trim()) return fromAdapter;
-  let cursor = 0;
-  const cues: Array<{ index: number; start: number; end: number; text: string }> = [];
-  workflow.storyboards.forEach((shot) => {
-    const duration = normalizeDuration(shot.duration);
-    const start = cursor;
-    const end = cursor + duration;
-    cursor = end;
-    const text = normalizeSubtitleText(shot.dialogue || shot.voiceOver || shot.pictureDesc);
-    if (!text) return;
-    cues.push({ index: cues.length + 1, start, end, text });
-  });
-  return buildSrt(cues);
+  return buildLingGuoSrt(workflow);
 }
 
 export async function createTtsAudioAsset(workflow: ProjectWorkflow, runtime?: TtsRuntime, dependencies: TtsSynthesisDependencies = {}): Promise<TtsAudioAsset> {
@@ -520,12 +508,9 @@ function createScratchNarrationWav(workflow: ProjectWorkflow, cues = buildVoiceC
 }
 
 export function buildVoiceCues(workflow: ProjectWorkflow) {
-  return workflow.storyboards.map((shot) => ({
-    shotId: shot.id,
-    duration: normalizeDuration(shot.duration),
-    speaker: inferCueSpeaker(shot, shot.dialogue || shot.voiceOver || ""),
-    voice: resolveCueVoice(workflow, shot, shot.dialogue || shot.voiceOver || ""),
-    text: normalizeSubtitleText(shot.dialogue || shot.voiceOver || "")
+  return buildSpeechTimeline(workflow).map((cue) => ({
+    ...cue,
+    voice: cue.text ? resolveCueVoice(workflow, cue.speaker) : undefined
   }));
 }
 
@@ -553,7 +538,7 @@ async function createEasyVoiceNarration(session: ExportSession, cues: ReturnType
     data: cues
       .filter((cue) => cue.text)
       .map((cue, index) => ({
-        id: cue.shotId,
+        id: cue.cueId,
         index: index + 1,
         speaker: cue.speaker,
         role: cue.speaker,
@@ -718,7 +703,7 @@ function resolveLongCatAudioDitRuntime(): LongCatAudioDitRuntime {
 function buildLongCatSegmentPayload(cue: ReturnType<typeof buildVoiceCues>[number], index: number, transport: LongCatTransport) {
   const prompt = resolveLongCatPrompt(cue, transport);
   return {
-    id: cue.shotId,
+    id: cue.cueId,
     index: index + 1,
     shotId: cue.shotId,
     speaker: cue.speaker,
@@ -814,6 +799,7 @@ async function createDashScopeTtsNarration(session: ExportSession, cues: ReturnT
 
   const requests = voicedCues.map((cue, index) => ({
     index: index + 1,
+    cueId: cue.cueId,
     shotId: cue.shotId,
     speaker: cue.speaker,
     voice: cue.voice || runtime.defaultVoice,
@@ -830,15 +816,16 @@ async function createDashScopeTtsNarration(session: ExportSession, cues: ReturnT
   const rendered = new Map<string, PcmWav>();
   for (const item of requests) {
     const bytes = dependencies.requestCue ? await dependencies.requestCue(options, item.text, item.voice) : await requestDashScopeTtsCue(runtime, item.text, item.voice);
-    rendered.set(item.shotId, parsePcm16Wav(bytes));
+    rendered.set(item.cueId, parsePcm16Wav(bytes));
   }
   const sampleRate = rendered.values().next().value?.sampleRate ?? 24_000;
   const samples: number[] = [];
   cues.forEach((cue) => {
-    const wav = rendered.get(cue.shotId);
+    const wav = rendered.get(cue.cueId);
     const source = wav ? resampleSamples(wav.samples, wav.sampleRate, sampleRate) : [];
-    if (source.length > Math.ceil(cue.duration * sampleRate)) throw new Error(`镜头 ${cue.shotId} 的实际配音超过 ${cue.duration} 秒，请缩短台词或延长镜头后重试。`);
-    for (const sample of fitCueSamples(source, cue.duration, sampleRate)) samples.push(sample);
+    const cueSamples = Math.round(cue.end * sampleRate) - Math.round(cue.start * sampleRate);
+    if (source.length > cueSamples) throw new Error(`镜头 ${cue.shotId} 中${cue.speaker}的实际配音超过 ${cue.duration.toFixed(2)} 秒，请缩短台词或延长镜头后重试。`);
+    for (const sample of fitCueSamples(source, cueSamples / sampleRate, sampleRate)) samples.push(sample);
   });
 
   return {
@@ -1047,18 +1034,10 @@ function inferConfiguredTtsProvider() {
   return "";
 }
 
-function inferCueSpeaker(shot: StoryboardShot, rawText: string) {
-  const match = rawText.match(/^([\u4e00-\u9fa5A-Za-z0-9_]{1,16})[：:]/);
-  if (match?.[1]) return match[1];
-  if (shot.voiceOver) return "旁白";
-  return shot.characters[0] || "旁白";
-}
-
-function resolveCueVoice(workflow: ProjectWorkflow, shot: StoryboardShot, rawText: string) {
-  const speaker = inferCueSpeaker(shot, rawText);
+function resolveCueVoice(workflow: ProjectWorkflow, speaker: string) {
   const map = parseVoiceMap(process.env.DASHSCOPE_TTS_VOICE_MAP || process.env.TTS_VOICE_MAP);
   if (map[speaker]) return map[speaker];
-  const character = workflow.characters.find((item) => item.name === speaker) ?? workflow.characters.find((item) => shot.characters.includes(item.name));
+  const character = workflow.characters.find((item) => item.name === speaker);
   return character?.voiceId || process.env.DASHSCOPE_TTS_DEFAULT_VOICE || process.env.TTS_VOICE;
 }
 
@@ -1405,10 +1384,6 @@ function normalizeDuration(value: number) {
 
 function totalDuration(workflow: ProjectWorkflow) {
   return workflow.storyboards.reduce((sum, shot) => sum + normalizeDuration(shot.duration), 0) || 1;
-}
-
-function normalizeSubtitleText(value: string) {
-  return value.replace(/^[\u4e00-\u9fa5A-Za-z0-9_]{1,12}[：:]/, "").trim();
 }
 
 function formatSrtTime(totalSeconds: number) {

@@ -72,6 +72,33 @@ test("PostgreSQL narration exports reserve, settle and reuse paid speech", { ski
       await assert.rejects(getOrCreatePaidNarration(f.workflow, f.userId, db, { maximumCredits: 6, synthesize: async () => ({ audioUrl: "/storage/audio/fake.wav", manifestUrl: "/storage/exports/fake.json", durationSeconds: 15, cueCount: 1, provider: "scratch-local-wav", ext: "wav", warnings: [] }) }), /占位配音/);
       assert.equal((await f.account()).balance, 100); assert.equal((await f.account()).frozenBalance, 0);
     });
+    await t.test("multiple voices in one shot keep separate audio and narration changes invalidate the cache", async () => {
+      const f = await fixture("甲（轻声）：你好。\n乙：再见。");
+      f.workflow.storyboards[0].characters = ["甲", "乙"];
+      f.workflow.storyboards[0].voiceOver = "旁白：门关上了。";
+      f.workflow.characters = [{ name: "甲", voiceId: "voice-a" }, { name: "乙", voiceId: "voice-b" }] as ProjectWorkflow["characters"];
+      const quote = await quoteProjectNarration(f.workflow, f.userId, db);
+      assert.equal(quote.characters, 11);
+      const calls: string[] = [];
+      const audio = await getOrCreatePaidNarration(f.workflow, f.userId, db, { maximumCredits: quote.estimatedCredits, synthesize: (workflow, runtime) => createTtsAudioAsset(workflow, runtime, { requestCue: async (_configured, text, voice) => {
+        calls.push(`${voice}:${text}`);
+        const bytes = wav();
+        for (let offset = 44; offset < bytes.length; offset += 2) bytes.writeInt16LE(calls.length * 1000, offset);
+        return bytes;
+      } }) });
+      assert.equal(audio.cueCount, 3);
+      assert.deepEqual(calls, ["voice-a:你好。", "voice-b:再见。", "Cherry:门关上了。"]);
+      const { buildVoiceCues } = await import("./videoComposer.js");
+      const data = await readStoredAsset(audio.audioUrl);
+      for (const [index, cue] of buildVoiceCues(f.workflow).entries()) {
+        assert.equal(data.readInt16LE(44 + Math.round(cue.start * 24000) * 2), (index + 1) * 1000);
+      }
+      assert.equal(data.length, 44 + 15 * 24000 * 2);
+      assert.equal((await quoteProjectNarration(f.workflow, f.userId, db)).cached, true);
+      f.workflow.storyboards[0].voiceOver = "旁白：门又开了。";
+      assert.equal((await quoteProjectNarration(f.workflow, f.userId, db)).cached, false);
+      assert.equal(calls.length, 3);
+    });
     await t.test("changed quote or insufficient balance stops before an upstream call", async () => {
       const f = await fixture("你好", 3); let calls = 0;
       const synthesize = async () => { calls += 1; throw new Error("Must not call"); };

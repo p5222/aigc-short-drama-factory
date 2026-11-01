@@ -28,3 +28,15 @@ export function materializePrompt(key: string, variables: Record<string, unknown
 export function promptSnapshot(version: PromptVersion | Record<string, unknown>) {
   return JSON.parse(JSON.stringify(version));
 }
+
+// Media endpoints consume a description, not a request to return a JSON object.
+export function materializeMediaPrompt(key: string, variables: Record<string, unknown>, version?: PromptDefinition) {
+  const definition = version ?? getPromptDefinition(key);
+  if (!definition) throw new Error(`未找到提示词定义：${key}`);
+  return [
+    renderPrompt(definition.systemPrompt, variables),
+    renderPrompt(definition.userTemplate, variables),
+    definition.validationRules.join("；"),
+    `避免：${definition.negativeRules.join("；")}`
+  ].join("\n");
+}
