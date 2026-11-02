@@ -92,14 +92,16 @@ export function OnlineCheckout({ userId, plans, memberships, onRefresh }: {
   async function buy(planId: string, kind: "recharge" | "membership", expected: CheckoutExpectation) {
     if (actionLock.current || !loaded || storageError) return false;
     actionLock.current = true; setBusy(true); setError("");
-    requestOrderId.current = undefined;
     try {
       const saved = pendingCheckoutRequests(userId).find(item => item.planId === planId && item.kind === kind);
       const pending = orders.find(order => order.planId === planId && order.kind === kind && order.status === "pending");
+      const knownPending = pending && (!saved || (request.current?.requestId === saved.requestId && requestOrderId.current === pending.id));
+      requestOrderId.current = undefined;
       let order: RechargeOrder;
-      if (!saved && pending) {
-        request.current = undefined;
+      if (knownPending) {
+        request.current = saved;
         order = await api.resumeCheckout(pending.id);
+        requestOrderId.current = saved ? order.id : undefined;
       } else {
         request.current = saved ?? persistCheckoutRequest(userId, { planId, kind, expected });
         readSaved();
@@ -131,14 +133,18 @@ export function OnlineCheckout({ userId, plans, memberships, onRefresh }: {
     } finally { setBusy(false); actionLock.current = false; }
   }
   async function resume(order: RechargeOrder) {
-    request.current = undefined;
-    requestOrderId.current = undefined;
+    if (actionLock.current) return;
+    const identity = requestOrderId.current === order.id ? request.current : undefined;
+    request.current = identity;
+    requestOrderId.current = identity ? order.id : undefined;
     setSelected(order);
-    if (order.status !== "pending" || actionLock.current) return;
+    complete(order, identity);
+    if (order.status !== "pending") return;
     actionLock.current = true; setBusy(true); setError("");
     try {
       const updated = await api.resumeCheckout(order.id);
       setSelected(updated); setOrders(items => items.map(item => item.id === updated.id ? updated : item));
+      complete(updated, identity);
       if (updated.status === "paid") {
         await load();
         try { await refresh.current(); } catch { setError("支付已到账，余额面板刷新失败，请稍后刷新页面。"); }

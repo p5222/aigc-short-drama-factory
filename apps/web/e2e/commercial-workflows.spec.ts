@@ -106,7 +106,7 @@ test("non-retryable task exposes platform ID, manual diagnostics and support wit
 test("online cashier reuses pending orders and refreshes the UI after a confirmed-paid fixture", async ({ page }) => {
   await fixtureApi(page);
   const plan = { id: "cashier-trial", name: "支付验收套餐", price: 9.9, credits: 1000, bonusCredits: 0, features: [], enabled: true };
-  let creates = 0, paid = false;
+  let creates = 0, resumes = 0, paid = false;
   let order: Record<string, unknown> | undefined;
   await page.route("**/api/plans", route => route.fulfill({ json: [plan] }));
   await page.route("**/api/membership-plans", route => route.fulfill({ json: [] }));
@@ -121,7 +121,7 @@ test("online cashier reuses pending orders and refreshes the UI after a confirme
         codeUrl: "weixin://wxpay/bizpayurl?pr=ui-fixture", expiresAt: new Date(Date.now()+600_000).toISOString(), createdAt: new Date().toISOString() };
       return route.fulfill({ status: 201, json: order });
     }
-    if (path.endsWith("/checkout")) return route.fulfill({ json: order });
+    if (path.endsWith("/checkout")) { resumes++; return route.fulfill({ json: order }); }
     if (path.endsWith("/orders")) return route.fulfill({ json: order ? [{ ...order, status: paid ? "paid" : "pending" }] : [] });
     if (path.includes("/orders/")) { paid = true; return route.fulfill({ json: { ...order, status: "paid", codeUrl: undefined } }); }
     return route.fulfill({ json: [] });
@@ -133,8 +133,12 @@ test("online cashier reuses pending orders and refreshes the UI after a confirme
   await expect(page.getByText("微信扫一扫", { exact: true })).toBeVisible();
   await buy.click();
   expect(creates).toBe(1);
+  expect(resumes).toBe(1);
+  await page.getByRole("button", { name: "刷新订单", exact: true }).click();
+  expect(resumes).toBe(2);
   await expect(page.getByRole("region", { name: "当前支付订单" })).toContainText("已到账", { timeout: 10_000 });
   await expect(page.getByText("微信扫一扫", { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("待恢复购买请求")).toHaveCount(0);
   await noOverflow(page);
 });
 
