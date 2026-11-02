@@ -75,6 +75,7 @@ import { confirmAdminAction } from "../admin/AdminConfirm";
 import { fetchAdminUserPage } from "../admin/adminApi";
 import type { AdminColumn } from "../admin/AdminTablePage";
 import { AdminAuditLogPage } from "../admin/AdminAuditLogPage";
+import { TaskOperations } from "../admin/TaskOperations";
 import { formatAdminMoney, formatAdminTaskSuccess, qualityMetricAvailability } from "../admin/adminMetricsModel";
 import { providerTestAvailability, testSavedProvider, type ProviderTestOptions } from "../admin/adminProviderTestModel";
 import { scopedAdminNotice } from "../admin/adminNoticeModel";
@@ -109,9 +110,10 @@ type PipelineTestState = {
   result?: VisualPipelineTestResult;
 };
 
-const adminModules = ["运营总览", "用户管理", "平台公告", "支持工单", "创作现场管理", "创作质量中心", "提示词评分", "兑换码", "套餐会员", "订阅会员", "积分中心", "平台配置", "模型路由", "价格策略", "操作记录"];
+const adminModules = ["运营总览", "用户管理", "平台公告", "支持工单", "异常任务", "创作现场管理", "创作质量中心", "提示词评分", "兑换码", "套餐会员", "订阅会员", "积分中心", "平台配置", "模型路由", "价格策略", "操作记录"];
 
 const moduleCopy: Record<string, { title: string; subtitle: string }> = {
+  异常任务: { title: "异常任务", subtitle: "核对生成与导出中的未确认结果，结束未交付任务并释放对应冻结积分。" },
   平台配置: { title: "平台配置", subtitle: "设置创作默认渠道、注册邮件和支付，让服务按已保存配置运行。" },
   积分中心: { title: "积分中心", subtitle: "维护成本与计价政策，核对账户资金、任务结算和真实账单。" },
   操作记录: { title: "操作记录", subtitle: "查看管理员配置和运营操作的执行记录，用于核对变更、排查失败。" },
@@ -363,6 +365,7 @@ export function AdminPage({
 
       <fieldset className="admin-action-scope" disabled={actionPending}>
       {activeModule === "操作记录" ? <AdminAuditLogPage /> : null}
+      {activeModule === "异常任务" ? <TaskOperations /> : null}
       {activeModule === "积分中心" ? <CreditCenter /> : null}
       {activeModule === "支持工单" ? <SupportAdminPanel userId={userId} /> : null}
       {activeModule === "运营总览" ? <DashboardSection summary={summary} providers={providers} modelPrices={modelPrices} onConfigure={id => { setRequestedProvider(id); navigateAdminHash("模型路由"); }} /> : null}

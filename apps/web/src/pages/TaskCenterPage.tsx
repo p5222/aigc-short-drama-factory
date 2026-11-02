@@ -185,7 +185,7 @@ export function TaskCenterPage({
                     ) : null}
                   </span>
                   <span className="queue-task-side">
-                    <em className={`queue-status ${task.status}`}>{taskStatusText(task.status)}</em>
+                    <em className={`queue-status ${task.status}`}>{task.reviewRequired ? "待核对" : taskStatusText(task.status)}</em>
                     <small>{normalizeProgress(task.progress)}%</small>
                   </span>
                   </button>
@@ -261,13 +261,13 @@ function TaskDetailPanel({
           <h2>{taskTitleText(task.title)}</h2>
           <p>{task.projectName ?? "未绑定作品"} · {taskTypeText(task.type)}</p>
         </div>
-        <em className={`queue-status ${task.status}`}>{taskStatusText(task.status)}</em>
+        <em className={`queue-status ${task.status}`}>{task.reviewRequired ? "待核对" : taskStatusText(task.status)}</em>
       </div>
 
       <div className="queue-progress-card">
         <div>
           <strong>{progress}%</strong>
-          <span>{task.status === "running" ? "正在生成，请不要重复提交同一任务" : progressHint(task.status)}</span>
+          <span>{task.reviewRequired ? "已暂停，等待核对供应商结果" : task.status === "running" ? "正在生成，请不要重复提交同一任务" : progressHint(task.status)}</span>
         </div>
         <div className="queue-progress-bar"><i className={task.status === "running" ? "running" : undefined} style={{ width: `${Math.max(task.status === "running" ? 4 : 0, progress)}%` }} /></div>
       </div>
@@ -306,7 +306,7 @@ function TaskDetailPanel({
 
       {task.errorReason ? (
         <div className="queue-error-box">
-          <strong><AlertTriangle size={14} />失败原因</strong>
+          <strong><AlertTriangle size={14} />{task.reviewRequired ? "结果待核对" : "失败原因"}</strong>
           <p>{task.errorReason}</p>
           <p className="queue-error-hint">{taskRecoveryHint(task)}</p>
         </div>

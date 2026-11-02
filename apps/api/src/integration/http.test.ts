@@ -86,6 +86,20 @@ test("HTTP business boundaries: sessions, administrator writes, private media an
       sessions.push({ token: body.token, cookie: response.headers.get("set-cookie")!.split(";")[0]! });
     }
     const [owner, other, admin] = sessions as [typeof sessions[number], typeof sessions[number], typeof sessions[number]];
+    await t.test("task operations restrict reads and writes to administrators and validate bounded inputs", async () => {
+      const path = "/api/admin/task-operations";
+      assert.equal((await request(path)).status, 401);
+      assert.equal((await request(path, owner.token)).status, 403);
+      assert.equal((await request(path + "?pageSize=9999", admin.token)).status, 400);
+      assert.equal((await request(path + "?page=0", admin.token)).status, 400);
+      const response = await request(path + "?kind=export&view=all", admin.token);
+      assert.equal(response.status, 200);
+      assert.ok(Array.isArray((await response.json() as { items: unknown[] }).items));
+      const resolve = path + "/generation/nonexistent/resolve";
+      assert.equal((await request(resolve, owner.token, "POST", {})).status, 403);
+      assert.equal((await request(resolve, admin.token, "POST", { reason: "短" })).status, 400);
+      assert.equal((await request(path + "/generation/nonexistent/query", owner.token, "POST", {})).status, 403);
+    });
     await t.test("configuration endpoints enforce permissions, encrypted secret storage, CAS and explicit restore", async () => {
       const path = "/api/admin/settings/email";
       for (const target of [path, "/api/admin/configuration-readiness"]) {
@@ -316,7 +330,18 @@ test("HTTP business boundaries: sessions, administrator writes, private media an
       const notification = await request("/api/billing/wechat/notify", undefined, "POST", { forged: true });
       assert.equal(notification.status, 503, "provider callback must bypass sessions but refuse unavailable merchant");
       const checkout = await request("/api/billing/checkout", owner.token, "POST", { planId: "missing", kind: "recharge", requestId: run });
-      assert.equal(checkout.status, 503);
+      assert.equal(checkout.status, 400, "new checkout must include the displayed price and rights");
+      const planId = `http_checkout_${run}`;
+      await db.plan.create({ data: { id: planId, name: "HTTP checkout", price: 10, credits: 100, bonusCredits: 0, features: [] } });
+      try {
+        const input = { planId, kind: "recharge", requestId: run, expected: {
+          planName: "HTTP checkout", amountFen: 1000, credits: 100, bonusCredits: 0, discountPercent: 0, priorityLevel: 0
+        } };
+        assert.equal((await request("/api/billing/checkout", owner.token, "POST", input)).status, 503);
+        const changed = await request("/api/billing/checkout", owner.token, "POST", { ...input, expected: { ...input.expected, amountFen: 2000 } });
+        assert.equal(changed.status, 409);
+        assert.equal((await changed.json()).code, "checkout_not_created");
+      } finally { await db.plan.delete({ where: { id: planId } }); }
       const count = await db.rechargeOrder.count({ where: { userId: ids[0] } });
       assert.equal(count, 0);
       const membership = await (await request("/api/billing/membership", owner.token)).json();

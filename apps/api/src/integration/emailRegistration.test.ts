@@ -19,7 +19,7 @@ function registrationCodeFromMessage(raw: string) {
 }
 
 const databaseUrl = process.env.AIFILM_TEST_API_DATABASE_URL;
-test("QQ registration: real local TLS SMTP, Redis one-time verification and atomic PostgreSQL signup", { skip: !databaseUrl, timeout: 90_000 }, async t => {
+test("QQ registration: real local TLS SMTP, Redis one-time verification and atomic PostgreSQL signup", { skip: !databaseUrl, timeout: Number(process.env.AIFILM_TEST_EMAIL_TIMEOUT_MS) || 90_000 }, async t => {
   const dbUrl = new URL(databaseUrl!);
   assert.ok(["localhost", "127.0.0.1"].includes(dbUrl.hostname));
   assert.match(dbUrl.pathname, /^\/audit_api_[a-z0-9_]+$/i);
@@ -73,21 +73,23 @@ test("QQ registration: real local TLS SMTP, Redis one-time verification and atom
   let logs = "";
   child.stdout.on("data", data => { logs = (logs + data).slice(-6000); });
   child.stderr.on("data", data => { logs = (logs + data).slice(-6000); });
-  const request = (path: string, body?: unknown) => fetch(`http://127.0.0.1:${apiPort}${path}`, {
-    method: body ? "POST" : "GET", headers: body ? { "Content-Type": "application/json" } : undefined,
+  const request = (path: string, body?: unknown, token?: string, method = body ? "POST" : "GET") => fetch(`http://127.0.0.1:${apiPort}${path}`, {
+    method, headers: { ...(body ? { "Content-Type": "application/json" } : {}), ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(25_000)
   });
   const prefix = `test-registration:${run}:`;
   const service = new EmailVerificationService(redis, async () => undefined, () => true, prefix);
   try {
     let ready = false;
-    for (let i = 0; i < 120; i++) {
+    let readiness: unknown;
+    const startupDeadline = Date.now() + (Number(process.env.AIFILM_TEST_EMAIL_STARTUP_MS) || 45_000);
+    while (Date.now() < startupDeadline) {
       if (child.exitCode !== null) throw new Error(logs);
-      try { ready = (await request("/ready")).ok; } catch { /* startup */ }
+      try { const result = await request("/ready"); readiness = await result.json(); ready = result.ok; } catch { /* startup */ }
       if (ready) break;
       await new Promise(done => setTimeout(done, 250));
     }
-    assert.ok(ready, logs);
+    assert.ok(ready, JSON.stringify(readiness) + "\n" + logs);
     await t.test("mail delivery, failed guesses, email binding and one successful concurrent signup", async () => {
       assert.equal((await (await request("/api/auth/registration-policy")).json()).mailAvailable, true);
       assert.equal((await request("/api/auth/email/send", { email: "test@example.test" })).status, 400);
@@ -110,18 +112,48 @@ test("QQ registration: real local TLS SMTP, Redis one-time verification and atom
       const users = await db.user.findMany({ where: { email }, include: { credit: true } });
       assert.equal(users.length, 1);
       assert.equal(users[0]!.phone, phone);
+      assert.ok(users[0]!.emailVerifiedAt);
       assert.ok(users[0]!.credit);
       assert.equal(users[0]!.credit!.balance, users[0]!.credit!.totalRecharge);
       assert.equal(users[0]!.credit!.frozenBalance, 0);
       assert.equal((await request("/api/auth/register", { ...signup, phone: "13800000001" })).status, 409);
       for (const account of [email, phone]) assert.equal((await request("/api/auth/login", { account, password: signup.password })).status, 200);
     });
+    await t.test("TLS email proof authorizes binding and recovery, while all previous HTTP sessions expire", async () => {
+      const signedIn = await (await request("/api/auth/login", { account: email, password: "QQ-fixture-password" })).json();
+      assert.equal(signedIn.user.emailVerified, true);
+      // A legacy database row must remain unverified until its own mailbox is proven.
+      await db.user.update({ where: { email }, data: { emailVerifiedAt: null } });
+      assert.equal((await request("/api/auth/profile", { email, currentPassword: "QQ-fixture-password" }, signedIn.token, "PATCH")).status, 400);
+      assert.equal((await request("/api/auth/email-binding/send", { email, currentPassword: "QQ-fixture-password" })).status, 401);
+      assert.equal((await request("/api/auth/email-binding/send", { email, currentPassword: "QQ-fixture-password" }, signedIn.token)).status, 200);
+      const bindingProof = await request("/api/auth/email-binding/verify", { email, currentPassword: "QQ-fixture-password", code: deliveries.at(-1)!.code }, signedIn.token);
+      assert.equal(bindingProof.status, 200);
+      const { verificationToken } = await bindingProof.json();
+      const saved = await request("/api/auth/profile", { email, currentPassword: "QQ-fixture-password", verificationToken }, signedIn.token, "PATCH");
+      assert.equal(saved.status, 200); assert.equal((await saved.json()).requiresLogin, true);
+      assert.equal((await request("/api/auth/me", undefined, signedIn.token)).status, 401);
+      const beforeReset = await (await request("/api/auth/login", { account: email, password: "QQ-fixture-password" })).json();
+      assert.equal((await request("/api/auth/recovery/send", { email })).status, 200);
+      const recovered = await request("/api/auth/recovery/verify", { email, code: deliveries.at(-1)!.code });
+      assert.equal(recovered.status, 200);
+      const proof = await recovered.json();
+      assert.equal((await request("/api/auth/recovery/reset", { email, verificationToken: proof.verificationToken, newPassword: "Recovered-fixture-password" })).status, 200);
+      assert.equal((await request("/api/auth/me", undefined, beforeReset.token)).status, 401);
+      assert.equal((await request("/api/auth/login", { account: email, password: "QQ-fixture-password" })).status, 401);
+      const next = await (await request("/api/auth/login", { account: email, password: "Recovered-fixture-password" })).json();
+      assert.ok(next.token);
+      assert.equal((await request("/api/auth/password", { currentPassword: "Recovered-fixture-password", newPassword: "Changed-fixture-password" }, next.token)).status, 200);
+      assert.equal((await request("/api/auth/me", undefined, next.token)).status, 401);
+      assert.equal(await db.authSession.count({ where: { user: { email }, revokedAt: null } }), 0);
+    });
     await t.test("SMTP rejection cannot acknowledge a sent code or permit verification", async () => {
       rejectMail = true;
+      const before = deliveries.length;
       const failed = `failed.${run}@qq.com`;
       assert.equal((await request("/api/auth/email/send", { email: failed })).status, 503);
       assert.equal((await request("/api/auth/email/verify", { email: failed, code: "123456" })).status, 400);
-      assert.equal(deliveries.length, 1);
+      assert.equal(deliveries.length, before);
     });
     await t.test("Redis enforces attempts, expiration, parallel send limits, one-time grants and retries", async () => {
       let code = "";
@@ -167,7 +199,7 @@ test("QQ registration: real local TLS SMTP, Redis one-time verification and atom
     await new Promise<void>(done => smtp.close(done));
     await db.user.deleteMany({ where: { email } });
     await db.$disconnect();
-    const keys = (await redis.keys("registration:v1:*")).concat(await redis.keys(prefix + "*"));
+    const keys = (await redis.keys("registration:v1:*")).concat(await redis.keys("email-binding:v1:*"), await redis.keys("password-recovery:v1:*"), await redis.keys(prefix + "*"));
     if (keys.length) await redis.del(...keys);
     await redis.quit();
     await rm(root, { recursive: true, force: true });

@@ -10,14 +10,15 @@ export type PendingTaskActions = Record<string, TaskAction>;
 export type TaskActionResult = { status: "ignored" | "succeeded" } | { status: "failed" | "sync-required"; message: string };
 
 export function canRetryTask(task: GenerationTask): boolean {
-  return ["failed", "canceled", "refunded"].includes(task.status) && task.retryable !== false;
+  return !task.reviewRequired && ["failed", "canceled", "refunded"].includes(task.status) && task.retryable !== false;
 }
 
 export function canCancelTask(task: GenerationTask): boolean {
-  return ["pending", "running"].includes(task.status) && task.cancelable !== false;
+  return !task.reviewRequired && ["pending", "running"].includes(task.status) && task.cancelable !== false;
 }
 
 export function taskRecoveryHint(task: GenerationTask): string {
+  if (task.reviewRequired) return "结果待核对，系统已停止重复调用。请提交工单；管理员核对后会结束未交付任务并释放其冻结积分。";
   if (["pending", "running"].includes(task.status)) return "任务仍在后台处理。请先刷新核对结果，避免重复提交同一生成请求。";
   if (task.status === "succeeded") return "回到所属作品查看结果，继续下一阶段。";
   if (canRetryTask(task)) return "核对失败原因、渠道和积分后，可以重试此任务。";
@@ -36,6 +37,7 @@ export function taskSupportDiagnostic(task: GenerationTask): string {
     `创建时间：${task.createdAt}`,
     `更新时间：${task.updatedAt}`,
     `可直接重试：${canRetryTask(task) ? "是" : "否"}`,
+    `结果待核对：${task.reviewRequired ? "是" : "否"}`,
     "请在工单中补充操作步骤和看到的问题。"
   ].join("\n");
 }

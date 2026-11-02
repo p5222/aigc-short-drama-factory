@@ -192,13 +192,16 @@ export async function ensureSeedData() {
   const adminPasswordHash = seedDefaultUsers ? await hashPassword(adminSeedPassword) : "";
 
   if (seedDefaultUsers) {
-    await prisma.user.upsert({
+    await prisma.$transaction(async tx => {
+    await tx.user.upsert({
       where: { id: ADMIN_USER_ID },
       update: resetDefaultUsers ? {
         name: "运营管理员",
         email: "admin@aifilm.local",
         phone: "13900000001",
         passwordHash: adminPasswordHash,
+        authVersion: { increment: 1 },
+        emailVerifiedAt: null,
         role: "admin",
         status: "active"
       } : {},
@@ -211,6 +214,8 @@ export async function ensureSeedData() {
         role: "admin",
         status: "active"
       }
+    });
+    if (resetDefaultUsers) await tx.authSession.updateMany({ where: { userId: ADMIN_USER_ID, revokedAt: null }, data: { revokedAt: new Date() } });
     });
 
     await prisma.creditAccount.upsert({
@@ -229,13 +234,16 @@ export async function ensureSeedData() {
 
   if (seedDemoUser) {
     const demoPasswordHash = await hashPassword("demo123456");
-    await prisma.user.upsert({
+    await prisma.$transaction(async tx => {
+    await tx.user.upsert({
       where: { id: DEMO_USER_ID },
       update: resetDefaultUsers ? {
         name: "用户1829",
         email: "demo@aifilm.local",
         phone: "13900000002",
         passwordHash: demoPasswordHash,
+        authVersion: { increment: 1 },
+        emailVerifiedAt: null,
         role: "creator",
         status: "active"
       } : {},
@@ -248,6 +256,8 @@ export async function ensureSeedData() {
         role: "creator",
         status: "active"
       }
+    });
+    if (resetDefaultUsers) await tx.authSession.updateMany({ where: { userId: DEMO_USER_ID, revokedAt: null }, data: { revokedAt: new Date() } });
     });
 
     await prisma.creditAccount.upsert({

@@ -28,6 +28,8 @@ model User {
   id           String        @id
   name         String
   email        String?       @unique
+  emailVerifiedAt DateTime?
+  authVersion  Int           @default(0)
   phone        String?       @unique
   avatarUrl    String?
   passwordHash String?
@@ -42,6 +44,7 @@ model User {
   redemptions  RedeemRedemption[]
   sessions     AuthSession[]
   orders       RechargeOrder[]
+  checkoutRequests CheckoutRequest[]
   membership   UserMembership?
   invoices     Invoice[]
   exportJobs   ExportJob[]
@@ -291,6 +294,7 @@ model GenerationTask {
   billingQuote     Json?
   billingUsage     Json?
   billingSettlement Json?
+  execution        Json     @default("{}")
   queuePriority    Int      @default(100)
   errorReason      String?
   jobId            String?
@@ -302,6 +306,21 @@ model GenerationTask {
   updatedAt        DateTime @updatedAt
   @@index([userId])
   @@index([projectId])
+}
+
+model TaskResolution {
+  id          String   @id
+  actorId     String
+  requestId   String
+  requestHash String
+  kind        String
+  targetId    String
+  reason      String
+  result      Json
+  createdAt   DateTime @default(now())
+
+  @@unique([actorId, requestId])
+  @@index([kind, targetId])
 }
 
 model AnalyticsEvent {
@@ -751,6 +770,7 @@ model RechargeOrder {
   paidAt          DateTime?
   invoiceStatus   String          @default("none")
   payments        PaymentRecord[]
+  checkoutRequests CheckoutRequest[]
   invoices        Invoice[]
   createdAt       DateTime        @default(now())
   updatedAt       DateTime        @updatedAt
@@ -759,6 +779,20 @@ model RechargeOrder {
   @@index([status])
   @@unique([userId, requestId])
   @@index([channel, status, checkedAt])
+  @@index([userId, kind, planId, status])
+}
+
+model CheckoutRequest {
+  userId      String
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  requestId   String
+  requestHash String
+  orderId     String
+  order       RechargeOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  createdAt   DateTime      @default(now())
+
+  @@id([userId, requestId])
+  @@index([orderId])
 }
 
 model UserMembership {

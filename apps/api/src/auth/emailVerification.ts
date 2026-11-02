@@ -23,7 +23,7 @@ export function registrationMailConfig(env: NodeJS.ProcessEnv = process.env) {
   return { host, port, secure, auth: { user, pass } };
 }
 
-export async function sendRegistrationEmail(email: string, code: string, env: NodeJS.ProcessEnv = process.env) {
+export async function sendRegistrationEmail(email: string, code: string, env: NodeJS.ProcessEnv = process.env, purpose: "registration" | "security" = "registration") {
   const config = registrationMailConfig(env);
   if (!config) throw new EmailVerificationError(503, "邮箱验证服务暂未开通，请稍后再试或联系平台管理员。");
   const transport = nodemailer.createTransport({
@@ -34,9 +34,9 @@ export async function sendRegistrationEmail(email: string, code: string, env: No
   try {
     const result = await transport.sendMail({
       from: { name: "漫角", address: config.auth.user }, to: email,
-      subject: "漫角注册邮箱验证码",
+      subject: purpose === "security" ? "漫角账户安全验证码" : "漫角注册邮箱验证码",
       textEncoding: "quoted-printable",
-      text: `${code}\n\n以上是你的漫角注册验证码，10 分钟内有效，用于验证 QQ 邮箱。\n如非本人操作，请忽略此邮件。请勿向他人透露验证码。`
+      text: `${code}\n\n${purpose === "security" ? "以上是你的漫角账户安全验证码，10 分钟内有效。仅在本人发起的邮箱验证或密码找回页面使用；收到邮件不代表账号符合找回条件。" : "以上是你的漫角注册验证码，10 分钟内有效，用于验证 QQ 邮箱。"}\n如非本人操作，请忽略此邮件。请勿向他人透露验证码。`
     });
     if (!result.accepted.some((recipient: string | { address: string }) => (typeof recipient === "string" ? recipient : recipient.address).toLowerCase() === email)) {
       throw new Error("Recipient not accepted");
@@ -68,6 +68,7 @@ local raw = redis.call('GET', KEYS[1])
 if not raw then return 0 end
 local item = cjson.decode(raw)
 if item.pending then return 0 end
+if (item.binding or '') ~= ARGV[5] then return 0 end
 if item.hash ~= ARGV[1] then
   item.attempts = item.attempts + 1
   if item.attempts >= tonumber(ARGV[2]) then redis.call('DEL', KEYS[1])
@@ -98,7 +99,7 @@ export class EmailVerificationService {
     }
   }
 
-  async send(email: string, ip: string) {
+  async send(email: string, ip: string, binding?: string) {
     if (!QQ_EMAIL_PATTERN.test(email)) throw new EmailVerificationError(400, "请使用 qq.com 邮箱注册。");
     if (!await this.mailAvailable()) throw new EmailVerificationError(503, "邮箱验证服务暂未开通，请稍后再试或联系平台管理员。");
     return this.operation(async () => {
@@ -116,7 +117,7 @@ export class EmailVerificationService {
         const published = Number(await this.redis.eval(`
           if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end
           redis.call('SET', KEYS[1], ARGV[2], 'EX', ARGV[3])
-          return 1`, 1, codeKey, pending, JSON.stringify({ salt: nonce, hash: digest(nonce + code), attempts: 0 }), CODE_TTL));
+          return 1`, 1, codeKey, pending, JSON.stringify({ salt: nonce, hash: digest(nonce + code), attempts: 0, binding: binding ? digest(binding) : "" }), CODE_TTL));
         if (!published) throw new EmailVerificationError(503, "验证码已失效，请重新发送。");
       } catch (error) {
         await this.redis.eval(`if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end return 0`, 1, codeKey, pending).catch(() => undefined);
@@ -127,7 +128,7 @@ export class EmailVerificationService {
     });
   }
 
-  async verify(email: string, code: string) {
+  async verify(email: string, code: string, binding?: string) {
     return this.operation(async () => {
       if (!QQ_EMAIL_PATTERN.test(email) || !/^\d{6}$/.test(code)) throw new EmailVerificationError(400, "请输入 QQ 邮箱和 6 位邮箱验证码。");
       const key = this.prefix + "code:" + digest(email);
@@ -135,13 +136,17 @@ export class EmailVerificationService {
       const item = raw ? JSON.parse(raw) as { salt?: string } : null;
       const token = crypto.randomBytes(32).toString("hex");
       const result = Number(await this.redis.eval(VERIFY, 2, key, this.prefix + "grant:" + digest(token),
-        digest((item?.salt || "") + code), MAX_ATTEMPTS, email, GRANT_TTL));
+        digest((item?.salt || "") + code), MAX_ATTEMPTS, this.grantValue(email, binding), GRANT_TTL, binding ? digest(binding) : ""));
       if (result !== 1) throw new EmailVerificationError(400, result === -1 ? "邮箱验证码不正确；连续错误 5 次后需重新发送。" : "邮箱验证码已失效，请重新发送。");
       return { verificationToken: token, expiresInSeconds: GRANT_TTL };
     });
   }
 
-  async consume(email: string, token: string) {
+  private grantValue(email: string, binding?: string) {
+    return binding ? JSON.stringify([email, digest(binding)]) : email;
+  }
+
+  async consume(email: string, token: string, binding?: string) {
     return this.operation(async () => {
       if (!/^[a-f0-9]{64}$/.test(token)) throw new EmailVerificationError(400, "请先验证 QQ 邮箱后再注册。");
       const key = this.prefix + "grant:" + digest(token);
@@ -149,15 +154,15 @@ export class EmailVerificationService {
         if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end
         local ttl = redis.call('TTL', KEYS[1])
         redis.call('DEL', KEYS[1])
-        return ttl`, 1, key, email));
+        return ttl`, 1, key, this.grantValue(email, binding)));
       if (ttl <= 0) throw new EmailVerificationError(400, "邮箱验证已失效或已使用，请重新验证邮箱。");
       return ttl;
     });
   }
 
   // A rejected DB transaction may retry with the same grant, without extending validity.
-  async restore(email: string, token: string, expiresAt: number) {
+  async restore(email: string, token: string, expiresAt: number, binding?: string) {
     const ttl = Math.floor((expiresAt - Date.now()) / 1000);
-    if (ttl > 0) await this.redis.set(this.prefix + "grant:" + digest(token), email, "EX", ttl, "NX").catch(() => undefined);
+    if (ttl > 0) await this.redis.set(this.prefix + "grant:" + digest(token), this.grantValue(email, binding), "EX", ttl, "NX").catch(() => undefined);
   }
 }

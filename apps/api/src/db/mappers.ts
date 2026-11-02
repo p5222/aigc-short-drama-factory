@@ -1,5 +1,6 @@
 import { readProviderConnection, isSupportedProviderProtocol } from "@aifilm/shared";
 import { decryptSettingSecret } from "../config/secrets.js";
+import { creationCanRetry, creationExecution, creationNeedsReview } from "../queue/creationState.js";
 import type {
   AssetItem,
   CharacterProfile,
@@ -96,8 +97,11 @@ export function mapTask(row: any): GenerationTask {
     errorReason: publicTaskError(row.errorReason),
     estimatedSeconds,
     refundPolicy: refundPolicyForTask(status),
-    retryable: !/^(content|media):/.test(String(row.jobId ?? "")) && ["failed", "canceled", "refunded"].includes(status),
-    cancelable: !/^(content|media):/.test(String(row.jobId ?? "")) && ["pending", "running"].includes(status),
+    retryable: !/^(content|media):/.test(String(row.jobId ?? "")) && creationCanRetry(row) && ["failed", "canceled", "refunded"].includes(status),
+    cancelable: !/^(content|media):/.test(String(row.jobId ?? "")) && !creationNeedsReview(row) && ["pending", "running"].includes(status),
+    reviewRequired: creationExecution(row.execution).reviewRequired || (() => {
+      try { const data = JSON.parse(row.errorReason ?? "{}"); return Boolean(data.kind === "media_checkpoint" && data.metadata?.needsReconciliation); } catch { return false; }
+    })(),
     fallbackAvailable: ["text", "storyboard", "character", "image", "video"].includes(type),
     fallbackHint: fallbackHintForTask(type, row.provider, row.model),
     createdAt: row.createdAt.toISOString(),
@@ -188,6 +192,8 @@ export function mapRechargeOrder(row: any): RechargeOrder {
     reconcileError: row.reconcileError ?? undefined,
     membershipStartsAt: row.membershipStartsAt?.toISOString(),
     membershipEndsAt: row.membershipEndsAt?.toISOString(),
+    membershipDiscountPercent: row.kind === "membership" ? row.membershipDiscountPercent : undefined,
+    membershipPriorityLevel: row.kind === "membership" ? row.membershipPriorityLevel : undefined,
     credits: row.credits,
     bonusCredits: row.bonusCredits,
     status: row.status,

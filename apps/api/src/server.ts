@@ -18,6 +18,7 @@ import { createCharacterConsistencyPlan, createRelayGatewayPolicy, createWebNove
 import { getLingGuoAdapterMetadata } from "./agents/lingguoAdapter.js";
 import { getToonflowAdapterMetadata } from "./agents/toonflowAdapter.js";
 import { hashPassword, verifyPassword } from "./auth/password.js";
+import { AccountSecurityService } from "./auth/accountSecurity.js";
 import { EmailVerificationError, EmailVerificationService, QQ_EMAIL_PATTERN, registrationMailConfig, sendRegistrationEmail } from "./auth/emailVerification.js";
 import { mockCheckoutEnabled } from "./billing/checkoutPolicy.js";
 import { ContentMutationError } from "./content/contentMutation.js";
@@ -107,6 +108,7 @@ import { prisma } from "./db/client.js";
 import { CreditQueryError, accountPage, billingTasks, fundingLots, ledgerCsv, ledgerPage, pricingOverview, saveCostRule, savePricingPolicy, verifyTaskCost } from "./billing/creditCenter.js";
 import type { CreditPolicy, OfficialCostRule } from "@aifilm/shared";
 import { beginAdminAudit, finishAdminAudit, listAdminAuditLogs } from "./admin/audit.js";
+import { getTaskOperation, inspectRemoteTask, listTaskOperations, resolveTaskOperation, TaskOperationError } from "./admin/taskOperations.js";
 import { captureStoryboardTailFrame, deleteCharacterReferenceImageV2, generateCharacterReferenceImages, generateSceneEnvironmentImage, regenerateStoryboardShotImage, runProjectStoryboardTasks, setCharacterReferenceImageV2, updateStoryboardShot } from "./db/storyboardActions.js";
 import { MediaSourceConflict } from "./db/mediaSource.js";
 import { AnnouncementScheduleError } from "./db/announcementSafety.js";
@@ -184,6 +186,10 @@ registrationRedis.on("error", () => { /* Requests fail closed; do not log creden
 const emailVerification = new EmailVerificationService(registrationRedis,
   async (email, code) => sendRegistrationEmail(email, code, await settingsEnvironment("email")),
   async () => Boolean(registrationMailConfig(await settingsEnvironment("email"))));
+const securityMail = (prefix: string) => new EmailVerificationService(registrationRedis,
+  async (email, code) => sendRegistrationEmail(email, code, await settingsEnvironment("email"), "security"),
+  async () => Boolean(registrationMailConfig(await settingsEnvironment("email"))), prefix);
+const accountSecurity = new AccountSecurityService(prisma, securityMail("email-binding:v1:"), securityMail("password-recovery:v1:"));
 
 app.disable("x-powered-by");
 app.use((req, res, next) => {
@@ -311,12 +317,19 @@ const profileUpdateSchema = z.object({
   name: z.string().trim().min(1, "用户名不能为空").max(40, "用户名最多 40 个字符").optional(),
   email: z.string().trim().email("请输入有效邮箱").max(120, "邮箱最多 120 个字符").optional(),
   avatarUrl: z.string().max(120_000, "头像文件过大").nullable().optional(),
-  currentPassword: z.string().min(1, "请输入当前密码").optional()
+  currentPassword: z.string().min(1, "请输入当前密码").max(1024).optional(),
+  verificationToken: z.string().regex(/^[a-f0-9]{64}$/).optional()
 });
 
 const passwordChangeSchema = z.object({
-  currentPassword: z.string().min(1, "请输入当前密码"),
+  currentPassword: z.string().min(1, "请输入当前密码").max(1024),
   newPassword: z.string().min(8, "新密码至少 8 个字符").max(72, "新密码最多 72 个字符")
+});
+const bindingEmailSchema = registrationEmailSchema.extend({ currentPassword: passwordChangeSchema.shape.currentPassword });
+const bindingCodeSchema = bindingEmailSchema.extend({ code: registrationCodeSchema.shape.code });
+const recoveryResetSchema = registrationEmailSchema.extend({
+  verificationToken: registerSchema.shape.verificationToken,
+  newPassword: passwordChangeSchema.shape.newPassword
 });
 
 const modelPriceUpdateSchema = z.object({
@@ -848,13 +861,14 @@ function sessionExpiresAt() {
   return new Date(Date.now() + ttlMs);
 }
 
-async function issueToken(userId: string, req: express.Request, expectedPasswordHash?: string) {
+async function issueToken(userId: string, req: express.Request, expectedPasswordHash?: string, expectedAuthVersion?: number) {
   const token = crypto.randomBytes(32).toString("hex");
   await prisma.$transaction(async tx => {
     await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${userId} FOR UPDATE`;
     const user = await tx.user.findUniqueOrThrow({ where: { id: userId } });
-    if (user.status !== "active" || (expectedPasswordHash && user.passwordHash !== expectedPasswordHash)) {
-      throw new Error("账号状态或密码已发生变化，请重新登录。");
+    if (user.status !== "active" || (expectedPasswordHash && user.passwordHash !== expectedPasswordHash)
+      || (expectedAuthVersion !== undefined && user.authVersion !== expectedAuthVersion)) {
+      throw new EmailVerificationError(409, "账号状态或密码已发生变化，请重新登录。");
     }
     await tx.authSession.create({ data: {
       id: `session_${crypto.randomUUID()}`, userId, tokenHash: hashAuthToken(token),
@@ -873,11 +887,12 @@ function bearerToken(req: express.Request) {
   return header?.startsWith("Bearer ") ? header.slice("Bearer ".length).trim() : "";
 }
 
-function publicUser(user: { id: string; name: string; email?: string | null; phone?: string | null; avatarUrl?: string | null; role: string; status: string }) {
+function publicUser(user: { id: string; name: string; email?: string | null; emailVerifiedAt?: Date | null; phone?: string | null; avatarUrl?: string | null; role: string; status: string }) {
   return {
     id: user.id,
     name: user.name,
     email: user.email ?? undefined,
+    emailVerified: Boolean(user.emailVerifiedAt),
     phone: user.phone ?? undefined,
     avatarUrl: user.avatarUrl ?? undefined,
     role: user.role,
@@ -1020,6 +1035,40 @@ app.get("/api/auth/registration-policy", asyncRoute(async (_req, res) => {
   res.setHeader("Cache-Control", "no-store");
   res.json(await emailVerification.policy());
 }));
+app.post("/api/auth/recovery/send", asyncRoute(async (req, res) => {
+  const parsed = registrationEmailSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json(parsed.error.flatten());
+  res.setHeader("Cache-Control", "no-store");
+  res.json(await accountSecurity.sendRecovery(parsed.data.email, req.ip || "unknown"));
+}));
+app.post("/api/auth/recovery/verify", asyncRoute(async (req, res) => {
+  const parsed = registrationCodeSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json(parsed.error.flatten());
+  res.setHeader("Cache-Control", "no-store");
+  res.json(await accountSecurity.verifyRecovery(parsed.data.email, parsed.data.code));
+}));
+app.post("/api/auth/recovery/reset", asyncRoute(async (req, res) => {
+  const parsed = recoveryResetSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json(parsed.error.flatten());
+  res.setHeader("Cache-Control", "no-store");
+  res.json(await accountSecurity.resetPassword(parsed.data.email, parsed.data.verificationToken, parsed.data.newPassword));
+}));
+app.post("/api/auth/email-binding/send", asyncRoute(async (req, res) => {
+  const user = await resolveAuthUser(req);
+  if (!user) return res.status(401).json({ message: "登录已过期，请重新登录。" });
+  const parsed = bindingEmailSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json(parsed.error.flatten());
+  res.setHeader("Cache-Control", "no-store");
+  res.json(await accountSecurity.sendBinding(user.id, parsed.data.email, parsed.data.currentPassword, req.ip || "unknown"));
+}));
+app.post("/api/auth/email-binding/verify", asyncRoute(async (req, res) => {
+  const user = await resolveAuthUser(req);
+  if (!user) return res.status(401).json({ message: "登录已过期，请重新登录。" });
+  const parsed = bindingCodeSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json(parsed.error.flatten());
+  res.setHeader("Cache-Control", "no-store");
+  res.json(await accountSecurity.verifyBinding(user.id, parsed.data.email, parsed.data.currentPassword, parsed.data.code));
+}));
 app.post("/api/auth/email/send", asyncRoute(async (req, res) => {
   const parsed = registrationEmailSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json(parsed.error.flatten());
@@ -1055,6 +1104,7 @@ app.post(
           id: userId,
           name: parsed.data.name?.trim() || `用户${phone.slice(-4)}`,
           email,
+          emailVerifiedAt: new Date(),
           phone,
           passwordHash,
           role: "creator",
@@ -1067,7 +1117,7 @@ app.post(
       throw error;
     });
 
-    const token = await issueToken(user.id, req, user.passwordHash ?? undefined);
+    const token = await issueToken(user.id, req, user.passwordHash ?? undefined, user.authVersion);
     setMediaCookie(res, token);
     res.status(201).json({ token, user: publicUser(user) });
   })
@@ -1095,7 +1145,7 @@ app.post(
 
     await ensureCreditForUser(user.id);
     await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
-    const token = await issueToken(user.id, req, user.passwordHash ?? undefined);
+    const token = await issueToken(user.id, req, user.passwordHash ?? undefined, user.authVersion);
     setMediaCookie(res, token);
     res.json({ token, user: publicUser(user) });
   })
@@ -1270,25 +1320,16 @@ app.patch(
     const parsed = profileUpdateSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json(parsed.error.flatten());
 
-    const data: { name?: string; email?: string; avatarUrl?: string | null } = {};
+    const data: { name?: string; avatarUrl?: string | null } = {};
     if (parsed.data.name !== undefined) data.name = parsed.data.name;
     if (parsed.data.avatarUrl !== undefined) data.avatarUrl = parsed.data.avatarUrl || null;
 
     if (parsed.data.email !== undefined) {
-      const nextEmail = parsed.data.email.trim().toLowerCase();
-      if (!parsed.data.currentPassword) return res.status(400).json({ message: "修改邮箱需要输入当前密码。" });
-
-      const currentUser = await prisma.user.findUnique({ where: { id: authUser.id } });
-      if (!currentUser) return res.status(401).json({ message: "用户不存在，请重新登录。" });
-      const validPassword = await verifyPassword(parsed.data.currentPassword, currentUser.passwordHash);
-      if (!validPassword) return res.status(400).json({ message: "当前密码不正确，无法修改邮箱。" });
-
-      const existingEmail = await prisma.user.findFirst({
-        where: { email: nextEmail, id: { not: authUser.id } },
-        select: { id: true }
-      });
-      if (existingEmail) return res.status(409).json({ message: "该邮箱已绑定其他账号。" });
-      data.email = nextEmail;
+      if (!parsed.data.currentPassword || !parsed.data.verificationToken) return res.status(400).json({ message: "请输入当前密码并验证 QQ 邮箱。" });
+      if (Object.keys(data).length) return res.status(400).json({ message: "请单独保存邮箱安全设置。" });
+      const user = await accountSecurity.bindEmail(authUser.id, parsed.data.email.trim().toLowerCase(), parsed.data.currentPassword, parsed.data.verificationToken);
+      res.clearCookie(MEDIA_COOKIE, { httpOnly: true, secure: isProduction, sameSite: "lax", path: "/storage" });
+      return res.json({ user: publicUser(user), requiresLogin: true });
     }
 
     const user = await prisma.user.update({
@@ -1308,28 +1349,9 @@ app.post(
     const parsed = passwordChangeSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json(parsed.error.flatten());
 
-    const user = await prisma.user.findUnique({ where: { id: authUser.id } });
-    if (!user) return res.status(401).json({ message: "用户不存在，请重新登录。" });
-    const validPassword = await verifyPassword(parsed.data.currentPassword, user.passwordHash);
-    if (!validPassword) return res.status(400).json({ message: "当前密码不正确。" });
-
-    const token = bearerToken(req);
-    await prisma.$transaction([
-      prisma.user.update({
-        where: { id: user.id },
-        data: { passwordHash: await hashPassword(parsed.data.newPassword) }
-      }),
-      prisma.authSession.updateMany({
-        where: {
-          userId: user.id,
-          revokedAt: null,
-          ...(token ? { tokenHash: { not: hashAuthToken(token) } } : {})
-        },
-        data: { revokedAt: new Date() }
-      })
-    ]);
-
-    res.json({ ok: true });
+    const result = await accountSecurity.changePassword(authUser.id, parsed.data.currentPassword, parsed.data.newPassword);
+    res.clearCookie(MEDIA_COOKIE, { httpOnly: true, secure: isProduction, sameSite: "lax", path: "/storage" });
+    res.json(result);
   })
 );
 
@@ -1901,12 +1923,17 @@ app.get("/api/billing/membership", asyncRoute(async (req, res) => res.json(await
 app.post("/api/billing/checkout", asyncRoute(async (req, res) => {
   const parsed = z.object({
     planId: z.string().min(1).max(128), kind: z.enum(["recharge", "membership"]),
-    requestId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/)
+    requestId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/),
+    expected: z.object({
+      planName: z.string().min(1).max(200), amountFen: z.number().int().positive().max(2_147_483_647),
+      credits: z.number().int().nonnegative().max(2_147_483_647), bonusCredits: z.number().int().nonnegative().max(2_147_483_647),
+      discountPercent: z.number().int().min(0).max(100), priorityLevel: z.number().int().nonnegative().max(2_147_483_647)
+    })
   }).safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ message: "购买参数无效。" });
   try { res.status(201).json(await startCheckout(requestUserId(req)!, parsed.data)); }
   catch (error) {
-    if (error instanceof PaymentError) return res.status(error.status).json({ message: error.message });
+    if (error instanceof PaymentError) return res.status(error.status).json({ message: error.message, code: error.code });
     throw error;
   }
 }));
@@ -2200,6 +2227,31 @@ app.get(
 );
 app.get("/api/admin/creator-insights", requireAdminPermission("dashboard:read"), asyncRoute(async (_req, res) => {
   res.json(await creatorInsights());
+}));
+
+app.get("/api/admin/task-operations", requireAdminPermission("tasks:manage"), asyncRoute(async (req, res) => {
+  const parsed = z.object({ kind: z.enum(["generation", "export"]).default("generation"), page: z.coerce.number().int().min(1).max(10000).default(1),
+    pageSize: z.coerce.number().int().min(1).max(50).default(30), keyword: z.string().trim().max(100).default(""), view: z.enum(["attention", "all"]).default("attention") }).safeParse(req.query);
+  if (!parsed.success) return res.status(400).json({ message: "任务查询参数无效。" });
+  res.json(await listTaskOperations(parsed.data));
+}));
+app.post("/api/admin/task-operations/:kind/:id/resolve", requireAdminPermission("tasks:manage"), asyncRoute(async (req, res) => {
+  const kind = z.enum(["generation", "export"]).safeParse(req.params.kind);
+  const input = z.object({ requestId: z.string().uuid(), expectedUpdatedAt: z.string().datetime(), reason: z.string().trim().min(8).max(500) }).strict().safeParse(req.body);
+  if (!kind.success || !input.success) return res.status(400).json({ message: "请填写至少 8 个字的核对依据，并刷新任务版本后提交。" });
+  res.json(await resolveTaskOperation(requestUserId(req)!, kind.data, paramId(req.params.id), input.data));
+}));
+app.get("/api/admin/task-operations/:kind/:id", requireAdminPermission("tasks:manage"), asyncRoute(async (req, res) => {
+  const kind = z.enum(["generation", "export"]).safeParse(req.params.kind);
+  if (!kind.success) return res.status(400).json({ message: "任务类别无效。" });
+  res.json(await getTaskOperation(kind.data, paramId(req.params.id)));
+}));
+app.post("/api/admin/task-operations/generation/:id/query", requireAdminPermission("tasks:manage"), asyncRoute(async (req, res) => {
+  try { res.json(await inspectRemoteTask(paramId(req.params.id))); }
+  catch (error) {
+    if (error instanceof TaskOperationError) throw error;
+    res.status(502).json({ message: "供应商状态暂未查到，请稍后核对或使用供应商控制台；未重新提交生成请求。" });
+  }
 }));
 
 app.get("/api/support/tickets", asyncRoute(async (req, res) => {
@@ -2999,6 +3051,7 @@ app.post("/api/admin/credits/verify-cost", creditAdminRead, creditAdminAction(re
 }));
 
 app.use((error: unknown, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  if (error instanceof TaskOperationError) return res.status(error.status).json({ message: error.message });
   if (error instanceof SettingsError) return res.status(error.status).json({ message: error.message });
   if (error instanceof EmailVerificationError) {
     if (error.retryAfter) res.setHeader("Retry-After", String(error.retryAfter));

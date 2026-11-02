@@ -66,6 +66,7 @@ export interface CreatorRun {
     id: string; sequence: number; tool: string; status: string; taskId: string | null;
     inputManifest: ContextManifest; findings: CreatorFinding[]; error: string | null;
     scriptId?: string; credits: number | null;
+    reviewRequired?: boolean;
     usage: { inputTokens: number; outputTokens: number; cachedInputTokens: number } | null;
     costMicros: number | null; costStatus: string;
   }>;

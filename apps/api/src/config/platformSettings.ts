@@ -44,8 +44,9 @@ export async function readPlatformSettings(group: SettingGroup, db: Db = prisma)
   }
   return { group, version: row?.version ?? 0, values, sources, secrets, encryptionReady: settingsEncryptionReady(), updatedAt: row?.updatedAt.toISOString() };
 }
-export async function lockPaymentConfiguration(tx: Prisma.TransactionClient) {
-  await tx.$queryRaw`SELECT true AS locked FROM pg_advisory_xact_lock(hashtext('platform:payment-configuration'))`;
+export async function lockPaymentConfiguration(tx: Prisma.TransactionClient, shared = false) {
+  if (shared) await tx.$queryRaw`SELECT true AS locked FROM pg_advisory_xact_lock_shared(hashtext('platform:payment-configuration'))`;
+  else await tx.$queryRaw`SELECT true AS locked FROM pg_advisory_xact_lock(hashtext('platform:payment-configuration'))`;
 }
 export async function updatePlatformSettings(group: SettingGroup, input: PlatformSettingUpdate, actorId: string, db: PrismaClient = prisma) {
   const spec = definition(group);

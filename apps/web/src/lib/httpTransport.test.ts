@@ -49,6 +49,15 @@ test("proxy HTML is replaced with actionable text while request id remains avail
   await assert.rejects(request("/", {}, response => response.json()), error => error instanceof HttpError && error.requestId === "r1" && !error.message.includes("<html>"));
 });
 
+test("structured checkout rejection remains distinguishable from uncertain network failure", async () => {
+  const request = createHttpTransport({
+    baseUrl: "/api", readToken: () => "", expireSession: () => {},
+    fetch: async () => new Response(JSON.stringify({ message: "Price changed", code: "checkout_not_created" }), { status: 409 })
+  });
+  await assert.rejects(request("/checkout", { method: "POST" }, response => response.json()),
+    error => error instanceof HttpError && error.code === "checkout_not_created" && error.status === 409);
+});
+
 test("explicit cancellation is preserved and malformed JSON has a recoverable message", async () => {
   const abort = new AbortController();
   abort.abort();

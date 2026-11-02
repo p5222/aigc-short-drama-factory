@@ -4,9 +4,9 @@ import { Dialog, InlineNotice } from "../design-system/ui";
 
 const date = (value: string) => new Date(value).toLocaleString("zh-CN");
 const queue = (level: number) => level > 0 ? `创作队列优先等级 ${level}` : "标准创作队列";
-export function MembershipCenter({ plans, status, available, loaded, busy, orders, error, onBuy }: {
+export function MembershipCenter({ plans, status, available, loaded, busy, blocked, orders, error, onBuy }: {
   plans: MembershipPlan[]; status?: MembershipStatus; available: boolean; loaded: boolean;
-  busy: boolean; orders: RechargeOrder[]; error: string; onBuy: (planId: string) => Promise<boolean>;
+  busy: boolean; blocked?: boolean; orders: RechargeOrder[]; error: string; onBuy: (plan: MembershipPlan) => Promise<boolean>;
 }) {
   const [confirm, setConfirm] = useState<MembershipPlan>();
   const enabled = plans.filter(plan => plan.enabled);
@@ -15,7 +15,7 @@ export function MembershipCenter({ plans, status, available, loaded, busy, order
   const stateLabel = !loaded ? "会员状态读取中" : status?.active ? "会员权益生效中"
     : status?.scheduled?.length ? "已有待生效会员" : status?.lastExpired ? "会员已到期" : "普通创作者";
   async function purchase() {
-    if (confirm && await onBuy(confirm.id)) setConfirm(undefined);
+    if (confirm && await onBuy(confirm)) setConfirm(undefined);
   }
   return <div className="membership-center">
     <div className="membership-intro"><div><span className="membership-eyebrow">创作权益</span><h3>选择适合创作节奏的会员</h3><p>按需补充积分，按月购买权益，手动续费。</p></div><span className="membership-state">{stateLabel}</span></div>
@@ -45,7 +45,7 @@ export function MembershipCenter({ plans, status, available, loaded, busy, order
         <div className="recharge-card-price"><em>¥</em><strong>{plan.monthlyPrice.toFixed(2)}</strong><small>/ 自然月</small></div>
         <ul><li>支付后立即获得 <strong>{plan.monthlyCredits.toLocaleString()}</strong> 积分</li><li>积分永久有效，会员到期仍可使用</li>
           <li>符合计价规则的任务结算减免 {plan.discountPercent}%</li><li>{queue(plan.priorityLevel)}</li><li>手动续费，不自动扣款</li></ul>
-        <button type="button" className="primary-button" disabled={busy || !loaded || !available || Boolean(lockedPlan && lockedPlan !== plan.id)}
+        <button type="button" className="primary-button" disabled={busy || blocked || !loaded || !available || Boolean(lockedPlan && lockedPlan !== plan.id)}
           onClick={() => setConfirm(plan)}>{!loaded ? "正在读取…" : !available ? "暂未开放购买" : status?.active?.planId === plan.id ? "同档续费一个月" : "购买一个月"}</button>
         {lockedPlan && lockedPlan !== plan.id && <small>当前仅支持同档续费，跨档购买暂未开放</small>}
       </article>)}
@@ -59,7 +59,7 @@ export function MembershipCenter({ plans, status, available, loaded, busy, order
     </details>
     <Dialog open={Boolean(confirm)} title="确认会员购买" onClose={() => setConfirm(undefined)} busy={busy}
       footer={<><button type="button" className="ghost-button" disabled={busy} onClick={() => setConfirm(undefined)}>取消</button>
-        <button type="button" className="primary-button" disabled={busy || !available} onClick={() => void purchase()}>{busy ? "正在创建订单…" : "确认并获取付款码"}</button></>}>
+        <button type="button" className="primary-button" disabled={busy || blocked || !loaded || !available} onClick={() => void purchase()}>{busy ? "正在创建订单…" : "确认并获取付款码"}</button></>}>
       {confirm && <div className="membership-confirm"><h3>{confirm.name} · ¥{confirm.monthlyPrice.toFixed(2)}</h3>
         <p>本次支付后立即发放 {confirm.monthlyCredits.toLocaleString()} 积分，永久有效。</p>
         <p>{lockedPlan === confirm.id && status?.paidThrough && Date.parse(status.paidThrough) > Date.now()

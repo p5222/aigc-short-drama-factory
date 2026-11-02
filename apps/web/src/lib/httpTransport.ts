@@ -1,11 +1,13 @@
 export class HttpError extends Error {
   readonly status: number;
   readonly requestId?: string;
-  constructor(message: string, status: number, requestId?: string) {
+  readonly code?: string;
+  constructor(message: string, status: number, requestId?: string, code?: string) {
     super(message);
     this.name = "HttpError";
     this.status = status;
     this.requestId = requestId;
+    this.code = code;
   }
 }
 
@@ -52,13 +54,15 @@ export function createHttpTransport(options: TransportOptions) {
       if (!response.ok) {
         const text = await response.text();
         let message = statusMessages[response.status] ?? `请求失败（${response.status}），请稍后重试。`;
+        let code: string | undefined;
         try {
           const data = JSON.parse(text);
+          if (typeof data.code === "string" && /^[a-z_]{1,64}$/.test(data.code)) code = data.code;
           const fields = Object.values(data.fieldErrors ?? {}).flat().filter(value => typeof value === "string");
           const detail = data.message || data.error || [...(data.formErrors ?? []), ...fields].join("；");
           if (typeof detail === "string" && detail.trim()) message = detail;
         } catch { /* Proxy HTML and stack traces are not user-facing error messages. */ }
-        throw new HttpError(message, response.status, response.headers.get("x-request-id") ?? undefined);
+        throw new HttpError(message, response.status, response.headers.get("x-request-id") ?? undefined, code);
       }
       return await consume(response);
     } catch (error) {

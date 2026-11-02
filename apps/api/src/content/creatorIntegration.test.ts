@@ -14,7 +14,7 @@ test("creator run persistence, costs, recovery and author acceptance with real P
   const { syncContentToProduction } = await import("./service.js");
   const { saveFact } = await import("./storyMemory.js");
   const fetchOriginal = globalThis.fetch;
-  const userId = `audit_creator_${crypto.randomUUID()}`, providerId = `audit_creator_provider_${crypto.randomUUID()}`;
+  const userId = `audit_creator_${crypto.randomUUID()}`, providerId = `audit_creator_provider_${crypto.randomUUID()}`, adminId = `audit_creator_admin_${crypto.randomUUID()}`;
   const valid = { title: "旧书店的信", synopsis: "修表师读到父亲留下的线索", script: "场景一：旧书店，日。阿青轻轻推门，门铃响起。他抚平信纸，凝视纸上的钟楼图案。阿青：原来你一直在等我。场景二：钟楼前，日。阿青握着怀表，钟声响起。他停下脚步，将信贴近胸口，然后坚定地走向钟楼。画面渐暗，钟声延续。",
     estimatedSeconds: 30, characters: [{ name: "阿青", identity: "修表师", appearance: "短发", costume: "蓝色外套", personality: "细心" }],
     scenes: [{ location: "旧书店", description: "旧书架和门铃", characters: ["阿青"] }], props: [], factUpdates: [],
@@ -46,6 +46,7 @@ test("creator run persistence, costs, recovery and author acceptance with real P
     return { runId: run.id, input, quote };
   };
   try {
+    await db.user.create({ data: { id: adminId, name: "Creator recovery operator", role: "admin" } });
     await db.user.create({ data: { id: userId, name: "Creator integration fixture", credit: { create: { id: `credit_${userId}`, balance: 1000 } } } });
     await db.modelProvider.create({ data: { id: providerId, name: "Fixture text", modality: "text", enabled: true, models: ["fixture-text"], apiKey: "fixture-only", baseUrl: "https://creator-fixture.invalid/v1", capability: { connection: { protocol: "openai-chat" } }, costHint: "test",
       prices: { create: { id: `price_${crypto.randomUUID()}`, providerName: "Fixture", modality: "text", model: "fixture-text", unit: "text_run", unitCredits: 10 } } } });
@@ -155,9 +156,14 @@ test("creator run persistence, costs, recovery and author acceptance with real P
       const state = await agent.executeCreatorRun(userId, projectId, runId);
       assert.equal(state.runs[0]?.status, "unknown");
       assert.equal(calls - before, 1);
-      await assert.rejects(agent.executeCreatorRun(userId, projectId, runId), /尚未核对/);
+      await assert.rejects(agent.executeCreatorRun(userId, projectId, runId), /待核对|尚未核对/);
       await assert.rejects(agent.acknowledgeUnknownRun(userId, projectId, runId, { supplierChecked: false }));
-      await agent.acknowledgeUnknownRun(userId, projectId, runId, { supplierChecked: true });
+      await assert.rejects(agent.acknowledgeUnknownRun(userId, projectId, runId, { supplierChecked: true }), /仍有生成任务/);
+      const rows = await db.generationTask.findMany({ where: { userId, jobId: { startsWith: `content:${projectId}:` }, status: { in: ["pending", "running"] } } });
+      await db.generationTask.updateMany({ where: { id: { in: rows.map(row => row.id) } }, data: { updatedAt: new Date(Date.now() - 180_000) } });
+      const child = await db.generationTask.findUniqueOrThrow({ where: { id: state.runs[0].steps[0].taskId! } });
+      const { resolveTaskOperation } = await import("../admin/taskOperations.js");
+      await resolveTaskOperation(adminId, "generation", child.id, { requestId: crypto.randomUUID(), expectedUpdatedAt: child.updatedAt.toISOString(), reason: "已核对测试供应商记录，本次结果未交付，结束调用。" }, db);
       assert.equal((await agent.getCreatorState(userId, projectId)).runs[0]?.status, "canceled");
       assert.equal((await db.creditAccount.findUniqueOrThrow({ where: { userId } })).frozenBalance, 0);
     });
@@ -250,7 +256,9 @@ test("creator run persistence, costs, recovery and author acceptance with real P
   } finally {
     globalThis.fetch = fetchOriginal;
     await db.contentProject.deleteMany({ where: { userId } });
-    await db.user.deleteMany({ where: { id: userId } });
+    await db.taskResolution.deleteMany({ where: { actorId: adminId } });
+    await db.adminAuditLog.deleteMany({ where: { actorId: adminId } });
+    await db.user.deleteMany({ where: { id: { in: [userId, adminId] } } });
     await db.modelProvider.deleteMany({ where: { id: providerId } });
     await db.$disconnect();
   }

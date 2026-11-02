@@ -1,5 +1,5 @@
 ﻿import { useCallback, useEffect, useMemo, useState } from "react";
-import { Bell, ChartNoAxesCombined, ChevronDown, CircleDollarSign, FilePenLine, Gift, LayoutDashboard, Layers3, LogOut, Megaphone, Moon, ReceiptText, SlidersHorizontal, UserRound, Video, WalletCards } from "lucide-react";
+import { Activity, Bell, ChartNoAxesCombined, ChevronDown, CircleDollarSign, FilePenLine, Gift, LayoutDashboard, Layers3, LogOut, Megaphone, Moon, ReceiptText, SlidersHorizontal, UserRound, Video, WalletCards } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { firstAdminRefreshFailure } from "./admin/adminRefreshModel";
 import { useLayoutEffect } from "react";
@@ -75,7 +75,7 @@ const adminPageResources: Record<string, string[]> = {
   "运营总览": ["运营概况", "模型渠道", "模型价格"], "用户管理": ["用户列表"], "平台公告": ["平台公告", "帮助文章"],
   "创作质量中心": ["质量概况", "质量项目", "模型渠道"], "兑换码": [],
   "套餐会员": ["充值套餐"], "订阅会员": ["会员配置"], "模型路由": ["模型渠道"],
-  "价格策略": ["模型价格", "模型渠道"], "提示词评分": ["提示词模板"], "平台配置": ["模型渠道", "模型价格"]
+  "价格策略": ["模型价格", "模型渠道"], "提示词评分": ["提示词模板"], "平台配置": ["模型渠道", "模型价格"], "异常任务": []
 };
 
 function getInitialTheme(): WorkbenchTheme {
@@ -111,6 +111,7 @@ export function App() {
         { name: "操作记录", icon: ReceiptText },
         { name: "平台公告", icon: Megaphone },
         { name: "支持工单", icon: Bell },
+        { name: "异常任务", icon: Activity },
         { name: "创作现场管理", icon: Video },
         { name: "创作质量中心", icon: ChartNoAxesCombined }
       ]
@@ -533,9 +534,10 @@ export function App() {
           />
         );
       case "profile":
-        return user ? <ProfilePage user={user} account={account} summary={summary} transactions={transactions} orders={orders} onNavigate={setActivePage} onLogout={logout} onUserUpdate={setUser} /> : null;
+        return user ? <ProfilePage user={user} account={account} summary={summary} transactions={transactions} orders={orders} onNavigate={setActivePage} onLogout={logout} onUserUpdate={setUser}
+          onSecurityChanged={message => { clearAuthState(); setSessionExpired(false); setError(message); }} /> : null;
       case "recharge":
-        return <RechargePage account={account} plans={plans} membershipPlans={membershipPlans} modelPrices={modelPrices} onRefresh={() => load()} />;
+        return <RechargePage key={user?.id} userId={user?.id ?? ""} account={account} plans={plans} membershipPlans={membershipPlans} modelPrices={modelPrices} onRefresh={() => load()} />;
       case "ledger":
         return <LedgerPage account={account} transactions={transactions} />;
       case "settings":

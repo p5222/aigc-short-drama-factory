@@ -400,7 +400,8 @@ export async function getCreatorState(userId: string, contentProjectId: string):
           cachedInputTokens: sum.cachedInputTokens + (call.usage?.cachedInputTokens ?? 0)
         }), { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 }) : null;
         const settlement = object(task?.billingSettlement);
-        return { id: step.id, sequence: step.sequence, tool: step.tool, status: step.status, taskId: step.taskId,
+          return { id: step.id, sequence: step.sequence, tool: step.tool, status: step.status, taskId: step.taskId,
+            reviewRequired: object(task?.execution).reviewRequired === true,
           inputManifest: step.inputManifest as any, findings: step.findings as unknown as CreatorFinding[], error: step.error,
           scriptId: object(step.output).scriptId, credits: task?.finalCredits ?? null, usage,
           costMicros: typeof settlement.costMicros === "number" ? settlement.costMicros : null, costStatus: settlement.costStatus ?? "unknown" };

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import test from "node:test";
+import { markTextSubmissionStarted, TextSubmissionError } from "../providers/textSubmission.js";
 
 const testDatabaseUrl = process.env.AIFILM_TEST_DATABASE_URL;
 
@@ -104,6 +105,17 @@ test("content generation billing and durable project operation lease", { skip: !
       assert.equal((await account()).balance, 100);
       assert.equal((await account()).frozenBalance, 0);
       assert.equal(await db.creditTransaction.count({ where: { userId: project.userId, type: "refund" } }), 1);
+    });
+    await t.test("unknown submitted calls retain their reservation and block a fresh content operation", async () => {
+      const { project, account } = await fixture();
+      let calls = 0;
+      await assert.rejects(operation(project.userId, project.id, "Unknown", () => generate(project, "Text", async () => {
+        await markTextSubmissionStarted(); calls++; throw new TextSubmissionError("unknown", "fixture disconnected");
+      }, async () => undefined)), /fixture disconnected/);
+      assert.equal((await account()).frozenBalance, 30);
+      assert.equal(await db.generationTask.count({ where: { userId: project.userId, status: "pending" } }), 2);
+      await assert.rejects(operation(project.userId, project.id, "Repeat", async () => { calls++; }), /待核对/);
+      assert.equal(calls, 1);
     });
   } finally {
     await db.contentProject.deleteMany({ where: { id: { in: projects } } });

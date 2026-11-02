@@ -3,6 +3,8 @@ import crypto from "node:crypto";
 import test from "node:test";
 import { PrismaClient } from "@prisma/client";
 import { lockTaskCredits, releaseTaskCredits, reserveTaskCredits, settleTaskCredits } from "./taskCredits.js";
+import { markTextSubmissionStarted, TextSubmissionError } from "../providers/textSubmission.js";
+import { creationExecution } from "../queue/creationState.js";
 
 // Explicit opt-in: this suite may write only to a dedicated, local test database.
 const testDatabaseUrl = process.env.AIFILM_TEST_DATABASE_URL;
@@ -72,12 +74,12 @@ test("PostgreSQL task billing: concurrent reserve, retries, cancellation and set
       assert.equal((await f.account()).frozenBalance, 30);
       assert.equal(await db.creditTransaction.count({ where: { taskId: f.tasks[0]!.id, type: "refund" } }), 1);
     });
-    await t.test("automatic retries retain the freeze and release once after the last failure", async () => {
+    await t.test("failures before submission retain the freeze and release once after the last attempt", async () => {
       const f = await fixture();
       await reservation(f.userId, f.tasks[0]!.id);
-      const generate = async () => { throw new Error("Simulated provider timeout"); };
+      const generate = async () => { throw new Error("Simulated pre-submission failure"); };
       for (let attempt = 0; attempt < 3; attempt++) {
-        await assert.rejects(processCreationJob(job(f, attempt), { db, generate }), /Simulated provider timeout/);
+        await assert.rejects(processCreationJob(job(f, attempt), { db, generate }), /Simulated pre-submission failure/);
         assert.equal((await f.account()).frozenBalance, attempt < 2 ? 30 : 0);
       }
       assert.equal((await f.account()).balance, 100);
@@ -128,7 +130,7 @@ test("PostgreSQL task billing: concurrent reserve, retries, cancellation and set
       } finally { finish(); }
       await running; assert.equal((await f.account()).balance, 70);
     });
-    await t.test("an expired worker cannot save output or refund the new execution lease", async () => {
+    await t.test("an expired worker that never submitted cannot save output or refund a new lease", async () => {
       for (const oldFails of [false, true]) {
         const f = await fixture(); let startedOld!: () => void; let finishOld!: () => void; let startedNew!: () => void; let finishNew!: () => void;
         const oldBegan = new Promise<void>(resolve => { startedOld = resolve; }); const oldEnd = new Promise<void>(resolve => { finishOld = resolve; });
@@ -149,6 +151,66 @@ test("PostgreSQL task billing: concurrent reserve, retries, cancellation and set
         assert.equal((await f.account()).balance, 70); assert.equal((await f.account()).frozenBalance, 0);
         assert.equal(await db.scriptDraft.count({ where: { projectId: f.projectId } }), 1);
       }
+    });
+    await t.test("unknown submission results preserve one reservation and never call a provider twice", async () => {
+      for (const kind of ["unreadable", "timeout", "persistence"] as const) {
+        const f = await fixture(), current = job(f);
+        await db.generationTask.update({ where: { id: f.tasks[0]!.id }, data: { jobId: current.id } });
+        let calls = 0;
+        const generate = async () => {
+          await markTextSubmissionStarted(); calls++;
+          if (kind === "unreadable") throw new TextSubmissionError("unknown", "HTTP 200 unreadable");
+          if (kind === "timeout") throw new TextSubmissionError("unknown", "timeout");
+          // A successful provider response followed by invalid local persistence
+          // cannot become a second paid attempt.
+          const result = output(f.projectId);
+          result.script.projectId = f.projectId;
+          await db.scriptDraft.create({ data: { ...result.script, createdAt: new Date(result.script.createdAt) } });
+          return result;
+        };
+        await assert.rejects(processCreationJob(current, { db, generate }), /结果尚未确认/);
+        for (let repeat = 0; repeat < 4; repeat++) await processCreationJob(current, { db, generate });
+        const task = await db.generationTask.findUniqueOrThrow({ where: { id: current.data.taskId } });
+        assert.equal(calls, 1); assert.equal(task.status, "pending"); assert.equal(creationExecution(task.execution).reviewRequired, true);
+        assert.equal((await f.account()).frozenBalance, 30); assert.equal((await f.account()).balance, 100);
+        assert.equal(await db.creditTransaction.count({ where: { taskId: task.id, type: "consume" } }), 0);
+        const { retryTask } = await import("../db/repository.js");
+        await assert.rejects(retryTask(task.id, f.userId, current.data.input, db), /待核对/);
+      }
+    });
+    await t.test("expired submitted and legacy leases become review items; late output cannot overwrite that decision", async () => {
+      const f = await fixture(); let began!: () => void, finish!: () => void, calls = 0;
+      const start = new Promise<void>(resolve => { began = resolve; }), end = new Promise<void>(resolve => { finish = resolve; });
+      const generate = async () => { await markTextSubmissionStarted(); calls++; began(); await end; return output(f.projectId); };
+      const old = processCreationJob(job(f), { db, generate });
+      await start;
+      await db.generationTask.update({ where: { id: f.tasks[0]!.id }, data: { updatedAt: new Date(Date.now() - 180_000) } });
+      await processCreationJob(job(f), { db, generate });
+      const rejected = assert.rejects(old, CreationLeaseBusyError); finish(); await rejected;
+      assert.equal(calls, 1);
+      assert.equal((await f.account()).frozenBalance, 30);
+      assert.equal(await db.scriptDraft.count({ where: { projectId: f.projectId } }), 0);
+      assert.equal(creationExecution((await db.generationTask.findUniqueOrThrow({ where: { id: f.tasks[0]!.id } })).execution).reviewRequired, true);
+      const legacy = await fixture();
+      await reservation(legacy.userId, legacy.tasks[0]!.id);
+      await db.generationTask.update({ where: { id: legacy.tasks[0]!.id }, data: { status: "running", updatedAt: new Date(Date.now() - 180_000) } });
+      await processCreationJob(job(legacy), { db, generate: async () => { throw new Error("Legacy must not submit"); } });
+      assert.equal(creationExecution((await db.generationTask.findUniqueOrThrow({ where: { id: legacy.tasks[0]!.id } })).execution).reviewRequired, true);
+    });
+    await t.test("explicit rejection is retryable, while one successful submission settles once", async () => {
+      const f = await fixture(); let calls = 0;
+      const generate = async () => {
+        await markTextSubmissionStarted(); calls++;
+        if (calls === 1) throw new TextSubmissionError("rejected", "HTTP 429");
+        return output(f.projectId);
+      };
+      await assert.rejects(processCreationJob(job(f), { db, generate }), /HTTP 429/);
+      await processCreationJob(job(f, 1), { db, generate });
+      await processCreationJob(job(f, 2), { db, generate });
+      assert.equal(calls, 2); assert.equal((await f.account()).balance, 70); assert.equal((await f.account()).frozenBalance, 0);
+      const state = creationExecution((await db.generationTask.findUniqueOrThrow({ where: { id: f.tasks[0]!.id } })).execution);
+      assert.deepEqual(state.attempts.map(attempt => attempt.state), ["rejected", "delivered"]);
+      assert.equal(await db.scriptDraft.count({ where: { projectId: f.projectId } }), 1);
     });
     await t.test("simultaneous settle and cancel have exactly one financial outcome", async () => {
       for (let round = 0; round < 6; round++) {
