@@ -27,6 +27,7 @@ import { cineScenes as scenes } from "./cineScenes";
 import { getCardPose, nextCardIndex, relativeCardOffset, shouldCorrectDrift, shouldReleasePreparedSlot } from "./cineHomeModel";
 import { Dialog, InlineNotice } from "../design-system/ui";
 import { StudioWordmark } from "../design-system/StudioIcon";
+import { PasswordRecovery } from "./PasswordRecovery";
 
 interface LoginPageProps {
   onAuthed: (token: string, user: AuthUser) => void;
@@ -217,6 +218,8 @@ function waitForDrawableFrame(video: HTMLVideoElement, timeoutMs = BG_FRAME_TIME
 export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = false, sessionMessage = "" }: LoginPageProps) {
   const [authOpen, setAuthOpen] = useState(variant === "admin" || initialAuthOpen);
   const [mode, setMode] = useState<AuthMode>("login");
+  const [recoveryOpen, setRecoveryOpen] = useState(false);
+  const [recoveryBusy, setRecoveryBusy] = useState(false);
   const [locale, setLocale] = useState<Locale>("cn");
   const [publicView, setPublicView] = useState<PublicView>("home");
   const [languageOpen, setLanguageOpen] = useState(false);
@@ -265,7 +268,7 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
   const isAdmin = variant === "admin";
   const activeMode = isAdmin ? "login" : mode;
   const t = copy[locale];
-  const authBusy = loading || emailAction !== null;
+  const authBusy = loading || emailAction !== null || recoveryBusy;
   const emailVerified = Boolean(emailGrant && emailGrant.email === email.trim().toLowerCase() && emailGrant.expiresAt > now);
   const resendSeconds = Math.max(0, Math.ceil((resendAt - now) / 1000));
   useEffect(() => {
@@ -674,6 +677,7 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
   }, [publicView]);
 
   const switchMode = useCallback((nextMode: AuthMode) => {
+    setRecoveryOpen(false);
     setMode(nextMode);
     setMessage("");
     setCaptcha(createCaptcha());
@@ -913,7 +917,10 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
             </label>
             <button
               type="button"
-              onClick={() => { setMessageKind("info"); setMessage(locale === "cn" ? "忘记密码时，请向该账号所属平台的管理员申请重置。只有已登录且记得当前密码，才能在个人页修改密码。" : "If you forgot your password, ask the administrator of the platform that manages your account to reset it. You can change it in Profile only when signed in and you know your current password."); }}
+              onClick={() => {
+                if (!isAdmin) { setRecoveryOpen(true); setMessage(""); return; }
+                setMessageKind("info"); setMessage(locale === "cn" ? "管理员账号请由其他有权限的管理员通过后台重置密码。" : "Ask another authorized administrator to reset your administrator password.");
+              }}
             >
               {t.forgot}
             </button>
@@ -1276,9 +1283,9 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
 
       <footer className="cine-icp-line">© {ICP_YEAR} 漫角 manjiao.cloud · <a className="cine-icp-link" href="https://beian.miit.gov.cn/" target="_blank" rel="noreferrer">{ICP_NUMBER}</a>{ICP_COMPANY ? ` · ${ICP_COMPANY}` : ""}{ICP_REGION ? ` · ${ICP_REGION}` : ""}</footer>
 
-      <Dialog open={authOpen} title={activeMode === "login" ? t.welcome : t.createAccount} description={activeMode === "login" ? t.loginIntro : t.registerIntro} busy={authBusy} onClose={() => setAuthOpen(false)} className={`creator-auth-dialog ${activeMode === "register" ? "register-mode" : "login-mode"}`}>
+      <Dialog open={authOpen} title={recoveryOpen ? locale === "cn" ? "找回密码" : "Recover your account" : activeMode === "login" ? t.welcome : t.createAccount} description={recoveryOpen ? locale === "cn" ? "通过已验证的 QQ 邮箱重新设置密码。" : "Reset your password using your verified QQ email." : activeMode === "login" ? t.loginIntro : t.registerIntro} busy={authBusy} onClose={() => setAuthOpen(false)} className={`creator-auth-dialog ${activeMode === "register" ? "register-mode" : "login-mode"}`}>
             <div className="creator-auth-wordmark"><StudioWordmark height={30} /><span>MANJIAO STUDIO</span></div>
-            <div className="cine-auth-tabs" role="group" aria-label={locale === "cn" ? "登录或注册" : "Authentication mode"}>
+            {!recoveryOpen ? <div className="cine-auth-tabs" role="group" aria-label={locale === "cn" ? "登录或注册" : "Authentication mode"}>
               <button className={activeMode === "login" ? "active" : undefined} aria-pressed={activeMode === "login"} disabled={authBusy} type="button" onClick={() => switchMode("login")}>
                 {t.login}
               </button>
@@ -1286,9 +1293,12 @@ export function LoginPage({ onAuthed, variant = "creator", initialAuthOpen = fal
                 <UserPlus size={15} />
                 {t.register}
               </button>
-            </div>
-            {authForm}
-            <p className="creator-auth-note">{t.authNote}</p>
+            </div> : null}
+            {recoveryOpen ? <PasswordRecovery locale={locale} onBusy={setRecoveryBusy} onBack={notice => {
+              setRecoveryOpen(false); setRecoveryBusy(false); setPassword(""); setCaptchaInput(""); setCaptcha(createCaptcha());
+              setMessageKind("info"); setMessage(notice || "");
+            }} /> : authForm}
+            {!recoveryOpen ? <p className="creator-auth-note">{t.authNote}</p> : null}
       </Dialog>
     </main>
   );

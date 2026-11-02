@@ -98,6 +98,7 @@
 .app-shell .creator-page .profile-avatar-editor { display: grid; grid-template-columns: auto minmax(0,1fr); gap: 12px; }
 .app-shell .creator-page .profile-editor-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; }
 .app-shell .creator-page .profile-v2-collapse-body { display: grid; gap: 14px; padding: 18px; }
+.app-shell .creator-page.profile-page .field > span { color: var(--ds-text-secondary); }
 .app-shell .creator-page .profile-v2-collapse-body .inline-actions { flex-wrap: wrap; }
 .app-shell .creator-page .profile-v2-collapse-body .profile-security-submit { width: auto; margin: 0; }
 .app-shell .creator-page .profile-v2-balance strong { font-size: 32px; }

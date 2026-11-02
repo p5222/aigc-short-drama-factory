@@ -16,7 +16,7 @@ import "./credit-ledger.css";
 
 const modalityOrder: Record<string, number> = { text: 0, image: 1, video: 2, tts: 3, embedding: 4 };
 
-export function RechargePage({ account, plans, membershipPlans, modelPrices, onRefresh }: { account?: CreditAccount; plans: Plan[]; membershipPlans: MembershipPlan[]; modelPrices: ModelPrice[]; onRefresh: () => void | Promise<void> }) {
+export function RechargePage({ userId, account, plans, membershipPlans, modelPrices, onRefresh }: { userId: string; account?: CreditAccount; plans: Plan[]; membershipPlans: MembershipPlan[]; modelPrices: ModelPrice[]; onRefresh: () => void | Promise<void> }) {
   const [message, setMessage] = useState("");
   const [redeemCode, setRedeemCode] = useState("");
   const [error, setError] = useState("");
@@ -153,7 +153,7 @@ export function RechargePage({ account, plans, membershipPlans, modelPrices, onR
         </div>
         {!availablePlans.length ? <StatePanel compact title="暂未开放新套餐" description="已有卡密仍可在上方兑换。套餐开放后会显示在这里。" /> : null}
       </section>
-      <OnlineCheckout plans={plans} memberships={membershipPlans} onRefresh={onRefresh} />
+      <OnlineCheckout key={userId} userId={userId} plans={plans} memberships={membershipPlans} onRefresh={onRefresh} />
       <section className="panel credit-usage-panel">
         <div className="panel-head">
           <div><h2 id="credit-usage-title">生成费用参考</h2><small>以下为已开放模型的价格范围；实际消耗以每次生成前的报价为准。</small></div>

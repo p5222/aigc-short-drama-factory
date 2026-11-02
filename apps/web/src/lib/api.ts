@@ -85,12 +85,13 @@
   WorkbenchSummary
 } from "@aifilm/shared";
 import { requestBlob as httpRequestBlob, requestJson, requestText as httpRequestText } from "./httpClient";
-import type { CreditPricingOverview, CreditPolicy, OfficialCostRule, CreditPage, CreditAccountRow, CreditFundingRow, CreditBillingTask, CreditLedgerPage } from "@aifilm/shared";
+import type { CheckoutExpectation, CreditPricingOverview, CreditPolicy, OfficialCostRule, CreditPage, CreditAccountRow, CreditFundingRow, CreditBillingTask, CreditLedgerPage } from "@aifilm/shared";
 
 export interface AuthUser {
   id: string;
   name: string;
   email?: string;
+  emailVerified?: boolean;
   phone?: string;
   avatarUrl?: string;
   role: string;
@@ -177,8 +178,18 @@ export const api = {
       body: JSON.stringify(input)
     }),
   me: () => request<{ user: AuthUser }>("/auth/me"),
-  updateProfile: (input: { name?: string; email?: string; avatarUrl?: string | null; currentPassword?: string }) =>
-    request<{ user: AuthUser }>("/auth/profile", {
+  sendBindingCode: (input: { email: string; currentPassword: string }) =>
+    request<{ sent: true; resendAfterSeconds: number }>("/auth/email-binding/send", { method: "POST", body: JSON.stringify(input) }),
+  verifyBindingCode: (input: { email: string; currentPassword: string; code: string }) =>
+    request<{ verificationToken: string; expiresInSeconds: number }>("/auth/email-binding/verify", { method: "POST", body: JSON.stringify(input) }),
+  sendRecoveryCode: (email: string) =>
+    request<{ sent: true; resendAfterSeconds: number }>("/auth/recovery/send", { method: "POST", body: JSON.stringify({ email }) }),
+  verifyRecoveryCode: (email: string, code: string) =>
+    request<{ verificationToken: string; expiresInSeconds: number }>("/auth/recovery/verify", { method: "POST", body: JSON.stringify({ email, code }) }),
+  resetPassword: (input: { email: string; verificationToken: string; newPassword: string }) =>
+    request<{ ok: true; requiresLogin: true }>("/auth/recovery/reset", { method: "POST", body: JSON.stringify(input) }),
+  updateProfile: (input: { name?: string; email?: string; avatarUrl?: string | null; currentPassword?: string; verificationToken?: string }) =>
+    request<{ user: AuthUser; requiresLogin?: boolean }>("/auth/profile", {
       method: "PATCH",
       body: JSON.stringify(input)
     }),
@@ -215,7 +226,7 @@ export const api = {
   orders: () => request<RechargeOrder[]>("/billing/orders"),
   paymentAvailability: () => request<{ wechat: boolean; membership: boolean; autoRenew: false }>("/billing/availability"),
   membership: () => request<MembershipStatus>("/billing/membership"),
-  checkout: (input: { planId: string; kind: "recharge" | "membership"; requestId: string }) =>
+  checkout: (input: { planId: string; kind: "recharge" | "membership"; requestId: string; expected: CheckoutExpectation }) =>
     request<RechargeOrder>("/billing/checkout", { method: "POST", body: JSON.stringify(input) }),
   paymentOrder: (id: string) => request<RechargeOrder>(`/billing/orders/${encodeURIComponent(id)}`),
   resumeCheckout: (id: string) => request<RechargeOrder>(`/billing/orders/${encodeURIComponent(id)}/checkout`, { method: "POST" }),

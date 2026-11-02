@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { DelayedError } from "bullmq";
-import { CreationLeaseBusyError, processQueuedCreationJob, type CreationJobData } from "./creationProcessor.js";
+import { DelayedError, UnrecoverableError } from "bullmq";
+import { CreationLeaseBusyError, CreationReviewRequiredError, processQueuedCreationJob, type CreationJobData } from "./creationProcessor.js";
 
 test("a live DB lease delays BullMQ delivery without completing it or exhausting retries", async () => {
   const before = Date.now(); let delayedAt = 0; let suppliedToken: string | undefined;
@@ -16,5 +16,6 @@ test("lease delay failure propagates and normal model failures retain their retr
   await assert.rejects(processQueuedCreationJob(job, "token", async () => { throw new CreationLeaseBusyError(); }), error => error === transportError);
   const modelError = new Error("Model rejected");
   await assert.rejects(processQueuedCreationJob(job, "token", async () => { throw modelError; }), error => error === modelError);
+  await assert.rejects(processQueuedCreationJob(job, "token", async () => { throw new CreationReviewRequiredError(); }), UnrecoverableError);
   assert.deepEqual(await processQueuedCreationJob(job, "token", async () => ({ mode: "real" })), { mode: "real" });
 });

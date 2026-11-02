@@ -10,6 +10,7 @@ import { recordTextUsage } from "../billing/metering.js";
 import { splitSpeech } from "./speechTimeline.js";
 import { inferProviderProtocol, type ProviderConnection } from "@aifilm/shared";
 import { configuredRuntime } from "../providers/connection.js";
+import { requestTextJson, TextSubmissionError } from "../providers/textSubmission.js";
 
 interface PipelineCharacter {
   name: string;
@@ -98,7 +99,7 @@ export async function generateProjectContent(projectId: string, input: CreatePro
       const output = await generateWithModel(input);
       return normalizeOutput(projectId, input, output, "real");
     } catch (error) {
-      throw new Error("真实文本模型调用失败：" + errorMessage(error));
+      throw new Error("真实文本模型调用失败：" + errorMessage(error), { cause: error });
     }
   }
 
@@ -113,7 +114,7 @@ export async function generateProjectScriptContent(projectId: string, input: Cre
       const output = await generateScriptWithModel(input);
       return normalizeScriptOutput(projectId, input, output, "real");
     } catch (error) {
-      throw new Error("真实剧本模型调用失败：" + errorMessage(error));
+      throw new Error("真实剧本模型调用失败：" + errorMessage(error), { cause: error });
     }
   }
 
@@ -164,7 +165,7 @@ export async function generateProjectStoryboards(
         promptSnapshot: output.promptSnapshot
       };
     } catch (error) {
-      throw new Error("真实分镜生成失败，未保存替代分镜：" + errorMessage(error));
+      throw new Error("真实分镜生成失败，未保存替代分镜：" + errorMessage(error), { cause: error });
     }
   }
 
@@ -396,22 +397,14 @@ async function callGeminiInteraction(body: Record<string, unknown>, options: Tex
         }
       };
 
-  const response = await fetch(url, {
+  const parsed = await requestTextJson<TextModelResponse>(url, {
     method: "POST",
-    ...(options.singleSubmission ? { signal: AbortSignal.timeout(90_000) } : {}),
     headers: {
       "Content-Type": "application/json",
       "x-goog-api-key": runtime.apiKey
     },
     body: JSON.stringify(payload)
-  });
-
-  const text = await response.text().catch(() => "");
-  if (!response.ok) {
-    throw new Error(`Google AI Studio request failed: ${response.status} ${text.slice(0, 180)}`);
-  }
-
-  const parsed = JSON.parse(text) as TextModelResponse;
+  }, "Google AI Studio");
   recordTextUsage(parsed, runtime.provider, runtime.model);
   return parsed;
 }
@@ -479,34 +472,20 @@ async function postJsonWithFallback<T>({
   payload: unknown;
   singleSubmission?: boolean;
 }): Promise<T> {
-  let lastStatus = 0;
-  let lastText = "";
-
-  for (const url of urls) {
-    const response = await fetch(url, {
-      method: "POST",
-      ...(singleSubmission ? { signal: AbortSignal.timeout(90_000) } : {}),
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`
-      },
-      body: JSON.stringify(payload)
-    });
-
-    lastStatus = response.status;
-    lastText = await response.text().catch(() => "");
-    if (response.ok) {
-      try {
-        return JSON.parse(lastText) as T;
-      } catch {
-        throw new Error(`${label} returned an unreadable response; result unknown, automatic resubmission stopped.`);
-      }
+  let lastError: unknown;
+  for (const url of singleSubmission ? urls.slice(0, 1) : urls) {
+    try {
+      return await requestTextJson<T>(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify(payload)
+      }, label);
+    } catch (error) {
+      lastError = error;
+      if (singleSubmission || !(error instanceof TextSubmissionError) || ![404, 405].includes(error.httpStatus ?? 0)) throw error;
     }
-
-    if (![404, 405].includes(response.status)) break;
   }
-
-  throw new Error(`${label} request failed: ${lastStatus} ${lastText.slice(0, 180)}`);
+  throw lastError ?? new Error(`${label} has no configured endpoint`);
 }
 
 async function callResponsesApi(body: Record<string, unknown>, options: TextRuntimeOptions = {}) {
@@ -1196,7 +1175,7 @@ function buildAllTextModelsFailedMessage(provider: string, skipped: string[], la
 
 function annotateTextFallbackError(error: unknown, skipped: string[], selectedModel: string) {
   if (!skipped.length) return error instanceof Error ? error : new Error(errorMessage(error));
-  return new Error(`${errorMessage(error)} Model fallback trace: selected=${selectedModel}; skipped=${skipped.slice(0, 4).join(" | ")}`);
+  return new Error(`${errorMessage(error)} Model fallback trace: selected=${selectedModel}; skipped=${skipped.slice(0, 4).join(" | ")}`, { cause: error });
 }
 
 function splitModelList(value?: string) {

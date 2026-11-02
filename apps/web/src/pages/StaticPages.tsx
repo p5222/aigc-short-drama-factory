@@ -57,6 +57,7 @@ export function ProfilePage({
   orders,
   onNavigate,
   onLogout,
+  onSecurityChanged,
   onUserUpdate
 }: {
   user: AuthUser;
@@ -66,6 +67,7 @@ export function ProfilePage({
   orders: RechargeOrder[];
   onNavigate: (page: PageKey) => void;
   onLogout: () => void;
+  onSecurityChanged: (message: string) => void;
   onUserUpdate: (user: AuthUser) => void;
 }) {
   const contact = user.email || user.phone || "未绑定联系方式";
@@ -78,7 +80,11 @@ export function ProfilePage({
   const [profileError, setProfileError] = useState("");
   const [avatarReading, setAvatarReading] = useState(false);
   const avatarReadEpoch = useRef(createRequestEpoch()).current;
-  const [emailForm, setEmailForm] = useState({ email: user.email ?? "", currentPassword: "" });
+  const [emailForm, setEmailForm] = useState({ email: user.email ?? "", currentPassword: "", code: "" });
+  const emailGrant = useRef<{ token: string; expiresAt: number } | null>(null);
+  const [emailResendAt, setEmailResendAt] = useState(0);
+  const [emailNow, setEmailNow] = useState(Date.now());
+  const emailCooldown = Math.max(0, Math.ceil((emailResendAt - emailNow) / 1000));
   const [emailBusy, setEmailBusy] = useState(false);
   const [emailMessage, setEmailMessage] = useState("");
   const [emailError, setEmailError] = useState("");
@@ -87,7 +93,7 @@ export function ProfilePage({
   const [passwordMessage, setPasswordMessage] = useState("");
   const [passwordError, setPasswordError] = useState("");
   const profileDirty = profileName !== user.name || avatarUrl !== (user.avatarUrl ?? "");
-  const emailDirty = emailForm.email !== (user.email ?? "") || Boolean(emailForm.currentPassword);
+  const emailDirty = emailForm.email !== (user.email ?? "") || Boolean(emailForm.currentPassword || emailForm.code);
   const passwordDirty = Boolean(passwordForm.currentPassword || passwordForm.newPassword || passwordForm.confirmPassword);
   const pending = profileBusy || emailBusy || passwordBusy;
   const dirty = profileDirty || emailDirty || passwordDirty || avatarReading;
@@ -108,10 +114,16 @@ export function ProfilePage({
     setAvatarReading(false);
     setProfileName(user.name);
     setAvatarUrl(user.avatarUrl ?? "");
-    setEmailForm({ email: user.email ?? "", currentPassword: "" });
+    setEmailForm({ email: user.email ?? "", currentPassword: "", code: "" });
+    emailGrant.current = null;
     setPasswordForm({ currentPassword: "", newPassword: "", confirmPassword: "" });
     return () => avatarReadEpoch.invalidate();
   }, [user.id]);
+  useEffect(() => {
+    if (!emailResendAt) return;
+    const timer = window.setInterval(() => setEmailNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [emailResendAt]);
 
   async function handleAvatarFile(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -184,6 +196,24 @@ export function ProfilePage({
     }
   }
 
+  async function sendEmailCode() {
+    if (pending || emailCooldown) return;
+    const email = emailForm.email.trim().toLowerCase();
+    setEmailMessage(""); setEmailError("");
+    if (!/^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?@qq\.com$/i.test(email) || !emailForm.currentPassword) {
+      setEmailError("请输入 QQ 邮箱和当前密码。"); return;
+    }
+    setEmailBusy(true);
+    try {
+      const result = await api.sendBindingCode({ email, currentPassword: emailForm.currentPassword });
+      emailGrant.current = null;
+      setEmailForm(value => ({ ...value, code: "" }));
+      setEmailNow(Date.now()); setEmailResendAt(Date.now() + result.resendAfterSeconds * 1000);
+      setEmailMessage("验证码已发送，10 分钟内有效。");
+    } catch (err) { setEmailError(err instanceof Error ? err.message : "发送失败，请重试。"); }
+    finally { setEmailBusy(false); }
+  }
+
   async function changeEmail() {
     if (pending) return;
     const email = emailForm.email.trim().toLowerCase();
@@ -193,25 +223,24 @@ export function ProfilePage({
       setEmailError("请输入邮箱地址。");
       return;
     }
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      setEmailError("请输入有效邮箱地址。");
-      return;
-    }
-    if (email === (user.email ?? "").toLowerCase()) {
-      setEmailMessage("邮箱账号没有变化。");
+    if (!/^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?@qq\.com$/i.test(email)) {
+      setEmailError("请使用 qq.com 邮箱。");
       return;
     }
     if (!emailForm.currentPassword) {
       setEmailError("修改邮箱需要输入当前密码。");
       return;
     }
+    if (!/^\d{6}$/.test(emailForm.code)) { setEmailError("请输入 6 位邮箱验证码。"); return; }
 
     setEmailBusy(true);
     try {
-      const result = await api.updateProfile({ email, currentPassword: emailForm.currentPassword });
-      onUserUpdate(result.user);
-      setEmailForm({ email: result.user.email ?? "", currentPassword: "" });
-      setEmailMessage("邮箱账号已更新。");
+      if (!emailGrant.current || emailGrant.current.expiresAt <= Date.now()) {
+        const verified = await api.verifyBindingCode({ email, currentPassword: emailForm.currentPassword, code: emailForm.code });
+        emailGrant.current = { token: verified.verificationToken, expiresAt: Date.now() + verified.expiresInSeconds * 1000 };
+      }
+      await api.updateProfile({ email, currentPassword: emailForm.currentPassword, verificationToken: emailGrant.current.token });
+      onSecurityChanged("QQ 邮箱已验证并保存，所有登录会话已退出。请重新登录。");
     } catch (err) {
       setEmailError(err instanceof Error ? err.message : "邮箱修改失败");
     } finally {
@@ -242,8 +271,7 @@ export function ProfilePage({
         currentPassword: passwordForm.currentPassword,
         newPassword: passwordForm.newPassword
       });
-      setPasswordForm({ currentPassword: "", newPassword: "", confirmPassword: "" });
-      setPasswordMessage("密码已更新。");
+      onSecurityChanged("密码已更新，所有登录会话已退出。请使用新密码登录。");
     } catch (err) {
       setPasswordError(err instanceof Error ? err.message : "密码修改失败");
     } finally {
@@ -326,9 +354,9 @@ export function ProfilePage({
                 <span className="profile-v2-binding-icon"><Mail size={17} /></span>
                 <div>
                   <strong>邮箱</strong>
-                  <small>{user.email ? maskContact(user.email) : "未绑定，绑定后可使用邮箱登录"}</small>
+                  <small>{user.email ? `${maskContact(user.email)} · ${user.emailVerified ? "已验证" : "待验证，暂不可用于找回"}` : "绑定并验证 QQ 邮箱后可找回密码"}</small>
                 </div>
-                <button className="ghost-button" type="button" onClick={() => setSecurityOpen("email")}>{user.email ? "换绑" : "绑定"}</button>
+                <button className="ghost-button" type="button" onClick={() => setSecurityOpen("email")}>{user.emailVerified ? "换绑" : "验证邮箱"}</button>
               </div>
               <div className="profile-v2-binding-row">
                 <span className="profile-v2-binding-icon"><KeyRound size={17} /></span>
@@ -345,7 +373,7 @@ export function ProfilePage({
             <div className="panel-head">
               <div>
                 <h2>账号安全</h2>
-                <small>修改邮箱或密码都需要校验当前密码；改密码后其他会话会失效。</small>
+                <small>邮箱需验证 QQ 验证码；保存邮箱或修改密码后，全部会话将退出。</small>
               </div>
             </div>
 
@@ -353,7 +381,7 @@ export function ProfilePage({
               <button type="button" disabled={pending} aria-expanded={securityOpen === "email"} onClick={() => setSecurityOpen((value) => (value === "email" ? "" : "email"))}>
                 <Mail size={17} />
                 <span>
-                  <strong>修改邮箱账号</strong>
+                  <strong>验证或修改邮箱</strong>
                   <small>当前邮箱：{user.email || "未绑定"}</small>
                 </span>
                 <ChevronDown size={16} />
@@ -361,13 +389,13 @@ export function ProfilePage({
               {securityOpen === "email" ? (
                 <form className="profile-v2-collapse-body" onSubmit={event => { event.preventDefault(); void changeEmail(); }}><fieldset className="creator-form-fieldset" disabled={pending}>
                   <label className="field">
-                    <span>新邮箱</span>
+                    <span>QQ 邮箱</span>
                     <input
                       type="email"
                       value={emailForm.email}
-                      onChange={(event) => setEmailForm((value) => ({ ...value, email: event.target.value }))}
+                      onChange={(event) => { emailGrant.current = null; setEmailForm((value) => ({ ...value, email: event.target.value, code: "" })); }}
                       autoComplete="email"
-                      placeholder="name@example.com"
+                      placeholder="可填写当前邮箱或新的 QQ 邮箱"
                     />
                   </label>
                   <label className="field">
@@ -375,15 +403,22 @@ export function ProfilePage({
                     <input
                       type="password"
                       value={emailForm.currentPassword}
-                      onChange={(event) => setEmailForm((value) => ({ ...value, currentPassword: event.target.value }))}
+                      onChange={(event) => { emailGrant.current = null; setEmailForm((value) => ({ ...value, currentPassword: event.target.value })); }}
                       autoComplete="current-password"
                       placeholder="确认本人操作"
                     />
                   </label>
+                  <label className="field"><span>邮箱验证码</span>
+                    <input inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={emailForm.code}
+                      onChange={event => { emailGrant.current = null; setEmailForm(value => ({ ...value, code: event.target.value.replace(/\D/g, "") })); }} placeholder="6 位验证码" />
+                  </label>
+                  <button type="button" className="ghost-button" disabled={pending || emailCooldown > 0} onClick={() => void sendEmailCode()}>
+                    {emailCooldown > 0 ? `${emailCooldown} 秒后重发` : "发送邮箱验证码"}
+                  </button>
                   <div className="inline-actions"><button className="primary-button profile-security-submit" disabled={pending || !emailDirty} type="submit">
                     <Mail size={17} />{emailBusy ? "保存中" : "保存邮箱"}
                   </button>
-                  <button type="button" className="ghost-button" onClick={() => { setEmailForm({ email: user.email ?? "", currentPassword: "" }); setEmailError(""); setEmailMessage(""); setSecurityOpen(""); }}>取消修改</button></div></fieldset>
+                  <button type="button" className="ghost-button" onClick={() => { emailGrant.current = null; setEmailForm({ email: user.email ?? "", currentPassword: "", code: "" }); setEmailError(""); setEmailMessage(""); setSecurityOpen(""); }}>取消修改</button></div></fieldset>
                   {emailMessage ? <InlineNotice tone="success">{emailMessage}</InlineNotice> : null}
                   {emailError ? <InlineNotice tone="error">{emailError}</InlineNotice> : null}
                 </form>

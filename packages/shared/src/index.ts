@@ -250,6 +250,7 @@ export interface GenerationTask {
   estimatedSeconds?: number;
   refundPolicy?: string;
   retryable?: boolean;
+  reviewRequired?: boolean;
   cancelable?: boolean;
   fallbackAvailable?: boolean;
   fallbackHint?: string;
@@ -265,6 +266,37 @@ export interface CreditAccount {
   totalConsume: number;
 }
 
+export interface TaskOperationRow {
+  id: string;
+  kind: "generation" | "export";
+  userId: string;
+  projectId?: string;
+  contentProjectId?: string;
+  projectName?: string;
+  title: string;
+  type: string;
+  status: string;
+  provider?: string;
+  model?: string;
+  frozenCredits: number;
+  chargedCredits: number;
+  reviewRequired: boolean;
+  remoteTaskId?: string;
+  sourceFingerprint?: string;
+  canQuery: boolean;
+  canResolve: boolean;
+  attempts: Array<{ id: string; state: string; startedAt: string; submittedAt?: string; finishedAt?: string }>;
+  resolutions?: Array<{ id: string; actorId: string; reason: string; releasedCredits: number; createdAt: string }>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TaskResolutionResult {
+  targetId: string;
+  affectedTaskIds: string[];
+  releasedCredits: number;
+}
+
 export interface CreditTransaction {
   id: string;
   type: CreditTransactionType;
@@ -274,6 +306,15 @@ export interface CreditTransaction {
   taskId?: string;
   projectId?: string;
   createdAt: string;
+}
+
+export interface CheckoutExpectation {
+  planName: string;
+  amountFen: number;
+  credits: number;
+  bonusCredits: number;
+  discountPercent: number;
+  priorityLevel: number;
 }
 
 export interface RechargeOrder {
@@ -290,6 +331,8 @@ export interface RechargeOrder {
   reconcileError?: string;
   membershipStartsAt?: string;
   membershipEndsAt?: string;
+  membershipDiscountPercent?: number;
+  membershipPriorityLevel?: number;
   credits: number;
   bonusCredits: number;
   status: OrderStatus;

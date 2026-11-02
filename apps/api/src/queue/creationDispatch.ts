@@ -1,6 +1,7 @@
 import type { CreateProjectInput } from "@aifilm/shared";
 import { prisma } from "../db/client.js";
 import { generationQueue } from "./generationQueue.js";
+import { creationNeedsReview } from "./creationState.js";
 
 /** The DB transaction creates the reservation + input + deterministic job ID.
  * Redis delivery can then be retried without creating another billable task.
@@ -11,6 +12,7 @@ export async function enqueueCreationTask(taskId: string) {
     throw new Error("生成请求缺少持久化快照，请回到创作步骤重新提交");
   }
   if (!["pending", "running"].includes(task.status)) return generationQueue.getJob(task.jobId);
+  if (task.status === "pending" && creationNeedsReview(task)) return generationQueue.getJob(task.jobId);
   return generationQueue.add("create-project", {
     taskId, projectId: task.projectId, userId: task.userId,
     input: task.requestPayload as unknown as CreateProjectInput, estimatedCredits: task.estimatedCredits

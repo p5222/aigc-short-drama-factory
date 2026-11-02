@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { assertProviderConnection, readProviderConnection, storedProviderConnection, type ProviderConnection } from "@aifilm/shared";
 import { providerRuntimeOptions, validateProviderUrl } from "../providers/connection.js";
 import { encryptSettingSecret } from "../config/secrets.js";
+import { creationCanRetry, creationNeedsReview } from "../queue/creationState.js";
 import { applyDefaultModelRoutes, effectiveSettings } from "../config/platformSettings.js";
 import { normalizeRedeemCode, redeemCodeStatus, type RedeemBatchInput, type RedeemHistoryPage } from "@aifilm/shared";
 import type { ExportJob as ExportJobRow, Prisma, PrismaClient } from "@prisma/client";
@@ -714,6 +715,7 @@ export async function updateAdminUser(
 
   const user = await prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT true AS locked FROM pg_advisory_xact_lock(hashtext('active-admin-membership'))`;
+    await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${id} FOR UPDATE`;
     const current = await tx.user.findUnique({ where: { id } });
     if (!current) throw new Error("用户不存在");
     if ((data.email !== undefined || data.phone !== undefined) && !(data.email === undefined ? current.email : cleanData.email) && !(data.phone === undefined ? current.phone : cleanData.phone)) throw new Error("邮箱和手机号至少保留一个");
@@ -724,8 +726,12 @@ export async function updateAdminUser(
     const losesAccess = current.role === "admin" && current.status === "active"
       && ((cleanData.role !== undefined && cleanData.role !== "admin") || (cleanData.status !== undefined && cleanData.status !== "active"));
     if (losesAccess && await tx.user.count({ where: { role: "admin", status: "active" } }) <= 1) throw new Error("至少保留一位启用的管理员，不能停用或降级最后一位管理员。");
-    const updated = await tx.user.update({ where: { id }, data: cleanData });
-    if ((cleanData.role !== undefined && cleanData.role !== current.role) || (cleanData.status !== undefined && cleanData.status !== current.status) || (cleanData.email !== undefined && cleanData.email !== current.email) || (cleanData.phone !== undefined && cleanData.phone !== current.phone)) {
+    const securityChanged = (cleanData.role !== undefined && cleanData.role !== current.role) || (cleanData.status !== undefined && cleanData.status !== current.status) || (cleanData.email !== undefined && cleanData.email !== current.email) || (cleanData.phone !== undefined && cleanData.phone !== current.phone);
+    const updated = await tx.user.update({ where: { id }, data: { ...cleanData,
+      ...(securityChanged ? { authVersion: { increment: 1 } } : {}),
+      ...(cleanData.email !== undefined && cleanData.email !== current.email ? { emailVerifiedAt: null } : {})
+    } });
+    if (securityChanged) {
       await tx.authSession.updateMany({ where: { userId: id, revokedAt: null }, data: { revokedAt: new Date() } });
     }
     return updated;
@@ -749,7 +755,7 @@ export async function resetAdminUserPassword(id: string, password: string) {
     await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${id} FOR UPDATE`;
     const current = await tx.user.findUniqueOrThrow({ where: { id } });
     if (current.status === "deleted") throw new Error("请先恢复已删除用户，再重置密码");
-    const updated = await tx.user.update({ where: { id }, data: { passwordHash } });
+    const updated = await tx.user.update({ where: { id }, data: { passwordHash, authVersion: { increment: 1 } } });
     await tx.authSession.updateMany({ where: { userId: id, revokedAt: null }, data: { revokedAt: new Date() } });
     return updated;
   });
@@ -1334,6 +1340,7 @@ export async function createProjectAndTask(
         title: "核心剧情、剧本与角色卡生成",
         jobId: `creation-${crypto.randomUUID()}`,
         requestPayload: JSON.parse(JSON.stringify(resolvedInput)),
+        execution: { version: 1, reviewRequired: false, attempts: [] },
         provider: textProviderName(resolvedInput),
         model: textModelName(resolvedInput),
         status: "pending",
@@ -1686,8 +1693,8 @@ export async function createProjectExportJob(
           : await createVideoExportPackage(workflow, narration!);
 
     if (type === "video_export" && exportResult.outputKind !== "mp4") {
-      await prisma.exportJob.update({
-        where: { id: job.id },
+      await prisma.exportJob.updateMany({
+        where: { id: job.id, status: "running" },
         data: { status: "failed", outputUrl: exportResult.outputUrl, errorReason: exportDiagnosticsMessage(type, exportResult, workflow.storyboards.map(shot => shot.id), undefined, videoSnapshot, false, sourceSnapshot) }
       });
       return (await readCurrentExportJob(projectId, job.id, userId))!;
@@ -1696,14 +1703,14 @@ export async function createProjectExportJob(
     const refreshed = await persistProjectExportSuccess({ projectId, userId, jobId: job.id, type, workflow, exportResult, videoSnapshot, sourceSnapshot });
     return mapExportJob(refreshed, refreshed.sourceStatus);
   } catch (error) {
-    const failed = await prisma.exportJob.update({
-      where: { id: job.id },
+    await prisma.exportJob.updateMany({
+      where: { id: job.id, status: "running" },
       data: {
         status: "failed",
         errorReason: JSON.stringify({ kind: "export_diagnostics", sourceSnapshot, storyboardIds: sourceSnapshot.storyboardIds, message: error instanceof Error ? error.message : "导出失败" })
       }
     });
-    return (await readCurrentExportJob(projectId, failed.id, userId))!;
+    return (await readCurrentExportJob(projectId, job.id, userId))!;
   } finally { clearInterval(heartbeat); }
 }
 
@@ -1845,16 +1852,19 @@ export async function retryTask(taskId: string, userId = DEMO_USER_ID, input?: C
     }
     const { task } = await lockTaskCredits(tx, taskId, userId);
     if (task.status === "succeeded") throw new Error("已成功任务不需要重试");
+    if (creationNeedsReview(task)) throw new Error("生成结果待核对，请联系管理员确认，避免重复产生费用。");
     if (task.status === "pending" || task.status === "running") return task;
     if (task.type !== "text" || !task.projectId || !task.jobId) {
       throw new Error("请回到对应创作步骤重新生成此任务");
     }
+    if (!creationCanRetry(task)) throw new Error("该任务缺少可安全重试的提交记录，请联系管理员核对供应商结果，避免重复产生费用。");
     await reserveTaskCredits(tx, { taskId, userId, description: "重试生成任务，重新冻结预计积分" });
     return tx.generationTask.update({
       where: { id: taskId },
       data: { status: "pending", progress: 0, errorReason: null,
         jobId: `creation-${crypto.randomUUID()}`,
-        ...(input ? { requestPayload: JSON.parse(JSON.stringify(input)) } : {}) }
+        // The original paid request owns the input and quoted model.
+        ...(!task.requestPayload && input ? { requestPayload: JSON.parse(JSON.stringify(input)) } : {}) }
     });
   }));
 }
@@ -1863,6 +1873,7 @@ export async function cancelTask(taskId: string, userId = DEMO_USER_ID) {
   return mapTask(await prisma.$transaction(async (tx) => {
     const { task } = await lockTaskCredits(tx, taskId, userId);
     if (/^(content|media):/.test(task.jobId ?? "")) throw new Error("此生成正在独立处理中，请在对应创作步骤查看结果或重试");
+    if (creationNeedsReview(task)) throw new Error("请求已提交或结果待核对，请联系管理员确认后结束任务。");
     if (task.status === "succeeded") throw new Error("已成功任务不能取消");
     if (task.status === "canceled") return task;
     const release = await releaseTaskCredits(tx, { taskId, userId, description: "任务取消，退回本任务未消耗冻结积分" });

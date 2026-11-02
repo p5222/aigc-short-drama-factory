@@ -139,7 +139,8 @@ test("creation request replay and project deletion preserve tasks and ledger", {
         const userId = await user(), value = input(), created = await create(value, userId);
         await db.$transaction(async tx => {
           await releaseTaskCredits(tx, { taskId: created.taskId, userId });
-          await tx.generationTask.update({ where: { id: created.taskId }, data: { status: "failed" } });
+          await tx.generationTask.update({ where: { id: created.taskId }, data: { status: "failed",
+            execution: { version: 1, reviewRequired: false, attempts: [{ id: "known-failure", state: "not_submitted", startedAt: new Date().toISOString() }] } } });
         });
         await Promise.allSettled([deleteProject(created.projectId, userId, db), retryTask(created.taskId, userId, value, db)]);
         const project = await db.project.findUnique({ where: { id: created.projectId } });

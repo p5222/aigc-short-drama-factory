@@ -108,6 +108,111 @@ test("failed membership purchase keeps confirmation and reuses its durable reque
   await noOverflow(page);
 });
 
+test("lost checkout response survives reload and recovers while new sales are paused", async ({ page }) => {
+  await fixture(page, { available: true });
+  const requests: Array<{ requestId: string; expected: unknown }> = [];
+  await page.route("**/api/billing/checkout", route => {
+    requests.push(route.request().postDataJSON());
+    return requests.length === 1 ? route.fulfill({ status: 503, json: { message: "下单结果待核对" } })
+      : route.fulfill({ json: { ...pending, status: "paid" } });
+  });
+  await page.goto("/#/recharge");
+  await page.getByRole("button", { name: "购买一个月", exact: true }).first().click();
+  await page.getByRole("dialog").getByRole("button", { name: "确认并获取付款码" }).click();
+  await expect(page.getByRole("dialog")).toContainText("下单结果待核对");
+  await page.route("**/api/billing/availability", route => route.fulfill({ json: { wechat: false, membership: false, autoRenew: false } }));
+  await page.reload();
+  await expect(page.getByRole("button", { name: "暂未开放购买" })).toHaveCount(2);
+  await page.getByRole("button", { name: "恢复上次购买 · 当前配置会员" }).click();
+  await expect(page.getByRole("region", { name: "当前支付订单" })).toContainText("已到账");
+  await expect(page.getByLabel("待恢复购买请求")).toHaveCount(0);
+  expect(requests).toHaveLength(2);
+  expect(requests[1]).toEqual(requests[0]);
+  expect(requests[0]!.expected).toEqual({ planName: "当前配置会员", amountFen: 4850, credits: 4567,
+    bonusCredits: 0, discountPercent: 7, priorityLevel: 1 });
+});
+
+test("a failed refresh disables previously available purchases until all reads recover", async ({ page }) => {
+  await fixture(page, { available: true });
+  let failing = false, creates = 0;
+  await page.route("**/api/billing/orders", route => failing ? route.fulfill({ status: 503, json: { message: "fixture" } }) : route.fulfill({ json: [] }));
+  await page.route("**/api/billing/checkout", route => { creates++; return route.fulfill({ json: pending }); });
+  await page.goto("/#/recharge");
+  await expect(page.getByRole("button", { name: "购买一个月", exact: true }).first()).toBeEnabled();
+  failing = true;
+  await page.getByRole("button", { name: "刷新会员与订单" }).click();
+  await expect(page.getByText(/在线支付信息暂时加载失败/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "正在读取…" }).first()).toBeDisabled();
+  expect(creates).toBe(0);
+  failing = false;
+  await page.getByRole("button", { name: "刷新支付信息" }).click();
+  await expect(page.getByRole("button", { name: "购买一个月", exact: true }).first()).toBeEnabled();
+});
+
+test("blocked purchase storage leaves existing orders available for recovery", async ({ page }) => {
+  await fixture(page, { available: true, orders: [pending] });
+  await page.addInitScript(() => {
+    const original = Storage.prototype.setItem;
+    Storage.prototype.setItem = function(key: string, value: string) {
+      if (key.startsWith("manjiao:checkout:")) throw new DOMException("Unavailable", "QuotaExceededError");
+      original.call(this, key, value);
+    };
+  });
+  await page.route("**/api/billing/orders/pending-member/checkout", route => route.fulfill({ json: { ...pending, status: "paid" } }));
+  await page.goto("/#/recharge");
+  await expect(page.getByText(/浏览器无法保存购买请求/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "购买一个月", exact: true }).first()).toBeDisabled();
+  await page.locator(".online-order-list button").first().click();
+  await expect(page.getByRole("region", { name: "当前支付订单" })).toContainText("已到账");
+});
+
+test("price rejection clears only an uncreated request and requires renewed confirmation", async ({ page }) => {
+  await fixture(page, { available: true });
+  let changed = false;
+  const requests: Array<{ requestId: string; expected: { amountFen: number; discountPercent: number } }> = [];
+  await page.route("**/api/membership-plans", route => route.fulfill({ json: changed
+    ? [{ ...plans[0], monthlyPrice: 59, discountPercent: 9 }, plans[1]] : plans }));
+  await page.route("**/api/billing/checkout", route => {
+    requests.push(route.request().postDataJSON()); changed = true;
+    return requests.length === 1 ? route.fulfill({ status: 409, json: { code: "checkout_not_created", message: "套餐价格已变化，本次未创建订单。请重新选择。" } })
+      : route.fulfill({ json: { ...pending, amountCny: 59, amountFen: 5900, membershipDiscountPercent: 9, membershipPriorityLevel: 1 } });
+  });
+  await page.goto("/#/recharge");
+  await page.getByRole("button", { name: "购买一个月", exact: true }).first().click();
+  await page.getByRole("dialog").getByRole("button", { name: "确认并获取付款码" }).click();
+  await expect(page.getByRole("dialog")).toContainText("本次未创建订单");
+  await expect(page.getByLabel("待恢复购买请求")).toHaveCount(0);
+  await expect(page.locator(".membership-card").first()).toContainText("59.00");
+  await page.getByRole("dialog").getByRole("button", { name: "取消", exact: true }).click();
+  await page.getByRole("button", { name: "购买一个月", exact: true }).first().click();
+  await expect(page.getByRole("dialog")).toContainText("59.00");
+  await page.getByRole("dialog").getByRole("button", { name: "确认并获取付款码" }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  expect(requests[0]!.requestId).not.toBe(requests[1]!.requestId);
+  expect(requests[1]!.expected.amountFen).toBe(5900);
+  expect(requests[1]!.expected.discountPercent).toBe(9);
+  await expect(page.getByRole("region", { name: "当前支付订单" })).toContainText("结算减免 9%");
+});
+
+test("a replacement login never restores another account's checkout request", async ({ page }) => {
+  await fixture(page, { available: true });
+  let userId = "one";
+  await page.route("**/api/auth/me", route => route.fulfill({ json: { user: { id: userId, name: "Fixture", role: "creator", status: "active" } } }));
+  await page.route("**/api/billing/checkout", route => route.fulfill({ status: 503, json: { message: "结果待核对" } }));
+  await page.goto("/#/recharge");
+  await page.getByRole("button", { name: "购买一个月", exact: true }).first().click();
+  await page.getByRole("dialog").getByRole("button", { name: "确认并获取付款码" }).click();
+  await expect(page.getByRole("dialog")).toContainText("结果待核对");
+  userId = "two";
+  await page.reload();
+  await expect(page.getByRole("button", { name: "购买一个月", exact: true }).first()).toBeEnabled();
+  await expect(page.getByLabel("待恢复购买请求")).toHaveCount(0);
+  userId = "one";
+  await page.reload();
+  await expect(page.getByRole("button", { name: "恢复上次购买 · 当前配置会员" })).toBeVisible();
+  await noOverflow(page);
+});
+
 test("expired membership retains its date and balance; unresolved expired QR protects tier", async ({ page }) => {
   await fixture(page, { available: true, status: { active: null, paidThrough: "2026-10-20T00:00:00Z",
     lastExpired: { ...current, endsAt: "2026-10-20T00:00:00Z" }, scheduled: [], scheduledCount: 0, autoRenew: false }, orders: [pending] });

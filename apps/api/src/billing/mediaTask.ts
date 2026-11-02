@@ -7,6 +7,7 @@ import { withTaskMeter, flushTaskMeter } from "./metering.js";
 import type { BillingUsage } from "@aifilm/shared";
 import { readProviderConnection, assertProviderConnection } from "@aifilm/shared";
 import { providerRuntimeOptions, configuredRuntime } from "../providers/connection.js";
+import { withTextSubmissionGuard, textSubmissionOutcome } from "../providers/textSubmission.js";
 
 type MediaTaskInput = {
   userId: string; projectId: string; projectName: string; type: string; scope: string;
@@ -122,7 +123,10 @@ export async function runMediaTask<T>(input: MediaTaskInput, run: (context: Medi
     });
   }
   try {
-    const result = await withTaskMeter(task.id, () => run({
+    const result = await withTaskMeter(task.id, () => withTextSubmissionGuard(async () => {
+      if (checkpoint.submissionStarted) throw new MediaSourceConflict("本次文本调用已提交，不能重复调用。");
+      await saveCheckpoint({ submissionStarted: true }, "running");
+    }, () => run({
       taskId: task.id, task,
       checkpoint: async (metadata) => { await saveCheckpoint(metadata, "running"); },
       defer: async (metadata) => { const pending = await saveCheckpoint(metadata, "pending"); finalized = true; return pending; },
@@ -149,7 +153,7 @@ export async function runMediaTask<T>(input: MediaTaskInput, run: (context: Medi
         finalized = true;
         return result;
       }
-    }), db, leaseId);
+    })), db, leaseId);
     if (!finalized) throw new Error("媒体任务未记录最终状态");
     return result;
   } catch (error) {
@@ -158,9 +162,11 @@ export async function runMediaTask<T>(input: MediaTaskInput, run: (context: Medi
       await db.$transaction(async (tx) => {
         const { task: latest } = await lockTaskCredits(tx, task.id, input.userId);
         if (!["pending", "running"].includes(latest.status) || mediaCheckpoint(latest).leaseId !== leaseId) return;
-        if (input.resume && (checkpoint.remoteTaskId || checkpoint.remoteVideoUrl || checkpoint.submissionStarted)) {
+        if ((input.resume && (checkpoint.remoteTaskId || checkpoint.remoteVideoUrl || checkpoint.submissionStarted))
+          || (checkpoint.submissionStarted && textSubmissionOutcome(error) !== "rejected" && ["text", "storyboard"].includes(input.type))) {
           await tx.generationTask.update({ where: { id: task.id }, data: {
-            status: "pending", errorReason: JSON.stringify({ kind: "media_checkpoint", metadata: { ...checkpoint, lastError: message } })
+            status: "pending", errorReason: JSON.stringify({ kind: "media_checkpoint", metadata: { ...checkpoint, lastError: message,
+              ...(!input.resume ? { needsReconciliation: true } : {}) } })
           } });
           return;
         }

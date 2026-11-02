@@ -18,3 +18,12 @@ test("task responses retain actionable errors without exposing checkpoint metada
   assert.equal(mapTask({ ...row, errorReason: "额度不足" }).errorReason, "额度不足");
   assert.match(mapTask(row).fallbackHint!, /沿用本次任务的模型与报价/);
 });
+
+test("unknown submission state disables direct retry and cancellation without exposing private attempts", () => {
+  const mapped = mapTask({ ...row, status: "pending", jobId: "creation-example",
+    execution: { version: 1, reviewRequired: true, attempts: [{ id: "private-attempt-id", state: "unknown" }] } });
+  assert.equal(mapped.reviewRequired, true); assert.equal(mapped.retryable, false); assert.equal(mapped.cancelable, false);
+  assert.doesNotMatch(JSON.stringify(mapped), /private-attempt-id/);
+  assert.equal(mapTask({ ...row, status: "failed", jobId: "creation-legacy" }).retryable, false);
+  assert.equal(mapTask({ ...row, status: "canceled", jobId: "creation-new", execution: { version: 1, attempts: [], reviewRequired: false } }).retryable, true);
+});

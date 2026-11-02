@@ -59,7 +59,8 @@ test("PostgreSQL commerce and startup configuration are idempotent", { skip: !da
       const planId = `member_${crypto.randomUUID()}`; memberPlanIds.push(planId);
       await db.membershipPlan.create({ data: { id: planId, name: "Integration month", monthlyPrice: 39.9,
         monthlyCredits: 4000, discountPercent: 10, priorityLevel: 2, features: [] } });
-      const input = { planId, kind: "membership" as const, requestId: crypto.randomUUID() };
+      const input = { planId, kind: "membership" as const, requestId: crypto.randomUUID(),
+        expected: { planName: "Integration month", amountFen: 3990, credits: 4000, bonusCredits: 0, discountPercent: 10, priorityLevel: 2 } };
       const orders = await Promise.all(Array.from({ length: 12 }, () => createPaymentOrder(userId, input, db)));
       assert.equal(new Set(orders.map(row => row.id)).size, 1);
       assert.equal(orders[0]!.amountFen, 3990);
@@ -74,7 +75,8 @@ test("PostgreSQL commerce and startup configuration are idempotent", { skip: !da
       assert.equal((await account(userId)).balance, 4100);
       const firstMember = await getMembership(userId, db);
       assert.equal(firstMember.active?.discountPercent, 10);
-      const renewal = await createPaymentOrder(userId, { ...input, requestId: crypto.randomUUID() }, db);
+      const renewal = await createPaymentOrder(userId, { ...input, requestId: crypto.randomUUID(),
+        expected: { ...input.expected, amountFen: 4990, credits: 5000, discountPercent: 20 } }, db);
       await repository.handleRechargeCallback({ ...payment, orderId: renewal.id, providerTradeNo: `renew_${crypto.randomUUID()}`, amountFen: 4990 });
       const updated = await getMembership(userId, db);
       assert.ok(Date.parse(updated.paidThrough!) > Date.parse(firstMember.paidThrough!));
@@ -107,9 +109,10 @@ test("PostgreSQL commerce and startup configuration are idempotent", { skip: !da
       const userId = await user();
       const ids = [`member_${crypto.randomUUID()}`, `member_${crypto.randomUUID()}`]; memberPlanIds.push(...ids);
       for (const id of ids) await db.membershipPlan.create({ data: { id, name: "Tier", monthlyPrice: 10, monthlyCredits: 100, features: [] } });
-      const first = await createPaymentOrder(userId, { planId: ids[0]!, kind: "membership", requestId: crypto.randomUUID() }, db);
+      const expected = { planName: "Tier", amountFen: 1000, credits: 100, bonusCredits: 0, discountPercent: 0, priorityLevel: 0 };
+      const first = await createPaymentOrder(userId, { planId: ids[0]!, kind: "membership", requestId: crypto.randomUUID(), expected }, db);
       await db.rechargeOrder.update({ where: { id: first.id }, data: { expiresAt: new Date(0) } });
-      await assert.rejects(createPaymentOrder(userId, { planId: ids[1]!, kind: "membership", requestId: crypto.randomUUID() }, db), /同档续费/);
+      await assert.rejects(createPaymentOrder(userId, { planId: ids[1]!, kind: "membership", requestId: crypto.randomUUID(), expected }, db), /同档续费/);
       await repository.handleRechargeCallback({ orderId: first.id, channel: "wechat", amountFen: 1000, paidAt: new Date(),
         providerTradeNo: `late_${crypto.randomUUID()}` });
       assert.equal((await getMembership(userId, db)).active?.planId, ids[0]);
