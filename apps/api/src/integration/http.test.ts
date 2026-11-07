@@ -308,7 +308,7 @@ test("HTTP business boundaries: sessions, administrator writes, private media an
         const summary = await (await request("/api/workbench/summary", owner.token)).json();
         assert.equal(summary.recentProjects.length, 6);
         assert.equal(summary.recentTasks.length, 8);
-        assert.deepEqual(summary.actionCounts, { waiting: 9, active: 9, failed: 2 });
+        assert.deepEqual(summary.actionCounts, { waiting: 9, active: 9, failed: 2, review: 0 });
         assert.equal(summary.actionProjects.length, 3);
         assert.ok(summary.actionProjects.every((project: { id: string }) => project.id.startsWith(prefix)));
         const denied = await request("/api/admin/summary", owner.token);
