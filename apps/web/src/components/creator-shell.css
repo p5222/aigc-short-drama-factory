@@ -1,4 +1,5 @@
 .creator-search { position: relative; flex: 1 1 220px; min-width: 150px; max-width: 380px; }
+body:has(.app-shell.product-shell) { min-width: 0; }
 .creator-search .search-box { width: 100%; min-width: 0; }
 .creator-search-results { position: absolute; z-index: 120; inset: calc(100% + 8px) 0 auto; min-width: 240px; max-height: min(440px, 65dvh); overflow: auto; padding: 8px; background: var(--ds-bg-surface); border: 1px solid var(--ds-border-default); border-radius: var(--ds-radius-dialog); box-shadow: var(--ds-shadow-floating); }
 .creator-search-results p { padding: 8px; margin: 0; color: var(--ds-text-muted); font-size: 12px; }

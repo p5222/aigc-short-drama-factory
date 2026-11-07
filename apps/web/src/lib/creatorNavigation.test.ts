@@ -8,6 +8,8 @@ test("task shortcuts preserve status and exact selection through reload while in
   assert.deepEqual(readCreatorRoute("#/tasks?status=unknown&task=bad%2Fid"), { page: "tasks" });
   assert.deepEqual(readCreatorRoute("#/tasks?status=all&task="), { page: "tasks" });
   assert.deepEqual(readCreatorRoute("#/tasks?status=active"), { page: "tasks", taskFilter: "active" });
+  const review = { page: "tasks", taskFilter: "review", taskId: "content-task-42" } as const;
+  assert.deepEqual(readCreatorRoute(creatorRouteHash(review)), review);
 });
 
 test("creator links preserve project identity across reloads, and reject invalid or admin destinations", () => {

@@ -55,7 +55,8 @@ async function fixtures(page: Page) {
     };
     return route.fulfill({ json: values[path] ?? [] });
   });
-  return { historyId, writes: () => writes, setConflict: () => { conflict = true; }, failRefresh: () => { failRefresh = true; },
+  return { historyId, project, jobs: () => jobs, setJobs: (next: any[]) => { jobs = next; }, setRatio: (ratio: string) => { project.videoRatio = ratio; },
+    writes: () => writes, setConflict: () => { conflict = true; }, failRefresh: () => { failRefresh = true; }, recover: () => { failRefresh = false; },
     addImages: () => { for (const shot of storyboards) assets.push({ id: `image_${shot.id}`, projectId: project.id, type: "image", name: "现有图片夹具", description: "", prompt: "", referenceUrl: "/media/cineart-home/desert_poster.jpg", status: "succeeded" }); },
     replaceVideo: () => { assets[0].referenceUrl = "/storage/editor-replaced.mp4"; },
     quote: () => quoteRequest, exported: () => exportRequest, shotEdited: () => shotRequest };
@@ -175,6 +176,86 @@ test("studio keeps generated clips accessible after final exports and previews h
   await screenshot(page, "studio-outputs", info.project.name);
   await page.getByRole("button", { name: "继续剪辑", exact: true }).click();
   await expect(page.getByLabel("镜头入点秒数")).toBeVisible();
+});
+
+test("studio player remains inside its preview column across aspect ratios, widths and themes", async ({ page }, info) => {
+  const state = await fixtures(page);
+  await page.goto("/#/studio");
+  for (const ratio of ["16:9", "9:16", "1:1"]) {
+    state.setRatio(ratio); await page.reload();
+    await expect(page.locator(".studio-player video")).toBeVisible();
+    for (const theme of ["light", "dark"]) {
+      if (await page.locator("html").getAttribute("data-theme") !== theme) await page.getByRole("button", { name: "切换主题", exact: true }).click();
+      for (const width of [360, 768, 1024, 1440]) {
+        await page.setViewportSize({ width, height: 950 });
+        await expect.poll(() => page.evaluate((viewportWidth) => {
+          const player = document.querySelector(".studio-player")!.getBoundingClientRect();
+          const video = document.querySelector(".studio-player video")!.getBoundingClientRect();
+          const panel = document.querySelector(".studio-preview-panel")!.getBoundingClientRect();
+          const inspector = document.querySelector(".studio-inspector")!.getBoundingClientRect();
+          return [
+            document.documentElement.scrollWidth > innerWidth + 1 ? `page ${document.documentElement.scrollWidth} > ${innerWidth}` : "",
+            innerWidth > viewportWidth + 1 ? `layout viewport ${innerWidth} > device ${viewportWidth}` : "",
+            player.left < panel.left || player.right > panel.right + 1 ? `player ${player.left}..${player.right}, panel ${panel.left}..${panel.right}` : "",
+            video.left < player.left || video.right > player.right + 1 ? `video ${video.left}..${video.right}, player ${player.left}..${player.right}` : "",
+            inspector.top < player.bottom && inspector.left < player.right ? `inspector ${inspector.left},${inspector.top}, player ${player.right},${player.bottom}` : ""
+          ].filter(Boolean);
+        }, width), { message: `${theme} ${ratio} at ${width}px keeps media inside preview` }).toEqual([]);
+      }
+    }
+  }
+  state.setRatio("16:9"); await page.reload();
+  await expect(page.locator(".studio-output-context")).toContainText("历史版本 · 内容已更新");
+  await expect(page.getByRole("heading", { name: "最终成片预览" })).toHaveCount(0);
+  await page.setViewportSize({ width: info.project.name === "mobile" ? 390 : 1440, height: 950 });
+  await screenshot(page, "studio-contained", info.project.name);
+});
+
+test("delivery library reaches every historical video, audio and subtitle with versioned downloads", async ({ page }, info) => {
+  const state = await fixtures(page);
+  const seed = state.jobs()[0];
+  state.setJobs([
+    ...Array.from({ length: 15 }, (_, i) => ({ ...seed, id: `film-${String(i).padStart(2, "0")}`, deliveryEdit: { episodeNo: 2, revision: i + 1 }, createdAt: new Date(Date.UTC(2026, 9, i + 1)).toISOString() })),
+    { ...seed, id: "voice-archive", type: "tts", outputKind: "audio", outputUrl: "/storage/voice-archive.mp3" },
+    { ...seed, id: "subtitle-archive", type: "subtitle", outputKind: "subtitle", outputUrl: "/storage/subtitle-archive.srt" },
+    { ...seed, id: "failed-export", status: "failed", errorReason: "本次导出未完成，请核对输入" }
+  ]);
+  await page.route("**/api/projects/video-edit/export/jobs/*/download", route => route.fulfill({ body: "download-fixture", contentType: route.request().url().includes("voice") ? "audio/mpeg" : "application/octet-stream" }));
+  await page.goto("/#/studio");
+  const library = page.getByRole("region", { name: "成片版本库" });
+  await expect(library.locator("article")).toHaveCount(6);
+  await library.getByRole("button", { name: "下一页交付版本", exact: true }).click();
+  await library.getByRole("button", { name: "下一页交付版本", exact: true }).click();
+  await library.getByRole("button", { name: "预览成片 film-00", exact: true }).click();
+  await expect(page.locator(".studio-preview-panel .studio-panel-head")).toContainText("第 2 集 · 剪辑 v1 · 3 镜头");
+  await library.getByLabel("搜索交付版本").fill("film-14");
+  await expect(library.locator("article")).toHaveCount(1);
+  await expect(library.getByRole("navigation", { name: "交付版本列表分页" })).toHaveCount(0);
+  await library.getByLabel("搜索交付版本").fill("");
+  for (const [type, label, id, extension] of [["tts", "配音", "voice-archive", ".mp3"], ["subtitle", "字幕", "subtitle-archive", ".srt"]]) {
+    await library.getByLabel("交付文件类型").selectOption(type);
+    const downloading = page.waitForEvent("download");
+    await library.getByRole("button", { name: `下载${label} ${id}`, exact: true }).click();
+    const file = await downloading;
+    expect(file.suggestedFilename()).toContain(`${label}-3镜-${id}${extension}`);
+  }
+  await library.getByLabel("交付文件类型").selectOption("all");
+  await library.getByLabel("交付文件状态").selectOption("failed");
+  await expect(library.locator("article")).toHaveCount(1);
+  await expect(library).toContainText("本次导出未完成");
+  await screenshot(page, "delivery-library", info.project.name);
+});
+
+test("studio read failure is recoverable and never presented as absent media", async ({ page }) => {
+  const state = await fixtures(page); state.failRefresh();
+  await page.goto("/#/studio");
+  await expect(page.getByText("作品数据读取失败", { exact: true })).toBeVisible();
+  await expect(page.getByText("还没有可播放的视频片段", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "合成 MP4 成片" })).toBeDisabled();
+  state.recover();
+  await page.getByRole("button", { name: "重新加载作品" }).click();
+  await expect(page.locator(".studio-player video")).toBeVisible();
+  await expect(page.getByText("作品数据读取失败", { exact: true })).toHaveCount(0);
 });
 
 test("storyboard preview follows shot timing and remains clearly labeled as static frames", async ({ page }, info) => {

@@ -35,3 +35,14 @@ test("formats update times for quick scanning", () => {
   assert.equal(formatRelativeUpdate("2026-07-23T09:45:00.000Z", now), "15 分钟前");
   assert.equal(formatRelativeUpdate("2026-07-21T10:00:00.000Z", now), "2 天前");
 });
+
+test("unknown results are separate from active and failed work", () => {
+  const result = collectWorkbenchActions([], [
+    { ...task("pending-review", "pending"), reviewRequired: true },
+    { ...task("failed-review", "failed"), reviewRequired: true },
+    task("running", "running"), task("failed", "failed")
+  ]);
+  assert.deepEqual(result.review.map(item => item.id), ["pending-review", "failed-review"]);
+  assert.deepEqual(result.active.map(item => item.id), ["running"]);
+  assert.deepEqual(result.failed.map(item => item.id), ["failed"]);
+});

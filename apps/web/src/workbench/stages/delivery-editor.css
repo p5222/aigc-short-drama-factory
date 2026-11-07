@@ -30,6 +30,16 @@ body:has(.wb-shell.project-workbench) { min-width: 0; }
 .dlv3-output-library article strong { font-size: 12px; }
 .dlv3-output-library small, .dlv3-output-library p { color: var(--text-3); font-size: 11px; line-height: 1.7; }
 .dlv3-output-library .dlv3-output-error { color: var(--danger); }
+.dlv3-output-library { min-width: 0; }
+.dlv3-output-library .dlv3-library-filters { display: flex; flex-wrap: wrap; gap: 8px; padding-block: 8px; }
+.dlv3-library-filters label { display: grid; flex: 1 1 95px; min-width: 0; gap: 5px; font-size: 11px; color: var(--text-2); }
+.dlv3-library-filters .dlv3-library-search { flex-basis: 150px; }
+.dlv3-library-filters :is(input, select) { width: 100%; min-width: 0; min-height: 36px; border: 1px solid var(--border-1); border-radius: 6px; padding: 6px 8px; color: var(--text-1); background: var(--surface-1); font: inherit; }
+.dlv3-output-library article[data-selected] { border-left: 2px solid var(--accent); padding-left: 10px; }
+.dlv3-output-library .dlv3-output-info { min-width: 0; flex: 1 1 180px; overflow-wrap: anywhere; }
+.dlv3-output-library .dlv3-output-actions { flex-wrap: wrap; }
+.dlv3-output-library .dlv2-btn { min-height: 36px; }
+.dlv3-output-library .list-pagination { flex-wrap: wrap; gap: 8px; }
 .studio-preview-switch { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
 @media (max-width: 767px) {
   .wb-shell .dlv2-stage { padding: 12px; }

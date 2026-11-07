@@ -3,7 +3,7 @@ import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
 // UI-only fixtures: no production accounts, supplier requests or payments.
-async function setup(page: Page, options: { storyCount?: number; projectCount?: number; storyError?: boolean; savedDraft?: boolean; admin?: boolean } = {}) {
+async function setup(page: Page, options: { storyCount?: number; projectCount?: number; storyError?: boolean; savedDraft?: boolean; admin?: boolean; review?: boolean } = {}) {
   await page.addInitScript(({ savedDraft }) => {
     localStorage.setItem("aifilm_auth_token", "flow-fixture");
     localStorage.setItem("manjiao-theme", "light");
@@ -12,6 +12,7 @@ async function setup(page: Page, options: { storyCount?: number; projectCount?: 
   let stories = Array.from({ length: options.storyCount ?? 1 }, (_, i) => ({ id: `story-${i}`, title: `时光邮局 ${i + 1}`, mode: "original", status: "confirmed", activeStep: "chapter", sourceCount: 1, chapterCount: 3, scriptCount: 0, updatedAt: `2026-10-${String(27 - i % 20).padStart(2, "0")}T10:00:00Z` }));
   const projects = Array.from({ length: options.projectCount ?? 1 }, (_, i) => ({ id: `project-${i}`, name: `风起旧书店 ${i + 1}`, type: "漫剧", intro: "旧书店的来信，开启一段关于重逢的故事。", sourceType: "script", artStyle: "国漫", videoRatio: "16:9", status: "scripting", episodes: 3, storyboards: 12, characters: 2, imageAssets: 6, videoClips: 0, creditsSpent: 28, updatedAt: "2026-10-01T10:00:00Z" }));
   const tasks = Array.from({ length: 25 }, (_, i) => ({ id: `task-${i}`, title: `书店镜头 ${i + 1}`, type: "video", projectId: "project-0", projectName: "风起旧书店", provider: "测试渠道", model: "fixture", status: i === 24 ? "failed" : "succeeded", progress: i === 24 ? 0 : 100, estimatedCredits: 20, finalCredits: i === 24 ? 0 : 20, retryable: false, jobId: "private-internal-job", errorReason: i === 24 ? "需要核对结果" : undefined, createdAt: "2026-10-26T00:00:00Z", updatedAt: "2026-10-26T00:00:00Z" }));
+  if (options.review) Object.assign(tasks[0], { title: "故事大纲待核对", status: "running", reviewRequired: true, projectId: undefined, contentProjectId: "story-0", progress: 30, errorReason: undefined, finalCredits: undefined });
   let failStories = options.storyError;
   let writes: Record<string, unknown>[] = [];
   await page.route("**/api/**", async route => {
@@ -24,7 +25,7 @@ async function setup(page: Page, options: { storyCount?: number; projectCount?: 
     }
     const values: Record<string, unknown> = {
       "/auth/me": { user: { id: "flow-user", name: "林间", role: options.admin ? "admin" : "user", status: "active" } },
-      "/workbench/summary": { userName: "林间", projects: projects.length, storyboards: 12, runningTasks: 0, credits: 1280, recentProjects: projects.slice(0, 3), recentTasks: [tasks[24]], actionCounts: { waiting: projects.length, active: 0, failed: 1 }, announcements: [] },
+      "/workbench/summary": { userName: "林间", projects: projects.length, storyboards: 12, runningTasks: 0, credits: 1280, recentProjects: projects.slice(0, 3), recentTasks: [tasks[24]], actionCounts: { waiting: projects.length, active: 0, failed: 1, review: options.review ? 1 : 0 }, announcements: [] },
       "/projects": projects, "/content/projects": stories, "/tasks": tasks,
       "/credits/account": { balance: 1280, frozenBalance: 0 }, "/credits/ledger": { items: [], total: 0 },
       "/support/tickets": { items: [], total: 0, page: 1, pageSize: 20 },
@@ -58,6 +59,33 @@ test("workbench resumes the newer story and failed-task shortcut survives reload
   await expect(page.locator(".queue-task-row")).toHaveCount(1);
   await page.reload();
   await expect(page.getByRole("button", { name: "失败", exact: true })).toHaveAttribute("aria-pressed", "true");
+});
+
+test("review entry, notification and exact task search preserve the recovery context", async ({ page }, info) => {
+  await setup(page, { review: true });
+  await page.goto("/#/workbench");
+  await page.getByRole("button", { name: "查看待核对任务", exact: true }).click();
+  await expect(page).toHaveURL(/#\/tasks\?status=review$/);
+  await page.reload();
+  await expect(page.locator(".queue-task-row")).toHaveCount(1);
+  const detail = page.getByRole("region", { name: "所选任务详情" });
+  await expect(detail).toContainText("已暂停，等待核对供应商结果");
+  await expect(detail).toContainText("未结算积分仍冻结");
+  await expect(detail).not.toContainText("任务生成中，切换页面后仍会继续执行");
+  await expect(detail.locator(".running")).toHaveCount(0);
+  await expect(detail.getByRole("button", { name: "重试任务", exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "切换主题", exact: true }).click();
+  await capture(page, "task-review", info.project.name);
+  await detail.getByRole("button", { name: "打开所属故事" }).click();
+  await expect(page).toHaveURL(/#\/content\/story-0$/);
+  await page.goto("/#/workbench");
+  await page.getByRole("button", { name: "查看生成队列，1 个任务待核对，1 个任务失败" }).click();
+  await expect(page).toHaveURL(/#\/tasks\?status=review$/);
+  await page.setViewportSize({ width: 1440, height: 950 });
+  await page.getByLabel("搜索我的作品和任务").fill("书店镜头 23");
+  await page.locator("#creator-search-results").getByRole("button").click();
+  await expect(page).toHaveURL(/#\/tasks\?task=task-22$/);
+  await expect(detail.getByRole("heading", { name: "书店镜头 23" })).toBeVisible();
 });
 
 test("story read failure remains visible and recovery restores the saved manuscript", async ({ page }) => {

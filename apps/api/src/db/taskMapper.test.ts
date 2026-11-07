@@ -27,3 +27,21 @@ test("unknown submission state disables direct retry and cancellation without ex
   assert.equal(mapTask({ ...row, status: "failed", jobId: "creation-legacy" }).retryable, false);
   assert.equal(mapTask({ ...row, status: "canceled", jobId: "creation-new", execution: { version: 1, attempts: [], reviewRequired: false } }).retryable, true);
 });
+
+test("review presentation distinguishes active submissions, unknown results and resolved tasks", () => {
+  const execution = { version: 1, reviewRequired: false, attempts: [{ id: "attempt", state: "submitted" }] };
+  assert.equal(mapTask({ ...row, execution }).reviewRequired, false);
+  const unknown = mapTask({ ...row, execution: { ...execution, attempts: [{ id: "attempt", state: "unknown" }] } });
+  assert.equal(unknown.reviewRequired, true); assert.match(unknown.refundPolicy!, /仍冻结/);
+  const media = { ...row, status: "failed", errorReason: JSON.stringify({ kind: "media_checkpoint", metadata: { needsReconciliation: true } }) };
+  assert.equal(mapTask(media).reviewRequired, true);
+  assert.equal(mapTask(media).retryable, false);
+  assert.equal(mapTask({ ...media, status: "canceled" }).reviewRequired, false);
+});
+
+test("only well-formed content billing links expose a story destination", () => {
+  assert.equal(mapTask({ ...row, jobId: "content:story-42:billing:parent-1:child-1" }).contentProjectId, "story-42");
+  for (const jobId of ["content:story-42:billing:parent-1", "content:../bad:billing:parent:child", "content:story:billing:parent:child:extra", "media:story:billing:parent:child"]) {
+    assert.equal(mapTask({ ...row, jobId }).contentProjectId, undefined);
+  }
+});

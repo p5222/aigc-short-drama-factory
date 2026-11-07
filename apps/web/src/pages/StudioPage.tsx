@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Clapperboard, Download, FileAudio, Film, FolderOpen, Loader2, RefreshCw, Scissors, Subtitles } from "lucide-react";
+import { Clapperboard, FileAudio, Film, FolderOpen, Loader2, RefreshCw, Scissors, Subtitles } from "lucide-react";
 import type { AssetItem, ExportJob, GenerationTask, Project, ProjectWorkflow, StoryboardShot } from "@aifilm/shared";
 import { isPersistedPlayableVideoReference } from "@aifilm/shared";
 import { api } from "../lib/api";
@@ -8,7 +8,10 @@ import { confirmedDeliveryCredits, deliveryQuoteScopeKey, type DeliveryExportQuo
 import { getDeliveryExportState, partitionDeliveryExportJobs } from "../workbench/stages/deliveryModel";
 import { buildStudioExportIntent, createScopedRequestGate, submitStudioExport, type StudioExportIntent } from "./studioExportModel";
 import { DeliveryOutputLibrary } from "../workbench/stages/DeliveryOutputLibrary";
+import { isPlayableExport, outputDownloadName, outputScopeLabel, outputSourceLabel } from "../workbench/stages/deliveryOutputModel";
+import { StatePanel } from "../design-system/ui";
 import "../workbench/stages/delivery-editor.css";
+import "./studio-layout.css";
 import { workbenchPageSession } from "./workbenchPageModel";
 
 interface StudioPageProps {
@@ -34,6 +37,9 @@ export function StudioPage({ projects, tasks, onOpenProject, onRefresh }: Studio
   const [busyAction, setBusyAction] = useState<StudioAction | null>(null);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [readError, setReadError] = useState("");
+  const [downloadingJobId, setDownloadingJobId] = useState("");
+  const downloadingRef = useRef(false);
   const [clipIndex, setClipIndex] = useState(0);
   const [previewMode, setPreviewMode] = useState<"final" | "clips">("final");
   const [viewedOutputId, setViewedOutputId] = useState("");
@@ -76,10 +82,10 @@ export function StudioPage({ projects, tasks, onOpenProject, onRefresh }: Studio
       if (nextWorkflow.project.id !== projectId) throw new Error("作品数据不匹配，请刷新后重试。");
       setWorkflow(nextWorkflow);
       setExportJobs(nextExportJobs);
-      setError("");
+      setReadError("");
     } catch (err) {
       if (!dataRequests.isCurrent(ticket, projectRef.current)) return;
-      setError(err instanceof Error ? err.message : "剪辑中心数据加载失败");
+      setReadError(err instanceof Error ? err.message : "剪辑中心数据加载失败");
       throw err;
     } finally {
       if (dataRequests.isCurrent(ticket, projectRef.current)) setLoading(false);
@@ -92,6 +98,7 @@ export function StudioPage({ projects, tasks, onOpenProject, onRefresh }: Studio
     setAutoPlayNext(false);
     setMessage("");
     setError("");
+    setReadError("");
     setWorkflow(undefined);
     setExportJobs([]);
     setRefreshRequired(false);
@@ -136,7 +143,7 @@ export function StudioPage({ projects, tasks, onOpenProject, onRefresh }: Studio
   const imageAssetByShotId = useMemo(() => buildShotAssetMap(assets, "image"), [assets]);
   const videoAssetByShotId = useMemo(() => buildShotAssetMap(assets, "video"), [assets]);
   const latestFinalExport = scopedJobs.find((job) => isMp4Export(job));
-  const viewedOutput = currentExportJobs.find(job => job.id === viewedOutputId && isMp4Export(job)) ?? latestFinalExport;
+  const viewedOutput = currentExportJobs.find(job => job.id === viewedOutputId && isMp4Export(job)) ?? latestFinalExport ?? currentExportJobs.find(isMp4Export);
   const finalUrl = previewMode === "final" ? viewedOutput?.previewUrl || viewedOutput?.outputUrl : undefined;
 
   const shotClips = useMemo<StudioClip[]>(() => {
@@ -156,7 +163,7 @@ export function StudioPage({ projects, tasks, onOpenProject, onRefresh }: Studio
 
   const playlist = useMemo<StudioClip[]>(() => {
     if (finalUrl) {
-      return [{ url: finalUrl, label: "最终成片 MP4", duration: 0 }];
+      return [{ url: finalUrl, label: "成片版本 MP4", duration: 0 }];
     }
     return shotClips;
   }, [finalUrl, shotClips]);
@@ -264,20 +271,22 @@ export function StudioPage({ projects, tasks, onOpenProject, onRefresh }: Studio
   }
 
   async function downloadExport(job: ExportJob) {
-    if (!currentWorkflow || !selectedProjectId) return;
+    if (!currentWorkflow || !selectedProjectId || downloadingRef.current) return;
+    const projectId = selectedProjectId;
+    downloadingRef.current = true; setDownloadingJobId(job.id);
     try {
-      const blob = await api.downloadExportJob(selectedProjectId, job.id);
+      const blob = await api.downloadExportJob(job.projectId, job.id);
       const objectUrl = window.URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = objectUrl;
-      link.download = exportDownloadName(job);
+      link.download = outputDownloadName(job, currentWorkflow.project.name, blob.type);
       document.body.appendChild(link);
       link.click();
       link.remove();
-      window.URL.revokeObjectURL(objectUrl);
+      window.setTimeout(() => window.URL.revokeObjectURL(objectUrl), 30_000);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "文件下载失败");
-    }
+      if (projectRef.current === projectId) setError(err instanceof Error ? err.message : "文件下载失败");
+    } finally { downloadingRef.current = false; setDownloadingJobId(""); }
   }
 
   if (!projects.length) {
@@ -305,7 +314,7 @@ export function StudioPage({ projects, tasks, onOpenProject, onRefresh }: Studio
         <div className="studio-hero-stats">
           <StudioStat label="可连播片段" value={`${shotClips.length}/${storyboards.length || 0}`} ready={shotClips.length > 0} />
           <StudioStat label="全项目配音 / 字幕" value={exportStatusText(scopedJobs)} ready={scopedJobs.some(job => job.status === "succeeded" && (job.type === "tts" || job.type === "subtitle"))} />
-          <StudioStat label="成片" value={outputReady ? "可预览" : "未合成"} ready={outputReady} />
+          <StudioStat label="全项目成片" value={outputReady ? "可预览" : currentExportJobs.some(job => isMp4Export(job) && job.sourceStatus === "current") ? "其他范围可预览" : currentExportJobs.some(isMp4Export) ? "旧版可预览" : "未合成"} ready={outputReady} />
         </div>
       </section>
 
@@ -322,7 +331,7 @@ export function StudioPage({ projects, tasks, onOpenProject, onRefresh }: Studio
           </div>
           <div className="studio-project-list">
             {projects.map((item) => (
-              <button className={item.id === selectedProjectId ? "active" : ""} key={item.id} onClick={() => setSelectedProjectId(item.id)} disabled={submitting} type="button">
+              <button className={item.id === selectedProjectId ? "active" : ""} aria-pressed={item.id === selectedProjectId} key={item.id} onClick={() => setSelectedProjectId(item.id)} disabled={submitting} type="button">
                 <strong>{item.name}</strong>
                 <span>{item.videoRatio} · {item.storyboards} 分镜 · {item.videoClips} 视频</span>
               </button>
@@ -333,8 +342,8 @@ export function StudioPage({ projects, tasks, onOpenProject, onRefresh }: Studio
         <section className="studio-panel studio-preview-panel">
           <div className="studio-panel-head">
             <div>
-              <h2>{finalUrl ? "最终成片预览" : shotClips.length ? "视频片段连播" : "成片预览"}</h2>
-              <small>{project ? `${project.name} · ${project.videoRatio} · 共 ${storyboards.length} 镜头 / 约 ${totalDuration}s` : "选择作品后加载预览"}</small>
+              <h2>{finalUrl ? "成片版本预览" : shotClips.length ? "视频片段连播" : "成片预览"}</h2>
+              <small>{project ? finalUrl && viewedOutput ? `${project.name} · ${outputScopeLabel(viewedOutput, storyboards.map(shot => shot.id))}` : `${project.name} · ${project.videoRatio} · 共 ${storyboards.length} 镜头 / 约 ${totalDuration}s` : "选择作品后加载预览"}</small>
             </div>
             <div className="studio-actions-inline">
               <button className="ghost-button" onClick={() => project && onOpenProject(project.id)} disabled={!project}>
@@ -344,18 +353,22 @@ export function StudioPage({ projects, tasks, onOpenProject, onRefresh }: Studio
           </div>
 
           <div className="studio-preview-switch" aria-label="视频预览模式">
-            <button type="button" className="ghost-button" aria-pressed={previewMode === "final"} disabled={!currentExportJobs.some(isMp4Export)} onClick={() => { setPreviewMode("final"); setAutoPlayNext(false); setPlaybackError(""); }}><Film size={15} />成片版本</button>
-            <button type="button" className="ghost-button" aria-pressed={previewMode === "clips"} disabled={!shotClips.length} onClick={() => { setPreviewMode("clips"); setClipIndex(0); setAutoPlayNext(false); setPlaybackError(""); }}><Scissors size={15} />生成片段 · {shotClips.length}</button>
+            <button type="button" className="ghost-button" aria-pressed={Boolean(finalUrl)} disabled={!currentExportJobs.some(isMp4Export)} onClick={() => { setPreviewMode("final"); setClipIndex(0); setAutoPlayNext(false); setPlaybackError(""); }}><Film size={15} />成片版本</button>
+            <button type="button" className="ghost-button" aria-pressed={!finalUrl && Boolean(shotClips.length)} disabled={!shotClips.length} onClick={() => { setPreviewMode("clips"); setClipIndex(0); setAutoPlayNext(false); setPlaybackError(""); }}><Scissors size={15} />生成片段 · {shotClips.length}</button>
           </div>
+          {readError ? <StatePanel kind="error" compact title="作品数据读取失败" description={currentWorkflow ? `${readError} 当前保留上次读取的预览，请刷新核对。` : readError} action={<button className="ghost-button" disabled={loading} onClick={() => void refreshStudio()}>重新加载作品</button>} /> : null}
+          {finalUrl && viewedOutput ? <div className="studio-output-context" data-source={viewedOutput.sourceStatus}>
+            <strong>{outputSourceLabel(viewedOutput)}</strong><span>{new Date(viewedOutput.createdAt).toLocaleString("zh-CN")}</span>
+          </div> : null}
           <div className={`studio-player ${project ? ratioClass(project.videoRatio) : ""}`}>
-            {currentClip ? (
+            {!currentWorkflow && (loading || readError) ? <div className="studio-player-empty"><strong>{loading ? "正在读取作品…" : "预览暂不可用"}</strong><span>读取成功后显示视频与交付记录。</span></div> : currentClip ? (
               <video
                 key={currentClip.url}
                 ref={videoRef}
                 src={currentClip.url}
                 controls
                 playsInline
-                poster={coverImage}
+                poster={finalUrl ? undefined : coverImage}
                 autoPlay={autoPlayNext}
                 preload="metadata"
                 onEnded={handleClipEnded}
@@ -395,10 +408,10 @@ export function StudioPage({ projects, tasks, onOpenProject, onRefresh }: Studio
 
           <p className="studio-preview-note">
             {finalUrl
-              ? "当前播放的是合成后的最终 MP4。要调整镜头顺序、时长或替换片段，请进入生产台的成片时间线。"
+              ? "当前播放所选导出版本。历史文件保留原导出内容；调整镜头顺序、时长或素材后，需重新合成。"
               : "连播使用各镜头的图生视频结果，仅用于快速检查；镜头级剪辑、配音对轨请到生产台成片阶段完成。"}
           </p>
-          <DeliveryOutputLibrary jobs={currentExportJobs} onPreview={job => { setViewedOutputId(job.id); setPreviewMode("final"); setAutoPlayNext(false); setPlaybackError(""); }} onDownload={job => void downloadExport(job)} />
+          {currentWorkflow ? <DeliveryOutputLibrary key={selectedProjectId} jobs={currentExportJobs} currentIds={storyboards.map(shot => shot.id)} selectedJobId={finalUrl ? viewedOutput?.id : undefined} downloadingJobId={downloadingJobId} onPreview={job => { setViewedOutputId(job.id); setPreviewMode("final"); setClipIndex(0); setAutoPlayNext(false); setPlaybackError(""); videoRef.current?.scrollIntoView({ block: "center", behavior: "smooth" }); }} onDownload={job => void downloadExport(job)} /> : null}
         </section>
 
         <section className="studio-panel studio-inspector">
@@ -417,15 +430,15 @@ export function StudioPage({ projects, tasks, onOpenProject, onRefresh }: Studio
           {quoteIntent && quoteIntent.scopeKey !== scopeKey ? <p className="danger-text" role="alert">作品内容已变化，请刷新报价。</p> : null}
 
           <div className="studio-action-stack">
-            <button className="primary-button" onClick={() => void openExportQuote("video_export")} disabled={!exportState.canExportVideo || loading || refreshRequired || quoteLoading || Boolean(busyAction)} title={exportState.missingVideoCount ? `还有 ${exportState.missingVideoCount} 个镜头视频未完成` : "先查看费用，再确认合成"}>
+            <button className="primary-button" onClick={() => void openExportQuote("video_export")} disabled={!exportState.canExportVideo || Boolean(readError) || loading || refreshRequired || quoteLoading || Boolean(busyAction)} title={exportState.missingVideoCount ? `还有 ${exportState.missingVideoCount} 个镜头视频未完成` : "先查看费用，再确认合成"}>
               {busyAction === "video_export" ? <Loader2 size={17} className="spin-icon" /> : <Film size={17} />}
               合成 MP4 成片
             </button>
-            <button className="ghost-button" onClick={() => void openExportQuote("tts")} disabled={!storyboards.length || loading || refreshRequired || quoteLoading || Boolean(busyAction)}>
+            <button className="ghost-button" onClick={() => void openExportQuote("tts")} disabled={!storyboards.length || Boolean(readError) || loading || refreshRequired || quoteLoading || Boolean(busyAction)}>
               {busyAction === "tts" ? <Loader2 size={17} className="spin-icon" /> : <FileAudio size={17} />}
               生成配音轨{ttsJob ? `（${exportJobStatusText(ttsJob.status)}）` : ""}
             </button>
-            <button className="ghost-button" onClick={() => void openExportQuote("subtitle")} disabled={!storyboards.length || loading || refreshRequired || quoteLoading || Boolean(busyAction)}>
+            <button className="ghost-button" onClick={() => void openExportQuote("subtitle")} disabled={!storyboards.length || Boolean(readError) || loading || refreshRequired || quoteLoading || Boolean(busyAction)}>
               {busyAction === "subtitle" ? <Loader2 size={17} className="spin-icon" /> : <Subtitles size={17} />}
               生成字幕轨{subtitleJob ? `（${exportJobStatusText(subtitleJob.status)}）` : ""}
             </button>
@@ -438,30 +451,14 @@ export function StudioPage({ projects, tasks, onOpenProject, onRefresh }: Studio
             <strong>任务进度</strong>
             {projectTasks.slice(0, 4).map((task) => (
               <article key={task.id}>
-                <div><span>{task.title}</span><em>{taskStatusText(task.status)}</em></div>
+                <div><span>{task.title}</span><em>{task.reviewRequired ? "待核对" : taskStatusText(task.status)}</em></div>
                 <div className="studio-progress-line"><span style={{ width: `${Math.max(4, Math.min(100, task.progress || 0))}%` }} /></div>
               </article>
             ))}
             {!projectTasks.length ? <small>当前作品暂无排队任务。</small> : null}
           </div>
 
-          <div className="studio-export-list">
-            <strong>导出记录</strong>
-            {currentExportJobs.slice(0, 5).map((job) => (
-              <article key={job.id}>
-                <div>
-                  <span>{exportJobTitle(job)}</span>
-                  <small>{exportJobStatusText(job.status)} · {new Date(job.updatedAt).toLocaleString()}</small>
-                  <small>{job.status === "succeeded" && job.sourceStatus !== "current" ? (job.sourceStatus === "stale" ? "历史版本 · 内容已更新" : "历史版本 · 输入未核验") : scopedJobs.some(item => item.id === job.id) ? "本项目全部镜头" : job.storyboardIds?.length ? `其他导出范围 · ${job.storyboardIds.length} 镜头` : "历史记录 · 范围未记录"}</small>
-                  {job.errorReason ? <small className="danger-text">{job.errorReason}</small> : null}
-                </div>
-                {job.status === "succeeded" && (job.downloadUrl || job.outputUrl) ? (
-                  <button className="studio-icon-button" onClick={() => void downloadExport(job)} type="button" aria-label="下载导出文件"><Download size={15} /></button>
-                ) : null}
-              </article>
-            ))}
-            {!currentExportJobs.length ? <small>合成、配音和字幕记录会显示在这里，完成后可直接下载。</small> : null}
-          </div>
+          <p className="studio-preview-note">全部成片、配音和字幕保存在预览下方的交付版本库，可按类型、状态或版本编号查找。</p>
         </section>
       </div>
       {quoteIntent ? <DeliveryExportQuoteDialog type={quoteIntent.type} episode="all" shotCount={quoteIntent.storyboardIds.length} quote={quote} loading={quoteLoading} submitting={submitting} error={quoteIntent.scopeKey !== scopeKey ? "作品内容已变化，请刷新报价后重新确认。" : quoteError} maxCredits={confirmedCredits} onRetry={() => void openExportQuote(quoteIntent.type)} onSubmit={() => void confirmExport()} onClose={closeExportQuote} /> : null}
@@ -487,7 +484,7 @@ function buildShotAssetMap(assets: AssetItem[], type: AssetItem["type"]) {
 }
 
 function isMp4Export(job: ExportJob) {
-  return job.status === "succeeded" && (job.outputKind === "mp4" || Boolean(job.outputUrl?.split(/[?#]/)[0]?.endsWith(".mp4"))) && Boolean(job.previewUrl || job.outputUrl);
+  return isPlayableExport(job);
 }
 
 function exportStatusText(jobs: ExportJob[]) {
@@ -533,12 +530,6 @@ function taskStatusText(status: GenerationTask["status"]) {
     refunded: "已解冻"
   };
   return labels[status] ?? status;
-}
-
-function exportDownloadName(job: ExportJob) {
-  const ext = job.outputUrl?.split(/[?#]/)[0]?.match(/\.([a-z0-9]+)$/i)?.[1];
-  const prefix = job.type === "video_export" ? "video-export" : job.type;
-  return `${prefix}-${job.id}.${ext || "bin"}`;
 }
 
 function formatShotNo(shot: StoryboardShot) {

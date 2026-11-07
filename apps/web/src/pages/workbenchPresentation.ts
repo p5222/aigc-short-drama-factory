@@ -50,10 +50,11 @@ export function projectTone(status: ProjectStatus): ActionTone {
 }
 
 export function collectWorkbenchActions(projects: Project[], tasks: GenerationTask[]) {
-  const failed = tasks.filter((task) => task.status === "failed");
-  const active = tasks.filter((task) => task.status === "running" || task.status === "pending");
+  const review = tasks.filter(task => task.reviewRequired);
+  const failed = tasks.filter((task) => !task.reviewRequired && task.status === "failed");
+  const active = tasks.filter((task) => !task.reviewRequired && (task.status === "running" || task.status === "pending"));
   const waiting = projects.filter((project) => project.status === "scripting" || project.status === "storyboarding");
-  return { failed, active, waiting };
+  return { failed, active, waiting, review };
 }
 
 export function formatRelativeUpdate(value: string, now = Date.now()) {

@@ -48,6 +48,22 @@ test("task operations end only idle undelivered work and preserve its audit and 
       await assert.rejects(resolveTaskOperation(actorId, "generation", row.id, request(live.updatedAt), db), /心跳/);
       assert.equal(await db.creditTransaction.count({ where: { taskId: row.id, type: "refund" } }), 0);
     });
+    await t.test("attention search includes failed records without losing keyword or heartbeat constraints", async () => {
+      const one = await task(), two = await task(), live = await task();
+      await db.generationTask.update({ where: { id: one.id }, data: { status: "failed", errorReason: JSON.stringify({ kind: "media_checkpoint", metadata: { needsReconciliation: true } }) } });
+      await db.generationTask.update({ where: { id: live.id }, data: { status: "running" } });
+      const found = await listTaskOperations({ kind: "generation", page: 1, pageSize: 50, view: "attention", keyword: one.id }, db);
+      assert.equal(found.total, 1); assert.equal(found.items[0].id, one.id);
+      assert.equal(found.items[0].canResolve, true); assert.equal(found.items[0].reviewRequired, true);
+      const recent = await listTaskOperations({ kind: "generation", page: 1, pageSize: 50, view: "attention", keyword: live.id }, db);
+      assert.equal(recent.total, 0);
+      const missing = await listTaskOperations({ kind: "generation", page: 1, pageSize: 50, view: "attention", keyword: `missing-${crypto.randomUUID()}` }, db);
+      assert.equal(missing.total, 0);
+      const exports = await db.exportJob.create({ data: { id: `failed_export_${crypto.randomUUID()}`, userId, projectId, type: "subtitle", status: "failed" } });
+      const result = await listTaskOperations({ kind: "export", page: 1, pageSize: 10, view: "attention", keyword: exports.id }, db);
+      assert.equal(result.total, 1); assert.equal(result.items[0].canResolve, false);
+      assert.notEqual(one.id, two.id);
+    });
     await t.test("concurrent replay releases this task once and retains other task reservations", async () => {
       const row = await task(), body = request(row.updatedAt);
       const before = await db.creditAccount.findUniqueOrThrow({ where: { userId } });

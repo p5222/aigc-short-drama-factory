@@ -73,7 +73,7 @@ export function TaskOperations() {
   }
   return <>
     {message ? <InlineNotice tone="success">{message}</InlineNotice> : null}
-    <AdminTablePage title="异常任务核对" summary="默认显示两分钟内没有更新的未结束任务。先查供应商记录，再结束未交付任务；已交付内容和已消耗积分会保留。"
+    <AdminTablePage title="异常任务核对" summary="默认显示失败记录，以及超过两分钟没有更新的未结束任务。先查供应商结果和冻结积分，再处置可结束的任务；已交付内容与已消耗积分保留。"
       actions={<button className="admin-secondary-btn" disabled={loading || busy} onClick={() => setReload(value => value + 1)}><RefreshCw size={16} />刷新任务</button>}
       filters={<><select aria-label="任务类别" value={kind} onChange={e => { setKind(e.target.value as typeof kind); setPage(1); }}><option value="generation">生成任务</option><option value="export">导出任务</option></select>
         <select aria-label="核对范围" value={view} onChange={e => { setView(e.target.value); setPage(1); }}><option value="attention">待核对任务</option><option value="all">全部任务</option></select>

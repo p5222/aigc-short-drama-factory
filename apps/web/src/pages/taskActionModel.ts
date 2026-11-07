@@ -18,7 +18,7 @@ export function canCancelTask(task: GenerationTask): boolean {
 }
 
 export function taskRecoveryHint(task: GenerationTask): string {
-  if (task.reviewRequired) return "结果待核对，系统已停止重复调用。请提交工单；管理员核对后会结束未交付任务并释放其冻结积分。";
+  if (task.reviewRequired) return "结果待核对，系统已停止重复调用。未结算积分仍冻结，请提交工单；管理员核对后按实际交付结算或释放。";
   if (["pending", "running"].includes(task.status)) return "任务仍在后台处理。请先刷新核对结果，避免重复提交同一生成请求。";
   if (task.status === "succeeded") return "回到所属作品查看结果，继续下一阶段。";
   if (canRetryTask(task)) return "核对失败原因、渠道和积分后，可以重试此任务。";

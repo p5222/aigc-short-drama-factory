@@ -2,8 +2,8 @@ import type { PageKey } from "../components/Shell";
 
 export const BEFORE_CREATOR_NAVIGATION = "manjiao:before-navigation";
 const pages = new Set<PageKey>(["workbench", "content", "wizard", "scripts", "studio", "tasks", "models", "profile", "recharge", "ledger", "settings", "help"]);
-export type TaskQueueFilter = "all" | "active" | "failed" | "succeeded" | "pending" | "canceled" | "refunded";
-export const taskQueueFilters: readonly TaskQueueFilter[] = ["all", "active", "failed", "succeeded", "pending", "canceled", "refunded"];
+export type TaskQueueFilter = "all" | "active" | "review" | "failed" | "succeeded" | "pending" | "canceled" | "refunded";
+export const taskQueueFilters: readonly TaskQueueFilter[] = ["all", "active", "review", "failed", "succeeded", "pending", "canceled", "refunded"];
 export interface CreatorRoute { page: PageKey; projectId?: string; contentId?: string; taskFilter?: TaskQueueFilter; taskId?: string }
 
 export function readCreatorRoute(hash: string): CreatorRoute {

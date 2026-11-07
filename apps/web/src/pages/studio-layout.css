@@ -1,0 +1,53 @@
+/* Constrain intrinsic video dimensions independently of the shared panel styles. */
+:root .app-shell.product-shell .studio-page .studio-export-layout {
+  grid-template-columns: minmax(170px, .6fr) minmax(0, 1.9fr) minmax(230px, .8fr);
+  gap: 16px;
+}
+:root .app-shell.product-shell .studio-page .studio-panel { min-width: 0; }
+:root .app-shell.product-shell .studio-page :is(.studio-panel, .studio-hero) { border-color: var(--ds-border-default); background: var(--ds-bg-surface); box-shadow: var(--studio-shadow); }
+:root .app-shell.product-shell .studio-page .studio-inspector { grid-column: auto; }
+:root .app-shell.product-shell .studio-page .studio-hero { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 24px; }
+:root .app-shell.product-shell .studio-page .studio-hero-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); min-width: 0; }
+:root .app-shell.product-shell .studio-page .studio-hero-stats article { min-width: 0; border-color: var(--ds-border-default); background: var(--ds-bg-subtle); padding: 14px; }
+:root .app-shell.product-shell .studio-page .studio-hero-stats strong { font-size: 22px; }
+:root .app-shell.product-shell .studio-page :is(h1, h2, strong, .studio-task-list span) { color: var(--ds-text-primary); }
+:root .app-shell.product-shell .studio-page :is(.studio-hero p, .studio-hero-stats span, .studio-panel-head small, .studio-preview-note, .studio-project-list span, .studio-task-list small) { color: var(--ds-text-muted); }
+:root .app-shell.product-shell .studio-page :is(.studio-project-list button, .studio-icon-button) { color: var(--ds-text-secondary); border-color: var(--ds-border-default); background: var(--ds-bg-surface); }
+:root .app-shell.product-shell .studio-page .studio-project-list button.active { border-color: var(--ds-action-primary); background: var(--ds-action-soft); }
+:root .app-shell.product-shell .studio-page .dlv3-library-filters :is(input, select) { color: var(--ds-text-primary); border-color: var(--ds-border-default); background: var(--ds-bg-subtle); }
+:root .app-shell.product-shell .studio-page .dlv3-output-library :is(small, p, label) { font-size: 12px; color: var(--ds-text-muted); }
+:root .app-shell.product-shell .studio-page .dlv3-output-library .dlv3-output-error { color: var(--ds-status-danger); }
+:root .app-shell.product-shell .studio-page .studio-output-context strong { color: var(--ds-action-primary); }
+:root .app-shell.product-shell .studio-page .studio-output-context[data-source="stale"] strong { color: var(--ds-status-warning); }
+:root .app-shell.product-shell .studio-page .studio-panel-head { flex-wrap: wrap; }
+:root .app-shell.product-shell .studio-page .studio-panel-head > div { min-width: 0; }
+:root .app-shell.product-shell .studio-page .studio-panel-head small { display: block; overflow-wrap: anywhere; line-height: 1.65; }
+:root .app-shell.product-shell .studio-page .studio-player {
+  width: 100%; max-width: 100%; min-width: 0; min-height: 0; height: auto;
+  aspect-ratio: 16 / 9; grid-template-columns: minmax(0, 1fr);
+  margin-inline: auto; background: var(--media-bg, #101815);
+}
+:root .app-shell.product-shell .studio-page .studio-player.ratio-9-16 { aspect-ratio: 9 / 16; width: min(100%, 320px); max-height: none; }
+:root .app-shell.product-shell .studio-page .studio-player.ratio-1-1 { aspect-ratio: 1; width: min(100%, 440px); }
+:root .app-shell.product-shell .studio-page .studio-player :is(video, img) { width: 100%; max-width: 100%; min-width: 0; height: 100%; min-height: 0; object-fit: contain; }
+:root .app-shell.product-shell .studio-page .studio-player-empty { padding: 24px 16px; }
+:root .app-shell.product-shell .studio-page .studio-project-list strong { overflow-wrap: anywhere; }
+.studio-output-context { display: flex; flex-wrap: wrap; gap: 6px 14px; padding: 10px 0; font-size: 12px; color: var(--ds-text-muted); }
+.studio-output-context strong { color: var(--ds-action-primary); font-weight: 500; }
+.studio-output-context[data-source="stale"] strong { color: var(--ds-status-warning); }
+@media (max-width: 1280px) {
+  :root .app-shell.product-shell .studio-page .studio-hero { grid-template-columns: minmax(0, 1fr); }
+  :root .app-shell.product-shell .studio-page .studio-export-layout { grid-template-columns: minmax(0, 1fr) minmax(230px, .55fr); }
+  :root .app-shell.product-shell .studio-page .studio-project-rail { grid-column: 1 / -1; }
+  :root .app-shell.product-shell .studio-page .studio-project-list { display: flex; gap: 8px; max-height: 180px; }
+  :root .app-shell.product-shell .studio-page .studio-project-list button { flex: 0 0 220px; max-width: 100%; }
+}
+@media (max-width: 760px) {
+  :root .app-shell.product-shell .studio-page .studio-export-layout { grid-template-columns: minmax(0, 1fr); }
+  :root .app-shell.product-shell .studio-page .studio-panel { padding: 16px; }
+  :root .app-shell.product-shell .studio-page .studio-hero-stats article { padding: 12px 8px; }
+  :root .app-shell.product-shell .studio-page .studio-hero-stats strong { font-size: 18px; }
+  :root .app-shell.product-shell .studio-page .studio-project-list button { flex-basis: 200px; }
+  :root .app-shell.product-shell .studio-page .studio-preview-panel .dlv3-output-library { padding: 16px 0 0; }
+  :root .app-shell.product-shell .studio-page .dlv2-btn { min-height: 40px; }
+}

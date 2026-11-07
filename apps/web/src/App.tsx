@@ -523,6 +523,7 @@ export function App() {
             initialFilter={route.taskFilter}
             initialTaskId={route.taskId}
             onOpenProject={(id) => void openProject(id)}
+            onOpenContent={(id) => navigate({ page: "content", contentId: id })}
             onOpenSupport={task => {
               if (!user) return;
               setSupportIntent({ userId: user.id, view: "new", key: Date.now(), prefill: taskSupportDraft(task) });
@@ -689,6 +690,7 @@ export function App() {
       tasks={tasks}
       onOpenProject={(id) => void openProject(id)}
       onOpenContent={(id) => navigate({ page: "content", contentId: id })}
+      onOpenTasks={(taskFilter, taskId) => navigate({ page: "tasks", taskFilter, taskId })}
       onLogout={logout}
     >
       {error ? <div className="ui-page-notice"><InlineNotice tone="error">{error} <button type="button" className="ui-text-button" onClick={() => void load().catch(() => undefined)}>重新加载</button></InlineNotice></div> : null}
