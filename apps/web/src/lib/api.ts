@@ -17,6 +17,7 @@
   QualityCenterOverview,
   EvaluationRun,
   EvaluationRunDetail,
+  EvaluationReviewInput,
   FeedbackInput,
   ExportJob,
   DeliveryEdit,
@@ -342,6 +343,13 @@ export const api = {
   adminEvaluationRunsPage: (page = 1, pageSize = 20, keyword = "", status = "all") =>
     request<PagedResult<EvaluationRun>>(`/admin/evaluation/runs/page?page=${page}&pageSize=${pageSize}&keyword=${encodeURIComponent(keyword)}&status=${encodeURIComponent(status)}`),
   adminEvaluationRunDetail: (id: string) => request<EvaluationRunDetail>(`/admin/evaluation/runs/${id}`),
+  adminEvaluationRequest: (requestId: string) => request<EvaluationRunDetail>(`/admin/evaluation/requests/${encodeURIComponent(requestId)}`),
+  adminEvaluationMedia: (id: string) => request<Array<{ id: string; name: string; type: string; available: boolean; url?: string; reason?: string }>>(`/admin/evaluation/attempts/${id}/media`),
+  reviewEvaluationAttempt: (id: string, input: EvaluationReviewInput) =>
+    request<{ id: string; version: number }>(`/admin/evaluation/attempts/${id}/reviews`, { method: "POST", body: JSON.stringify(input) }),
+  reconcileEvaluationAttempt: (id: string, input: { requestId: string; outcome: "provider_completed" | "provider_failed"; reason: string; reference: string }) =>
+    request<{ id: string; reconciled: boolean }>(`/admin/evaluation/attempts/${id}/reconcile`, { method: "POST", body: JSON.stringify(input) }),
+  convertFeedbackDataset: (id: string) => request<{ feedback: UserFeedback; dataset: EvaluationDataset }>(`/admin/feedback/${id}/dataset`, { method: "POST" }),
   adminFeedback: (limit = 200) => request<UserFeedback[]>(`/admin/feedback?limit=${limit}`),
   adminFeedbackPage: (page = 1, pageSize = 20, keyword = "", stage = "all", status = "all") =>
     request<PagedResult<UserFeedback>>(`/admin/feedback/page?page=${page}&pageSize=${pageSize}&keyword=${encodeURIComponent(keyword)}&stage=${encodeURIComponent(stage)}&status=${encodeURIComponent(status)}`),
@@ -365,7 +373,7 @@ export const api = {
     request<ExperimentRun>("/admin/evaluation/experiments", { method: "POST", body: JSON.stringify(input) }),
   updateAdminFeedback: (
     id: string,
-    input: Partial<Pick<UserFeedback, "status" | "priority" | "rootCause" | "assignee" | "resolution" | "convertedDatasetId">>
+    input: Partial<Pick<UserFeedback, "status" | "priority" | "rootCause" | "assignee" | "resolution" | "resolutionAttemptId" | "resolutionReviewId">> & { expectedVersion: number }
   ) =>
     request<UserFeedback>(`/admin/feedback/${id}`, {
       method: "PATCH",

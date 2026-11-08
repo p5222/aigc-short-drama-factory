@@ -4,6 +4,12 @@ import { prisma } from "../db/client.js";
 
 type Meter = { taskId: string; attemptId?: string; calls: Array<{ usage: BillingUsage; provider: string; model: string; requestId?: string }> };
 const context = new AsyncLocalStorage<Meter>();
+export type TextUsageCall = Meter["calls"][number] & { reportedModel?: string };
+const independentUsage = new AsyncLocalStorage<TextUsageCall[]>();
+/** Independent audit capture; never charges or settles a creator account. */
+export function withTextUsageCapture<T>(calls: TextUsageCall[], run: () => Promise<T>) {
+  return independentUsage.run(calls, run);
+}
 export async function flushTaskMeter(delivered: boolean, db = prisma) {
   const meter = context.getStore();
   if (!meter?.calls.length) return;
@@ -38,13 +44,22 @@ export async function withTaskMeter<T>(taskId: string, run: () => Promise<T>, db
 /** Capture usage before parsing generated content: invalid JSON can still incur cost. */
 export function recordTextUsage(data: unknown, provider: string, model: string) {
   const meter = context.getStore();
-  if (!meter || !data || typeof data !== "object") return;
+  const audit = independentUsage.getStore();
+  if ((!meter && !audit) || !data || typeof data !== "object") return;
   const d = data as Record<string, any>, u = d.usage ?? d.usageMetadata;
-  if (!u) return;
+  const reportedModel = typeof d.model === "string" ? d.model : typeof d.modelVersion === "string" ? d.modelVersion : undefined;
+  const identity = { provider, model, ...(typeof d.id === "string" ? { requestId: d.id } : {}), ...(reportedModel ? { reportedModel } : {}) };
+  // A received audit response can establish identity even when usage is absent.
+  // Empty usage remains unknown cost; it is never treated as a zero-token call.
+  const missingUsage = () => { if (audit) audit.push({ ...identity, usage: {} }); };
+  if (!u) { missingUsage(); return; }
   const input = u.prompt_tokens ?? u.input_tokens ?? u.promptTokenCount;
   const output = u.completion_tokens ?? u.output_tokens ?? u.candidatesTokenCount;
-  if (!Number.isSafeInteger(input) || !Number.isSafeInteger(output) || input < 0 || output < 0) return;
+  if (!Number.isSafeInteger(input) || !Number.isSafeInteger(output) || input < 0 || output < 0) { missingUsage(); return; }
   const cached = u.prompt_tokens_details?.cached_tokens ?? u.input_tokens_details?.cached_tokens ?? u.prompt_cache_hit_tokens ?? u.cachedContentTokenCount ?? 0;
-  if (!Number.isSafeInteger(cached) || cached < 0 || cached > input) return;
-  meter.calls.push({ usage: { inputTokens: input, outputTokens: output, cachedInputTokens: cached }, provider, model, ...(typeof d.id === "string" ? { requestId: d.id } : {}) });
+  if (!Number.isSafeInteger(cached) || cached < 0 || cached > input) { missingUsage(); return; }
+  const call = { usage: { inputTokens: input, outputTokens: output, cachedInputTokens: cached }, ...identity };
+  // An audit scope owns its usage, even if called from a generation context.
+  if (audit) audit.push(call);
+  else meter?.calls.push(call);
 }
