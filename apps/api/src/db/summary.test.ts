@@ -9,7 +9,7 @@ test("PostgreSQL summaries use complete records and distinguish receipts from pr
   assert.ok(["localhost", "127.0.0.1"].includes(url.hostname)); assert.match(url.pathname, /^\/audit_commerce_[a-z0-9_]+$/i);
   process.env.AIFILM_LOAD_ENV_FILES = "false"; process.env.DATABASE_URL = databaseUrl;
   const db = new PrismaClient({ datasourceUrl: databaseUrl });
-  const { getWorkbenchSummary, getAdminSummary } = await import("./repository.js");
+  const { getWorkbenchSummary, getAdminSummary, listTasks } = await import("./repository.js");
   const users: string[] = [];
   async function user() {
     const id = `summary_user_${crypto.randomUUID()}`; users.push(id);
@@ -38,6 +38,27 @@ test("PostgreSQL summaries use complete records and distinguish receipts from pr
       assert.equal(summary.storyboards, 9, "Actual storyboard rows take precedence over stale cached project counters");
       assert.equal(summary.runningTasks, 1); assert.equal(summary.recentTasks.length, 8);
       assert.equal(summary.recentTasks.some(task => task.status === "pending"), false, "The active task is older than all recent cards");
+    });
+    await t.test("review counts include old unknown tasks, exclude internal locks and isolate the account", async () => {
+      const userId = await user(), outsider = await user();
+      const base = { userId, type: "text", title: "Review fixture", provider: "fixture", model: "fixture" };
+      await db.generationTask.createMany({ data: [
+        { ...base, id: `review_${crypto.randomUUID()}`, status: "pending", execution: { version: 1, reviewRequired: true, attempts: [] }, updatedAt: new Date("2000-01-01") },
+        { ...base, id: `review_${crypto.randomUUID()}`, status: "failed", errorReason: JSON.stringify({ kind: "media_checkpoint", metadata: { needsReconciliation: true } }), updatedAt: new Date("2000-01-01") },
+        { ...base, id: `review_${crypto.randomUUID()}`, status: "running", execution: { version: 1, reviewRequired: false, attempts: [{ state: "submitted" }] } },
+        { ...base, id: `review_${crypto.randomUUID()}`, status: "failed" },
+        { ...base, id: `content_operation_${crypto.randomUUID()}`, status: "running", execution: { version: 1, reviewRequired: true, attempts: [] } },
+        { ...base, userId: outsider, id: `review_${crypto.randomUUID()}`, status: "running", execution: { version: 1, reviewRequired: true, attempts: [] } },
+        ...Array.from({ length: 10 }, () => ({ ...base, id: `review_${crypto.randomUUID()}`, status: "succeeded" }))
+      ] });
+      const summary = await getWorkbenchSummary(userId);
+      assert.deepEqual(summary.actionCounts, { waiting: 0, active: 1, failed: 1, review: 2 });
+      assert.equal(summary.runningTasks, 1);
+      assert.equal(summary.recentTasks.some(task => task.reviewRequired), false);
+      const tasks = await listTasks(userId);
+      assert.equal(tasks.length, 14);
+      assert.equal(tasks.some(task => task.id.startsWith("content_operation_")), false);
+      assert.equal(tasks.filter(task => task.reviewRequired).length, summary.actionCounts!.review);
     });
     await t.test("admin totals never turn seeded account balances, pending budgets or model prices into revenue", async () => {
       const before = await getAdminSummary();

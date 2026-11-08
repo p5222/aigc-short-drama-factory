@@ -21,6 +21,7 @@ import type { ContentProjectSummary, GenerationTask, Project } from "@aifilm/sha
 import { searchCreatorItems, type CreatorSearchItem } from "./creatorSearchModel";
 import { dialogStackForDocument } from "../design-system/dialogStack";
 import { StudioIcon, StudioWordmark } from "../design-system/StudioIcon";
+import type { TaskQueueFilter } from "../lib/creatorNavigation";
 
 export type PageKey =
   | "workbench"
@@ -53,6 +54,7 @@ interface ShellProps {
   tasks: GenerationTask[];
   onOpenProject: (id: string) => void;
   onOpenContent: (id: string) => void;
+  onOpenTasks: (filter?: TaskQueueFilter, taskId?: string) => void;
 }
 
 const sections: Array<{ label: string; items: Array<{ key: PageKey; label: string; icon: ReactNode }> }> = [
@@ -83,7 +85,7 @@ const sections: Array<{ label: string; items: Array<{ key: PageKey; label: strin
   }
 ];
 
-export function Shell({ active, onNavigate, children, credits, theme, onToggleTheme, onStartGuide, userName, onLogout, projects, contentProjects, tasks, onOpenProject, onOpenContent }: ShellProps) {
+export function Shell({ active, onNavigate, children, credits, theme, onToggleTheme, onStartGuide, userName, onLogout, projects, contentProjects, tasks, onOpenProject, onOpenContent, onOpenTasks }: ShellProps) {
   const [query, setQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const searchRef = useRef<HTMLFormElement>(null);
@@ -120,7 +122,9 @@ export function Shell({ active, onNavigate, children, credits, theme, onToggleTh
     ...tasks.map((item) => ({ id: item.id, label: item.title, detail: "生成任务", kind: "task" as const, projectId: item.projectId }))
   ], [projects, contentProjects, tasks]);
   const results = useMemo(() => searchCreatorItems(searchItems, query), [searchItems, query]);
-  const failedCount = tasks.filter((task) => task.status === "failed").length;
+  const failedCount = tasks.filter((task) => !task.reviewRequired && task.status === "failed").length;
+  const reviewCount = tasks.filter(task => task.reviewRequired).length;
+  const noticeLabel = reviewCount ? `查看生成队列，${reviewCount} 个任务待核对${failedCount ? `，${failedCount} 个任务失败` : ""}` : failedCount ? `查看生成队列，${failedCount} 个任务失败` : "查看生成队列";
   useEffect(() => { setSearchOpen(false); }, [active]);
   useEffect(() => {
     const close = (event: PointerEvent) => { if (!searchRef.current?.contains(event.target as Node)) setSearchOpen(false); };
@@ -131,7 +135,7 @@ export function Shell({ active, onNavigate, children, credits, theme, onToggleTh
     setSearchOpen(false);
     if (item.kind === "project") onOpenProject(item.id);
     else if (item.kind === "content") onOpenContent(item.id);
-    else onNavigate("tasks");
+    else onOpenTasks(undefined, item.id);
   };
   return (
     <div className="app-shell product-shell">
@@ -202,8 +206,8 @@ export function Shell({ active, onNavigate, children, credits, theme, onToggleTh
             <button type="button" className="icon-button" onClick={onToggleTheme} aria-label="切换主题" title={theme === "dark" ? "切换浅色主题" : "切换深色主题"}>
               {theme === "dark" ? <Sun size={19} /> : <Moon size={19} />}
             </button>
-            <button type="button" className="icon-button creator-task-notice" onClick={() => go("tasks")} aria-label={failedCount ? `查看生成队列，${failedCount} 个任务失败` : "查看生成队列"} title={failedCount ? `${failedCount} 个任务失败，点击查看` : "查看生成队列"}>
-              <Bell size={19} />{failedCount ? <span className="creator-notice-dot" /> : null}
+            <button type="button" className="icon-button creator-task-notice" onClick={() => onOpenTasks(reviewCount ? "review" : failedCount ? "failed" : undefined)} aria-label={noticeLabel} title={noticeLabel}>
+              <Bell size={19} />{failedCount || reviewCount ? <span className="creator-notice-dot" /> : null}
             </button>
             <button className="user-pill" type="button" onClick={() => onNavigate("profile")} aria-label={`打开个人账户：${userName}`}>
               <span className="creator-avatar" aria-hidden="true">{userName.slice(0, 1)}</span><span>{userName}</span>

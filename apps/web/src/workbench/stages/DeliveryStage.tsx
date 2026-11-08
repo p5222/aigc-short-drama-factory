@@ -26,6 +26,7 @@ import { isPersistedPlayableVideoReference, shotVideoVersions } from "@aifilm/sh
 import type { WorkbenchSaveState } from "../WorkbenchContext";
 import { useDeliveryEdit } from "./useDeliveryEdit";
 import { DeliveryOutputLibrary } from "./DeliveryOutputLibrary";
+import { outputDownloadName } from "./deliveryOutputModel";
 import "./delivery-editor.css";
 import { api } from "../../lib/api";
 import { ModelRoutePicker } from "../../components/ModelRoutePicker";
@@ -471,8 +472,7 @@ export function DeliveryStage({
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      const extension = job.type === "subtitle" ? "srt" : job.type === "tts" ? (blob.type.includes("mpeg") ? "mp3" : "wav") : "mp4";
-      link.download = `${project.name}-${job.id}.${extension}`;
+      link.download = outputDownloadName(job, project.name, blob.type);
       document.body.append(link);
       link.click();
       link.remove();
@@ -546,9 +546,6 @@ export function DeliveryStage({
 
   const activeMax = activeClip?.outPoint ?? normalizeShotDuration(activeShot?.duration);
   const sourceMax = Math.min(normalizeShotDuration(activeShot?.duration), durationByShotId.get(activeShot?.id ?? "") ?? Infinity);
-  const downloads = episodeExportJobs.filter((job) => job.status === "succeeded" && job.outputUrl).slice(0, 3);
-  const historicalDownloads = exportsByScope.history.filter((job) => job.status === "succeeded" && job.outputUrl).slice(0, 3);
-  const otherDownloads = exportsByScope.other.filter((job) => job.status === "succeeded" && job.outputUrl).slice(0, 3);
 
   return (
     <main className="dlv2-frame" data-rail-open={queueDrawerActive} data-inspector-open={inspectorDrawerActive}>
@@ -828,18 +825,11 @@ export function DeliveryStage({
               本集配音：{latestTts ? JOB_STATUS_LABEL[latestTts.status] : "未生成"} · 字幕：{latestSubtitle ? JOB_STATUS_LABEL[latestSubtitle.status] : "未生成"} · 本集最近任务：{exportSummary.status === "idle" ? "暂无" : JOB_STATUS_LABEL[exportSummary.status as ExportJob["status"]] ?? exportSummary.status}
             </p>
             {exportSummary.messages.slice(0, 3).map((message) => <p className="dlv2-warn" key={message}>{message}</p>)}
-            {downloads.map((job) => (
-              <button className="dlv2-btn dlv2-download" type="button" key={job.id} disabled={Boolean(downloadingJobId)} onClick={() => void downloadJob(job)}>
-                <Download size={13} />{downloadingJobId === job.id ? "下载中…" : `下载本集${JOB_TYPE_LABEL[job.type]}`}
-              </button>
-            ))}
-            {otherDownloads.length ? <details className="dlv2-job-line"><summary>其他集或其他镜头顺序的导出</summary>{otherDownloads.map((job) => <button className="dlv2-btn dlv2-download" type="button" key={job.id} disabled={Boolean(downloadingJobId)} onClick={() => void downloadJob(job)}><Download size={13} />{downloadingJobId === job.id ? "下载中…" : `${JOB_TYPE_LABEL[job.type]} · ${job.storyboardIds?.length} 镜 · ${new Date(job.createdAt).toLocaleString()}`}</button>)}</details> : null}
-            {historicalDownloads.length ? <details className="dlv2-job-line"><summary>历史导出与旧版本</summary><p>这些文件的内容已更新或原始输入未核验，保留下载，不计入当前配音、字幕或成片完成状态。</p>{historicalDownloads.map((job) => <button className="dlv2-btn dlv2-download" type="button" key={job.id} disabled={Boolean(downloadingJobId)} onClick={() => void downloadJob(job)}><Download size={13} />{downloadingJobId === job.id ? "下载中…" : `${job.sourceStatus === "stale" ? "内容已更新" : "输入未核验"} · ${JOB_TYPE_LABEL[job.type]} · ${new Date(job.createdAt).toLocaleString()}`}</button>)}</details> : null}
             <button className="dlv2-btn dlv2-btn-primary" type="button" onClick={() => { if (publishableCandidate) onPublish(publishableCandidate); }} disabled={!publishableCandidate}>
               <Upload size={14} />发布到创作现场
             </button>
           </section>
-          <DeliveryOutputLibrary jobs={exportJobs} onPreview={job => { setPreviewJobId(job.id); onCloseInspector(); }} onDownload={job => void downloadJob(job)} downloading={Boolean(downloadingJobId)} />
+          <DeliveryOutputLibrary key={project.id} jobs={exportJobs} currentIds={shots.map(shot => shot.id)} selectedJobId={previewJobId} onPreview={job => { setPreviewJobId(job.id); onCloseInspector(); }} onDownload={job => void downloadJob(job)} downloadingJobId={downloadingJobId} />
           {episodeShots.some(shot => !shots.some(item => item.id === shot.id)) ? <section className="dlv2-card"><strong>已移出剪辑的镜头</strong>{episodeShots.filter(shot => !shots.some(item => item.id === shot.id)).map(shot => <button key={shot.id} type="button" className="dlv2-btn" disabled={busyAll} onClick={() => cut.edit([...cut.draft.clips, { shotId: shot.id, sourceAssetId: `video_${shot.id}`, inPoint: 0, outPoint: normalizeShotDuration(shot.duration) }])}>加回镜头 {shot.shotNo}</button>)}</section> : null}
         </aside>
       </div>

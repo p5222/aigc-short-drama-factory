@@ -18,7 +18,7 @@ interface WorkbenchPageProps {
   onRefresh: () => void;
   onStart: () => void;
   onOpen: (projectId: string) => void;
-  onOpenTasks: (filter?: "active" | "failed", taskId?: string) => void;
+  onOpenTasks: (filter?: "active" | "failed" | "review", taskId?: string) => void;
   onRecharge: () => void;
   onOpenWorks: () => void;
   onStartContent: () => void;
@@ -47,6 +47,10 @@ export function WorkbenchPage({ userId, onStartShort, summary, contentProjects, 
         <div className="workbench-header-actions"><button className="ghost-button" onClick={onStartContent}><BookOpen size={17} />内容创作</button><button className="primary-button large" onClick={onStart}><Plus size={18} />新建漫剧</button></div>
       </header>
       <CreatorWelcome key={userId} onStart={onStartShort} />
+      {(counts?.review ?? actions.review.length) > 0 ? <section className="workbench-review-notice" aria-label="任务结果待核对">
+        <AlertTriangle size={20} /><div><strong>{counts?.review ?? actions.review.length} 个任务结果待核对</strong><p>已暂停重复调用，未结算积分仍冻结。查看任务并提交工单，核对供应商结果。</p></div>
+        <button type="button" className="ghost-button" onClick={() => onOpenTasks("review")}>查看待核对任务<ArrowRight size={16} /></button>
+      </section> : null}
 
       {resumeStory ? <section className="workbench-resume studio-resume story-resume" aria-labelledby="workbench-story-resume-title">
         <div className="studio-resume-monogram" aria-hidden="true"><StudioIcon stage="content" size={32} /><span>故事手稿</span></div>
@@ -140,7 +144,7 @@ export function WorkbenchPage({ userId, onStartShort, summary, contentProjects, 
           <section className="panel dashboard-task-panel">
             <div className="panel-head"><div><h2>最近任务</h2><small>只显示最新生产状态</small></div><button type="button" className="ghost-button" onClick={() => onOpenTasks()}>全部任务</button></div>
             <div className="dashboard-mini-tasks">
-              {tasks.slice(0, 3).map((task) => <button type="button" key={task.id} onClick={() => onOpenTasks(undefined, task.id)}><Film size={16} /><span><strong>{task.title}</strong><small>{task.projectName ?? "未绑定项目"}</small></span><em className={task.status}>{taskStatusLabel(task.status)}</em></button>)}
+              {tasks.slice(0, 3).map((task) => <button type="button" key={task.id} onClick={() => onOpenTasks(undefined, task.id)}><Film size={16} /><span><strong>{task.title}</strong><small>{task.projectName ?? "未绑定项目"}</small></span><em className={task.reviewRequired ? "review" : task.status}>{task.reviewRequired ? "待核对" : taskStatusLabel(task.status)}</em></button>)}
               {!tasks.length ? <p className="empty-state compact"><CheckCircle2 size={20} />暂无生成任务</p> : null}
             </div>
           </section>

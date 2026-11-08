@@ -5,6 +5,7 @@ import { prisma } from "../db/client.js";
 import { lockTaskCredits, releaseTaskCredits } from "../billing/taskCredits.js";
 import { mediaCheckpoint } from "../billing/mediaTask.js";
 import { creationExecution } from "../queue/creationState.js";
+import { contentTaskIdentity, taskReviewRequired } from "../db/taskPresentation.js";
 import { exportSourceFromDiagnostics } from "../export/exportSource.js";
 import { queryVideoTaskResult } from "../providers/video.js";
 import { providerRuntimeOptions } from "../providers/connection.js";
@@ -18,9 +19,7 @@ const terminal = ["succeeded", "failed", "canceled", "refunded"];
 const json = (value: unknown) => JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
 
 function contentIdentity(task: Pick<GenerationTask, "jobId">) {
-  const parts = task.jobId?.split(":") ?? [];
-  return parts[0] === "content" && ["operation", "billing"].includes(parts[2])
-    ? { contentId: parts[1], parentId: parts[3] } : undefined;
+  return contentTaskIdentity(task.jobId);
 }
 async function requireOperator(tx: Prisma.TransactionClient, actorId: string) {
   const actor = await tx.user.findUnique({ where: { id: actorId }, select: { role: true, status: true } });
@@ -43,11 +42,11 @@ function taskRow(row: GenerationTask, frozenCredits: number): TaskOperationRow {
     contentProjectId: contentIdentity(row)?.contentId,
     title: row.title, projectName: row.projectName ?? undefined, type: row.type, status: row.status,
     provider: row.provider, model: row.model, frozenCredits, chargedCredits: row.finalCredits ?? 0,
-    reviewRequired: state.reviewRequired || Boolean(checkpoint.needsReconciliation),
+    reviewRequired: taskReviewRequired(row),
     remoteTaskId: typeof checkpoint.remoteTaskId === "string" ? checkpoint.remoteTaskId.slice(0, 200) : undefined,
     sourceFingerprint: payload?.source?.inputFingerprint,
     canQuery: row.type === "video" && typeof checkpoint.remoteTaskId === "string",
-    canResolve: (active.includes(row.status) && row.updatedAt.getTime() <= Date.now() - leaseMs) || (row.status === "failed" && (frozenCredits > 0 || state.reviewRequired)),
+    canResolve: (active.includes(row.status) && row.updatedAt.getTime() <= Date.now() - leaseMs) || (row.status === "failed" && (frozenCredits > 0 || taskReviewRequired(row))),
     attempts: state.attempts.map(({ id, state, startedAt, submittedAt, finishedAt }) => ({ id, state, startedAt, submittedAt, finishedAt })),
     createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString()
   };
@@ -64,8 +63,10 @@ async function frozenByTask(db: Prisma.TransactionClient, ids: string[]) {
 export async function listTaskOperations(input: { kind: "generation" | "export"; page: number; pageSize: number; keyword: string; view: "attention" | "all"; exactId?: string }, db: PrismaClient = prisma) {
   const { kind, page, pageSize, keyword, view } = input;
   const common = {
-    ...(view === "attention" ? { status: { in: active }, updatedAt: { lt: new Date(Date.now() - leaseMs) } } : {}),
-    ...(input.exactId ? { id: input.exactId } : keyword ? { OR: [{ id: { contains: keyword } }, { userId: { contains: keyword } }, { projectId: { contains: keyword } }] } : {})
+    AND: [
+      ...(view === "attention" ? [{ OR: [{ status: "failed" }, { status: { in: active }, updatedAt: { lt: new Date(Date.now() - leaseMs) } }] }] : []),
+      ...(input.exactId ? [{ id: input.exactId }] : keyword ? [{ OR: [{ id: { contains: keyword } }, { userId: { contains: keyword } }, { projectId: { contains: keyword } }] }] : [])
+    ]
   };
   return db.$transaction(async tx => {
     if (kind === "export") {

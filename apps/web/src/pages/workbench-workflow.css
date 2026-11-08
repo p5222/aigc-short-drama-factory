@@ -1,4 +1,7 @@
 .workbench-header-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.workbench-review-notice { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; padding: 20px; border: 1px solid var(--ds-border-default); border-left: 3px solid var(--ds-status-warning); border-radius: 12px; background: var(--ds-bg-surface); }
+.workbench-review-notice > div { flex: 1; min-width: min(240px, 100%); }
+.workbench-review-notice p { margin: 6px 0 0; color: var(--ds-text-muted); line-height: 1.65; font-size: 13px; }
 .dashboard-main-stack { display: grid; gap: 20px; min-width: 0; align-content: start; }
 .story-resume-footer { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 10px 20px; align-items: center; border-top: 1px solid var(--ds-border-default); padding: 16px 0 20px; font-size: 13px; }
 .story-resume-footer > span { color: var(--ds-action-primary); font-weight: 600; }

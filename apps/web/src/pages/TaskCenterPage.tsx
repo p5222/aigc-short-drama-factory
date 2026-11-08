@@ -45,6 +45,7 @@ export function TaskCenterPage({
   onCancel,
   onRefresh,
   onOpenProject,
+  onOpenContent,
   onOpenSupport,
   initialFilter = "all",
   initialTaskId = ""
@@ -54,6 +55,7 @@ export function TaskCenterPage({
   onCancel: (taskId: string) => void | Promise<void>;
   onRefresh: () => void | Promise<void>;
   onOpenProject: (projectId: string) => void;
+  onOpenContent: (contentId: string) => void;
   onOpenSupport: (task: GenerationTask) => void;
   initialFilter?: QueueFilter;
   initialTaskId?: string;
@@ -87,8 +89,8 @@ export function TaskCenterPage({
   const stageGroups = useMemo(() => stageOrder.map((type) => ({
     type,
     tasks: tasks.filter((task) => task.type === type),
-    running: tasks.filter((task) => task.type === type && isActiveStatus(task.status)).length,
-    failed: tasks.filter((task) => task.type === type && task.status === "failed").length
+    running: tasks.filter((task) => task.type === type && !task.reviewRequired && isActiveStatus(task.status)).length,
+    failed: tasks.filter((task) => task.type === type && !task.reviewRequired && task.status === "failed").length
   })), [tasks]);
 
   const filteredTasks = useMemo(() => {
@@ -97,10 +99,12 @@ export function TaskCenterPage({
       .filter((task) => activeStage === "all" || task.type === activeStage)
       .filter((task) => {
         if (activeFilter === "all") return true;
+        if (activeFilter === "review") return task.reviewRequired;
+        if (task.reviewRequired) return false;
         if (activeFilter === "active") return isActiveStatus(task.status);
         return task.status === activeFilter;
       })
-      .sort((a, b) => statusPriority[a.status] - statusPriority[b.status] || new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+      .sort((a, b) => Number(Boolean(b.reviewRequired)) - Number(Boolean(a.reviewRequired)) || statusPriority[a.status] - statusPriority[b.status] || new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
   }, [activeFilter, activeStage, tasks, query]);
 
   useEffect(() => {
@@ -115,13 +119,13 @@ export function TaskCenterPage({
 
   return (
     <div className="page-stack generation-queue-page creator-page" data-tour-id="task-center">
-      <PageHeader title="生成队列" description="查看创作进度，处理失败任务。已提交的任务会在后台继续运行。" actions={
+      <PageHeader title="生成队列" description="查看创作进度，处理失败或待核对任务。正常提交的任务会在后台继续运行。" actions={
           <button className="ghost-button" onClick={() => void runAction("__refresh__", "refresh")} disabled={Boolean(pendingActions.__refresh__)}>
             <RefreshCw size={18} />
             {pendingActions.__refresh__ ? "刷新中…" : "刷新队列"}
           </button>
         } />
-      {tasks.length ? <dl className="creator-metrics" aria-label="任务概况"><div><dt>全部任务</dt><dd>{tasks.length}</dd></div><div><dt>生成中</dt><dd>{queueStats.active}</dd></div><div><dt>失败待处理</dt><dd>{queueStats.failed}</dd></div><div><dt>已完成</dt><dd>{queueStats.succeeded}</dd></div></dl> : null}
+      {tasks.length ? <dl className="creator-metrics" aria-label="任务概况"><div><dt>全部任务</dt><dd>{tasks.length}</dd></div><div><dt>生成中</dt><dd>{queueStats.active}</dd></div><div><dt>待核对</dt><dd>{queueStats.review}</dd></div><div><dt>失败待处理</dt><dd>{queueStats.failed}</dd></div><div><dt>已完成</dt><dd>{queueStats.succeeded}</dd></div></dl> : null}
       {actionError ? <InlineNotice tone="error" onDismiss={() => setActionError("")}>{actionError}</InlineNotice> : null}
       {actionMessage ? <InlineNotice tone="success" onDismiss={() => setActionMessage("")}>{actionMessage}</InlineNotice> : null}
       {tasks.length ? <><div className="creator-list-toolbar queue-search-toolbar">
@@ -131,6 +135,7 @@ export function TaskCenterPage({
       <div className="queue-filter-row" role="group" aria-label="按任务状态筛选">
         {[
           ["all", "全部"],
+          ["review", "待核对"],
           ["active", "生成中"],
           ["pending", "排队中"],
           ["failed", "失败"],
@@ -155,7 +160,7 @@ export function TaskCenterPage({
           {tasks.length ? <div className="queue-card-head">
             <div>
               <h2>生成任务</h2>
-              <p>按状态优先展示：生成中、失败、排队中、已完成。</p>
+              <p>优先展示待核对、生成中和失败任务。</p>
             </div>
             <span>{filteredTasks.length} 条</span>
           </div> : null}
@@ -179,13 +184,13 @@ export function TaskCenterPage({
                   <span className="queue-task-main">
                     <strong>{taskTitleText(task.title)}</strong>
                     <small>{task.projectName ?? "未绑定作品"} · {task.provider || "未记录渠道"} / {task.model || "未记录模型"}</small>
-                    <span className="queue-progress-line"><i className={task.status === "running" ? "running" : undefined} style={{ width: `${Math.max(task.status === "running" ? 4 : 0, normalizeProgress(task.progress))}%` }} /></span>
+                    <span className="queue-progress-line"><i className={!task.reviewRequired && task.status === "running" ? "running" : undefined} style={{ width: `${Math.max(!task.reviewRequired && task.status === "running" ? 4 : 0, normalizeProgress(task.progress))}%` }} /></span>
                     {task.status === "failed" && task.errorReason ? (
                       <small className="queue-task-error"><AlertTriangle size={13} />{task.errorReason}</small>
                     ) : null}
                   </span>
                   <span className="queue-task-side">
-                    <em className={`queue-status ${task.status}`}>{task.reviewRequired ? "待核对" : taskStatusText(task.status)}</em>
+                    <em className={`queue-status ${task.reviewRequired ? "review" : task.status}`}>{task.reviewRequired ? "待核对" : taskStatusText(task.status)}</em>
                     <small>{normalizeProgress(task.progress)}%</small>
                   </span>
                   </button>
@@ -213,10 +218,10 @@ export function TaskCenterPage({
 
         {selectedTask ? <div id="selected-task-detail" ref={detailRef} className="queue-detail-region" tabIndex={-1} role="region" aria-label="所选任务详情">
           <button type="button" className="ghost-button queue-return-list" onClick={() => { listRef.current?.focus({ preventScroll: true }); listRef.current?.scrollIntoView({ block: "start", behavior: "instant" }); }}>返回任务列表</button>
-          <TaskDetailPanel task={selectedTask} onOpenProject={onOpenProject} onOpenSupport={onOpenSupport} queuePolicy={queuePolicy} pendingAction={pendingActions[selectedTask.id]} actionsDisabled={Boolean(pendingActions.__refresh__) || actionRunner.isAwaitingSync(selectedTask.id)} onRetry={(id) => void runAction(id, "retry")} onCancel={(id) => void runAction(id, "cancel")} />
+          <TaskDetailPanel task={selectedTask} onOpenProject={onOpenProject} onOpenContent={onOpenContent} onOpenSupport={onOpenSupport} queuePolicy={queuePolicy} pendingAction={pendingActions[selectedTask.id]} actionsDisabled={Boolean(pendingActions.__refresh__) || actionRunner.isAwaitingSync(selectedTask.id)} onRetry={(id) => void runAction(id, "retry")} onCancel={(id) => void runAction(id, "cancel")} />
         </div> : null}
       </section>
-      <p className="creator-page-footnote">当前显示你的任务。成功后正式扣费，失败或取消会退回未消耗的冻结积分。</p>
+      <p className="creator-page-footnote">当前显示你的任务。成功后正式扣费；结果明确的失败或取消任务释放未消耗积分，结果待核对的任务保留冻结直到核对结束。</p>
     </div>
   );
 }
@@ -224,6 +229,7 @@ export function TaskCenterPage({
 function TaskDetailPanel({
   task,
   onOpenProject,
+  onOpenContent,
   onOpenSupport,
   queuePolicy,
   pendingAction,
@@ -233,6 +239,7 @@ function TaskDetailPanel({
 }: {
   task?: GenerationTask;
   onOpenProject: (projectId: string) => void;
+  onOpenContent: (contentId: string) => void;
   onOpenSupport: (task: GenerationTask) => void;
   queuePolicy: ReturnType<typeof buildQueuePolicy>;
   pendingAction?: TaskAction;
@@ -251,7 +258,7 @@ function TaskDetailPanel({
   const canRetry = canRetryTask(task);
   const canCancel = canCancelTask(task);
   const progress = normalizeProgress(task.progress);
-  const queuePosition = task.status === "pending" ? pendingPosition(task, queuePolicy.pendingTasks) : 0;
+  const queuePosition = !task.reviewRequired && task.status === "pending" ? pendingPosition(task, queuePolicy.pendingTasks) : 0;
 
   return (
     <aside className="queue-detail-card">
@@ -261,7 +268,7 @@ function TaskDetailPanel({
           <h2>{taskTitleText(task.title)}</h2>
           <p>{task.projectName ?? "未绑定作品"} · {taskTypeText(task.type)}</p>
         </div>
-        <em className={`queue-status ${task.status}`}>{task.reviewRequired ? "待核对" : taskStatusText(task.status)}</em>
+        <em className={`queue-status ${task.reviewRequired ? "review" : task.status}`}>{task.reviewRequired ? "待核对" : taskStatusText(task.status)}</em>
       </div>
 
       <div className="queue-progress-card">
@@ -269,7 +276,7 @@ function TaskDetailPanel({
           <strong>{progress}%</strong>
           <span>{task.reviewRequired ? "已暂停，等待核对供应商结果" : task.status === "running" ? "正在生成，请不要重复提交同一任务" : progressHint(task.status)}</span>
         </div>
-        <div className="queue-progress-bar"><i className={task.status === "running" ? "running" : undefined} style={{ width: `${Math.max(task.status === "running" ? 4 : 0, progress)}%` }} /></div>
+        <div className="queue-progress-bar"><i className={!task.reviewRequired && task.status === "running" ? "running" : undefined} style={{ width: `${Math.max(!task.reviewRequired && task.status === "running" ? 4 : 0, progress)}%` }} /></div>
       </div>
 
       <div className="queue-detail-group">
@@ -296,7 +303,7 @@ function TaskDetailPanel({
         <h3>执行信息</h3>
         <div className="queue-detail-grid">
           <QueueDetail label="参考耗时" value={task.estimatedSeconds ? formatDuration(task.estimatedSeconds) : "等待渠道返回"} />
-          <QueueDetail label="我的待处理序号" value={queuePosition ? `第 ${queuePosition} 条` : task.status === "running" ? "执行中" : "-"} />
+          <QueueDetail label="我的待处理序号" value={task.reviewRequired ? "暂停待核对" : queuePosition ? `第 ${queuePosition} 条` : task.status === "running" ? "执行中" : "-"} />
           <QueueDetail label="创建时间" value={formatTaskTime(task.createdAt)} />
           <QueueDetail label="更新时间" value={formatTaskTime(task.updatedAt)} />
         </div>
@@ -319,8 +326,8 @@ function TaskDetailPanel({
 
       <div className="queue-fallback-box">
         <strong>成本与兜底</strong>
-        <p>{task.refundPolicy ?? "失败或取消会退回未消耗积分；成功后正式扣费。"}</p>
-        <p>{task.fallbackHint ?? "如同一模型反复失败，可以到生产台切换模型，或向支持人员提交工单。"}</p>
+        <p>{task.reviewRequired ? "供应商结果尚未确认，未结算积分仍冻结。核对后按实际交付结算或释放。" : task.refundPolicy ?? "失败或取消会退回未消耗积分；成功后正式扣费。"}</p>
+        <p>{task.reviewRequired ? "请先核对本次结果，避免重新生成造成重复费用。" : task.fallbackHint ?? "如同一模型反复失败，可以到生产台切换模型，或向支持人员提交工单。"}</p>
       </div>
       <details className="queue-fallback-box">
         <summary>工单诊断摘要</summary>
@@ -333,7 +340,7 @@ function TaskDetailPanel({
       </details>
       <button type="button" className="ghost-button" onClick={() => onOpenSupport(task)}>前往帮助中心提交工单</button>
 
-      {task.projectId ? <button type="button" className="primary-button" onClick={() => onOpenProject(task.projectId!)}><Film size={16} /> 打开所属作品</button> : <p className="muted">对应作品已不可用，任务记录仍保留。</p>}
+      {task.projectId ? <button type="button" className="primary-button" onClick={() => onOpenProject(task.projectId!)}><Film size={16} /> 打开所属作品</button> : task.contentProjectId ? <button type="button" className="primary-button" onClick={() => onOpenContent(task.contentProjectId!)}><FileText size={16} />打开所属故事</button> : <p className="muted">未找到关联作品，任务记录仍保留。</p>}
       <div className="queue-detail-actions">
         {canRetry ? <button type="button" onClick={() => onRetry(task.id)} disabled={Boolean(pendingAction) || actionsDisabled}>
           <RotateCcw size={16} />
@@ -393,20 +400,21 @@ function QueueDetail({ label, value }: { label: string; value: string }) {
 }
 
 function getQueueStats(tasks: GenerationTask[]) {
-  const active = tasks.filter((task) => isActiveStatus(task.status)).length;
+  const active = tasks.filter((task) => !task.reviewRequired && isActiveStatus(task.status)).length;
+  const review = tasks.filter(task => task.reviewRequired).length;
   const succeeded = tasks.filter((task) => task.status === "succeeded").length;
-  const failed = tasks.filter((task) => task.status === "failed").length;
+  const failed = tasks.filter((task) => !task.reviewRequired && task.status === "failed").length;
   const totalCredits = tasks.reduce((sum, task) => sum + (task.finalCredits ?? 0), 0);
-  const activeTasks = tasks.filter((task) => isActiveStatus(task.status));
+  const activeTasks = tasks.filter((task) => !task.reviewRequired && isActiveStatus(task.status));
   const avgProgress = activeTasks.length ? Math.round(activeTasks.reduce((sum, task) => sum + normalizeProgress(task.progress), 0) / activeTasks.length) : 0;
-  return { active, succeeded, failed, totalCredits, avgProgress };
+  return { active, succeeded, failed, review, totalCredits, avgProgress };
 }
 
 function buildQueuePolicy(tasks: GenerationTask[]) {
   const pendingTasks = tasks
-    .filter((task) => task.status === "pending")
+    .filter((task) => !task.reviewRequired && task.status === "pending")
     .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-  const running = tasks.filter((task) => task.status === "running").length;
+  const running = tasks.filter((task) => !task.reviewRequired && task.status === "running").length;
   return {
     running,
     pending: pendingTasks.length,
@@ -471,6 +479,7 @@ function emptyListText(filter: QueueFilter, stage: TaskType | "all", totalTasks:
   const stagePrefix = stage === "all" ? "" : `「${taskTypeText(stage)}」阶段`;
   const filterTexts: Record<QueueFilter, string> = {
     all: `${stagePrefix}暂无任务记录。`,
+    review: `${stagePrefix}当前没有待核对的任务。`,
     active: `${stagePrefix}当前没有生成中的任务。`,
     pending: `${stagePrefix}当前没有排队中的任务。`,
     failed: `${stagePrefix}没有失败任务，一切正常。`,
@@ -494,6 +503,7 @@ function progressHint(status: TaskStatus) {
 }
 
 function nextStepText(task: GenerationTask) {
+  if (task.reviewRequired) return taskRecoveryHint(task);
   if (task.status === "pending") return "任务已进入队列，实际开始时间取决于模型和阶段的可用额度。";
   if (task.status === "running") return "任务生成中，切换页面后仍会继续执行。";
   if (task.status === "succeeded") return "可以回到项目生产台查看生成结果，继续下一阶段。";

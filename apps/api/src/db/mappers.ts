@@ -1,6 +1,7 @@
 import { readProviderConnection, isSupportedProviderProtocol } from "@aifilm/shared";
 import { decryptSettingSecret } from "../config/secrets.js";
-import { creationCanRetry, creationExecution, creationNeedsReview } from "../queue/creationState.js";
+import { creationCanRetry, creationNeedsReview } from "../queue/creationState.js";
+import { contentTaskIdentity, taskReviewRequired } from "./taskPresentation.js";
 import type {
   AssetItem,
   CharacterProfile,
@@ -72,11 +73,13 @@ export function mapProject(row: any): Project {
 
 export function mapTask(row: any): GenerationTask {
   const status = normalizeTaskStatus(row.status);
+  const reviewRequired = taskReviewRequired(row);
   const type = String(row.type ?? "text");
   const estimatedSeconds = estimateTaskSeconds(type, Number(row.estimatedCredits) || 0);
   return {
     id: row.id,
     projectId: row.projectId ?? undefined,
+    contentProjectId: contentTaskIdentity(row.jobId)?.contentId,
     projectName: row.projectName ?? undefined,
     jobId: row.jobId ?? undefined,
     type: row.type,
@@ -96,12 +99,10 @@ export function mapTask(row: any): GenerationTask {
       } } : {}),
     errorReason: publicTaskError(row.errorReason),
     estimatedSeconds,
-    refundPolicy: refundPolicyForTask(status),
-    retryable: !/^(content|media):/.test(String(row.jobId ?? "")) && creationCanRetry(row) && ["failed", "canceled", "refunded"].includes(status),
-    cancelable: !/^(content|media):/.test(String(row.jobId ?? "")) && !creationNeedsReview(row) && ["pending", "running"].includes(status),
-    reviewRequired: creationExecution(row.execution).reviewRequired || (() => {
-      try { const data = JSON.parse(row.errorReason ?? "{}"); return Boolean(data.kind === "media_checkpoint" && data.metadata?.needsReconciliation); } catch { return false; }
-    })(),
+    refundPolicy: reviewRequired ? "结果尚未确认，未结算积分仍冻结。核对后按实际交付结算或释放，请勿重复提交。" : refundPolicyForTask(status),
+    retryable: !reviewRequired && !/^(content|media):/.test(String(row.jobId ?? "")) && creationCanRetry(row) && ["failed", "canceled", "refunded"].includes(status),
+    cancelable: !reviewRequired && !/^(content|media):/.test(String(row.jobId ?? "")) && !creationNeedsReview(row) && ["pending", "running"].includes(status),
+    reviewRequired,
     fallbackAvailable: ["text", "storyboard", "character", "image", "video"].includes(type),
     fallbackHint: fallbackHintForTask(type, row.provider, row.model),
     createdAt: row.createdAt.toISOString(),

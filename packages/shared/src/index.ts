@@ -233,6 +233,7 @@ export interface ProjectWorkflow {
 }
 
 export interface GenerationTask {
+  contentProjectId?: string;
   id: string;
   projectId?: string;
   projectName?: string;
@@ -1237,7 +1238,7 @@ export interface WorkbenchSummary {
   runningTasks: number;
   credits: number;
   /** Account-wide counts; recent lists are only presentation samples. */
-  actionCounts?: { waiting: number; active: number; failed: number };
+  actionCounts?: { waiting: number; active: number; failed: number; review?: number };
   actionProjects?: Project[];
   updatedAt?: string;
   recentProjects: Project[];

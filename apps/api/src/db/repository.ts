@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { taskReviewRequired } from "./taskPresentation.js";
 import { assertProviderConnection, readProviderConnection, storedProviderConnection, type ProviderConnection } from "@aifilm/shared";
 import { providerRuntimeOptions, validateProviderUrl } from "../providers/connection.js";
 import { encryptSettingSecret } from "../config/secrets.js";
@@ -72,7 +73,7 @@ import {
 export async function getWorkbenchSummary(userId = DEMO_USER_ID): Promise<WorkbenchSummary> {
   const taskWhere = { userId, NOT: { id: { startsWith: "content_operation_" } } };
   const waitingWhere = { userId, status: { in: ["scripting", "storyboarding"] } };
-  const [user, projects, tasks, account, announcements, projectCount, storyboardCount, runningTaskCount, waitingCount, failedCount, actionProjects] = await Promise.all([
+  const [user, projects, tasks, account, announcements, projectCount, storyboardCount, actionTasks, waitingCount, actionProjects] = await Promise.all([
     prisma.user.findUniqueOrThrow({ where: { id: userId } }),
     prisma.project.findMany({ where: { userId }, orderBy: { updatedAt: "desc" }, take: 6 }),
     prisma.generationTask.findMany({ where: taskWhere, orderBy: { updatedAt: "desc" }, take: 8 }),
@@ -80,11 +81,17 @@ export async function getWorkbenchSummary(userId = DEMO_USER_ID): Promise<Workbe
     listPublicAnnouncements(),
     prisma.project.count({ where: { userId } }),
     prisma.storyboard.count({ where: { project: { userId } } }),
-    prisma.generationTask.count({ where: { ...taskWhere, status: { in: ["running", "pending"] } } }),
+    prisma.generationTask.findMany({ where: { ...taskWhere, status: { in: ["running", "pending", "failed"] } },
+      select: { status: true, execution: true, errorReason: true } }),
     prisma.project.count({ where: waitingWhere }),
-    prisma.generationTask.count({ where: { ...taskWhere, status: "failed" } }),
     prisma.project.findMany({ where: waitingWhere, orderBy: { updatedAt: "asc" }, take: 3 })
   ]);
+  let reviewCount = 0, runningTaskCount = 0, failedCount = 0;
+  for (const task of actionTasks) {
+    if (taskReviewRequired(task)) reviewCount++;
+    else if (task.status === "failed") failedCount++;
+    else runningTaskCount++;
+  }
 
   return {
     userName: user.name,
@@ -92,7 +99,7 @@ export async function getWorkbenchSummary(userId = DEMO_USER_ID): Promise<Workbe
     storyboards: storyboardCount,
     runningTasks: runningTaskCount,
     credits: account.balance - account.frozenBalance,
-    actionCounts: { waiting: waitingCount, active: runningTaskCount, failed: failedCount },
+    actionCounts: { waiting: waitingCount, active: runningTaskCount, failed: failedCount, review: reviewCount },
     actionProjects: actionProjects.map(mapProject),
     updatedAt: new Date().toISOString(),
     recentProjects: projects.map(mapProject),
@@ -357,6 +364,7 @@ export async function listTasks(userId = DEMO_USER_ID, status?: string, type?: s
     await prisma.generationTask.findMany({
       where: {
         userId,
+        NOT: { id: { startsWith: "content_operation_" } },
         ...(status && status !== "all" ? { status } : {}),
         ...(type && type !== "all" ? { type } : {})
       },
