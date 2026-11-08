@@ -69,6 +69,7 @@ import { AdminConfiguration } from "../admin/AdminConfiguration";
 import { initialProviderDraft, ProviderConnectionFields } from "../admin/ProviderConnectionFields";
 import { HttpError } from "../lib/httpClient";
 import { AdminEvaluationPage, AdminMasterDetail, AdminTablePage } from "../admin";
+import { EvaluationChannelSummary, EvaluationEvidenceDialog, FeedbackEvidencePicker } from "../admin/EvaluationEvidence";
 import { closeAfterAdminSuccess, createAdminActionRunner, createCreditAdjustmentAttempt, isValidCreditAdjustment, isValidModelPriceDraft, runAdminBatch, type AdminActionResult } from "../admin/adminActionModel";
 import { AdminDialog, AdminDialogActions } from "../admin/AdminDialog";
 import { confirmAdminAction } from "../admin/AdminConfirm";
@@ -892,7 +893,7 @@ function QualityCenterSection({
     <section className="admin-v2-section quality-center-section">
       <div className="admin-product-metrics">
         <AdminMetric icon={<CheckCircle2 size={22} />} label="成功率" value={snapshot && available.completedTasks ? `${snapshot.summary.successRate}%` : "—"} hint={!snapshot ? "等待快照" : available.completedTasks ? `失败率 ${snapshot.summary.failureRate}% · 最近任务` : "无已结束任务"} tone="green" />
-        <AdminMetric icon={<ChartNoAxesCombined size={22} />} label="平均评分" value={snapshot && available.reports ? snapshot.summary.averageScore : "—"} hint={available.reports ? "最近质量报告均分" : "无评分样本"} tone="blue" />
+        <AdminMetric icon={<ChartNoAxesCombined size={22} />} label="结构检查均分" value={snapshot?.lab.recentReports.some(r => r.evidenceScope === "structure") ? snapshot.summary.averageScore : "—"} hint="仅字段与资产状态；质量需复核" tone="blue" />
         <AdminMetric icon={<Activity size={22} />} label="P95 耗时" value={snapshot && available.latency ? formatDuration(snapshot.summary.p95LatencyMs) : "—"} hint={available.latency ? "最近任务耗时分位数" : "无耗时样本"} tone="amber" />
         <AdminMetric icon={<DatabaseZap size={22} />} label="模型健康" value={snapshot && available.models ? `${snapshot.summary.modelHealth}%` : "—"} hint={snapshot && available.models ? `${snapshot.summary.costAnomalies} 个成本异常` : "无模型监控样本"} tone="violet" />
       </div>
@@ -921,7 +922,7 @@ function QualityCenterSection({
 
 function QualityOverviewPanel({ snapshot, onNavigate }: { snapshot: QualityCenterOverview; onNavigate: (panel: QualityPanelKey) => void }) {
   const blockedModels = snapshot.modelMonitoring.filter((row) => row.healthStatus === "blocked").length;
-  const openPriorityEvents = snapshot.events.filter((event) => ["p0", "p1"].includes(event.priority) && !["resolved", "ignored", "converted"].includes(event.status)).length;
+  const openPriorityEvents = snapshot.events.filter((event) => ["p0", "p1"].includes(event.priority) && !["resolved", "ignored"].includes(event.status)).length;
   const bottleneck = snapshot.stageOptimization.rows.find((row) => row.key === snapshot.stageOptimization.bottleneck);
   const readySamples = snapshot.samples.filter((sample) => sample.readiness === "pass").length;
   const activeSamples = snapshot.samples.reduce((sum, sample) => sum + sample.sampleCount, 0);
@@ -1050,7 +1051,7 @@ function QualityStageOptimizationPanel({ data }: { data: QualityCenterOverview["
           <article key={row.key} className={row.health}>
             <header><strong>{row.label}</strong><span>{qualityGateLabel(row.health)}</span></header>
             <div className="quality-optimization-metrics">
-              <MetricPill label="均分" value={row.averageScore || "-"} strong />
+              <MetricPill label="结构均分" value={row.reportCount ? row.averageScore : "-"} strong />
               <MetricPill label="通过率" value={row.reportCount ? `${row.passRate}%` : "待评测"} />
               <MetricPill label="待处理反馈" value={row.openFeedback} />
               <MetricPill label="生成失败" value={row.failedTasks} />
@@ -1084,13 +1085,13 @@ function QualityStageContractMatrix({ snapshot }: { snapshot: QualityCenterOverv
     <section className="quality-stage-contract" aria-label="前后台四阶段质量契约">
       <header>
         <div><span>前后台统一口径</span><strong>四阶段质量契约</strong></div>
-        <p>前台保持四步创作，后台保留五个细粒度评分项；“资产”聚合角色与图片评测，不改写历史数据。</p>
+        <p>以下指标只汇总结构检查。文字质量、视觉一致性和播放效果需查看固定样本并独立复核。</p>
       </header>
       <div className="quality-contract-grid">
         {contracts.map((contract, index) => {
           const diagnosis = snapshot.stageOptimization.rows.find((row) => row.key === contract.key);
-          const reports = snapshot.lab.recentReports.filter((report) => contract.stages.includes(report.stage));
-          const openEvents = snapshot.events.filter((event) => contract.stages.includes(event.stage as EvaluationStage) && !["resolved", "ignored", "converted"].includes(event.status));
+          const reports = snapshot.lab.recentReports.filter((report) => report.evidenceScope === "structure" && contract.stages.includes(report.stage));
+          const openEvents = snapshot.events.filter((event) => contract.stages.includes(event.stage as EvaluationStage) && !["resolved", "ignored"].includes(event.status));
           const urgent = openEvents.filter((event) => event.priority === "p0" || event.priority === "p1").length;
           const passRate = diagnosis?.passRate ?? (reports.length ? Math.round((reports.filter((report) => report.pass).length / reports.length) * 100) : 0);
           const averageScore = diagnosis?.averageScore ?? average(reports.map((report) => report.totalScore));
@@ -1105,7 +1106,7 @@ function QualityStageContractMatrix({ snapshot }: { snapshot: QualityCenterOverv
                 <small>{contract.gate}</small>
               </div>
               <dl>
-                <div><dt>均分</dt><dd>{averageScore || "-"}</dd></div>
+                <div><dt>结构均分</dt><dd>{reports.length ? averageScore : "-"}</dd></div>
                 <div><dt>通过率</dt><dd>{reports.length ? `${passRate}%` : "待评测"}</dd></div>
                 <div><dt>待优化</dt><dd>{diagnosis?.openFeedback ?? openEvents.length}</dd></div>
                 <div><dt>数据集</dt><dd>{datasets}</dd></div>
@@ -1488,13 +1489,16 @@ function EvaluationSection({
   const modelQuality = evaluation?.modelQuality ?? [];
   const blockedProjects = projects.filter((project) => project.blockedReasons.length > 0 || project.feedbacks.some((feedback) => feedback.usability !== "usable"));
   const textProviders = providers.filter((provider) => provider.modality === "text" && provider.enabled && !isDeprecatedChannel(provider.id, provider.name));
-  const defaultProjectIds = projects.slice(0, 3).map((row) => row.project.id);
+  const defaultProjectIds = projects.slice(0, 1).map((row) => row.project.id);
   const [activeEvalTab, setActiveEvalTab] = useState<"run" | "experiments" | "records" | "projects" | "models">("run");
   const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>(defaultProjectIds);
-  const [selectedStages, setSelectedStages] = useState<EvaluationStage[]>(["script", "character", "image", "storyboard", "video"]);
+  const [selectedStages, setSelectedStages] = useState<EvaluationStage[]>(["script"]);
   const [mode, setMode] = useState<"rules" | "hybrid" | "llm">("rules");
   const [selectedModels, setSelectedModels] = useState<string[]>([]);
   const [maxLlmCalls, setMaxLlmCalls] = useState(3);
+  const [budgetCny, setBudgetCny] = useState(5);
+  const [pendingRequestId, setPendingRequestId] = useState(() => sessionStorage.getItem("evaluation:pending-request") ?? "");
+  const [evidenceRunId, setEvidenceRunId] = useState("");
   const [datasets, setDatasets] = useState<EvaluationDataset[]>([]);
   const [runs, setRuns] = useState<EvaluationRun[]>([]);
   const [promptVersions, setPromptVersions] = useState<PromptVersion[]>([]);
@@ -1513,7 +1517,7 @@ function EvaluationSection({
   const datasetPending = useRef(false);
 
   useEffect(() => {
-    setSelectedProjectIds((current) => current.length ? current.filter((id) => projects.some((row) => row.project.id === id)) : projects.slice(0, 3).map((row) => row.project.id));
+    setSelectedProjectIds((current) => current.length ? current.filter((id) => projects.some((row) => row.project.id === id)) : projects.slice(0, 1).map((row) => row.project.id));
   }, [projects]);
 
   useEffect(() => {
@@ -1539,7 +1543,7 @@ function EvaluationSection({
     setSelectedDatasetId(datasetId);
     const dataset = datasets.find((item) => item.id === datasetId);
     if (!dataset) return;
-    setSelectedProjectIds(dataset.projectIds.filter((id) => projects.some((row) => row.project.id === id)));
+    setSelectedProjectIds(dataset.projectIds);
     setSelectedStages(dataset.stages);
   }
 
@@ -1585,20 +1589,24 @@ function EvaluationSection({
   }
 
   async function runEvaluation() {
-    if (evaluationPending.current) return;
+    if (evaluationPending.current || pendingRequestId) return;
     if (!selectedProjectIds.length || !selectedStages.length) { setRunError("请先选择样本项目和评测阶段。"); return; }
     if (mode !== "rules" && !selectedModels.length) { setRunError("请先选择用于评分的文本模型。"); return; }
     evaluationPending.current = true;
     setRunning(true);
     setRunError("");
+    const requestId = crypto.randomUUID();
+    sessionStorage.setItem("evaluation:pending-request", requestId);
+    setPendingRequestId(requestId);
     try {
       const evaluatorModels = evaluatorOptions
         .filter((item) => selectedModels.includes(item.key))
         .map((item) => ({ provider: item.provider, model: item.model, name: item.name }));
       const result = await api.runQualityEvaluation({
+        requestId,
         datasetId: selectedDatasetId || undefined,
         runName: `${stageLabel(selectedStages[0] ?? "none")}评测 ${new Date().toLocaleString()}`,
-        projectIds: selectedProjectIds,
+        projectIds: selectedDatasetId ? undefined : selectedProjectIds,
         stages: selectedStages,
         mode,
         evaluatorModels,
@@ -1606,24 +1614,45 @@ function EvaluationSection({
         generationPromptVersionId: selectedGenerationPromptVersionId || undefined,
         maxLlmCalls: mode === "rules" ? 0 : maxLlmCalls,
         maxShotsPerPrompt: 8,
-        includeFeedback: true
+        includeFeedback: false,
+        budgetCny
       });
       setRunResult(result);
+      setPendingRequestId("");
+      sessionStorage.removeItem("evaluation:pending-request");
       await refreshEvaluationSnapshots();
       onRefresh();
     } catch (err) {
       setRunError(err instanceof Error ? err.message : "评测运行失败");
+      if (err instanceof HttpError && err.status === 400) {
+        setPendingRequestId("");
+        sessionStorage.removeItem("evaluation:pending-request");
+      }
     } finally {
       setRunning(false);
       evaluationPending.current = false;
     }
   }
 
+  async function lookupPendingEvaluation() {
+    if (!pendingRequestId || evaluationPending.current) return;
+    evaluationPending.current = true;
+    setRunning(true); setRunError("");
+    try {
+      const detail = await api.adminEvaluationRequest(pendingRequestId);
+      setEvidenceRunId(detail.run.id);
+      setPendingRequestId("");
+      sessionStorage.removeItem("evaluation:pending-request");
+      await refreshEvaluationSnapshots();
+    } catch (cause) { setRunError(`${cause instanceof Error ? cause.message : "查询失败"} 请求标识已保留，请稍后再次查询。`); }
+    finally { setRunning(false); evaluationPending.current = false; }
+  }
+
   return (
     <section className="admin-v2-section admin-evaluation-section">
       <div className="admin-product-metrics">
-        <AdminMetric icon={<ChartNoAxesCombined size={22} />} label="有效作品" value={evaluation?.northStar.effectiveProjects ?? 0} hint={`总项目 ${evaluation?.northStar.totalProjects ?? 0}`} tone="blue" />
-        <AdminMetric icon={<CheckCircle2 size={22} />} label="最近评测均分" value={latestRun?.summary.averageScore ? `${latestRun.summary.averageScore}分` : "-"} hint={latestRun ? `${latestRun.summary.reportCount} 条报告` : "暂无评测记录"} tone="green" />
+        <AdminMetric icon={<ChartNoAxesCombined size={22} />} label="作者反馈可用" value={evaluation?.northStar.effectiveProjects ?? 0} hint="近期视频反馈，不代表商业验收" tone="blue" />
+        <AdminMetric icon={<CheckCircle2 size={22} />} label="最近评测报告" value={latestRun?.summary.reportCount ?? 0} hint="分通道查看证据与结论" tone="green" />
         <AdminMetric icon={<Activity size={22} />} label="评测记录" value={runs.length} hint={`LLM ${llmCallsTotal} 次 · 失败 ${failedRuns}`} tone="amber" />
         <AdminMetric icon={<DatabaseZap size={22} />} label="待处理项目" value={blockedProjects.length} hint="低分或不可用反馈" tone="violet" />
       </div>
@@ -1644,9 +1673,9 @@ function EvaluationSection({
         <div className="admin-v2-card-head">
           <div>
             <h2>运行评测</h2>
-            <p>先选样本，再选阶段和评测方式。默认规则评分不消耗 LLM，只有切到 LLM 模式才会调用模型。</p>
+            <p>固定样本 → 分通道评测 → 人工复核 → 反馈修复。默认结构检查不调用模型，图片和视频质量由媒体复核确认。</p>
           </div>
-          <button className="admin-primary-btn" onClick={() => void runEvaluation()} disabled={running || !selectedProjectIds.length || !selectedStages.length || (mode !== "rules" && (!selectedModels.length || maxLlmCalls <= 0))}>
+          <button className="admin-primary-btn" onClick={() => void runEvaluation()} disabled={running || !!pendingRequestId || !selectedProjectIds.length || !selectedStages.length || (mode !== "rules" && (!selectedModels.length || maxLlmCalls <= 0))}>
             {running ? <Loader2 size={18} className="spin" /> : <PlayCircle size={18} />}
             {running ? "评测中" : "运行评测"}
           </button>
@@ -1673,9 +1702,9 @@ function EvaluationSection({
             <div className="evaluation-project-picker">
               {sampleProjectRows.map((row) => (
                 <label key={row.project.id} className={selectedProjectIds.includes(row.project.id) ? "active" : ""}>
-                  <input type="checkbox" checked={selectedProjectIds.includes(row.project.id)} onChange={() => toggleString(selectedProjectIds, row.project.id, setSelectedProjectIds)} />
+                  <input type="checkbox" disabled={!!selectedDatasetId} checked={selectedProjectIds.includes(row.project.id)} onChange={() => toggleString(selectedProjectIds, row.project.id, setSelectedProjectIds)} />
                   <span>{row.project.name}</span>
-                  <small>{row.averageScore || "未评测"}分 · {row.userName} · {row.feedbacks.length}条反馈</small>
+                  <small>{row.reports.some(report => report.evidenceScope === "structure") ? `结构 ${row.averageScore} 分` : "未做结构检查"} · {row.userName} · {row.feedbacks.length}条反馈</small>
                 </label>
               ))}
             </div>
@@ -1705,9 +1734,9 @@ function EvaluationSection({
               <strong>评测方式</strong>
               <div className="evaluation-mode-cards">
                 {[
-                  ["rules", "规则评分", "快速、稳定、零 token"],
-                  ["hybrid", "规则 + LLM", "抽样复核，适合迭代验证"],
-                  ["llm", "LLM 对比", "只看模型评审差异"]
+                  ["rules", "结构检查", "字段、关联与资产状态"],
+                  ["hybrid", "结构 + 文本", "分别保留，不混合给分"],
+                  ["llm", "文本评审", "仅评审实际发送的文字"]
                 ].map(([value, label, desc]) => (
                   <button type="button" className={mode === value ? "active" : ""} onClick={() => setMode(value as typeof mode)} key={value}>
                     <span>{label}</span>
@@ -1719,8 +1748,8 @@ function EvaluationSection({
             <div>
               <strong>评测提示词版本</strong>
               <select className="evaluation-dataset-select" value={selectedPromptVersionId} onChange={(event) => setSelectedPromptVersionId(event.target.value)}>
-                <option value="">使用当前启用评分模板</option>
-                {promptVersions.filter((prompt) => prompt.purpose === "evaluation" && selectedStages.includes(prompt.stage)).map((prompt) => (
+                <option value="">使用内置文本评审契约 v2</option>
+                {promptVersions.filter((prompt) => prompt.purpose === "evaluation" && selectedStages.length === 1 && selectedStages.includes(prompt.stage)).map((prompt) => (
                   <option key={prompt.id} value={prompt.id}>{stageLabel(prompt.stage)} · {prompt.name} · {prompt.version} · {prompt.status === "active" ? "启用" : "草稿"}</option>
                 ))}
               </select>
@@ -1734,12 +1763,13 @@ function EvaluationSection({
                   <option key={prompt.id} value={prompt.id}>{stageLabel(prompt.stage)} · {prompt.name} · {prompt.version}</option>
                 ))}
               </select>
-              <small className="evaluation-config-hint">用于标记当前样本由哪个生成提示词产出，方便后续提示词效果对比。</small>
+              <small className="evaluation-config-hint">手选版本仅作声明标签；实际生成来源以固定样本中的版本证据为准。</small>
             </div>
             <div className={mode === "rules" ? "evaluation-llm-panel disabled" : "evaluation-llm-panel"}>
               <div className="evaluation-budget-row">
                 <strong>LLM 评测模型</strong>
                 <label><span>上限</span><input type="number" min={0} max={50} value={maxLlmCalls} onChange={(event) => setMaxLlmCalls(Number(event.target.value) || 0)} disabled={mode === "rules"} /></label>
+                <label><span>预算（元）</span><input aria-label="评测预算" type="number" min={0} max={500} step={1} value={budgetCny} onChange={(event) => setBudgetCny(Number(event.target.value))} disabled={mode === "rules"} /></label>
               </div>
               <div className="evaluation-model-group-grid">
                 {evaluatorGroups.map((group) => (
@@ -1769,10 +1799,12 @@ function EvaluationSection({
           </div>
         </div>
         {runError ? <p className="admin-toast danger">{runError}</p> : null}
+        {pendingRequestId ? <div className="eval-evidence-note" role="status"><p>请求标识：{pendingRequestId}。结果尚未核实，请查询原请求，避免重复调用。</p><button className="admin-secondary-btn" disabled={running} type="button" onClick={() => void lookupPendingEvaluation()}>查询本次评测</button></div> : null}
         {runResult ? (
           <div className="evaluation-run-result">
             <strong>{runResult.run?.name ?? "本次评测"} · 生成 {runResult.reports.length} 条报告</strong>
             <span>规则 {runResult.usage.ruleReports} · LLM {runResult.usage.llmReports} · 调用 {runResult.usage.llmCalls} · 失败 {runResult.usage.llmFailures}</span>
+            {runResult.run ? <button className="admin-secondary-btn" type="button" onClick={() => setEvidenceRunId(runResult.run!.id)}>查看证据并复核</button> : null}
             {runResult.skipped.slice(0, 4).map((item, index) => <small key={`${item.projectId}-${item.stage}-${index}`}>{item.projectId ?? "项目"} {item.stage ?? ""}：{item.reason}</small>)}
           </div>
         ) : null}
@@ -1782,6 +1814,7 @@ function EvaluationSection({
       {activeEvalTab === "records" ? <EvaluationRecordsCard runs={runs} datasets={datasets} onDeleteRun={async (id) => { await api.deleteEvaluationRun(id); await refreshEvaluationSnapshots(); onRefresh(); }} onDeleteDataset={async (id) => { await api.deleteEvaluationDataset(id); await refreshEvaluationSnapshots(); }} onRefresh={refreshEvaluationSnapshots} /> : null}
       {activeEvalTab === "projects" ? <ProjectQualityPool projects={projects} onDeleteQuality={async (projectId) => { await api.deleteProjectQualityData(projectId); onRefresh(); }} /> : null}
       {activeEvalTab === "models" ? <ModelQualityCard modelQuality={modelQuality} providers={providers} /> : null}
+      {evidenceRunId ? <EvaluationEvidenceDialog runId={evidenceRunId} onClose={() => setEvidenceRunId("")} /> : null}
     </section>
   );
 }
@@ -1892,7 +1925,7 @@ function EvaluationExperimentWorkspace({
       {message ? <p className="admin-toast success">{message}</p> : null}
       <section className="evaluation-experiment-intro">
         <div><span>迭代方法</span><h2>同样本、单变量、可复现</h2></div>
-        <p>先建立基线运行，再只替换一个模型或提示词生成候选运行。系统比较两次真实评测结果，不用主观印象判断优化是否有效。</p>
+        <p>按固定样本和评测器逐项配对，分开呈现新增、变化与回退。缺少相同原始输入时只提供描述性差异，生产效果保留“待验证”。</p>
       </section>
 
       <div className="evaluation-experiment-builder-grid">
@@ -1928,8 +1961,8 @@ function EvaluationExperimentWorkspace({
               <option value="model">模型对比</option><option value="prompt">提示词对比</option><option value="combined">组合策略对比</option>
             </select>
             <select value={experimentDraft.stage} onChange={(event) => setExperimentDraft({ ...experimentDraft, stage: event.target.value as EvaluationStage, baselineRunId: "", candidateRunId: "" })}>{frontendEvaluationStages.flatMap((group) => group.stages).map((stage) => <option key={stage} value={stage}>{stageLabel(stage)}</option>)}</select>
-            <select value={experimentDraft.baselineRunId} onChange={(event) => setExperimentDraft({ ...experimentDraft, baselineRunId: event.target.value })}><option value="">选择基线运行</option>{stageRuns.map((run) => <option key={run.id} value={run.id}>{run.name} · {run.summary.averageScore || "-"}分 · {run.summary.passRate}%</option>)}</select>
-            <select value={experimentDraft.candidateRunId} onChange={(event) => setExperimentDraft({ ...experimentDraft, candidateRunId: event.target.value })}><option value="">选择候选运行</option>{stageRuns.map((run) => <option key={run.id} value={run.id}>{run.name} · {run.summary.averageScore || "-"}分 · {run.summary.passRate}%</option>)}</select>
+            <select value={experimentDraft.baselineRunId} onChange={(event) => setExperimentDraft({ ...experimentDraft, baselineRunId: event.target.value })}><option value="">选择基线运行</option>{stageRuns.map((run) => <option key={run.id} value={run.id}>{run.name} · {run.summary.reportCount} 份报告</option>)}</select>
+            <select value={experimentDraft.candidateRunId} onChange={(event) => setExperimentDraft({ ...experimentDraft, candidateRunId: event.target.value })}><option value="">选择候选运行</option>{stageRuns.map((run) => <option key={run.id} value={run.id}>{run.name} · {run.summary.reportCount} 份报告</option>)}</select>
             <textarea value={experimentDraft.hypothesis} onChange={(event) => setExperimentDraft({ ...experimentDraft, hypothesis: event.target.value })} placeholder="这次只改了什么，预期改善哪个指标？" />
             <button className="admin-primary-btn" type="button" disabled={loading || !experimentDraft.baselineRunId || !experimentDraft.candidateRunId || experimentDraft.baselineRunId === experimentDraft.candidateRunId} onClick={() => void createExperiment()}><ChartNoAxesCombined size={16} />生成对比结论</button>
           </div>
@@ -1972,6 +2005,7 @@ function FeedbackOpsSection({
   const [feedbackTotal, setFeedbackTotal] = useState(evaluation?.recentFeedback.length ?? 0);
   const [selectedId, setSelectedId] = useState("");
   const [handlingId, setHandlingId] = useState("");
+  const [resolutionEvidence, setResolutionEvidence] = useState<{ resolutionAttemptId?: string; resolutionReviewId?: string }>({});
   const [draft, setDraft] = useState({
     status: "open" as UserFeedback["status"],
     priority: "p2" as UserFeedback["priority"],
@@ -2027,14 +2061,15 @@ function FeedbackOpsSection({
   const hasAttribution = Boolean(draft.rootCause.trim());
   const hasResolution = draft.resolution.trim().length >= 8;
   const hasLinkedProject = Boolean(selectedFeedback?.projectId);
-  const canSettleSample = Boolean(selectedFeedback && hasLinkedProject && hasAttribution && hasResolution);
+  const canSettleSample = Boolean(selectedFeedback && hasLinkedProject);
   const handlingSelected = selectedFeedback ? handlingId === selectedFeedback.id : false;
 
   useEffect(() => {
     if (!selectedFeedback) return;
     setSelectedId(selectedFeedback.id);
+    setResolutionEvidence({ resolutionAttemptId: selectedFeedback.resolutionAttemptId, resolutionReviewId: selectedFeedback.resolutionReviewId });
     setDraft({
-      status: selectedFeedback.status,
+      status: selectedFeedback.status === "converted" ? "processing" : selectedFeedback.status,
       priority: selectedFeedback.priority,
       rootCause: selectedFeedback.rootCause ?? inferRootCause(selectedFeedback),
       assignee: selectedFeedback.assignee ?? "",
@@ -2050,7 +2085,7 @@ function FeedbackOpsSection({
     setHandlingId(selectedFeedback.id);
     setError("");
     try {
-      const updated = await api.updateAdminFeedback(selectedFeedback.id, input);
+      const updated = await api.updateAdminFeedback(selectedFeedback.id, { ...input, ...resolutionEvidence, expectedVersion: selectedFeedback.version ?? 0 });
       setFeedbacks((current) => current.map((item) => item.id === updated.id ? updated : item));
       setDraft({
         status: updated.status,
@@ -2089,55 +2124,12 @@ function FeedbackOpsSection({
       setError("该反馈未关联作品，无法沉淀为评测样本。");
       return;
     }
-    if (!draft.rootCause.trim() || !draft.resolution.trim()) {
-      setError("请先补齐根因归类和处理结论，再沉淀为评测样本。");
-      return;
-    }
-
     setHandlingId(selectedFeedback.id);
     setError("");
     try {
-      let datasetId = selectedFeedback.convertedDatasetId;
-      if (!datasetId) {
-        const dataset = await api.createEvaluationDataset({
-          name: `反馈样本-${stageLabel(selectedFeedback.stage)}-${selectedProject?.project.name ?? selectedFeedback.id.slice(-6)}`.slice(0, 80),
-          description: [
-            `来源反馈：${selectedFeedback.content || "用户未填写补充说明。"}`,
-            `根因：${draft.rootCause}`,
-            `处理结论：${draft.resolution}`
-          ].join("\n").slice(0, 500),
-          source: "feedback",
-          projectIds: [selectedFeedback.projectId],
-          stages: [selectedFeedback.stage],
-          filters: {
-            feedbackId: selectedFeedback.id,
-            priority: draft.priority,
-            rootCause: draft.rootCause,
-            usability: selectedFeedback.usability,
-            rating: selectedFeedback.rating,
-            tags: selectedFeedback.tags
-          },
-          owner: draft.assignee.trim() || "feedback-ops"
-        });
-        datasetId = dataset.id;
-      }
-
-      const updated = await api.updateAdminFeedback(selectedFeedback.id, {
-        status: "converted",
-        priority: draft.priority,
-        rootCause: draft.rootCause,
-        assignee: draft.assignee,
-        resolution: draft.resolution,
-        convertedDatasetId: datasetId
-      });
+      const { feedback: updated } = await api.convertFeedbackDataset(selectedFeedback.id);
       setFeedbacks((current) => current.map((item) => item.id === updated.id ? updated : item));
-      setDraft({
-        status: updated.status,
-        priority: updated.priority,
-        rootCause: updated.rootCause ?? "",
-        assignee: updated.assignee ?? "",
-        resolution: updated.resolution ?? ""
-      });
+      setDraft(current => ({ ...current, status: updated.status }));
       onRefresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "评测样本沉淀失败");
@@ -2191,7 +2183,7 @@ function FeedbackOpsSection({
                 </div>
                 <div className="feedback-ops-meta">
                   <span>用户：{project?.userName ?? feedback.userId}</span>
-                  {project?.averageScore ? <span>质检均分 {project.averageScore}</span> : null}
+                  {project?.reports.some(report => report.evidenceScope === "structure") ? <span>结构均分 {project.averageScore}</span> : null}
                 </div>
               </button>
             );
@@ -2199,7 +2191,7 @@ function FeedbackOpsSection({
           {!rows.length ? <EmptyHint text="暂无匹配反馈。刷新后仍为空，说明最近还没有用户提交该类问题。" /> : null}
         </div>
 
-        <aside className="feedback-detail-panel" data-admin-dirty={hasFeedbackDraftChanges(selectedFeedback, draft, selectedFeedback ? inferRootCause(selectedFeedback) : "") || undefined}>
+        <aside className="feedback-detail-panel" data-admin-dirty={hasFeedbackDraftChanges(selectedFeedback, draft, selectedFeedback ? inferRootCause(selectedFeedback) : "") || resolutionEvidence.resolutionReviewId !== selectedFeedback?.resolutionReviewId || undefined}>
           {selectedFeedback ? (
             <>
               <div className="feedback-detail-head">
@@ -2213,8 +2205,9 @@ function FeedbackOpsSection({
               <div className="feedback-flow-strip" aria-label="反馈处理流程">
                 <span className="done">收集 badcase</span>
                 <span className={draft.rootCause ? "done" : ""}>归因分析</span>
-                <span className={draft.status === "processing" || draft.status === "resolved" || draft.status === "converted" ? "done" : ""}>复核处理</span>
                 <span className={selectedFeedback.convertedDatasetId || draft.status === "converted" ? "done" : ""}>样本沉淀</span>
+                <span className={draft.status === "processing" || draft.status === "resolved" ? "done" : ""}>优化复测</span>
+                <span className={selectedFeedback.status === "resolved" && selectedFeedback.resolutionReviewId ? "done" : ""}>证据闭环</span>
               </div>
               <blockquote>{selectedFeedback.content || "用户未填写补充说明。"}</blockquote>
               <div className="feedback-detail-meta">
@@ -2240,6 +2233,8 @@ function FeedbackOpsSection({
                 <span>处理结论</span>
                 <textarea value={draft.resolution} onChange={(event) => setDraft({ ...draft, resolution: event.target.value })} placeholder="记录复现情况、影响范围、修复方案、补偿结论或回归验证结果。" />
               </label>
+              <FeedbackEvidencePicker key={selectedFeedback.id} feedback={selectedFeedback} onSelect={(resolutionAttemptId, resolutionReviewId) => setResolutionEvidence({ resolutionAttemptId, resolutionReviewId })} />
+              {resolutionEvidence.resolutionReviewId ? <p className="eval-evidence-note">已关联复核：{resolutionEvidence.resolutionReviewId}</p> : null}
               <div className="feedback-closure-grid">
                 <section>
                   <div className="feedback-section-title compact">
@@ -2256,7 +2251,7 @@ function FeedbackOpsSection({
                     <DatabaseZap size={16} />
                     <div>
                       <strong>评测样本沉淀</strong>
-                      <span>仅沉淀有代表性、可复现且已归因的反馈。</span>
+                      <span>先保存当前问题样本。沉淀后仍需优化、捕获新样本并复核。</span>
                     </div>
                   </div>
                   <div className="feedback-sample-checklist">
@@ -2264,12 +2259,12 @@ function FeedbackOpsSection({
                     <span className={hasAttribution ? "done" : ""}><CheckCircle2 size={13} />完成归因</span>
                     <span className={hasResolution ? "done" : ""}><CheckCircle2 size={13} />处理结论</span>
                   </div>
-                  <button className="admin-secondary-btn compact" disabled={handlingSelected || !canSettleSample} title={canSettleSample ? "沉淀为评测样本" : "需关联作品、根因归类和处理结论"} onClick={() => void settleFeedbackSample()} type="button">沉淀为评测样本</button>
+                  <button className="admin-secondary-btn compact" disabled={handlingSelected || !canSettleSample || !!selectedFeedback.convertedDatasetId} title={canSettleSample ? "沉淀为评测样本" : "需先关联作品"} onClick={() => void settleFeedbackSample()} type="button">{selectedFeedback.convertedDatasetId ? "已保存固定样本" : "沉淀为评测样本"}</button>
                 </section>
               </div>
               <div className="feedback-ops-actions sticky">
-                <button className="admin-secondary-btn compact" disabled={handlingSelected} onClick={() => void saveFeedback({ status: "resolved", priority: draft.priority, rootCause: selectedRootCause, assignee: draft.assignee, resolution: draft.resolution })} type="button">标记已解决</button>
-                <button className="admin-secondary-btn compact" disabled={handlingSelected} onClick={() => void saveFeedback({ status: "ignored", priority: draft.priority, rootCause: draft.rootCause, assignee: draft.assignee, resolution: draft.resolution || "已关闭：不进入当前迭代处理。" })} type="button">关闭反馈</button>
+                <button className="admin-secondary-btn compact" disabled={handlingSelected || !draft.resolution.trim() || !resolutionEvidence.resolutionReviewId} onClick={() => void saveFeedback({ status: "resolved", priority: draft.priority, rootCause: selectedRootCause, assignee: draft.assignee, resolution: draft.resolution })} type="button">标记已解决</button>
+                <button className="admin-secondary-btn compact" disabled={handlingSelected || !draft.resolution.trim()} onClick={() => void saveFeedback({ status: "ignored", priority: draft.priority, rootCause: draft.rootCause, assignee: draft.assignee, resolution: draft.resolution })} type="button">关闭反馈</button>
                 <button className="admin-primary-btn compact" disabled={handlingSelected} onClick={() => void saveFeedback({ status: draft.status, priority: draft.priority, rootCause: draft.rootCause, assignee: draft.assignee, resolution: draft.resolution })} type="button">{handlingSelected ? <Loader2 className="spin-icon" size={15} /> : <FilePenLine size={15} />}保存处理</button>
               </div>
             </>
@@ -2948,6 +2943,7 @@ function EvaluationRecordsCard({
   onRefresh: () => void;
 }) {
   const [deleting, setDeleting] = useState("");
+  const [evidenceRunId, setEvidenceRunId] = useState("");
   const [exporting, setExporting] = useState("");
   const [exportError, setExportError] = useState("");
   const [selectedRunIds, setSelectedRunIds] = useState<string[]>([]);
@@ -3095,7 +3091,7 @@ function EvaluationRecordsCard({
           <div key={dataset.id}>
             <strong>{dataset.name}</strong>
             <span>{dataset.sampleCount} 项 · {dataset.stages.map(stageLabel).join(" / ")}</span>
-            <button className="admin-icon-btn danger" disabled={deleting === dataset.id} onClick={() => void deleteDataset(dataset)} title="删除样本集">
+            <button className="admin-icon-btn danger" disabled={deleting === dataset.id || (dataset.protocolVersion ?? 1) >= 2} onClick={() => void deleteDataset(dataset)} title={(dataset.protocolVersion ?? 1) >= 2 ? "固定样本保留证据，不支持删除" : "删除样本集"}>
               {deleting === dataset.id ? <Loader2 className="spin-icon" size={15} /> : null}<span>删除样本集</span>
             </button>
           </div>
@@ -3113,15 +3109,16 @@ function EvaluationRecordsCard({
                 <td><strong>{run.name}</strong><small>{new Date(run.startedAt).toLocaleString()}</small></td>
                 <td><strong>{run.datasetName ?? "手动样本"}</strong><small>{run.projectIds.length} 项 · {run.stages.map(stageLabel).join(" / ")}</small></td>
                 <td><span className="admin-chip">{modeLabel(run.mode)}</span><small>{run.evaluatorModels.map((item) => item.model).join(" / ") || "规则"}</small></td>
-                <td><ScoreBadge score={run.summary.averageScore} /><small>{run.summary.passRate}% 通过 · {run.summary.reportCount} 报告</small></td>
+                <td><EvaluationChannelSummary run={run} /><small>{run.summary.reportCount} 报告</small></td>
                 <td>{run.usage.llmCalls}/{run.maxLlmCalls}<small>{run.usage.llmFailures} 失败</small></td>
                 <td><EvaluationRunStatusChip status={run.status} /></td>
                 <td>
                   <div className="admin-row-actions">
+                    <button className="admin-icon-btn" type="button" onClick={() => setEvidenceRunId(run.id)}>查看证据</button>
                     <button className="admin-icon-btn" disabled={exporting === run.id} onClick={() => void exportRun(run)} title="导出 Excel">
                       {exporting === run.id ? <Loader2 className="spin-icon" size={15} /> : null}<span>导出 Excel</span>
                     </button>
-                    <button className="admin-icon-btn danger" disabled={deleting === run.id} onClick={() => void deleteRun(run)} title="删除评测记录">{deleting === run.id ? <Loader2 className="spin-icon" size={15} /> : null}<span>删除记录</span></button>
+                    <button className="admin-icon-btn danger" disabled={deleting === run.id || (run.protocolVersion ?? 1) >= 2 || ["running", "needs_review"].includes(run.status)} onClick={() => void deleteRun(run)} title={(run.protocolVersion ?? 1) >= 2 ? "保留调用与复核证据，不支持删除" : "删除评测记录"}>{deleting === run.id ? <Loader2 className="spin-icon" size={15} /> : null}<span>删除记录</span></button>
                   </div>
                 </td>
               </tr>
@@ -3131,6 +3128,7 @@ function EvaluationRecordsCard({
         {!visibleRuns.length && !recordsLoading && !exportError ? <EmptyHint text="暂无评测记录。先在“运行评测”里选择样本并执行一次规则评分。" /> : null}
       </div>
       <div className="admin-pagination"><button type="button" aria-label="上一页评测记录" disabled={recordsLoading || recordPage <= 1} onClick={() => void loadRunPage(recordPage - 1)}>‹</button><span>{recordPage} / {recordPages}</span><button type="button" aria-label="下一页评测记录" disabled={recordsLoading || recordPage >= recordPages} onClick={() => void loadRunPage(recordPage + 1)}>›</button></div>
+      {evidenceRunId ? <EvaluationEvidenceDialog runId={evidenceRunId} onClose={() => setEvidenceRunId("")} /> : null}
     </article>
   );
 }
@@ -3165,7 +3163,7 @@ function ProjectQualityPool({ projects, onDeleteQuality }: { projects: QualityPr
       </div>
       <div className="admin-table-wrap">
         <table className="admin-v2-table">
-          <thead><tr><th>作品</th><th>用户</th><th>阶段</th><th>均分</th><th>反馈</th><th>待优化点</th><th>操作</th></tr></thead>
+          <thead><tr><th>作品</th><th>用户</th><th>阶段</th><th>结构均分</th><th>反馈</th><th>待优化点</th><th>操作</th></tr></thead>
           <tbody>
             {projects.map((row) => (
               <tr key={row.project.id}>
@@ -3232,14 +3230,14 @@ function ModelQualityCard({ modelQuality, providers }: { modelQuality: NonNullab
             </div>
             <div className="model-quality-provider-metrics">
               <MetricPill label="平均成功率" value={`${group.successRate}%`} strong />
-              <MetricPill label="质量均分" value={group.averageScore || "-"} />
+              <MetricPill label="质量证据" value="待复核" />
               <MetricPill label="积分" value={group.credits} />
             </div>
             <div className="model-quality-model-list">
               {group.models.map((row) => (
                 <div key={`${row.model}-${row.stage}`}>
                   <strong>{row.model}</strong>
-                  <span>{stageLabel(row.stage as EvaluationStage)} · 成功 {row.successRate}% · 质量 {row.averageScore || "-"} · {row.credits} 积分</span>
+                  <span>{stageLabel(row.stage as EvaluationStage)} · 成功 {row.successRate}% · {row.credits} 积分 · 生成质量待复核</span>
                   <div className="model-quality-bars">
                     <i style={{ width: `${Math.min(100, row.successRate)}%` }} />
                     <b style={{ width: `${Math.min(100, row.averageScore || 0)}%` }} />
@@ -5011,6 +5009,7 @@ function StatusChip({ active, label }: { active: boolean; label?: string }) {
 function EvaluationRunStatusChip({ status }: { status: EvaluationRun["status"] }) {
   const labels: Record<EvaluationRun["status"], string> = {
     running: "运行中",
+      needs_review: "待核对",
     completed: "已完成",
     failed: "失败"
   };
@@ -5157,7 +5156,7 @@ function feedbackUsabilityLabel(value: UserFeedback["usability"]) {
   return labels[value] ?? value;
 }
 
-const feedbackStatusOptions: UserFeedback["status"][] = ["open", "triaged", "processing", "resolved", "converted", "ignored"];
+const feedbackStatusOptions: UserFeedback["status"][] = ["open", "triaged", "processing", "resolved", "ignored"];
 const feedbackPriorityOptions: UserFeedback["priority"][] = ["p0", "p1", "p2", "p3"];
 const feedbackRootCauseOptions = ["模型失败", "提示词问题", "工作流问题", "UI误导", "成本异常", "用户误操作", "数据缺失", "角色一致性", "素材/参考图问题", "导出问题", "其他"];
 

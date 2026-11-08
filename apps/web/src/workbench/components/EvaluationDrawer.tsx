@@ -20,7 +20,8 @@ export function EvaluationDrawer({ open, reports, feedbacks, onClose, onRefresh 
   return <Dialog open={open} title="评测与反馈" description="查看已保存的质量建议，定位下一步需要调整的内容。" onClose={onClose} busy={refreshing} className="wb-operation-dialog" footer={onRefresh ? <button className="wb-secondary-button" type="button" disabled={refreshing} onClick={() => void refresh()}><RefreshCw size={16} />{refreshing ? "刷新中…" : "刷新评测数据"}</button> : undefined}>
     {error ? <InlineNotice tone="error">{error}</InlineNotice> : null}
     {message ? <InlineNotice tone="success">{message}</InlineNotice> : null}
-    {reports.map(report => <article className="wb-evaluation-row" key={report.id}><div><strong>{stages[report.stage] ?? report.stage} · {report.totalScore} 分</strong><small>{new Date(report.createdAt).toLocaleString()}</small></div><p>{report.suggestions[0] || report.problems[0] || "暂无文字建议"}</p></article>)}
+    {reports.length ? <InlineNotice>结构检查核对字段和资产状态；文本评审仅覆盖已发送的文字。图片观感、视频播放与作品可用性仍需查看成品确认。</InlineNotice> : null}
+    {reports.map(report => <article className="wb-evaluation-row" key={report.id}><div><strong>{stages[report.stage] ?? report.stage} · {report.totalScore} 分</strong><small>{report.evidenceScope === "structure" ? "结构检查" : report.evidenceScope === "text" ? "文本评审" : "历史记录，证据范围不足"} · {new Date(report.createdAt).toLocaleString()}</small></div><p>{report.suggestions[0] || report.problems[0] || "暂无文字建议"}</p></article>)}
     {feedbacks.map(feedback => <article className="wb-evaluation-row" key={feedback.id}><div><strong>{stages[feedback.stage] ?? feedback.stage} · {feedback.rating} 分</strong><small>{feedback.usability === "usable" ? "可用" : feedback.usability === "barely_usable" ? "需要调整" : "不可用"}</small></div><p>{feedback.content || feedback.rootCause || "暂无文字反馈"}</p></article>)}
     {!reports.length && !feedbacks.length ? <StatePanel title="暂无评测记录" description="为生成结果提交反馈后，可在这里查看已保存的记录。" compact /> : null}
   </Dialog>;

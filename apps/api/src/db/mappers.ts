@@ -598,6 +598,9 @@ export function mapUserFeedback(row: any): UserFeedback {
     assignee: row.assignee ?? undefined,
     resolution: row.resolution ?? undefined,
     convertedDatasetId: row.convertedDatasetId ?? undefined,
+    resolutionAttemptId: row.resolutionAttemptId ?? undefined,
+    resolutionReviewId: row.resolutionReviewId ?? undefined,
+    version: row.version ?? 1,
     processedAt: row.processedAt?.toISOString(),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt?.toISOString()
@@ -613,6 +616,7 @@ export function mapQualityReport(row: any): QualityReport {
     assetId: row.assetId ?? undefined,
     stage: row.stage,
     evaluatorType: row.evaluatorType,
+    evidenceScope: row.evidenceScope ?? "legacy",
     totalScore: row.totalScore,
     pass: row.pass,
     dimensionScores: normalizeNumberRecord(row.dimensionScores),
@@ -637,6 +641,7 @@ export function mapEvaluationDataset(row: any): EvaluationDataset {
     stages: normalizeStringArray(row.stages).filter(isEvaluationStage) as EvaluationDataset["stages"],
     filters: normalizeObject(row.filters),
     sampleCount: row.sampleCount,
+    protocolVersion: row.protocolVersion ?? 1,
     owner: row.owner ?? undefined,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString()
@@ -648,6 +653,7 @@ export function mapEvaluationRun(row: any): EvaluationRun {
   const promptSnapshot = normalizeObject(row.promptSnapshot) as Partial<PromptVersion>;
   const generationPromptSnapshot = normalizeObject(row.generationPromptSnapshot) as Partial<PromptVersion>;
   return {
+    protocolVersion: row.protocolVersion ?? 1,
     id: row.id,
     name: row.name,
     datasetId: row.datasetId ?? undefined,
@@ -714,7 +720,9 @@ export function mapExperimentRun(row: any): ExperimentRun {
         baseline: item.baseline === undefined ? undefined : Number(item.baseline) || 0,
         candidate: item.candidate === undefined ? undefined : Number(item.candidate) || 0,
         delta: item.delta === undefined ? undefined : Number(item.delta) || 0,
-        status: item.status
+        status: item.status,
+        channel: item.channel,
+        evidenceChanged: item.evidenceChanged
       }))
     : [];
   return {
@@ -732,6 +740,7 @@ export function mapExperimentRun(row: any): ExperimentRun {
     baselineConfig: normalizeObject(row.baselineConfig),
     candidateConfig: normalizeObject(row.candidateConfig),
     metrics: {
+      comparability: metrics.comparability,
       baselineScore: Number(metrics.baselineScore) || 0,
       candidateScore: Number(metrics.candidateScore) || 0,
       scoreDelta: Number(metrics.scoreDelta) || 0,
@@ -779,7 +788,7 @@ function isEvaluationMode(value: string) {
 }
 
 function isEvaluationRunStatus(value: string) {
-  return ["running", "completed", "failed"].includes(value);
+  return ["running", "completed", "failed", "needs_review"].includes(value);
 }
 
 function normalizeFeedbackStatus(value: string): UserFeedback["status"] {
@@ -813,7 +822,11 @@ function normalizeEvaluationUsage(value: unknown): EvaluationRun["usage"] {
     llmReports: Number(object.llmReports) || 0,
     llmCalls: Number(object.llmCalls) || 0,
     llmFailures: Number(object.llmFailures) || 0,
-    estimatedPromptItems: Number(object.estimatedPromptItems) || 0
+    estimatedPromptItems: Number(object.estimatedPromptItems) || 0,
+    inputTokens: Number(object.inputTokens) || 0,
+    outputTokens: Number(object.outputTokens) || 0,
+    knownCostMicros: Number(object.knownCostMicros) || 0,
+    unknownCostCalls: Number(object.unknownCostCalls) || 0
   };
 }
 
@@ -842,6 +855,7 @@ function normalizeEvaluationSummary(value: unknown): EvaluationRun["summary"] {
     passRate: Number(object.passRate) || 0,
     averageScore: Number(object.averageScore) || 0,
     projectCount: Number(object.projectCount) || 0,
-    stageScores
+    stageScores,
+    channels: Array.isArray(object.channels) ? object.channels as EvaluationRun["summary"]["channels"] : undefined
   };
 }

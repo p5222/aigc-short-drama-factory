@@ -70,14 +70,15 @@ test("HTTP business boundaries: sessions, administrator writes, private media an
   });
   try {
     let ready = false;
+    let readinessDetails = "";
     const startupDeadline = Date.now() + (Number(process.env.AIFILM_TEST_STARTUP_TIMEOUT_MS) || 45000);
     while (Date.now() < startupDeadline) {
       if (child.exitCode !== null) throw new Error(`API exited during startup: ${logs}`);
-      try { ready = (await request("/ready")).ok; } catch { /* startup */ }
+      try { const response = await request("/ready"); ready = response.ok; readinessDetails = await response.text(); } catch { /* startup */ }
       if (ready) break;
       await new Promise(resolve => setTimeout(resolve, 250));
     }
-    assert.ok(ready, logs);
+    assert.ok(ready, `${readinessDetails}\n${logs}`);
     const sessions = [];
     for (const id of ids) {
       const response = await request("/api/auth/login", undefined, "POST", { account: `${id}@example.test`, password });
@@ -86,6 +87,37 @@ test("HTTP business boundaries: sessions, administrator writes, private media an
       sessions.push({ token: body.token, cookie: response.headers.get("set-cookie")!.split(";")[0]! });
     }
     const [owner, other, admin] = sessions as [typeof sessions[number], typeof sessions[number], typeof sessions[number]];
+    await t.test("evaluation evidence, review, request lookup and feedback conversion enforce administrator boundaries", async () => {
+      for (const path of ["/api/admin/evaluation/requests/fixture-request", "/api/admin/evaluation/attempts/nonexistent/media"]) {
+        assert.equal((await request(path)).status, 401);
+        assert.equal((await request(path, owner.token)).status, 403);
+      }
+      for (const path of ["/api/admin/evaluation/run", "/api/admin/evaluation/attempts/nonexistent/reviews", "/api/admin/evaluation/attempts/nonexistent/reconcile", "/api/admin/feedback/nonexistent/dataset"]) {
+        assert.equal((await request(path, owner.token, "POST", {})).status, 403);
+      }
+      assert.equal((await request("/api/admin/evaluation/run", admin.token, "POST", { mode: "rules" })).status, 400);
+      assert.equal((await request("/api/admin/evaluation/attempts/nonexistent/reviews", admin.token, "POST", {})).status, 400);
+      const input = { requestId: `http-eval-${run}`, projectIds: [projectId], stages: ["image"], mode: "rules" };
+      const result = await request("/api/admin/evaluation/run", admin.token, "POST", input);
+      assert.equal(result.status, 201);
+      const body = await result.json() as { run: { id: string } };
+      const read = await request(`/api/admin/evaluation/requests/${input.requestId}`, admin.token);
+      assert.equal(read.status, 200);
+      const detail = await read.json() as { run: { id: string }; attempts: Array<{ id: string; sample: { fingerprint: string } }> };
+      assert.equal(detail.run.id, body.run.id); assert.equal(detail.attempts.length, 1);
+      const review = await request(`/api/admin/evaluation/attempts/${detail.attempts[0].id}/reviews`, admin.token, "POST",
+        { requestId: `http-review-${run}`, expectedVersion: 0, fingerprint: detail.attempts[0].sample.fingerprint, scope: "structure", verdict: "usable", reason: "Checked saved structural fields" });
+      assert.equal(review.status, 201);
+      const mediaResponse = await request(`/api/admin/evaluation/attempts/${detail.attempts[0].id}/media`, admin.token);
+      const media = await mediaResponse.json() as Array<{ available: boolean; url: string }>;
+      assert.equal(media[0].available, true);
+      assert.equal((await request(media[0].url, undefined, "GET", undefined, { cookie: admin.cookie })).status, 200);
+      await db.project.update({ where: { id: projectId }, data: { name: "Changed after evaluation" } });
+      const exported = await (await request(`/api/admin/evaluation/runs/${body.run.id}/export.csv`, admin.token)).text();
+      assert.ok(exported.includes("Private test")); assert.ok(!exported.includes("Changed after evaluation")); assert.ok(exported.includes("structure"));
+      await db.project.update({ where: { id: projectId }, data: { name: "Private test" } });
+      assert.ok((await request(`/api/admin/evaluation/runs/${body.run.id}`, admin.token, "DELETE")).status >= 400);
+    });
     await t.test("task operations restrict reads and writes to administrators and validate bounded inputs", async () => {
       const path = "/api/admin/task-operations";
       assert.equal((await request(path)).status, 401);
@@ -687,6 +719,12 @@ test("HTTP business boundaries: sessions, administrator writes, private media an
     await db.platformAnnouncement.deleteMany({ where: { id: { in: announcementIds } } });
     await db.modelPrice.deleteMany({ where: { id: { in: [`api_text_price_${run}`, `api_other_price_${run}`, `api_image_price_${run}`, `api_video_price_${run}`] } } });
     await db.modelProvider.deleteMany({ where: { id: providerId } });
+    const evaluationRuns = await db.evaluationRun.findMany({ where: { projectIds: { has: projectId } }, select: { id: true } });
+    const evaluationRunIds = evaluationRuns.map(row => row.id);
+    await db.evaluationReview.deleteMany({ where: { attempt: { runId: { in: evaluationRunIds } } } });
+    await db.evaluationAttempt.deleteMany({ where: { runId: { in: evaluationRunIds } } });
+    await db.evaluationRun.deleteMany({ where: { id: { in: evaluationRunIds } } });
+    await db.evaluationSample.deleteMany({ where: { projectId } });
     await db.user.deleteMany({ where: { id: { in: ids } } });
     await db.$disconnect();
   }

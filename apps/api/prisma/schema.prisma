@@ -370,6 +370,9 @@ model UserFeedback {
   assignee    String?
   resolution  String?
   convertedDatasetId String?
+  resolutionAttemptId String?
+  resolutionReviewId String?
+  version     Int             @default(1)
   processedAt DateTime?
   createdAt   DateTime        @default(now())
   updatedAt   DateTime        @default(now()) @updatedAt
@@ -487,6 +490,7 @@ model QualityReport {
   asset             Asset?          @relation(fields: [assetId], references: [id], onDelete: SetNull)
   stage             String
   evaluatorType     String          @default("system")
+  evidenceScope     String          @default("legacy")
   totalScore        Int
   pass              Boolean
   dimensionScores   Json
@@ -517,6 +521,8 @@ model EvaluationDataset {
   stages      String[]
   filters     Json            @default("{}")
   sampleCount Int             @default(0)
+  protocolVersion Int         @default(1)
+  samples     EvaluationSample[]
   owner       String?
   runs        EvaluationRun[]
   experiments ExperimentRun[]
@@ -530,6 +536,10 @@ model EvaluationDataset {
 model EvaluationRun {
   id                  String             @id
   name                String
+  protocolVersion     Int                @default(1)
+  requestKey          String?            @unique
+  requestHash         String?
+  attempts            EvaluationAttempt[]
   datasetId           String?
   dataset             EvaluationDataset? @relation(fields: [datasetId], references: [id], onDelete: SetNull)
   datasetSnapshot     Json               @default("{}")
@@ -567,6 +577,66 @@ model EvaluationRun {
   @@index([generationPromptVersionId])
   @@index([status])
   @@index([startedAt])
+}
+
+// Immutable evidence. No cascade from mutable project data.
+model EvaluationSample {
+  id          String   @id
+  datasetId   String?
+  dataset     EvaluationDataset? @relation(fields: [datasetId], references: [id], onDelete: SetNull)
+  projectId   String
+  stage       String
+  sampleKey   String
+  fingerprint String
+  snapshot    Json
+  createdAt   DateTime @default(now())
+  attempts    EvaluationAttempt[]
+  @@unique([datasetId, sampleKey])
+  @@index([projectId, stage])
+}
+
+model EvaluationAttempt {
+  id          String   @id
+  runId       String
+  run         EvaluationRun @relation(fields: [runId], references: [id], onDelete: Restrict)
+  sampleId    String
+  sample      EvaluationSample @relation(fields: [sampleId], references: [id], onDelete: Restrict)
+  channel     String
+  evaluatorKey String
+  contractHash String
+  contract    Json
+  status      String   @default("prepared")
+  submittedAt DateTime?
+  finishedAt  DateTime?
+  reportId    String?
+  report      Json     @default("{}")
+  usage       Json     @default("{}")
+  cost        Json     @default("{}")
+  errorReason String?
+  durationMs  Int?
+  reviewVersion Int    @default(0)
+  reconciliation Json @default("{}")
+  reviews     EvaluationReview[]
+  createdAt   DateTime @default(now())
+  @@unique([runId, sampleId, evaluatorKey])
+  @@index([status])
+}
+
+model EvaluationReview {
+  id          String   @id
+  attemptId   String
+  attempt     EvaluationAttempt @relation(fields: [attemptId], references: [id], onDelete: Restrict)
+  actorId     String
+  requestKey  String   @unique
+  requestHash String
+  version     Int
+  fingerprint String
+  scope       String
+  verdict     String
+  reason      String
+  mediaIds    String[]
+  createdAt   DateTime @default(now())
+  @@unique([attemptId, version])
 }
 
 model PromptVersion {

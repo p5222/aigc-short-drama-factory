@@ -8,6 +8,7 @@ export * from "./deliveryEdit.js";
 export * from "./creatorAgent.js";
 export * from "./providerConnection.js";
 export * from "./platformSettings.js";
+export * from "./evaluation.js";
 
 export type ProjectStatus = "draft" | "planning" | "scripting" | "storyboarding" | "asseting" | "rendering" | "completed";
 
@@ -27,7 +28,7 @@ export type FeedbackUsability = "usable" | "barely_usable" | "unusable";
 export type FeedbackHandlingStatus = "open" | "triaged" | "processing" | "resolved" | "ignored" | "converted";
 export type FeedbackPriority = "p0" | "p1" | "p2" | "p3";
 export type QualityEvaluationMode = "rules" | "hybrid" | "llm";
-export type EvaluationRunStatus = "running" | "completed" | "failed";
+export type EvaluationRunStatus = "running" | "completed" | "failed" | "needs_review";
 export type AnnouncementType = "info" | "guide" | "update" | "warning";
 export type HelpArticleCategory = "getting_started" | "workflow" | "billing" | "account" | "troubleshooting" | "community";
 export type SegmentProfile = "jimeng_15s" | "doubao_10s";
@@ -696,6 +697,9 @@ export interface UserFeedback {
   assignee?: string;
   resolution?: string;
   convertedDatasetId?: string;
+  resolutionAttemptId?: string;
+  resolutionReviewId?: string;
+  version?: number;
   processedAt?: string;
   createdAt: string;
   updatedAt?: string;
@@ -709,6 +713,7 @@ export interface QualityReport {
   assetId?: string;
   stage: EvaluationStage;
   evaluatorType: "system" | "ai" | "user" | "admin";
+  evidenceScope?: import("./evaluation.js").EvaluationEvidenceScope;
   totalScore: number;
   pass: boolean;
   dimensionScores: Record<string, number>;
@@ -809,6 +814,7 @@ export interface ExperimentRun {
   baselineConfig: Record<string, unknown>;
   candidateConfig: Record<string, unknown>;
   metrics: {
+    comparability?: import("./evaluation.js").EvaluationComparability;
     baselineScore: number;
     candidateScore: number;
     scoreDelta: number;
@@ -825,6 +831,8 @@ export interface ExperimentRun {
       baseline?: number;
       candidate?: number;
       delta?: number;
+      channel?: string;
+      evidenceChanged?: boolean;
       status: "improved" | "regressed" | "same" | "new" | "missing";
     }>;
   };
@@ -848,6 +856,7 @@ export interface EvaluationDataset {
   stages: EvaluationStage[];
   filters: Record<string, unknown>;
   sampleCount: number;
+  protocolVersion?: number;
   owner?: string;
   createdAt: string;
   updatedAt: string;
@@ -869,6 +878,10 @@ export interface EvaluationRunUsage {
   llmCalls: number;
   llmFailures: number;
   estimatedPromptItems: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  knownCostMicros?: number;
+  unknownCostCalls?: number;
 }
 
 export interface EvaluationRunSummary {
@@ -878,11 +891,13 @@ export interface EvaluationRunSummary {
   averageScore: number;
   projectCount: number;
   stageScores: Array<{ stage: EvaluationStage; reports: number; passRate: number; averageScore: number }>;
+  channels?: Array<{ channel: string; reports: number; passRate: number; averageScore: number }>;
 }
 
 export interface EvaluationRun {
   id: string;
   name: string;
+  protocolVersion?: number;
   datasetId?: string;
   datasetName?: string;
   datasetSnapshot: Partial<EvaluationDataset>;
@@ -914,6 +929,8 @@ export interface EvaluationRun {
 export interface EvaluationRunDetail {
   run: EvaluationRun;
   reports: QualityReport[];
+  attempts?: import("./evaluation.js").EvaluationAttempt[];
+  calibration?: { reviewed: number; agreed: number; disagreed: number };
 }
 
 export interface EvaluationOverview {
@@ -1184,6 +1201,8 @@ export interface QualityEvaluatorModel {
 }
 
 export interface QualityEvaluationRunInput {
+  requestId?: string;
+  budgetCny?: number;
   datasetId?: string;
   runName?: string;
   projectIds?: string[];

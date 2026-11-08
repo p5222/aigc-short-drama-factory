@@ -1,4 +1,6 @@
 import "./config/env.js";
+import { attemptMedia, reviewAttempt, reconcileAttempt } from "./evaluation/reviews.js";
+import { convertFeedback } from "./evaluation/feedback.js";
 import { providerRuntimeOptions } from "./providers/connection.js";
 import { providerProtocols } from "@aifilm/shared";
 import { SettingsError, readPlatformSettings, updatePlatformSettings, effectiveSettings, settingsEnvironment, effectiveWechatConfig } from "./config/platformSettings.js";
@@ -626,12 +628,15 @@ const feedbackCreateSchema = z.object({
 });
 
 const feedbackUpdateSchema = z.object({
+  expectedVersion: z.number().int().min(1),
   status: z.enum(["open", "triaged", "processing", "resolved", "ignored", "converted"]).optional(),
   priority: z.enum(["p0", "p1", "p2", "p3"]).optional(),
   rootCause: z.string().max(80).nullable().optional(),
   assignee: z.string().max(80).nullable().optional(),
   resolution: z.string().max(800).nullable().optional(),
-  convertedDatasetId: z.string().max(120).nullable().optional()
+  convertedDatasetId: z.string().max(120).nullable().optional(),
+  resolutionAttemptId: z.string().max(120).nullable().optional(),
+  resolutionReviewId: z.string().max(120).nullable().optional()
 });
 
 const announcementTypeSchema = z.enum(["info", "guide", "update", "warning"]);
@@ -684,6 +689,8 @@ const evaluationDatasetCreateSchema = z.object({
 });
 
 const evaluationRunSchema = z.object({
+  requestId: supportRequestIdSchema,
+  budgetCny: z.number().min(0).max(500).optional(),
   datasetId: z.string().optional(),
   runName: z.string().max(100).optional(),
   projectIds: z.array(z.string()).max(50).optional().default([]),
@@ -700,6 +707,12 @@ const evaluationRunSchema = z.object({
   maxShotsPerPrompt: z.coerce.number().int().min(1).max(25).optional(),
   includeFeedback: z.boolean().optional()
 });
+
+const evaluationReviewSchema = z.object({
+  requestId: supportRequestIdSchema, expectedVersion: z.number().int().min(0), fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+  scope: z.enum(["structure", "text", "media"]), verdict: z.enum(["usable", "unusable", "insufficient"]),
+  reason: z.string().trim().min(1).max(2000), mediaIds: z.array(z.string().max(160)).max(1000).optional()
+}).strict();
 
 const promptVersionCreateSchema = z.object({
   key: z.string().trim().min(1).max(80),
@@ -2460,6 +2473,29 @@ app.get(
   })
 );
 
+app.get("/api/admin/evaluation/requests/:requestId", requireAdminPermission("dashboard:read"), asyncRoute(async (req, res) => {
+  const row = await prisma.evaluationRun.findUnique({ where: { requestKey: `${requestAuthUser(req)!.id}:${paramId(req.params.requestId)}` }, select: { id: true } });
+  if (!row) return res.status(404).json({ message: "尚未找到该评测请求，请保留请求标识后再次查询。" });
+  res.json(await getEvaluationRun(row.id));
+}));
+app.get("/api/admin/evaluation/attempts/:id/media", requireAdminPermission("dashboard:read"), asyncRoute(async (req, res) => {
+  res.json(await attemptMedia(paramId(req.params.id)));
+}));
+app.post("/api/admin/evaluation/attempts/:id/reviews", requireAdminPermission("evaluation:manage"), asyncRoute(async (req, res) => {
+  const parsed = evaluationReviewSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ message: "请填写完整复核意见及当前版本。" });
+  res.status(201).json(await reviewAttempt(paramId(req.params.id), requestAuthUser(req)!.id, parsed.data));
+}));
+app.post("/api/admin/evaluation/attempts/:id/reconcile", requireAdminPermission("evaluation:manage"), asyncRoute(async (req, res) => {
+  const parsed = z.object({ requestId: z.string().min(8).max(120), outcome: z.enum(["provider_completed", "provider_failed"]),
+    reason: z.string().trim().min(8).max(2000), reference: z.string().trim().min(1).max(300) }).strict().safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ message: "请填写供应商核对结果、依据及处理说明。" });
+  res.json(await reconcileAttempt(paramId(req.params.id), requestAuthUser(req)!.id, parsed.data));
+}));
+app.post("/api/admin/feedback/:id/dataset", requireAdminPermission("evaluation:manage"), asyncRoute(async (req, res) => {
+  res.json(await convertFeedback(paramId(req.params.id)));
+}));
+
 app.get(
   "/api/admin/evaluation/prompt-versions",
   requireAdminPermission("dashboard:read"),
@@ -2700,7 +2736,14 @@ app.post(
   asyncRoute(async (req, res) => {
     const parsed = evaluationRunSchema.safeParse(req.body ?? {});
     if (!parsed.success) return res.status(400).json(parsed.error.flatten());
-    res.status(201).json(await runQualityEvaluation(parsed.data));
+      const actorId = requestAuthUser(req)!.id;
+      try {
+        res.status(201).json(await runQualityEvaluation(parsed.data, undefined, actorId));
+      } catch (error) {
+        const existing = await prisma.evaluationRun.findUnique({ where: { requestKey: `${actorId}:${parsed.data.requestId}` }, select: { id: true } });
+        if (!existing) return res.status(400).json({ message: error instanceof Error ? error.message : "评测未受理，请检查参数。", code: "evaluation_not_accepted" });
+        throw error;
+      }
   })
 );
 
@@ -3169,13 +3212,9 @@ function tsvCell(value: unknown) {
 }
 
 async function buildEvaluationRunTable(details: Array<NonNullable<Awaited<ReturnType<typeof getEvaluationRun>>>>) {
-  const allProjectIds = [...new Set(details.flatMap((detail) => detail.run.projectIds))];
-  const projects = allProjectIds.length
-    ? await prisma.project.findMany({
-        where: { id: { in: allProjectIds } },
-        include: { user: true, feedbacks: true }
-      })
-    : [];
+  // Export only frozen evidence. A project's current name or feedback can have
+  // changed since evaluation and must never be presented as the original input.
+  const projects: Array<{ id: string; name: string; user?: { name: string }; feedbacks: Array<{ tags: string[]; content: string; stage: string; usability: string }> }> = [];
   const projectMap = new Map(projects.map((project) => [project.id, project]));
   const header = [
     "评测记录",
@@ -3198,7 +3237,24 @@ async function buildEvaluationRunTable(details: Array<NonNullable<Awaited<Return
     "下一步",
     "创建时间"
   ];
+  header.push("证据范围", "样本指纹", "尝试状态", "人工复核", "成本（元）", "成本依据");
   const rows = details.flatMap((detail) => {
+    if ((detail.run.protocolVersion ?? 1) >= 2) {
+      return (detail.attempts ?? []).map(a => {
+        const project = a.sample.snapshot.project as { name?: string };
+        const review = a.reviews[0];
+        return [
+          `${detail.run.name}(${detail.run.id})`, detail.run.datasetName ?? "手动固定样本", detail.run.status, detail.run.mode,
+          a.sample.projectId, project?.name ?? "", "", evaluationStageLabel(a.sample.stage), String(a.contract.provider ?? ""),
+          String(a.contract.model ?? ""), a.report ? String(a.report.totalScore) : "", a.report ? a.report.pass ? "本范围通过" : "本范围未通过" : "无有效报告",
+          "", a.report?.recommendedAction ?? "", "", a.report?.problems.join("；") ?? a.errorReason ?? "", a.report?.suggestions.join("；") ?? "",
+          a.status === "unknown" ? "核对原调用，禁止自动重发" : "结合人工复核判断", a.sample.createdAt, a.channel, a.sample.fingerprint, a.status,
+          review ? `${review.scope}/${review.verdict}：${review.reason}` : "未复核",
+          a.cost.status === "usage_derived" ? String((a.cost.actualMicros ?? 0) / 1_000_000) : "",
+          a.cost.status === "usage_derived" ? "按用量推算，待账单核对" : a.submittedAt ? "成本未知" : "未提交付费调用"
+        ];
+      });
+    }
     if (!detail.reports.length) {
       const runProjectIds = detail.run.projectIds.length ? detail.run.projectIds : [""];
       return runProjectIds.flatMap((projectId) => {
@@ -3222,7 +3278,8 @@ async function buildEvaluationRunTable(details: Array<NonNullable<Awaited<Return
           detail.run.errorReason ?? detail.run.skipped.map((item) => item.reason).join("；"),
           detail.run.errorReason ? "检查失败原因" : "等待评测结果",
           detail.run.skipped.map((item) => item.reason).join("；") || "重新运行评测",
-          detail.run.createdAt
+          detail.run.createdAt,
+          "旧版记录，证据不足", "", "", "", "", "历史记录未核验成本"
         ]);
       });
     }
@@ -3249,7 +3306,8 @@ async function buildEvaluationRunTable(details: Array<NonNullable<Awaited<Return
         report.problems.join("；"),
         report.suggestions.join("；"),
         report.suggestions[0] || report.problems[0] || "继续观察",
-        report.createdAt
+        report.createdAt,
+        "旧版记录，证据不足", "", "", "", "", "历史记录未核验成本"
       ];
     });
   });

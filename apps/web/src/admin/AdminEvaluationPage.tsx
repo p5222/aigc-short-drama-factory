@@ -20,14 +20,14 @@ export function AdminEvaluationPage({ prompts, experiments, selectedPromptId, on
       </section>
       <AdminTablePage
         title="实验运行"
-        summary="比较不同样本、模型与 Prompt 版本的评分、通过率和结论。"
+        summary="固定样本与评测器逐项配对，分通道展示差异。生产效果需另行验证。"
         actions={onCreateExperiment ? <button className="adm-primary-btn" type="button" onClick={onCreateExperiment}>新建实验</button> : null}
         columns={[
           { key: "name", label: "实验", render: (row) => <strong>{row.name}</strong> },
           { key: "type", label: "类型", render: (row) => row.experimentType === "model" ? "模型" : row.experimentType === "prompt" ? "提示词" : "组合" },
           { key: "stage", label: "阶段", render: (row) => row.stage },
-          { key: "score", label: "分数变化", render: (row) => `${row.metrics.baselineScore} → ${row.metrics.candidateScore}` },
-          { key: "status", label: "结论", render: (row) => <span className="adm-status" data-status={row.winner}>{row.winner === "candidate" ? "候选更优" : row.winner === "baseline" ? "基线更优" : "持平"}</span> },
+          { key: "score", label: "配对证据", render: (row) => row.metrics.comparability ? <div className="eval-channel-summary"><strong>{row.metrics.comparability.paired} 对 · {row.metrics.comparability.regressions} 项回退</strong><span>变化 {row.metrics.comparability.changed} · 未匹配 {row.metrics.comparability.unmatched}</span>{row.metrics.comparability.channels.map(c => <span key={c.channel}>{c.channel}：{c.baseline} → {c.candidate}</span>)}</div> : "旧版记录，证据不足" },
+          { key: "status", label: "结论", render: (row) => <div><span className="adm-status" data-status={row.winner}>{row.winner === "pending" ? "待验证" : !row.metrics.comparability ? "历史结论 · 待复核" : row.winner === "candidate" ? "候选更优" : row.winner === "baseline" ? "基线更优" : "持平"}</span><p>{row.metrics.comparability?.reasons.join("；")}</p></div> },
           { key: "hypothesis", label: "实验假设", render: (row) => row.hypothesis || "未提供" }
         ]}
         rows={experiments}

@@ -16,18 +16,19 @@ import type {
   QualityAssetLineageStage,
   QualityCenterOverview,
   QualityEventRow,
-  QualityEvaluationRunInput,
-  QualityEvaluationRunResult,
-  QualityEvaluatorModel,
   QualityGateStatus,
   QualityProjectRow,
   QualityReport,
   UserFeedback
 } from "@aifilm/shared";
-import { callTextModelJson, hasTextModelConfig, textModelName, textProviderName } from "../agents/generator.js";
-import { providerRuntimeOptions } from "../providers/connection.js";
 import { prisma } from "./client.js";
 import { mapEvaluationDataset, mapEvaluationRun, mapExperimentRun, mapProject, mapPromptVersion, mapQualityReport, mapUserFeedback } from "./mappers.js";
+import { runEvaluation as runQualityEvaluation, createFrozenDataset, reconcileStaleRuns, withEvaluationSnapshot } from "../evaluation/runner.js";
+import { runEvidence } from "../evaluation/reviews.js";
+import { compareEvidence } from "../evaluation/comparison.js";
+import { updateFeedback as updateAdminFeedback } from "../evaluation/feedback.js";
+export { runQualityEvaluation };
+export { updateAdminFeedback };
 
 type Stage = "script" | "character" | "storyboard" | "image" | "video";
 type ModelMonitorGroup = {
@@ -169,147 +170,18 @@ export async function generateProjectQualityReports(projectId: string, userId?: 
   return result.reports;
 }
 
-export async function runQualityEvaluation(input: QualityEvaluationRunInput, userId?: string): Promise<QualityEvaluationRunResult> {
-  const dataset = input.datasetId ? await prisma.evaluationDataset.findUnique({ where: { id: input.datasetId } }) : null;
-  const promptVersion = input.promptVersionId ? await prisma.promptVersion.findUnique({ where: { id: input.promptVersionId } }) : null;
-  const generationPromptVersion = input.generationPromptVersionId ? await prisma.promptVersion.findUnique({ where: { id: input.generationPromptVersionId } }) : null;
-  if (input.promptVersionId && !promptVersion) throw new Error("所选提示词版本不存在。");
-  if (promptVersion && promptVersion.purpose !== "evaluation") throw new Error("评分提示词必须选择用途为“评测”的版本。");
-  if (input.generationPromptVersionId && !generationPromptVersion) throw new Error("所选生成提示词版本不存在。");
-  if (generationPromptVersion && generationPromptVersion.purpose !== "generation") throw new Error("样本来源提示词必须选择用途为“生成”的版本。");
-  const inputProjectIds = input.projectIds ?? [];
-  const inputStages = input.stages ?? [];
-  const selectedProjectIds = unique(inputProjectIds.length ? inputProjectIds : dataset?.projectIds ?? []).slice(0, 50);
-  const selectedStages = unique(inputStages.length ? inputStages : dataset?.stages ?? []).filter((stage): stage is Stage => isStage(stage));
-  const mode = input.mode ?? "rules";
-  const maxLlmCalls = mode === "rules" ? 0 : clamp(Math.floor(input.maxLlmCalls ?? 3), 0, 50);
-  const evaluators = mode === "rules" ? [] : normalizeEvaluatorModels(input.evaluatorModels);
-  const skipped: QualityEvaluationRunResult["skipped"] = [];
-  const allReports: QualityReport[] = [];
-  let llmCalls = 0;
-  let llmFailures = 0;
-  let estimatedPromptItems = 0;
-
-  const maxShotsPerPrompt = clamp(Math.floor(input.maxShotsPerPrompt ?? 8), 1, 25);
-  const includeFeedback = input.includeFeedback ?? true;
-  const run = await prisma.evaluationRun.create({
-    data: {
-      id: `eval_run_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`,
-      name: normalizeRunName(input.runName),
-      datasetId: dataset?.id,
-      datasetSnapshot: dataset ? toJsonValue(evaluationDatasetSnapshot(dataset)) : {},
-      projectIds: selectedProjectIds,
-      stages: selectedStages,
-      mode,
-      evaluatorModels: toJsonValue(evaluators),
-      promptVersionId: promptVersion?.id,
-      promptSnapshot: promptVersion ? toJsonValue(promptVersionSnapshot(promptVersion)) : {},
-      generationPromptVersionId: generationPromptVersion?.id,
-      generationPromptSnapshot: generationPromptVersion ? toJsonValue(promptVersionSnapshot(generationPromptVersion)) : {},
-      maxLlmCalls,
-      maxShotsPerPrompt,
-      includeFeedback,
-      status: "running",
-      usage: emptyUsage(),
-      skipped: [],
-      summary: emptyRunSummary(selectedProjectIds.length),
-      primaryProjectId: selectedProjectIds[0]
-    },
-    include: { dataset: true, promptVersion: true }
-  });
-
-  try {
-    if (!selectedProjectIds.length || !selectedStages.length) {
-      const result = emptyEvaluationRunResult({ projectCount: selectedProjectIds.length, stages: selectedStages, mode, skipped });
-      const completedRun = await completeEvaluationRun(run.id, result);
-      return { ...result, run: completedRun };
-    }
-
-    for (const projectId of selectedProjectIds) {
-      const remainingCalls = maxLlmCalls - llmCalls;
-      const result = await generateProjectQualityReportsControlled(projectId, userId, {
-        stages: selectedStages,
-        mode,
-        evaluators: evaluators.slice(0, Math.max(0, remainingCalls)),
-        maxLlmCalls: Math.max(0, remainingCalls),
-        maxShotsPerPrompt,
-        includeFeedback,
-        promptVersion: promptVersion ?? undefined,
-        evaluationRunId: run.id
-      });
-      allReports.push(...result.reports);
-      llmCalls += result.usage.llmCalls;
-      llmFailures += result.usage.llmFailures;
-      estimatedPromptItems += result.usage.estimatedPromptItems;
-      skipped.push(...result.skipped);
-    }
-
-    const result: QualityEvaluationRunResult = {
-      projects: selectedProjectIds.length,
-      stages: selectedStages,
-      mode,
-      reports: allReports,
-      skipped,
-      usage: {
-        ruleReports: allReports.filter((report) => report.evaluatorType === "system").length,
-        llmReports: allReports.filter((report) => report.evaluatorType === "ai").length,
-        llmCalls,
-        llmFailures,
-        estimatedPromptItems
-      }
-    };
-    const completedRun = await completeEvaluationRun(run.id, result);
-    return { ...result, run: completedRun };
-  } catch (error) {
-    await prisma.evaluationRun.update({
-      where: { id: run.id },
-      data: {
-        status: "failed",
-        errorReason: formatError(error).slice(0, 1000),
-        finishedAt: new Date(),
-        usage: {
-          ruleReports: allReports.filter((report) => report.evaluatorType === "system").length,
-          llmReports: allReports.filter((report) => report.evaluatorType === "ai").length,
-          llmCalls,
-          llmFailures,
-          estimatedPromptItems
-        },
-        skipped: toJsonValue(skipped),
-        summary: buildRunSummary(allReports, selectedProjectIds.length)
-      }
-    });
-    throw error;
-  }
-}
-
 export async function listEvaluationDatasets(): Promise<EvaluationDataset[]> {
   const rows = await prisma.evaluationDataset.findMany({ orderBy: { updatedAt: "desc" }, take: 100 });
   return rows.map(mapEvaluationDataset);
 }
 
 export async function createEvaluationDataset(input: EvaluationDatasetInput): Promise<EvaluationDataset> {
-  const projectIds = unique(input.projectIds).slice(0, 100);
-  const stages = unique(input.stages).filter((stage): stage is Stage => isStage(stage));
-  if (!projectIds.length) throw new Error("评测数据集至少需要选择 1 个项目。");
-  if (!stages.length) throw new Error("评测数据集至少需要选择 1 个阶段。");
-
-  const row = await prisma.evaluationDataset.create({
-    data: {
-      id: `eval_dataset_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`,
-      name: input.name.trim().slice(0, 80) || "未命名评测数据集",
-      description: input.description?.trim().slice(0, 500) ?? "",
-      source: input.source?.trim().slice(0, 40) || "manual",
-      projectIds,
-      stages,
-      filters: toJsonObject(input.filters),
-      sampleCount: projectIds.length,
-      owner: input.owner?.trim().slice(0, 80)
-    }
-  });
+  const row = await withEvaluationSnapshot(tx => createFrozenDataset(input, tx));
   return mapEvaluationDataset(row);
 }
 
 export async function listEvaluationRuns(): Promise<EvaluationRun[]> {
+  await reconcileStaleRuns();
   const rows = await prisma.evaluationRun.findMany({
     include: { dataset: true, promptVersion: true },
     orderBy: { startedAt: "desc" },
@@ -330,6 +202,7 @@ export async function listEvaluationDatasetsPage(options: { page?: number; pageS
 }
 
 export async function listEvaluationRunsPage(options: { page?: number; pageSize?: number; keyword?: string; status?: string } = {}): Promise<PagedResult<EvaluationRun>> {
+  await reconcileStaleRuns();
   const { page, pageSize, skip } = pagination(options.page, options.pageSize);
   const keyword = options.keyword?.trim();
   const where = {
@@ -468,16 +341,10 @@ export async function createExperimentRun(input: {
   if (!baselineRow.stages.includes(input.stage) || !candidateRow.stages.includes(input.stage)) throw new Error("基线和候选运行都必须覆盖所选评测阶段。");
   const baseline = mapEvaluationRun(baselineRow);
   const candidate = mapEvaluationRun(candidateRow);
-  const metrics = compareEvaluationRuns(
-    baseline,
-    candidate,
-    input.stage,
-    baselineRow.reports.map((report) => ({ ...mapQualityReport(report), projectName: report.project.name })),
-    candidateRow.reports.map((report) => ({ ...mapQualityReport(report), projectName: report.project.name }))
-  );
-  const winner = metrics.scoreDelta > 0 || (metrics.scoreDelta === 0 && metrics.passRateDelta > 0)
-    ? "candidate"
-    : metrics.scoreDelta < 0 || metrics.passRateDelta < 0 ? "baseline" : "tie";
+  const metrics = await compareEvidence(baseline.id, candidate.id, input.stage);
+  // Current projects do not retain identical original inputs. Evaluator score shifts
+  // and manually selected generation labels cannot establish production improvement.
+  const winner = "pending";
   const baselineVersion = evaluationRunVariantLabel(baseline, input.experimentType);
   const candidateVersion = evaluationRunVariantLabel(candidate, input.experimentType);
   const row = await prisma.experimentRun.create({
@@ -497,7 +364,7 @@ export async function createExperimentRun(input: {
       metrics: toJsonValue(metrics),
       winner,
       successMetric: input.successMetric?.trim().slice(0, 200) || "平均分与通过率不低于基线",
-      resultSummary: experimentResultSummary(metrics, winner, baselineVersion, candidateVersion),
+      resultSummary: `待验证：${metrics.comparability?.reasons.join("；") || "仅提供配对样本的描述性分差，尚不能证明生产效果提升。"}。`,
       status: "completed",
       startAt: baseline.startedAt < candidate.startedAt ? new Date(baseline.startedAt) : new Date(candidate.startedAt),
       endAt: new Date()
@@ -508,6 +375,7 @@ export async function createExperimentRun(input: {
 }
 
 export async function getEvaluationRun(id: string): Promise<EvaluationRunDetail | null> {
+  await reconcileStaleRuns();
   const run = await prisma.evaluationRun.findUnique({
     where: { id },
     include: {
@@ -519,13 +387,15 @@ export async function getEvaluationRun(id: string): Promise<EvaluationRunDetail 
   if (!run) return null;
   return {
     run: mapEvaluationRun(run),
-    reports: run.reports.map(mapQualityReport)
+    reports: run.reports.map(mapQualityReport),
+    ...await runEvidence(id)
   };
 }
 
 export async function deleteEvaluationDataset(id: string) {
   const row = await prisma.evaluationDataset.findUnique({ where: { id }, include: { _count: { select: { runs: true } } } });
   if (!row) throw new Error("评测数据集不存在。");
+  if (row.protocolVersion >= 2) throw new Error("固定样本集保留复测与反馈证据，不能删除。");
   await prisma.evaluationRun.updateMany({ where: { datasetId: id }, data: { datasetId: null } });
   await prisma.evaluationDataset.delete({ where: { id } });
   return { id, deleted: true, detachedRuns: row._count.runs };
@@ -534,6 +404,8 @@ export async function deleteEvaluationDataset(id: string) {
 export async function deleteEvaluationRun(id: string) {
   const row = await prisma.evaluationRun.findUnique({ where: { id }, include: { _count: { select: { reports: true } } } });
   if (!row) throw new Error("评测记录不存在。");
+  if (row.protocolVersion >= 2) throw new Error("固定样本评测保留调用及复核证据，不能删除。");
+  if (["running", "needs_review"].includes(row.status)) throw new Error("执行中或待核对的记录不能删除。");
   await prisma.$transaction([
     prisma.qualityReport.deleteMany({ where: { evaluationRunId: id } }),
     prisma.evaluationRun.delete({ where: { id } })
@@ -544,163 +416,12 @@ export async function deleteEvaluationRun(id: string) {
 export async function deleteProjectQualityData(projectId: string) {
   const project = await prisma.project.findUnique({ where: { id: projectId }, select: { id: true } });
   if (!project) throw new Error("项目不存在。");
+  if (await prisma.evaluationSample.count({ where: { projectId } })) throw new Error("项目已有固定评测证据，不能清除质量历史。");
   const [reports, feedbacks] = await prisma.$transaction([
     prisma.qualityReport.deleteMany({ where: { projectId } }),
     prisma.userFeedback.deleteMany({ where: { projectId } })
   ]);
   return { projectId, deletedReports: reports.count, deletedFeedbacks: feedbacks.count };
-}
-
-async function completeEvaluationRun(runId: string, result: QualityEvaluationRunResult): Promise<EvaluationRun> {
-  const updated = await prisma.evaluationRun.update({
-    where: { id: runId },
-    data: {
-      status: "completed",
-      finishedAt: new Date(),
-      usage: toJsonValue(result.usage),
-      skipped: toJsonValue(result.skipped),
-      summary: toJsonValue(buildRunSummary(result.reports, result.projects))
-    },
-    include: { dataset: true, promptVersion: true }
-  });
-  return mapEvaluationRun(updated);
-}
-
-async function generateProjectQualityReportsControlled(
-  projectId: string,
-  userId: string | undefined,
-  options: {
-    stages: Stage[];
-    mode: "rules" | "hybrid" | "llm";
-    evaluators: QualityEvaluatorModel[];
-    maxLlmCalls: number;
-    maxShotsPerPrompt: number;
-    includeFeedback: boolean;
-    promptVersion?: { id: string; name: string; stage: string; version: string; content: string };
-    evaluationRunId?: string;
-  }
-): Promise<QualityEvaluationRunResult> {
-  const workflow = await prisma.project.findFirst({
-    where: { id: projectId, ...(userId ? { userId } : {}) },
-    include: {
-      scripts: { orderBy: { createdAt: "desc" }, take: 1 },
-      characterSet: { orderBy: { createdAt: "asc" } },
-      assets: { orderBy: { createdAt: "asc" } },
-      shots: { orderBy: [{ episodeNo: "asc" }, { sceneNo: "asc" }, { shotNo: "asc" }] },
-      tasks: { orderBy: { createdAt: "desc" }, take: 20 },
-      feedbacks: { orderBy: { createdAt: "desc" }, take: 20 }
-    }
-  });
-
-  if (!workflow) {
-    return emptyEvaluationRunResult({
-      projectCount: 1,
-      stages: options.stages,
-      mode: options.mode,
-      skipped: [{ projectId, reason: "项目不存在或无权评测。" }]
-    });
-  }
-
-  const ruleReports = [
-    workflow.scripts[0] ? buildScriptReport(workflow) : undefined,
-    workflow.characterSet.length ? buildCharacterReport(workflow) : undefined,
-    workflow.shots.length ? buildStoryboardReport(workflow) : undefined,
-    workflow.assets.some((asset) => asset.type === "image") ? buildImageReport(workflow) : undefined,
-    workflow.assets.some((asset) => asset.type === "video") ? buildVideoReport(workflow) : undefined
-  ].filter((report): report is DraftReport => report ? options.stages.includes(report.stage) : false);
-
-  if (!ruleReports.length) {
-    return emptyEvaluationRunResult({
-      projectCount: 1,
-      stages: options.stages,
-      mode: options.mode,
-      skipped: [{ projectId, reason: "所选阶段没有可评测数据。" }]
-    });
-  }
-
-  const reports: DraftReport[] = [];
-  const skipped: QualityEvaluationRunResult["skipped"] = [];
-  let llmCalls = 0;
-  let llmFailures = 0;
-  let estimatedPromptItems = 0;
-
-  for (const ruleReport of ruleReports) {
-    if (options.mode === "rules" || options.mode === "hybrid") reports.push(ruleReport);
-    if (options.mode === "rules") continue;
-
-    const remainingCalls = options.maxLlmCalls - llmCalls;
-    if (remainingCalls <= 0) {
-      skipped.push({ projectId, stage: ruleReport.stage, reason: `已达到本次 LLM 调用上限 ${options.maxLlmCalls}。` });
-      continue;
-    }
-
-    const allowedEvaluators = options.evaluators.slice(0, remainingCalls);
-    if (!allowedEvaluators.length) {
-      skipped.push({ projectId, stage: ruleReport.stage, reason: "没有勾选可用的 LLM 评测模型。" });
-      continue;
-    }
-
-    const llmResult = await runLlmEvaluators(workflow, ruleReport, {
-      evaluators: allowedEvaluators,
-      includeFeedback: options.includeFeedback,
-      maxShotsPerPrompt: options.maxShotsPerPrompt,
-      promptVersion: options.promptVersion
-    });
-    llmCalls += allowedEvaluators.length;
-    llmFailures += llmResult.failures.length;
-    estimatedPromptItems += estimatePromptItems(workflow, ruleReport.stage, options.maxShotsPerPrompt);
-    reports.push(...llmResult.reports);
-    if (options.mode === "hybrid" && llmResult.reports.length) {
-      reports.push(buildEnsembleReport(ruleReport, llmResult.reports, llmResult.failures));
-    }
-    llmResult.failures.forEach((failure) => skipped.push({ projectId, stage: ruleReport.stage, reason: failure }));
-  }
-
-  if (!reports.length) {
-    return emptyEvaluationRunResult({ projectCount: 1, stages: options.stages, mode: options.mode, skipped });
-  }
-
-  const created = await prisma.$transaction(
-    reports.map((report, index) =>
-      prisma.qualityReport.create({
-        data: {
-          id: `quality_${Date.now()}_${report.stage}_${crypto.randomUUID().slice(0, 8)}`,
-          projectId: report.projectId ?? workflow.id,
-          evaluationRunId: options.evaluationRunId,
-          taskId: report.taskId,
-          assetId: report.assetId,
-          stage: report.stage,
-          evaluatorType: report.evaluatorType,
-          totalScore: report.totalScore,
-          pass: report.pass,
-          dimensionScores: report.dimensionScores,
-          problems: report.problems,
-          suggestions: report.suggestions,
-          recommendedAction: report.recommendedAction,
-          promptVersion: report.promptVersion,
-          provider: report.provider,
-          model: report.model,
-          createdAt: new Date(Date.now() + index)
-        }
-      })
-    )
-  );
-
-  const mapped = created.map(mapQualityReport);
-  return {
-    projects: 1,
-    stages: options.stages,
-    mode: options.mode,
-    reports: mapped,
-    skipped,
-    usage: {
-      ruleReports: mapped.filter((report) => report.evaluatorType === "system").length,
-      llmReports: mapped.filter((report) => report.evaluatorType === "ai").length,
-      llmCalls,
-      llmFailures,
-      estimatedPromptItems
-    }
-  };
 }
 
 export async function getProjectQualityReports(projectId: string, userId?: string) {
@@ -730,7 +451,9 @@ export async function getAdminEvaluationOverview(): Promise<EvaluationOverview> 
   latestReports.forEach((report) => {
     projectLatest.set(report.projectId, [...(projectLatest.get(report.projectId) ?? []), report]);
   });
-  const effectiveProjects = [...projectLatest.values()].filter((items) => isEffectiveProject(items)).length;
+  const latestVideoFeedback = new Map<string, typeof feedbacks[number]>();
+  for (const feedback of feedbacks) if (feedback.projectId && feedback.stage === "video" && !latestVideoFeedback.has(feedback.projectId)) latestVideoFeedback.set(feedback.projectId, feedback);
+  const effectiveProjects = [...latestVideoFeedback.values()].filter(item => item.usability === "usable").length;
   const stages: Stage[] = ["script", "character", "storyboard", "image", "video"];
 
   return {
@@ -784,7 +507,7 @@ export async function listAdminQualityProjects(): Promise<QualityProjectRow[]> {
       reports,
       feedbacks,
       latestStage: reports[0]?.stage ?? "none",
-      averageScore: average(reports.map((report) => report.totalScore)),
+      averageScore: average(reports.filter(report => report.evidenceScope === "structure").map((report) => report.totalScore)),
       blockedReasons: [
         ...reports.filter((report) => !report.pass).flatMap((report) => report.problems.slice(0, 2)),
         ...feedbacks.filter((feedback) => feedback.usability === "unusable").flatMap((feedback) => feedback.tags.slice(0, 2))
@@ -878,11 +601,11 @@ export async function getAdminQualityCenter(): Promise<QualityCenterOverview> {
     summary: {
       successRate: completedTasks.length ? Math.round((succeededTasks / completedTasks.length) * 100) : 0,
       failureRate: completedTasks.length ? Math.round(((completedTasks.length - succeededTasks) / completedTasks.length) * 100) : 0,
-      averageScore: average(reports.map((report) => report.totalScore)),
+      averageScore: average(reports.filter(report => report.evidenceScope === "structure").map((report) => report.totalScore)),
       p95LatencyMs: percentile(tasks.map(taskLatencyMs).filter((value) => value > 0), 95),
       costAnomalies,
       modelHealth: modelMonitoring.length ? Math.round((healthyModels / modelMonitoring.length) * 100) : 0,
-      openEvents: events.filter((event) => !["resolved", "ignored", "converted"].includes(event.status)).length,
+      openEvents: events.filter((event) => !["resolved", "ignored"].includes(event.status)).length,
       sampleCount: samples.reduce((sum, sample) => sum + sample.sampleCount, 0)
     },
     events,
@@ -908,7 +631,7 @@ export async function getStageOptimizationOverview(windowDays = 30): Promise<Qua
   const [reportGroups, feedbackGroups, taskGroups, recentReports, recentFeedback] = await Promise.all([
     prisma.qualityReport.groupBy({
       by: ["stage", "pass"],
-      where: { createdAt: { gte: since } },
+      where: { createdAt: { gte: since }, evidenceScope: "structure" },
       _count: { _all: true },
       _avg: { totalScore: true }
     }),
@@ -923,7 +646,7 @@ export async function getStageOptimizationOverview(windowDays = 30): Promise<Qua
       _count: { _all: true }
     }),
     prisma.qualityReport.findMany({
-      where: { createdAt: { gte: since }, pass: false },
+      where: { createdAt: { gte: since }, pass: false, evidenceScope: "structure" },
       select: { stage: true, problems: true },
       orderBy: { createdAt: "desc" },
       take: 300
@@ -950,7 +673,7 @@ export async function getStageOptimizationOverview(windowDays = 30): Promise<Qua
       : 0;
     const feedbackRows = feedbackGroups.filter((row) => contract.stages.includes(row.stage as Stage));
     const openFeedback = feedbackRows
-      .filter((row) => !["resolved", "ignored", "converted"].includes(row.status))
+      .filter((row) => !["resolved", "ignored"].includes(row.status))
       .reduce((sum, row) => sum + row._count._all, 0);
     const unusableFeedback = feedbackRows
       .filter((row) => row.usability === "unusable")
@@ -985,297 +708,16 @@ export async function getStageOptimizationOverview(windowDays = 30): Promise<Qua
   return { windowDays: days, bottleneck: ranked[0]?.key, rows };
 }
 
-export async function updateAdminFeedback(
-  id: string,
-  input: Partial<Pick<UserFeedback, "status" | "priority">> & Partial<Record<"rootCause" | "assignee" | "resolution" | "convertedDatasetId", string | null>>
-): Promise<UserFeedback> {
-  const data: Prisma.UserFeedbackUpdateInput = {};
-  if (input.status) {
-    const status = normalizeFeedbackStatus(input.status);
-    data.status = status;
-    if (["resolved", "ignored", "converted"].includes(status)) {
-      data.processedAt = new Date();
-    } else if (status === "open") {
-      data.processedAt = null;
-    }
-  }
-  if (input.priority) data.priority = normalizeFeedbackPriority(input.priority);
-  if ("rootCause" in input) data.rootCause = cleanNullable(input.rootCause, 80);
-  if ("assignee" in input) data.assignee = cleanNullable(input.assignee, 80);
-  if ("resolution" in input) data.resolution = cleanNullable(input.resolution, 800);
-  if ("convertedDatasetId" in input) data.convertedDatasetId = cleanNullable(input.convertedDatasetId, 120);
-
-  return mapUserFeedback(await prisma.userFeedback.update({ where: { id }, data }));
-}
-
-type DraftReport = {
-  projectId?: string;
-  stage: Stage;
-  evaluatorType: "system" | "ai";
-  totalScore: number;
-  pass: boolean;
-  dimensionScores: Record<string, number>;
-  problems: string[];
-  suggestions: string[];
-  recommendedAction: string;
-  promptVersion?: string;
-  provider?: string;
-  model?: string;
-  taskId?: string;
-  assetId?: string;
-};
-
-function buildScriptReport(workflow: any): DraftReport {
-  const script = workflow.scripts[0];
-  const content = `${script.synopsis}\n${script.content}`;
-  const structure = scoreByLength(content, 500, 2500, 20);
-  const hook = keywordScore(content, ["反转", "冲突", "危机", "秘密", "重生", "复仇", "误会", "真相"], 20);
-  const episode = clamp(workflow.episodes > 0 ? 15 : 8, 0, 15);
-  const character = clamp(workflow.characterSet.length * 5, 5, 15);
-  const visual = keywordScore(content, ["镜头", "场景", "画面", "动作", "表情", "转身", "雨夜", "办公室", "街道"], 15);
-  const production = clamp(15 - countTooHardScenes(content) * 3, 6, 15);
-  const dimensions = { structure, hook, episode, character, visual, production };
-  return reportFromDimensions({
-    stage: "script",
-    dimensions,
-    passLine: 75,
-    provider: workflow.textProvider,
-    model: workflow.textModel,
-    taskId: latestTaskId(workflow.tasks, "text"),
-    problems: [
-      structure < 14 ? "剧本结构还不够完整，后续分镜会缺少承接。" : "",
-      hook < 14 ? "短剧钩子和情绪爆点偏弱，冷启动内容不容易打动用户。" : "",
-      character < 10 ? "角色数量或角色目标不够清晰。" : "",
-      visual < 10 ? "可视化动作和场景描写偏少。" : ""
-    ],
-    suggestions: [
-      "补强开场冲突、关键反转和结尾钩子。",
-      "把抽象心理活动改成动作、表情、场景和可生成画面。",
-      "确保主要角色的目标、关系和冲突能被角色定稿模块读取。"
-    ],
-    recommendedAction: "continue"
-  });
-}
-
-function buildCharacterReport(workflow: any): DraftReport {
-  const roleAssets = workflow.assets.filter((asset: any) => asset.type === "role" || asset.type === "role_derivative" || asset.type === "role_reference");
-  const primaryRefs = roleAssets.filter((asset: any) => asset.type === "role" && asset.referenceUrl && asset.status === "succeeded").length;
-  const derivatives = roleAssets.filter((asset: any) => asset.type === "role_derivative" && asset.referenceUrl).length;
-  const userReferences = roleAssets.filter((asset: any) => asset.type === "role_reference" && asset.referenceUrl).length;
-  const characterCount = Math.max(1, workflow.characterSet.length);
-  const identity = clamp(Math.round((workflow.characterSet.filter((item: any) => item.identity).length / characterCount) * 15), 0, 15);
-  const appearance = clamp(Math.round((workflow.characterSet.filter((item: any) => item.appearance && item.costume).length / characterCount) * 20), 0, 20);
-  const multiview = clamp(Math.round(((primaryRefs + derivatives * 0.5 + userReferences * 0.35) / characterCount) * 18), 0, 25);
-  const storyMatch = workflow.characterSet.length ? 13 : 6;
-  const referenceFollow = clamp(Math.round(((primaryRefs + userReferences * 0.5) / characterCount) * 15), 0, 15);
-  const negativePrompt = clamp(Math.round((workflow.characterSet.filter((item: any) => item.negativePrompt).length / characterCount) * 10), 0, 10);
-  const dimensions = { identity, appearance, multiview, storyMatch, referenceFollow, negativePrompt };
-  return reportFromDimensions({
-    stage: "character",
-    dimensions,
-    passLine: 80,
-    provider: workflow.imageProvider,
-    model: workflow.imageModel,
-    taskId: latestTaskId(workflow.tasks, "character"),
-    assetId: roleAssets.find((asset: any) => asset.referenceUrl)?.id,
-    problems: [
-      referenceFollow < 12 ? "角色参考图未完全锁定，后续分镜图容易脸和服装漂移。" : "",
-      multiview < 16 ? "多视图资产不足，建议先补正面、侧面、背面和表情参考。" : "",
-      appearance < 15 ? "角色外貌或服装锚点不够稳定。" : ""
-    ],
-    suggestions: [
-      "先上传或生成角色正面参考图，再生成多视图设定表。",
-      "把发型、服装主色、饰品和负面提示词固定下来。",
-      "角色评分低于 80 时，不建议批量生成分镜图。"
-    ],
-    recommendedAction: referenceFollow < 12 ? "regenerate_multiview" : "lock_character"
-  });
-}
-
-function buildStoryboardReport(workflow: any): DraftReport {
-  const shots = workflow.shots;
-  const total = Math.max(1, shots.length);
-  const order = hasOrderedShots(shots) ? 10 : 5;
-  const imageability = clamp(Math.round((shots.filter((shot: any) => shot.pictureDesc && shot.imagePrompt).length / total) * 20), 0, 20);
-  const continuity = clamp(Math.round((shots.filter((shot: any) => shot.scene && shot.characters.length).length / total) * 20), 0, 20);
-  const simplicity = clamp(15 - shots.filter((shot: any) => String(shot.cameraMovement).length > 18 || shot.duration > 12).length * 2, 6, 15);
-  const rhythm = clamp(15 - Math.abs(Math.round(total / Math.max(1, workflow.episodes)) - 9), 6, 15);
-  const prompt = clamp(Math.round((shots.filter((shot: any) => shot.imagePrompt && shot.videoPrompt).length / total) * 20), 0, 20);
-  const dimensions = { order, imageability, continuity, simplicity, rhythm, prompt };
-  return reportFromDimensions({
-    stage: "storyboard",
-    dimensions,
-    passLine: 75,
-    provider: workflow.textProvider,
-    model: workflow.textModel,
-    taskId: latestTaskId(workflow.tasks, "storyboard"),
-    problems: [
-      imageability < 15 ? "部分镜头画面描述或图片提示词不完整。" : "",
-      continuity < 15 ? "部分镜头缺少角色、场景或动作承接。" : "",
-      simplicity < 10 ? "镜头参数偏复杂，真实用户会难以理解和维护。" : "",
-      prompt < 16 ? "图片/视频提示词不完整，后续生成可控性不足。" : ""
-    ],
-    suggestions: [
-      "把复杂运镜收敛为少量用户能理解的镜头语言。",
-      "保证每个镜头有角色、场景、动作、画面描述和图片提示词。",
-      "把台词旁白保留为字幕/配音草稿，不作为当前生成必填项。"
-    ],
-    recommendedAction: "generate_images"
-  });
-}
-
-function buildImageReport(workflow: any): DraftReport {
-  const shots = workflow.shots;
-  const imageAssets = workflow.assets.filter((asset: any) => asset.type === "image");
-  const total = Math.max(1, shots.length);
-  const succeeded = imageAssets.filter((asset: any) => asset.referenceUrl && asset.status === "succeeded").length;
-  const promptMatch = clamp(Math.round((succeeded / total) * 20), 0, 20);
-  const characterConsistency = clamp(Math.round((succeeded / total) * 20) + (hasRoleRefs(workflow) ? 5 : 0), 0, 25);
-  const composition = clamp(Math.round((succeeded / total) * 15), 0, 15);
-  const artifact = clamp(Math.round((succeeded / total) * 20), 0, 20);
-  const videoReady = clamp(Math.round((succeeded / total) * 20), 0, 20);
-  const dimensions = { promptMatch, characterConsistency, composition, artifact, videoReady };
-  return reportFromDimensions({
-    stage: "image",
-    dimensions,
-    passLine: 80,
-    provider: workflow.imageProvider,
-    model: workflow.imageModel,
-    taskId: latestTaskId(workflow.tasks, "image"),
-    assetId: imageAssets.find((asset: any) => asset.referenceUrl)?.id,
-    problems: [
-      succeeded < shots.length ? `还有 ${Math.max(0, shots.length - succeeded)} 张分镜图未生成或没有真实图片地址。` : "",
-      !hasRoleRefs(workflow) ? "角色参考资产不足，分镜图一致性风险较高。" : "",
-      videoReady < 16 ? "分镜图还不足以稳定进入图生视频。" : ""
-    ],
-    suggestions: [
-      "优先补齐没有真实图片地址的镜头。",
-      "低分图片只重生本镜头，不批量重跑全部镜头。",
-      "角色漂移时先回到角色定稿补多视图，而不是只改分镜提示词。"
-    ],
-    recommendedAction: succeeded < shots.length ? "regenerate_missing_images" : "accept"
-  });
-}
-
-function buildVideoReport(workflow: any): DraftReport {
-  const shots = workflow.shots;
-  const videoAssets = workflow.assets.filter((asset: any) => asset.type === "video");
-  const imageAssets = workflow.assets.filter((asset: any) => asset.type === "image" && asset.referenceUrl);
-  const total = Math.max(1, shots.length);
-  const succeeded = videoAssets.filter((asset: any) => asset.referenceUrl && asset.status === "succeeded").length;
-  const firstFrame = clamp(Math.round((imageAssets.length / total) * 20), 0, 20);
-  const identity = clamp(Math.round((succeeded / total) * 20), 0, 20);
-  const motion = clamp(Math.round((succeeded / total) * 20), 0, 20);
-  const intent = clamp(Math.round((succeeded / total) * 20), 0, 20);
-  const editable = clamp(Math.round((succeeded / total) * 20), 0, 20);
-  const dimensions = { firstFrame, identity, motion, intent, editable };
-  return reportFromDimensions({
-    stage: "video",
-    dimensions,
-    passLine: 70,
-    provider: workflow.videoProvider,
-    model: workflow.videoModel,
-    taskId: latestTaskId(workflow.tasks, "video"),
-    assetId: videoAssets.find((asset: any) => asset.referenceUrl)?.id,
-    problems: [
-      imageAssets.length < shots.length ? "部分镜头还缺首帧图，图生视频稳定性不足。" : "",
-      succeeded < shots.length ? "视频草稿没有覆盖全部镜头。" : ""
-    ],
-    suggestions: [
-      "先确保分镜图全部通过，再进入批量视频生成。",
-      "视频模型结果不稳定时，用单镜头重生和短时长策略控制成本。"
-    ],
-    recommendedAction: "generate_video_clips"
-  });
-}
-
-function reportFromDimensions(input: {
-  stage: Stage;
-  dimensions: Record<string, number>;
-  passLine: number;
-  problems: string[];
-  suggestions: string[];
-  recommendedAction: string;
-  provider?: string | null;
-  model?: string | null;
-  taskId?: string;
-  assetId?: string;
-}): DraftReport {
-  const totalScore = Object.values(input.dimensions).reduce((sum, score) => sum + score, 0);
-  return {
-    stage: input.stage,
-    evaluatorType: "system",
-    totalScore,
-    pass: totalScore >= input.passLine,
-    dimensionScores: input.dimensions,
-    problems: input.problems.filter(Boolean),
-    suggestions: input.suggestions,
-    recommendedAction: totalScore >= input.passLine ? input.recommendedAction : lowScoreAction(input.stage),
-    provider: input.provider ?? undefined,
-    model: input.model ?? undefined,
-    taskId: input.taskId,
-    assetId: input.assetId,
-    promptVersion: `${input.stage}-rules-v1`
-  };
-}
-
-function lowScoreAction(stage: Stage) {
-  const actions: Record<Stage, string> = {
-    script: "rewrite_script",
-    character: "regenerate_multiview",
-    storyboard: "edit_bad_shots",
-    image: "regenerate_same_prompt",
-    video: "regenerate_video_clip"
-  };
-  return actions[stage];
-}
-
-function latestTaskId(tasks: Array<{ id: string; type: string }>, type: string) {
-  return tasks.find((task) => task.type === type)?.id;
-}
-
-function hasRoleRefs(workflow: any) {
-  return workflow.assets.some((asset: any) => asset.type === "role" && asset.referenceUrl && asset.status === "succeeded");
-}
-
-function hasOrderedShots(shots: Array<{ episodeNo: number; sceneNo: number; shotNo: number }>) {
-  return shots.every((shot) => shot.episodeNo > 0 && shot.sceneNo > 0 && shot.shotNo > 0);
-}
-
-function scoreByLength(content: string, min: number, good: number, maxScore: number) {
-  if (!content.trim()) return 0;
-  if (content.length >= good) return maxScore;
-  if (content.length <= min) return Math.round(maxScore * 0.45);
-  return clamp(Math.round((content.length / good) * maxScore), 0, maxScore);
-}
-
-function keywordScore(content: string, keywords: string[], maxScore: number) {
-  const hits = keywords.filter((keyword) => content.includes(keyword)).length;
-  return clamp(Math.round((hits / Math.min(5, keywords.length)) * maxScore), Math.round(maxScore * 0.45), maxScore);
-}
-
-function countTooHardScenes(content: string) {
-  return ["千军万马", "大规模战争", "复杂群像", "爆炸", "灾难", "科幻城市"].filter((keyword) => content.includes(keyword)).length;
-}
-
 function latestReportsByProjectStage(reports: QualityReport[]) {
   const map = new Map<string, QualityReport>();
   reports
+    .filter(report => report.evidenceScope === "structure")
     .sort((a, b) => Number(new Date(b.createdAt)) - Number(new Date(a.createdAt)))
     .forEach((report) => {
       const key = `${report.projectId}:${report.stage}`;
       if (!map.has(key)) map.set(key, report);
     });
   return [...map.values()];
-}
-
-function isEffectiveProject(reports: QualityReport[]) {
-  const byStage = new Map(reports.map((report) => [report.stage, report]));
-  return Boolean(
-    byStage.get("script")?.pass &&
-    byStage.get("character")?.pass &&
-    byStage.get("image")?.pass
-  );
 }
 
 function topTags(tags: string[]) {
@@ -1293,18 +735,6 @@ function inferFeedbackPriority(input: FeedbackInput): UserFeedback["priority"] {
   if (input.usability === "unusable") return "p1";
   if (input.usability === "barely_usable") return "p2";
   return "p3";
-}
-
-function normalizeFeedbackStatus(value: string): UserFeedback["status"] {
-  return ["open", "triaged", "processing", "resolved", "ignored", "converted"].includes(value)
-    ? value as UserFeedback["status"]
-    : "open";
-}
-
-function normalizeFeedbackPriority(value: string): UserFeedback["priority"] {
-  return ["p0", "p1", "p2", "p3"].includes(value)
-    ? value as UserFeedback["priority"]
-    : "p2";
 }
 
 function cleanNullable(value: string | undefined | null, maxLength: number) {
@@ -1503,13 +933,8 @@ function buildModelMonitoring(
     groups.set(key, group);
   });
 
-  reports.forEach((report) => {
-    if (!report.provider || !report.model) return;
-    const key = `${report.provider}:${report.model}:${report.stage}`;
-    const group: ModelMonitorGroup = groups.get(key) ?? { provider: report.provider, model: report.model, modality: report.stage, stage: report.stage, tasks: 0, succeeded: 0, credits: 0, costCny: 0, latencies: [], scores: [], errors: new Map<string, number>() };
-    group.scores.push(report.totalScore);
-    groups.set(key, group);
-  });
+    // Evaluation report provider/model identify the judge, not the generator.
+    // Production quality scores require provenance and calibration; omit them here.
 
   return [...groups.values()]
     .map((group) => {
@@ -1550,9 +975,8 @@ function buildSampleRows(datasets: EvaluationDataset[], runs: EvaluationRun[]): 
     const datasetRuns = runsByDataset.get(dataset.id) ?? [];
     const latest = datasetRuns[0];
     const sampleType = inferSampleType(dataset);
-    const readiness = latest
-      ? latest.summary.passRate >= 85 ? "pass" : latest.summary.passRate >= 70 ? "warning" : "blocked"
-      : sampleType === "manual" ? "warning" : "pass";
+      const structure = latest?.summary.channels?.find(channel => channel.channel === "structure-v2");
+      const readiness = latest?.status === "failed" ? "blocked" : "warning";
     return {
       id: dataset.id,
       name: dataset.name,
@@ -1564,8 +988,8 @@ function buildSampleRows(datasets: EvaluationDataset[], runs: EvaluationRun[]): 
       projectIds: dataset.projectIds,
       owner: dataset.owner,
       latestRunName: latest?.name,
-      latestRunScore: latest?.summary.averageScore,
-      latestRunPassRate: latest?.summary.passRate,
+        latestRunScore: structure?.reports ? structure.averageScore : undefined,
+        latestRunPassRate: structure?.reports ? structure.passRate : undefined,
       readiness,
       createdAt: dataset.createdAt,
       updatedAt: dataset.updatedAt
@@ -1578,13 +1002,13 @@ function buildAttributionRows(events: QualityEventRow[]): QualityCenterOverview[
   events.forEach((event) => groups.set(event.rootCause, [...(groups.get(event.rootCause) ?? []), event]));
   return [...groups.entries()]
     .map(([rootCause, items]) => {
-      const resolved = items.filter((event) => ["resolved", "ignored", "converted"].includes(event.status)).length;
+      const resolved = items.filter((event) => ["resolved", "ignored"].includes(event.status)).length;
       return {
         rootCause,
         count: items.length,
         open: items.length - resolved,
         resolved,
-        averageScore: average(items.map((event) => event.score ?? 0).filter(Boolean)),
+          averageScore: 0,
         stages: uniqueText(items.map((event) => event.stage)).slice(0, 6),
         recommendation: attributionRecommendation(rootCause),
         recentEvents: items.slice(0, 4)
@@ -1592,94 +1016,6 @@ function buildAttributionRows(events: QualityEventRow[]): QualityCenterOverview[
     })
     .sort((a, b) => b.count - a.count)
     .slice(0, 12);
-}
-
-function buildReleaseGates(input: {
-  latestRun?: EvaluationRun;
-  openP0P1: number;
-  blockedModels: number;
-  costAnomalies: number;
-  samples: QualityCenterOverview["samples"];
-  traceCoverage: number;
-}): QualityCenterOverview["releaseGates"] {
-  const regressionSamples = input.samples.filter((sample) => ["golden", "badcase", "regression"].includes(sample.sampleType));
-  const latestPassRate = input.latestRun?.summary.passRate ?? 0;
-  const latestAverage = input.latestRun?.summary.averageScore ?? 0;
-  const now = new Date().toISOString();
-  return [
-    {
-      id: "core-samples",
-      name: "核心样本覆盖",
-      target: "新 prompt / 新模型 / 新流程",
-      status: regressionSamples.length >= 3 ? "pass" : regressionSamples.length ? "warning" : "blocked",
-      metric: "golden+badcase+regression 样本集",
-      threshold: "至少 3 个",
-      current: `${regressionSamples.length} 个`,
-      owner: "产品 / 算法",
-      action: regressionSamples.length >= 3 ? "可作为发布前回归集" : "从事件池继续沉淀代表性样本",
-      updatedAt: now
-    },
-    {
-      id: "latest-eval",
-      name: "最近评测通过率",
-      target: input.latestRun?.name ?? "暂无评测运行",
-      status: latestPassRate >= 85 && latestAverage >= 80 ? "pass" : latestPassRate >= 70 ? "warning" : "blocked",
-      metric: "passRate / averageScore",
-      threshold: ">=85% / >=80分",
-      current: `${latestPassRate}% / ${latestAverage || "-"}分`,
-      owner: "质量运营",
-      action: latestPassRate >= 85 ? "允许灰度前复核" : "先运行核心样本回归并修复低分阶段",
-      updatedAt: input.latestRun?.updatedAt ?? now
-    },
-    {
-      id: "p0-feedback",
-      name: "P0/P1 未关闭事件",
-      target: "用户反馈 + 模型错误 + 评测失败",
-      status: input.openP0P1 === 0 ? "pass" : input.openP0P1 <= 2 ? "warning" : "blocked",
-      metric: "open P0/P1",
-      threshold: "0",
-      current: `${input.openP0P1} 个`,
-      owner: "运营 / 客服",
-      action: input.openP0P1 ? "先处理或明确关闭理由" : "无阻塞用户事件",
-      updatedAt: now
-    },
-    {
-      id: "model-health",
-      name: "模型健康",
-      target: "文本 / 生图 / 视频 / 导出",
-      status: input.blockedModels === 0 ? "pass" : input.blockedModels <= 2 ? "warning" : "blocked",
-      metric: "blocked model rows",
-      threshold: "0",
-      current: `${input.blockedModels} 个`,
-      owner: "模型运营",
-      action: input.blockedModels ? "切换候选模型或降级路由" : "模型池可用",
-      updatedAt: now
-    },
-    {
-      id: "cost-anomaly",
-      name: "成本异常",
-      target: "积分扣费 / 供应商成本",
-      status: input.costAnomalies === 0 ? "pass" : input.costAnomalies <= 3 ? "warning" : "blocked",
-      metric: "finalCredits > estimatedCredits * 1.3",
-      threshold: "0",
-      current: `${input.costAnomalies} 个`,
-      owner: "商业化 / 财务",
-      action: input.costAnomalies ? "复核价格策略和任务补偿" : "未发现明显扣费异常",
-      updatedAt: now
-    },
-    {
-      id: "lineage-coverage",
-      name: "资产溯源覆盖",
-      target: "作品生成链路",
-      status: input.traceCoverage >= 90 ? "pass" : input.traceCoverage >= 70 ? "warning" : "blocked",
-      metric: "有模型或 prompt 版本记录的作品",
-      threshold: ">=90%",
-      current: `${input.traceCoverage}%`,
-      owner: "研发",
-      action: input.traceCoverage >= 90 ? "溯源覆盖达标" : "补齐任务 trace、模型、promptVersion 和参数记录",
-      updatedAt: now
-    }
-  ];
 }
 
 function buildAssetLineageRows(projects: any[], templates: any[]): QualityCenterOverview["lineage"] {
@@ -1695,7 +1031,7 @@ function buildAssetLineageRows(projects: any[], templates: any[]): QualityCenter
     const stages: QualityAssetLineageStage[] = ["script", "character", "storyboard", "image", "video", "tts", "export"].map((stage) => {
       const stageTasks = project.tasks.filter((task: any) => task.type === taskTypeForLineage(stage));
       const reportStage = normalizeLineageReportStage(stage);
-      const stageReports = project.qualityReports.filter((report: any) => report.stage === reportStage);
+        const stageReports = project.qualityReports.filter((report: any) => report.stage === reportStage && report.evidenceScope === "structure").slice(0, 1);
       const stageFeedback = project.feedbacks.filter((feedback: any) => feedback.stage === reportStage);
       const stageAssets = project.assets.filter((asset: any) => assetMatchesStage(asset.type, stage));
       const score = average(stageReports.map((report: any) => report.totalScore));
@@ -1703,13 +1039,13 @@ function buildAssetLineageRows(projects: any[], templates: any[]): QualityCenter
       const warning = stageFeedback.some((feedback: any) => feedback.usability !== "usable") || (score > 0 && score < 75);
       const latestTask = stageTasks[0];
       const latestReport = stageReports[0];
-      const providerModel = lineageProviderModel(project, stage, latestTask, latestReport);
+      const providerModel = lineageProviderModel(project, stage, latestTask);
       const status: QualityGateStatus = failed ? "blocked" : warning ? "warning" : "pass";
       return {
         stage,
         provider: providerModel.provider,
         model: providerModel.model,
-        promptVersion: latestReport?.promptVersion ?? templateByStage.get(stage)?.version ?? "workflow-current",
+          promptVersion: "实际生成版本请查看固定样本",
         tasks: stageTasks.length,
         assets: stageAssets.length,
         reports: stageReports.length,
@@ -1744,7 +1080,7 @@ function buildAssetLineageRows(projects: any[], templates: any[]): QualityCenter
         status: asset.status,
         shotNo: String(asset.name ?? "").match(/\d+-\d+-\d+/)?.[0]
       }));
-    const latestReports = project.qualityReports.slice(0, 5).map((report: any) => ({
+      const latestReports = project.qualityReports.filter((report: any) => report.evidenceScope === "structure").slice(0, 5).map((report: any) => ({
       id: report.id,
       stage: report.stage as Stage,
       score: report.totalScore,
@@ -1890,9 +1226,8 @@ function assetMatchesStage(type: string, stage: string) {
   return false;
 }
 
-function lineageProviderModel(project: any, stage: string, task?: any, report?: any) {
+function lineageProviderModel(project: any, stage: string, task?: any) {
   if (task?.provider || task?.model) return { provider: task.provider ?? undefined, model: task.model ?? undefined };
-  if (report?.provider || report?.model) return { provider: report.provider ?? undefined, model: report.model ?? undefined };
   if (stage === "image") return { provider: project.imageProvider ?? undefined, model: project.imageModel ?? undefined };
   if (stage === "video" || stage === "tts" || stage === "export") return { provider: project.videoProvider ?? undefined, model: project.videoModel ?? undefined };
   return { provider: project.textProvider ?? undefined, model: project.textModel ?? undefined };
@@ -1911,13 +1246,7 @@ function summarizeModelQuality(
     group.credits += task.finalCredits ?? task.estimatedCredits;
     groups.set(key, group);
   });
-  reports.forEach((report) => {
-    if (!report.provider || !report.model) return;
-    const key = `${report.provider}:${report.model}:${report.stage}`;
-    const group = groups.get(key) ?? { provider: report.provider, model: report.model, stage: report.stage, tasks: 0, succeeded: 0, credits: 0, scores: [] };
-    group.scores.push(report.totalScore);
-    groups.set(key, group);
-  });
+  // Judge scores do not establish the generation model's quality.
   return [...groups.values()]
     .map((group) => ({
       provider: group.provider,
@@ -1932,347 +1261,6 @@ function summarizeModelQuality(
     .slice(0, 12);
 }
 
-type LlmEvaluationOutput = {
-  totalScore?: number;
-  pass?: boolean;
-  dimensionScores?: Record<string, number>;
-  mainProblems?: string[];
-  suggestedFixes?: string[];
-  problems?: string[];
-  suggestions?: string[];
-  recommendedAction?: string;
-  badShots?: Array<{ shotNo?: string; problem?: string; fix?: string }>;
-};
-
-async function runLlmEvaluators(
-  workflow: any,
-  ruleReport: DraftReport,
-  options: {
-    evaluators: QualityEvaluatorModel[];
-    includeFeedback: boolean;
-    maxShotsPerPrompt: number;
-    promptVersion?: { id: string; name: string; stage: string; version: string; content: string };
-  }
-): Promise<{ reports: DraftReport[]; failures: string[] }> {
-  const reports: DraftReport[] = [];
-  const failures: string[] = [];
-  const prompt = await buildLlmEvaluationPrompt(workflow, ruleReport.stage, options);
-
-  for (const evaluator of options.evaluators) {
-    try {
-      const provider = await prisma.modelProvider.findUnique({ where: { id: evaluator.provider } });
-      if (!provider?.enabled || provider.modality !== "text" || !provider.models.includes(evaluator.model)) throw new Error("评测渠道或模型已停用");
-      const runtime = providerRuntimeOptions(provider);
-      if (!hasTextModelConfig({ textProvider: evaluator.provider, textModel: evaluator.model, ...runtime })) {
-        failures.push(`${evaluator.provider}/${evaluator.model} 未配置可用 API Key 或 Base URL。`);
-        continue;
-      }
-      const result = await callTextModelJson<LlmEvaluationOutput>({
-        ...runtime,
-        textProvider: evaluator.provider,
-        textModel: evaluator.model,
-        system: "你是严谨的 AI 漫剧生产质检评测员。只输出合法 JSON，不输出 Markdown。",
-        prompt,
-        temperature: 0.12,
-        maxTokens: Number(process.env.QUALITY_EVALUATOR_MAX_TOKENS ?? 1800),
-        label: `${ruleReport.stage} LLM 评测`
-      });
-      reports.push(normalizeLlmReport(result, workflow, ruleReport, evaluator, options.promptVersion));
-    } catch (error) {
-      failures.push(`${evaluator.provider}/${evaluator.model} 评测失败：${formatError(error)}`);
-    }
-  }
-
-  return { reports, failures };
-}
-
-function normalizeLlmReport(
-  result: LlmEvaluationOutput,
-  workflow: any,
-  ruleReport: DraftReport,
-  evaluator: QualityEvaluatorModel,
-  promptVersion?: { name: string; stage: string; version: string }
-): DraftReport {
-  const dimensionScores = normalizeDimensionScores(result.dimensionScores, ruleReport.dimensionScores);
-  const totalScore = clamp(Math.round(Number(result.totalScore) || average(Object.values(dimensionScores)) || ruleReport.totalScore), 0, 100);
-  const problems = uniqueText([
-    ...(result.mainProblems ?? []),
-    ...(result.problems ?? []),
-    ...(result.badShots ?? []).map((shot) => [shot.shotNo, shot.problem, shot.fix].filter(Boolean).join("："))
-  ]).slice(0, 8);
-  const suggestions = uniqueText([...(result.suggestedFixes ?? []), ...(result.suggestions ?? [])]).slice(0, 8);
-  return {
-    projectId: workflow.id,
-    stage: ruleReport.stage,
-    evaluatorType: "ai",
-    totalScore,
-    pass: typeof result.pass === "boolean" ? result.pass : totalScore >= passLine(ruleReport.stage),
-    dimensionScores,
-    problems: problems.length ? problems : ruleReport.problems,
-    suggestions: suggestions.length ? suggestions : ruleReport.suggestions,
-    recommendedAction: sanitizeRecommendedAction(result.recommendedAction, ruleReport.stage),
-    promptVersion: promptVersion?.stage === ruleReport.stage ? `${promptVersion.name} ${promptVersion.version}` : `${ruleReport.stage}-llm-judge-v1`,
-    provider: textProviderName({ textProvider: evaluator.provider }),
-    model: evaluator.model || textModelName({ textProvider: evaluator.provider, textModel: evaluator.model }),
-    taskId: ruleReport.taskId,
-    assetId: ruleReport.assetId
-  };
-}
-
-function buildEnsembleReport(ruleReport: DraftReport, llmReports: DraftReport[], failures: string[]): DraftReport {
-  const llmAverage = average(llmReports.map((report) => report.totalScore));
-  const totalScore = clamp(Math.round(ruleReport.totalScore * 0.35 + llmAverage * 0.65), 0, 100);
-  const dimensions = mergeDimensionScores(ruleReport, llmReports, totalScore);
-  return {
-    projectId: ruleReport.projectId,
-    stage: ruleReport.stage,
-    evaluatorType: "ai",
-    totalScore,
-    pass: totalScore >= passLine(ruleReport.stage),
-    dimensionScores: dimensions,
-    problems: uniqueText(llmReports.flatMap((report) => report.problems).concat(ruleReport.problems)).slice(0, 8),
-    suggestions: uniqueText([
-      ...llmReports.flatMap((report) => report.suggestions),
-      ...ruleReport.suggestions,
-      ...failures.map((failure) => `部分 LLM 评测失败，已保留成功评测与规则分：${failure}`)
-    ]).slice(0, 8),
-    recommendedAction: totalScore >= passLine(ruleReport.stage) ? ruleReport.recommendedAction : lowScoreAction(ruleReport.stage),
-    promptVersion: `${ruleReport.stage}-hybrid-ensemble-v1`,
-    provider: "Quality Ensemble",
-    model: ["rules", ...llmReports.map((report) => report.model).filter(Boolean)].join(" + "),
-    taskId: ruleReport.taskId,
-    assetId: ruleReport.assetId
-  };
-}
-
-async function buildLlmEvaluationPrompt(
-  workflow: any,
-  stage: Stage,
-  options: {
-    includeFeedback: boolean;
-    maxShotsPerPrompt: number;
-    promptVersion?: { name: string; stage: string; version: string; content: string };
-  }
-) {
-  const selectedPrompt = options.promptVersion?.stage === stage ? options.promptVersion : undefined;
-  const template = selectedPrompt ? undefined : await activeEvaluationPromptTemplate(stage);
-  const rubric = selectedPrompt?.content || template?.content || stageRubric(stage);
-  const feedback = options.includeFeedback
-    ? workflow.feedbacks?.map((item: any) => `${item.stage} ${item.rating}/5 ${item.usability} ${item.tags.join(",")} ${item.content}`).slice(0, 8).join("\n") || "暂无用户反馈"
-    : "本次不纳入用户反馈";
-  return [
-    `评分模板版本：${selectedPrompt ? `${selectedPrompt.name} ${selectedPrompt.version}` : template ? `${template.name} ${template.version}` : `${stage}-llm-judge-v1`}`,
-    rubric,
-    "输出 JSON 字段：totalScore, pass, dimensionScores, mainProblems, suggestedFixes, recommendedAction。分数必须为 0-100 内整数，dimensionScores 使用 rubric 中指定维度。",
-    "评测要保守：如果缺少真实图片 URL、角色参考图、关键镜头提示词或视频首帧，请明确扣分。",
-    `项目：${workflow.name}`,
-    `题材：${workflow.type}；画风：${workflow.artStyle}；画幅：${workflow.videoRatio}；集数：${workflow.episodes}`,
-    `用户反馈：\n${feedback}`,
-    stagePayload(workflow, stage, options.maxShotsPerPrompt)
-  ].join("\n\n");
-}
-
-async function activeEvaluationPromptTemplate(stage: Stage) {
-  return prisma.promptTemplate.findFirst({
-    where: {
-      enabled: true,
-      type: stage,
-      OR: [
-        { name: { contains: "评测" } },
-        { name: { contains: "评分" } },
-        { summary: { contains: "LLM 评测" } },
-        { content: { contains: "recommendedAction" } }
-      ]
-    },
-    orderBy: [{ updatedAt: "desc" }]
-  });
-}
-
-function stageRubric(stage: Stage) {
-  const rubrics: Record<Stage, string> = {
-    script: "评测剧本是否适合进入角色定稿和分镜生产。维度：structure 0-20, hook 0-20, episode 0-15, character 0-15, visual 0-15, production 0-15。recommendedAction 可选 continue/rewrite_script/clarify_characters/reduce_complexity。",
-    character: "评测角色定稿是否适合进入分镜批量出图。维度：identity 0-15, appearance 0-20, multiview 0-25, storyMatch 0-15, referenceFollow 0-15, negativePrompt 0-10。recommendedAction 可选 lock_character/regenerate_multiview/edit_prompt/upload_reference。",
-    storyboard: "评测分镜表是否适合进入分镜图生成。维度：order 0-10, imageability 0-20, continuity 0-20, simplicity 0-15, rhythm 0-15, prompt 0-20。recommendedAction 可选 generate_images/edit_bad_shots/regenerate_storyboard。",
-    image: "评测分镜图是否可作为视频首帧继续生产。维度：promptMatch 0-20, characterConsistency 0-25, composition 0-15, artifact 0-20, videoReady 0-20。recommendedAction 可选 accept/regenerate_same_prompt/edit_prompt/regenerate_character。",
-    video: "评测视频草稿是否可剪辑发布或继续合成。维度：firstFrame 0-20, identity 0-20, motion 0-20, intent 0-20, editable 0-20。recommendedAction 可选 accept/regenerate_video_clip/edit_prompt/regenerate_first_frame。"
-  };
-  return rubrics[stage];
-}
-
-function stagePayload(workflow: any, stage: Stage, maxShots: number) {
-  if (stage === "script") {
-    const script = workflow.scripts?.[0];
-    return `剧本梗概：${script?.synopsis ?? "无"}\n剧本文本：${truncateText(script?.content ?? "无", 6000)}`;
-  }
-  if (stage === "character") {
-    return [
-      "角色卡：",
-      JSON.stringify(workflow.characterSet?.map((item: any) => ({
-        name: item.name,
-        identity: item.identity,
-        appearance: item.appearance,
-        costume: item.costume,
-        negativePrompt: item.negativePrompt,
-        referenceAssetId: item.referenceAssetId
-      })) ?? [], null, 2),
-      "角色资产：",
-      JSON.stringify(workflow.assets?.filter((asset: any) => asset.type === "role" || asset.type === "role_derivative").map(assetSummary), null, 2)
-    ].join("\n");
-  }
-  if (stage === "storyboard") {
-    return `分镜样本（最多 ${maxShots} 条）：\n${JSON.stringify(workflow.shots?.slice(0, maxShots).map(shotSummary) ?? [], null, 2)}`;
-  }
-  if (stage === "image") {
-    const imageAssets = workflow.assets?.filter((asset: any) => asset.type === "image").map(assetSummary) ?? [];
-    return `分镜样本：\n${JSON.stringify(workflow.shots?.slice(0, maxShots).map(shotSummary) ?? [], null, 2)}\n图片资产：\n${JSON.stringify(imageAssets.slice(0, maxShots), null, 2)}`;
-  }
-  const videoAssets = workflow.assets?.filter((asset: any) => asset.type === "video").map(assetSummary) ?? [];
-  return `分镜样本：\n${JSON.stringify(workflow.shots?.slice(0, maxShots).map(shotSummary) ?? [], null, 2)}\n视频资产：\n${JSON.stringify(videoAssets.slice(0, maxShots), null, 2)}`;
-}
-
-function shotSummary(shot: any) {
-  return {
-    shot: `${shot.episodeNo}-${shot.sceneNo}-${shot.shotNo}`,
-    duration: shot.duration,
-    shotSize: shot.shotSize,
-    cameraMovement: shot.cameraMovement,
-    characters: shot.characters,
-    scene: shot.scene,
-    pictureDesc: shot.pictureDesc,
-    dialogue: shot.dialogue,
-    imagePrompt: shot.imagePrompt,
-    videoPrompt: shot.videoPrompt,
-    referenceAssetIds: shot.referenceAssetIds,
-    status: shot.status
-  };
-}
-
-function assetSummary(asset: any) {
-  return {
-    id: asset.id,
-    type: asset.type,
-    name: asset.name,
-    status: asset.status,
-    hasUrl: Boolean(asset.referenceUrl),
-    prompt: truncateText(asset.prompt, 800)
-  };
-}
-
-function normalizeEvaluatorModels(models: QualityEvaluatorModel[] | undefined): QualityEvaluatorModel[] {
-  const raw = models?.length ? models : [];
-  return raw
-    .filter((item) => item.provider && item.model)
-    .map((item) => ({ provider: item.provider, model: item.model, name: item.name }))
-    .slice(0, 6);
-}
-
-function normalizeDimensionScores(value: unknown, fallback: Record<string, number>) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return fallback;
-  const entries = Object.entries(value as Record<string, unknown>).map(([key, item]) => [key, clamp(Math.round(Number(item) || 0), 0, 100)] as const);
-  return Object.fromEntries(entries.length ? entries : Object.entries(fallback));
-}
-
-function mergeDimensionScores(ruleReport: DraftReport, llmReports: DraftReport[], totalScore: number) {
-  const keys = new Set([...Object.keys(ruleReport.dimensionScores), ...llmReports.flatMap((report) => Object.keys(report.dimensionScores))]);
-  const merged: Record<string, number> = {};
-  keys.forEach((key) => {
-    const llmValues = llmReports.map((report) => report.dimensionScores[key]).filter((value) => Number.isFinite(value));
-    const ruleValue = ruleReport.dimensionScores[key] ?? 0;
-    merged[key] = llmValues.length ? clamp(Math.round(ruleValue * 0.35 + average(llmValues) * 0.65), 0, 100) : ruleValue;
-  });
-  merged.ruleTotal = ruleReport.totalScore;
-  merged.llmTotal = average(llmReports.map((report) => report.totalScore));
-  merged.finalTotal = totalScore;
-  return merged;
-}
-
-function passLine(stage: Stage) {
-  const map: Record<Stage, number> = { script: 75, character: 80, storyboard: 75, image: 80, video: 70 };
-  return map[stage];
-}
-
-function sanitizeRecommendedAction(action: unknown, stage: Stage) {
-  return typeof action === "string" && action.trim() ? action.trim().slice(0, 80) : lowScoreAction(stage);
-}
-
-function emptyEvaluationRunResult(input: {
-  projectCount: number;
-  stages: Stage[];
-  mode: "rules" | "hybrid" | "llm";
-  skipped: QualityEvaluationRunResult["skipped"];
-}): QualityEvaluationRunResult {
-  return {
-    projects: input.projectCount,
-    stages: input.stages,
-    mode: input.mode,
-    reports: [],
-    skipped: input.skipped,
-    usage: { ruleReports: 0, llmReports: 0, llmCalls: 0, llmFailures: 0, estimatedPromptItems: 0 }
-  };
-}
-
-function normalizeRunName(value: string | undefined) {
-  const trimmed = value?.trim();
-  if (trimmed) return trimmed.slice(0, 100);
-  return `评测运行 ${new Date().toISOString().slice(0, 16).replace("T", " ")}`;
-}
-
-function evaluationDatasetSnapshot(dataset: {
-  id: string;
-  name: string;
-  description: string;
-  source: string;
-  projectIds: string[];
-  stages: string[];
-  filters: unknown;
-  sampleCount: number;
-  owner: string | null;
-  createdAt: Date;
-}) {
-  return {
-    id: dataset.id,
-    name: dataset.name,
-    description: dataset.description,
-    source: dataset.source,
-    projectIds: dataset.projectIds,
-    stages: dataset.stages,
-    filters: dataset.filters,
-    sampleCount: dataset.sampleCount,
-    owner: dataset.owner ?? undefined,
-    createdAt: dataset.createdAt.toISOString()
-  };
-}
-
-function promptVersionSnapshot(prompt: {
-  id: string;
-  key: string;
-  name: string;
-  stage: string;
-  purpose: string;
-  version: string;
-  content: string;
-  status: string;
-  owner: string | null;
-  notes: string;
-  createdAt: Date;
-  updatedAt: Date;
-}) {
-  return {
-    id: prompt.id,
-    key: prompt.key,
-    name: prompt.name,
-    stage: prompt.stage,
-    purpose: prompt.purpose,
-    version: prompt.version,
-    content: prompt.content,
-    status: prompt.status,
-    owner: prompt.owner ?? undefined,
-    notes: prompt.notes,
-    createdAt: prompt.createdAt.toISOString(),
-    updatedAt: prompt.updatedAt.toISOString()
-  };
-}
-
 function pagination(pageValue?: number, pageSizeValue?: number) {
   const page = clamp(Math.floor(pageValue ?? 1), 1, 100_000);
   const pageSize = clamp(Math.floor(pageSizeValue ?? 20), 1, 100);
@@ -2281,56 +1269,6 @@ function pagination(pageValue?: number, pageSizeValue?: number) {
 
 function paged<T>(items: T[], page: number, pageSize: number, total: number): PagedResult<T> {
   return { items, page, pageSize, total, totalPages: Math.max(1, Math.ceil(total / pageSize)) };
-}
-
-function compareEvaluationRuns(
-  baseline: EvaluationRun,
-  candidate: EvaluationRun,
-  selectedStage: Stage,
-  baselineReports: Array<QualityReport & { projectName?: string }>,
-  candidateReports: Array<QualityReport & { projectName?: string }>
-): ExperimentRun["metrics"] {
-  const stages = unique([...baseline.summary.stageScores.map((row) => row.stage), ...candidate.summary.stageScores.map((row) => row.stage)]);
-  const stageDeltas = stages.map((stage) => {
-    const baselineScore = baseline.summary.stageScores.find((row) => row.stage === stage)?.averageScore ?? 0;
-    const candidateScore = candidate.summary.stageScores.find((row) => row.stage === stage)?.averageScore ?? 0;
-    return { stage, baseline: baselineScore, candidate: candidateScore, delta: candidateScore - baselineScore };
-  });
-  const baselineStage = baseline.summary.stageScores.find((row) => row.stage === selectedStage);
-  const candidateStage = candidate.summary.stageScores.find((row) => row.stage === selectedStage);
-  const baselineScore = baselineStage?.averageScore ?? average(baselineReports.map((report) => report.totalScore));
-  const candidateScore = candidateStage?.averageScore ?? average(candidateReports.map((report) => report.totalScore));
-  const baselinePassRate = baselineStage?.passRate ?? reportPassRate(baselineReports);
-  const candidatePassRate = candidateStage?.passRate ?? reportPassRate(candidateReports);
-  const projectIds = unique([...baselineReports.map((report) => report.projectId), ...candidateReports.map((report) => report.projectId)]);
-  const sampleDeltas = projectIds.map((projectId) => {
-    const baselineRows = baselineReports.filter((report) => report.projectId === projectId);
-    const candidateRows = candidateReports.filter((report) => report.projectId === projectId);
-    const baselineValue = baselineRows.length ? average(baselineRows.map((report) => report.totalScore)) : undefined;
-    const candidateValue = candidateRows.length ? average(candidateRows.map((report) => report.totalScore)) : undefined;
-    const delta = baselineValue === undefined || candidateValue === undefined ? undefined : candidateValue - baselineValue;
-    const status: ExperimentRun["metrics"]["sampleDeltas"][number]["status"] = baselineValue === undefined
-      ? "new"
-      : candidateValue === undefined ? "missing" : delta! > 0 ? "improved" : delta! < 0 ? "regressed" : "same";
-    const projectName = candidateRows[0]?.projectName ?? baselineRows[0]?.projectName;
-    return { projectId, projectName, stage: selectedStage, baseline: baselineValue, candidate: candidateValue, delta, status };
-  }).sort((a, b) => (a.delta ?? -999) - (b.delta ?? -999));
-  return {
-    baselineScore,
-    candidateScore,
-    scoreDelta: candidateScore - baselineScore,
-    baselinePassRate,
-    candidatePassRate,
-    passRateDelta: candidatePassRate - baselinePassRate,
-    baselineReports: baselineReports.length,
-    candidateReports: candidateReports.length,
-    stageDeltas,
-    sampleDeltas
-  };
-}
-
-function reportPassRate(reports: QualityReport[]) {
-  return reports.length ? Math.round((reports.filter((report) => report.pass).length / reports.length) * 100) : 0;
 }
 
 function evaluationRunVariantLabel(run: EvaluationRun, experimentType: ExperimentRun["experimentType"]) {
@@ -2363,12 +1301,6 @@ function evaluationRunConfigSnapshot(run: EvaluationRun) {
   };
 }
 
-function experimentResultSummary(metrics: ExperimentRun["metrics"], winner: string, baseline: string, candidate: string) {
-  if (winner === "tie") return `${candidate} 与 ${baseline} 综合表现持平；平均分差 ${metrics.scoreDelta}，通过率差 ${metrics.passRateDelta}%。`;
-  const winnerLabel = winner === "candidate" ? candidate : baseline;
-  return `${winnerLabel} 表现更好；候选相对基线平均分 ${metrics.scoreDelta >= 0 ? "+" : ""}${metrics.scoreDelta}，通过率 ${metrics.passRateDelta >= 0 ? "+" : ""}${metrics.passRateDelta}%。`;
-}
-
 function mostFrequentText(values: string[], limit: number) {
   const counts = new Map<string, number>();
   values.map((value) => value.trim()).filter(Boolean).forEach((value) => counts.set(value, (counts.get(value) ?? 0) + 1));
@@ -2394,67 +1326,12 @@ function stageOptimizationRecommendation(
     : focus ? `围绕“${focus}”对比视频模型与运动提示词，观察成片可用率。` : "对比视频模型与运动提示词，联合观察可用率、连续性、耗时和成本。";
 }
 
-function emptyUsage() {
-  return { ruleReports: 0, llmReports: 0, llmCalls: 0, llmFailures: 0, estimatedPromptItems: 0 };
-}
-
-function emptyRunSummary(projectCount: number) {
-  return {
-    reportCount: 0,
-    passCount: 0,
-    passRate: 0,
-    averageScore: 0,
-    projectCount,
-    stageScores: []
-  };
-}
-
-function buildRunSummary(reports: QualityReport[], projectCount: number) {
-  const passCount = reports.filter((report) => report.pass).length;
-  const stages = unique(reports.map((report) => report.stage)).filter((stage): stage is Stage => isStage(stage));
-  return {
-    reportCount: reports.length,
-    passCount,
-    passRate: reports.length ? Math.round((passCount / reports.length) * 100) : 0,
-    averageScore: average(reports.map((report) => report.totalScore)),
-    projectCount,
-    stageScores: stages.map((stage) => {
-      const stageReports = reports.filter((report) => report.stage === stage);
-      const stagePass = stageReports.filter((report) => report.pass).length;
-      return {
-        stage,
-        reports: stageReports.length,
-        passRate: stageReports.length ? Math.round((stagePass / stageReports.length) * 100) : 0,
-        averageScore: average(stageReports.map((report) => report.totalScore))
-      };
-    })
-  };
-}
-
-function estimatePromptItems(workflow: any, stage: Stage, maxShots: number) {
-  if (stage === "script") return 1;
-  if (stage === "character") return Math.max(1, workflow.characterSet?.length ?? 0);
-  return Math.min(maxShots, Math.max(1, workflow.shots?.length ?? 0));
-}
-
 function unique<T>(values: T[]) {
   return [...new Set(values)];
 }
 
-function isStage(value: string): value is Stage {
-  return ["script", "character", "storyboard", "image", "video"].includes(value);
-}
-
 function uniqueText(values: string[]) {
   return unique(values.map((value) => String(value).trim()).filter(Boolean));
-}
-
-function truncateText(value: string, max: number) {
-  return value.length > max ? `${value.slice(0, max)}...` : value;
-}
-
-function formatError(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
 }
 
 function average(values: number[]) {
