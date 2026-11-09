@@ -246,10 +246,10 @@ test("feedback query applies explicitly, keeps a draft on cancel and clears it a
 
 test("feedback pagination keeps applied filters until an explicit query", async ({ page }) => {
   await fixtures(page);
-  const queries: string[] = [];
+  const queries: Array<{ page: number; keyword: string }> = [];
   await page.route("**/api/admin/feedback/page?**", async route => {
     const url = new URL(route.request().url());
-    queries.push(url.searchParams.get("keyword") ?? "");
+    queries.push({ page: Number(url.searchParams.get("page")), keyword: url.searchParams.get("keyword") ?? "" });
     await route.fulfill({ json: { items: [], total: 60, page: Number(url.searchParams.get("page") ?? 1), pageSize: 50, totalPages: 2 } });
   });
   await page.goto("/admin#用户反馈");
@@ -259,7 +259,7 @@ test("feedback pagination keeps applied filters until an explicit query", async 
   await expect(page.getByRole("button", { name: "上一页反馈" })).toBeEnabled();
   await page.getByRole("button", { name: "上一页反馈" }).click();
   await expect(page.getByRole("button", { name: "下一页反馈" })).toBeEnabled();
-  expect(queries).toEqual(["", "", ""]);
+  expect(queries.slice(-2)).toEqual([{ page: 2, keyword: "" }, { page: 1, keyword: "" }]);
   await page.getByRole("button", { name: "查询反馈", exact: true }).click();
-  await expect.poll(() => queries.at(-1)).toBe("待应用条件");
+  await expect.poll(() => queries.at(-1)).toEqual({ page: 1, keyword: "待应用条件" });
 });
