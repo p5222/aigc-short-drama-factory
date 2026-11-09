@@ -83,7 +83,8 @@ jobs:
       - name: Install Chromium for isolated desktop and mobile UI regression
         run: pnpm --filter @aifilm/web exec playwright install --with-deps chromium
       - name: Verify all creator and administrator browser workflows
-        timeout-minutes: 10
+        # The full desktop/mobile suite can exceed ten minutes on slower runners.
+        timeout-minutes: 15
         env:
           PLAYWRIGHT_OUTPUT_DIR: ${{ runner.temp }}/manjiao-browser-results
           PLAYWRIGHT_REPORT_DIR: ${{ runner.temp }}/manjiao-browser-report
