@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 import type { AssetItem, ModelPrice, ModelProvider, Project, ProjectWorkflow, UserFeedback } from "@aifilm/shared";
+import { QualityFeedbackForm, type QualityFeedbackInput } from "../components/QualityFeedbackForm";
 import {
   estimateImageCredits,
   imageOutputQualityOptions,
@@ -427,35 +428,19 @@ function AssetImageRoute({
   return <section className="wb-route-panel"><header><strong><SlidersHorizontal aria-hidden="true" />图片模型</strong><small>预计：{estimate}</small></header><div className="mrp-field"><span>渠道 / 模型</span><ModelRoutePicker modality="image" providers={pickerProviders} modelPrices={modelPrices} value={{ providerId: draft.imageProvider, model: draft.imageModel }} onChange={(providerId, model) => setDraft((current) => ({ ...current, ...resolveImageRoutePair(providerId, model, providers, failedImageModels) }))} disabled={blocked} /></div><div className="wb-route-grid"><label><span>尺寸</span><select disabled={blocked} value={draft.imageSize} onChange={(event) => setDraft((current) => ({ ...current, imageSize: normalizeImageOutputSize(event.target.value) }))}>{imageOutputSizeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label><label><span>质量</span><select disabled={blocked} value={draft.imageQuality} onChange={(event) => setDraft((current) => ({ ...current, imageQuality: normalizeImageOutputQuality(event.target.value) }))}>{imageOutputQualityOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label></div><button className="wb-primary-button" type="button" disabled={disabled || pending || saving || (!refreshRequired && !validPair)} onClick={() => void (refreshRequired ? onRetryRefresh() : applyAndGenerate())}>{pending || saving ? <Loader2 className="wb-spin" aria-hidden="true" /> : refreshRequired ? <Save aria-hidden="true" /> : <WandSparkles aria-hidden="true" />}{pending || saving ? "正在处理…" : refreshRequired ? "重试刷新" : actionLabel}</button>{error ? <p className="wb-action-feedback--error" role="alert">{error}</p> : null}</section>;
 }
 function FeedbackForm({ projectId, target, recentCount, disabled, onRefresh }: { projectId: string; target: ReturnType<typeof buildAssetFeedbackTarget>; recentCount: number; disabled: boolean; onRefresh: (projectId: string) => Promise<ProjectWorkflow> }) {
-  const [rating, setRating] = useState(4);
-  const [usability, setUsability] = useState<UserFeedback["usability"]>("usable");
-  const [content, setContent] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [message, setMessage] = useState("");
-  const [error, setError] = useState("");
-
-  async function submit() {
-    if (!target.assetId) return;
-    setSubmitting(true);
-    setMessage("");
-    setError("");
+  async function submit(input: QualityFeedbackInput) {
+    if (!target.assetId) throw new Error("请先选择要评价的资产。");
     const result = await commitMutationThenSync(
-      () => api.submitFeedback({ projectId, assetId: target.assetId, stage: target.stage, rating, usability, tags: [], content, source: "creator_workbench" }),
+      () => api.submitFeedback({ projectId, assetId: target.assetId, stage: target.stage, ...input, source: "creator_workbench" }),
       () => onRefresh(projectId)
     );
     if (result.status === "mutation-failed") {
-      setError(errorMessage(result.error, "反馈提交失败。"));
-    } else {
-      setContent("");
-      setMessage(result.status === "synced"
-        ? "反馈已回流质量中心。"
-        : "反馈已回流质量中心；当前列表暂未刷新。"
-      );
+      throw new Error(errorMessage(result.error, "反馈提交失败，内容已保留。"));
     }
-    setSubmitting(false);
+    return result.status === "synced" ? "反馈已保存，可在「评测与反馈」跟进处理。" : "反馈已保存；列表暂未刷新，请刷新记录核对。";
   }
 
-  return <div className="wb-feedback-form"><small>已回流 {recentCount} 条反馈</small><div><label><span>评分</span><select value={rating} onChange={(event) => setRating(Number(event.target.value))}>{[5, 4, 3, 2, 1].map((value) => <option key={value} value={value}>{value} 分</option>)}</select></label><label><span>可用性</span><select value={usability} onChange={(event) => setUsability(event.target.value as UserFeedback["usability"])}><option value="usable">可用</option><option value="barely_usable">勉强可用</option><option value="unusable">不可用</option></select></label></div><label><span>说明</span><textarea value={content} onChange={(event) => setContent(event.target.value)} placeholder="记录需要继续优化的具体问题" /></label><button className="wb-secondary-button" type="button" disabled={disabled || submitting} onClick={() => void submit()}>{submitting ? "提交中" : "提交反馈"}</button>{message ? <p className="wb-action-feedback--success">{message}</p> : null}{error ? <p className="wb-action-feedback--error">{error}</p> : null}</div>;
+  return <QualityFeedbackForm key={`${projectId}:${target.assetId ?? "none"}`} stage={target.stage} recentCount={recentCount} disabled={disabled} onSubmit={submit} />;
 }
 
 function routeDraft(project: Project, providers: ModelProvider[]) {

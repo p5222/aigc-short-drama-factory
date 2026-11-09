@@ -61,6 +61,7 @@ import { ShotStage } from "../workbench/stages/ShotStage";
 import { DeliveryStage } from "../workbench/stages/DeliveryStage";
 import { TaskDrawer } from "../workbench/components/TaskDrawer";
 import { EvaluationDrawer } from "../workbench/components/EvaluationDrawer";
+import { QualityFeedbackForm, type QualityFeedbackInput } from "../workbench/components/QualityFeedbackForm";
 import { type DeliveryCandidate } from "../workbench/stages/deliveryModel";
 import { buildShowcaseCandidates, canReviseShowcase, createShowcaseSubmitGuard, mergeShowcaseRecord, resolveShowcaseRevision, resolveShowcaseSelection, showcaseCandidateKey, showcaseSubmissionKey } from "./showcasePublishModel";
 import { generateCharacterImages, generateStoryboards, generateImages, generateVideos, createExportJob, generateQualityReports, submitFeedback } from "../workbench/workbenchActions";
@@ -791,61 +792,16 @@ function QualityReportCard({ report, emptyTitle, emptyText }: { report?: Quality
 }
 
 function FeedbackComposer({ projectId, stage, assetId, recentCount, onSubmitted }: { projectId: string; stage: "character" | "image"; assetId?: string; recentCount: number; onSubmitted: () => void | Promise<void> }) {
-  const [rating, setRating] = useState(4);
-  const [usability, setUsability] = useState<UserFeedback["usability"]>("usable");
-  const [tags, setTags] = useState<string[]>([]);
-  const [content, setContent] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [message, setMessage] = useState("");
-  const tagOptions = stage === "character"
-    ? ["角色不像", "脸型漂移", "服装不一致", "参考图不足", "可继续"]
-    : ["角色不像", "构图问题", "提示词不符", "画面崩坏", "可用于视频"];
-
-  function toggleTag(tag: string) {
-    setTags((current) => current.includes(tag) ? current.filter((item) => item !== tag) : [...current, tag]);
-  }
-
-  async function submit() {
-    setSubmitting(true);
-    setMessage("");
+  async function submit(input: QualityFeedbackInput) {
+    await submitFeedback({ projectId, assetId, stage, ...input, source: "creator_workbench" });
     try {
-      await submitFeedback({
-        projectId,
-        assetId,
-        stage,
-        rating,
-        usability,
-        tags,
-        content,
-        source: "creator_workbench"
-      });
-      setContent("");
-      setTags([]);
-      setMessage("反馈已提交，会进入后台质量中心和 badcase 池。");
       await onSubmitted();
-    } finally {
-      setSubmitting(false);
+      return "反馈已保存，可在「评测与反馈」跟进处理。";
+    } catch {
+      return "反馈已保存；列表暂未刷新，请刷新记录核对。";
     }
   }
-
-  return (
-    <div className="creator-feedback-panel">
-      <div>
-        <strong>创作者效果反馈</strong>
-        <span>已有 {recentCount} 条反馈回流后台</span>
-      </div>
-      <div className="feedback-quick-row">
-        <label>评分<select value={rating} onChange={(event) => setRating(Number(event.target.value))}>{[5, 4, 3, 2, 1].map((value) => <option key={value} value={value}>{value} 分</option>)}</select></label>
-        <label>可用性<select value={usability} onChange={(event) => setUsability(event.target.value as UserFeedback["usability"])}><option value="usable">可用</option><option value="barely_usable">勉强可用</option><option value="unusable">不可用</option></select></label>
-        <div className="feedback-tag-row">{tagOptions.map((tag) => <button key={tag} type="button" className={tags.includes(tag) ? "active" : ""} onClick={() => toggleTag(tag)}>{tag}</button>)}</div>
-      </div>
-      <div className="feedback-input-row">
-        <input value={content} onChange={(event) => setContent(event.target.value)} placeholder="补充说明：哪里不像、哪里崩、希望怎么改..." />
-        <button className="primary-button" onClick={() => void submit()} disabled={submitting}>{submitting ? "提交中" : "提交反馈"}</button>
-      </div>
-      {message ? <small className="success-text">{message}</small> : null}
-    </div>
-  );
+  return <QualityFeedbackForm key={`${projectId}:${assetId ?? stage}`} stage={stage} recentCount={recentCount} disabled={!assetId} onSubmit={submit} />;
 }
 
 function StableImage({ src, alt }: { src: string; alt: string }) {

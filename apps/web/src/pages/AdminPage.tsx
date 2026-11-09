@@ -99,6 +99,7 @@ import { CreditCenter } from "../admin/CreditCenter";
 import { PromptStudio } from "../admin/PromptStudio";
 import { AdminCommercialIdentity, membershipLabels } from "../admin/AdminCommercialIdentity";
 import { RedeemWorkspace } from "../admin/RedeemWorkspace";
+import "../admin/quality-workspace.css";
 
 const AdminActionContext = createContext({ pending: false, message: "", error: "", version: 0 });
 type ProviderTestResult = ModelTestResult | ImageModelTestResult | VideoModelTestResult;
@@ -891,12 +892,12 @@ function QualityCenterSection({
 
   return (
     <section className="admin-v2-section quality-center-section">
-      <div className="admin-product-metrics">
+      {activePanel === "overview" ? <div className="admin-product-metrics">
         <AdminMetric icon={<CheckCircle2 size={22} />} label="成功率" value={snapshot && available.completedTasks ? `${snapshot.summary.successRate}%` : "—"} hint={!snapshot ? "等待快照" : available.completedTasks ? `失败率 ${snapshot.summary.failureRate}% · 最近任务` : "无已结束任务"} tone="green" />
         <AdminMetric icon={<ChartNoAxesCombined size={22} />} label="结构检查均分" value={snapshot?.lab.recentReports.some(r => r.evidenceScope === "structure") ? snapshot.summary.averageScore : "—"} hint="仅字段与资产状态；质量需复核" tone="blue" />
         <AdminMetric icon={<Activity size={22} />} label="P95 耗时" value={snapshot && available.latency ? formatDuration(snapshot.summary.p95LatencyMs) : "—"} hint={available.latency ? "最近任务耗时分位数" : "无耗时样本"} tone="amber" />
         <AdminMetric icon={<DatabaseZap size={22} />} label="模型健康" value={snapshot && available.models ? `${snapshot.summary.modelHealth}%` : "—"} hint={snapshot && available.models ? `${snapshot.summary.costAnomalies} 个成本异常` : "无模型监控样本"} tone="violet" />
-      </div>
+      </div> : null}
 
       <AdminModuleWorkbench
         railTitle="质量工作区"
@@ -1665,31 +1666,29 @@ function EvaluationSection({
           ["projects", "项目质检池"],
           ["models", "模型表现"]
         ].map(([key, label]) => (
-          <button key={key} type="button" className={activeEvalTab === key ? "active" : ""} onClick={() => setActiveEvalTab(key as typeof activeEvalTab)}>{label}</button>
+          <button key={key} type="button" aria-pressed={activeEvalTab === key} className={activeEvalTab === key ? "active" : ""} onClick={() => setActiveEvalTab(key as typeof activeEvalTab)}>{label}</button>
         ))}
       </div>
 
       {activeEvalTab === "run" ? <article className="admin-v2-card evaluation-runner-card compact">
         <div className="admin-v2-card-head">
           <div>
-            <h2>运行评测</h2>
-            <p>固定样本 → 分通道评测 → 人工复核 → 反馈修复。默认结构检查不调用模型，图片和视频质量由媒体复核确认。</p>
+            <h2>创建一次评测</h2>
+            <p>固定样本与检查范围，运行后查看证据并完成人工复核。</p>
           </div>
-          <button className="admin-primary-btn" onClick={() => void runEvaluation()} disabled={running || !!pendingRequestId || !selectedProjectIds.length || !selectedStages.length || (mode !== "rules" && (!selectedModels.length || maxLlmCalls <= 0))}>
-            {running ? <Loader2 size={18} className="spin" /> : <PlayCircle size={18} />}
-            {running ? "评测中" : "运行评测"}
-          </button>
+          <span className="quality-scope-label">{mode === "rules" ? "结构检查 · 不调用付费模型" : "文本评审 · 按预算受控执行"}</span>
         </div>
         <div className="evaluation-run-workspace">
           <div className="evaluation-sample-panel">
+            <header className="quality-step-heading"><span>01</span><div><h3>选择样本</h3><p>从现有作品捕获，或复用已保存的固定样本。</p></div></header>
             <div className="evaluation-sample-toolbar">
-              <select className="evaluation-dataset-select" value={selectedDatasetId} onChange={(event) => selectDataset(event.target.value)}>
+              <select aria-label="选择样本集" className="evaluation-dataset-select" value={selectedDatasetId} onChange={(event) => selectDataset(event.target.value)}>
                 <option value="">手动选择项目样本</option>
                 {datasets.map((dataset) => (
                   <option key={dataset.id} value={dataset.id}>{dataset.name} · {dataset.sampleCount} 项</option>
                 ))}
               </select>
-              <input value={sampleKeyword} onChange={(event) => setSampleKeyword(event.target.value)} placeholder="搜索作品 / 用户" />
+              <input aria-label="搜索评测作品" value={sampleKeyword} onChange={(event) => setSampleKeyword(event.target.value)} placeholder="搜索作品 / 用户" />
             </div>
             <div className="evaluation-selected-strip">
               <strong>{selectedDataset?.name ?? "当前样本"}</strong>
@@ -1707,24 +1706,27 @@ function EvaluationSection({
                   <small>{row.reports.some(report => report.evidenceScope === "structure") ? `结构 ${row.averageScore} 分` : "未做结构检查"} · {row.userName} · {row.feedbacks.length}条反馈</small>
                 </label>
               ))}
+              {!sampleProjectRows.length ? <p className="quality-empty">没有匹配的作品，请调整关键词。</p> : null}
             </div>
-            <div className="evaluation-dataset-form inline">
-              <input value={datasetName} onChange={(event) => setDatasetName(event.target.value)} placeholder="保存为样本集名称" />
-              <input value={datasetDescription} onChange={(event) => setDatasetDescription(event.target.value)} placeholder="样本说明，可选" />
+            <small className="evaluation-config-hint">{selectedDatasetId ? "固定样本保留捕获时的内容。修订作品后，请手动选择作品以捕获新样本。" : `当前展示 ${sampleProjectRows.length} 个匹配作品，最多展示 18 个；可搜索定位更多作品。`}</small>
+            <details className="quality-advanced"><summary>保存为可复用样本集</summary><div className="evaluation-dataset-form inline">
+              <input aria-label="样本集名称" value={datasetName} onChange={(event) => setDatasetName(event.target.value)} placeholder="保存为样本集名称" />
+              <input aria-label="样本说明" value={datasetDescription} onChange={(event) => setDatasetDescription(event.target.value)} placeholder="样本说明，可选" />
               <button type="button" onClick={() => void saveCurrentDataset()} disabled={savingDataset || !selectedProjectIds.length || !selectedStages.length}>
                 {savingDataset ? <Loader2 size={16} className="spin" /> : <DatabaseZap size={16} />}
                 保存
               </button>
-            </div>
+            </div></details>
             {datasetMessage ? <small className="evaluation-inline-message">{datasetMessage}</small> : null}
           </div>
 
           <div className="evaluation-config-panel">
+            <header className="quality-step-heading"><span>02</span><div><h3>检查范围与方式</h3><p>结构与文本分别记录，媒体质量通过人工复核确认。</p></div></header>
             <div>
               <strong>评测阶段</strong>
               <div className="evaluation-chip-row">
                 {frontendEvaluationStages.map((group) => (
-                  <button type="button" key={group.key} className={group.stages.every((stage) => selectedStages.includes(stage)) ? "active" : ""} onClick={() => toggleFrontendStageGroup(selectedStages, group.stages, setSelectedStages)}>
+                  <button type="button" key={group.key} aria-pressed={group.stages.every((stage) => selectedStages.includes(stage))} className={group.stages.every((stage) => selectedStages.includes(stage)) ? "active" : ""} onClick={() => toggleFrontendStageGroup(selectedStages, group.stages, setSelectedStages)}>
                     {group.label}<small>{group.detail}</small>
                   </button>
                 ))}
@@ -1738,16 +1740,16 @@ function EvaluationSection({
                   ["hybrid", "结构 + 文本", "分别保留，不混合给分"],
                   ["llm", "文本评审", "仅评审实际发送的文字"]
                 ].map(([value, label, desc]) => (
-                  <button type="button" className={mode === value ? "active" : ""} onClick={() => setMode(value as typeof mode)} key={value}>
+                  <button type="button" aria-pressed={mode === value} className={mode === value ? "active" : ""} onClick={() => setMode(value as typeof mode)} key={value}>
                     <span>{label}</span>
                     <small>{desc}</small>
                   </button>
                 ))}
               </div>
             </div>
-            <div>
+            <details className="quality-advanced"><summary>提示词版本与来源</summary><div>
               <strong>评测提示词版本</strong>
-              <select className="evaluation-dataset-select" value={selectedPromptVersionId} onChange={(event) => setSelectedPromptVersionId(event.target.value)}>
+              <select aria-label="评测提示词版本" className="evaluation-dataset-select" disabled={mode === "rules"} value={selectedPromptVersionId} onChange={(event) => setSelectedPromptVersionId(event.target.value)}>
                 <option value="">使用内置文本评审契约 v2</option>
                 {promptVersions.filter((prompt) => prompt.purpose === "evaluation" && selectedStages.length === 1 && selectedStages.includes(prompt.stage)).map((prompt) => (
                   <option key={prompt.id} value={prompt.id}>{stageLabel(prompt.stage)} · {prompt.name} · {prompt.version} · {prompt.status === "active" ? "启用" : "草稿"}</option>
@@ -1757,19 +1759,19 @@ function EvaluationSection({
             </div>
             <div>
               <strong>样本生成提示词版本</strong>
-              <select className="evaluation-dataset-select" value={selectedGenerationPromptVersionId} onChange={(event) => setSelectedGenerationPromptVersionId(event.target.value)}>
+              <select aria-label="样本生成提示词版本" className="evaluation-dataset-select" value={selectedGenerationPromptVersionId} onChange={(event) => setSelectedGenerationPromptVersionId(event.target.value)}>
                 <option value="">未记录 / 使用项目现有版本</option>
                 {promptVersions.filter((prompt) => prompt.purpose === "generation" && selectedStages.includes(prompt.stage)).map((prompt) => (
                   <option key={prompt.id} value={prompt.id}>{stageLabel(prompt.stage)} · {prompt.name} · {prompt.version}</option>
                 ))}
               </select>
               <small className="evaluation-config-hint">手选版本仅作声明标签；实际生成来源以固定样本中的版本证据为准。</small>
-            </div>
-            <div className={mode === "rules" ? "evaluation-llm-panel disabled" : "evaluation-llm-panel"}>
+            </div></details>
+            {mode !== "rules" ? <div className="evaluation-llm-panel">
               <div className="evaluation-budget-row">
-                <strong>LLM 评测模型</strong>
-                <label><span>上限</span><input type="number" min={0} max={50} value={maxLlmCalls} onChange={(event) => setMaxLlmCalls(Number(event.target.value) || 0)} disabled={mode === "rules"} /></label>
-                <label><span>预算（元）</span><input aria-label="评测预算" type="number" min={0} max={500} step={1} value={budgetCny} onChange={(event) => setBudgetCny(Number(event.target.value))} disabled={mode === "rules"} /></label>
+                <strong>文本评审模型</strong>
+                <label><span>调用上限</span><input aria-label="评测调用上限" type="number" min={1} max={50} value={maxLlmCalls} onChange={(event) => setMaxLlmCalls(Number(event.target.value) || 0)} /></label>
+                <label><span>预算（元）</span><input aria-label="评测预算" type="number" min={0} max={500} step={1} value={budgetCny} onChange={(event) => setBudgetCny(Number(event.target.value))} /></label>
               </div>
               <div className="evaluation-model-group-grid">
                 {evaluatorGroups.map((group) => (
@@ -1780,25 +1782,20 @@ function EvaluationSection({
                     </div>
                     <div className="evaluation-model-chip-grid">
                       {group.models.map((item) => (
-                        <button type="button" key={item.key} aria-pressed={selectedModels.includes(item.key)} className={selectedModels.includes(item.key) ? "active" : ""} onClick={() => toggleString(selectedModels, item.key, setSelectedModels)} disabled={mode === "rules"}>
+                        <button type="button" key={item.key} aria-pressed={selectedModels.includes(item.key)} className={selectedModels.includes(item.key) ? "active" : ""} onClick={() => toggleString(selectedModels, item.key, setSelectedModels)}>
                           <ModelIdentity model={item.model} modality="text" compact />
                         </button>
                       ))}
                     </div>
                   </article>
                 ))}
-                {!evaluatorOptions.length ? <small>暂无启用的文本模型。</small> : null}
+                {!evaluatorOptions.length ? <p className="quality-empty">暂无启用的文本模型。可先使用结构检查，或在模型路由中完成配置。</p> : null}
               </div>
-            </div>
-            <div className="evaluation-runner-summary">
-              <span>样本 {selectedProjectIds.length} 项</span>
-              <span>{selectedStages.length} 阶段</span>
-              <span>{modeLabel(mode)}</span>
-              <span>理论 LLM {projectedLlmCalls} 次 / 上限 {mode === "rules" ? 0 : maxLlmCalls}</span>
-            </div>
+            </div> : null}
           </div>
         </div>
-        {runError ? <p className="admin-toast danger">{runError}</p> : null}
+        <div className="quality-run-confirm"><div><strong>本次评测</strong><p>{selectedProjectIds.length} 个作品 · {selectedStages.length} 个阶段 · {mode === "rules" ? "不产生模型调用费用" : `预计最多 ${Math.min(projectedLlmCalls, maxLlmCalls)} 次调用 · 预算 ¥${budgetCny}`}</p></div><button className="admin-primary-btn" type="button" onClick={() => void runEvaluation()} disabled={running || !!pendingRequestId || !selectedProjectIds.length || !selectedStages.length || (mode !== "rules" && (!selectedModels.length || maxLlmCalls <= 0))}>{running ? <Loader2 size={17} className="spin" /> : <PlayCircle size={17} />}{running ? "评测中" : "运行评测"}</button></div>
+        {runError ? <p className="admin-toast danger" role="alert">{runError}</p> : null}
         {pendingRequestId ? <div className="eval-evidence-note" role="status"><p>请求标识：{pendingRequestId}。结果尚未核实，请查询原请求，避免重复调用。</p><button className="admin-secondary-btn" disabled={running} type="button" onClick={() => void lookupPendingEvaluation()}>查询本次评测</button></div> : null}
         {runResult ? (
           <div className="evaluation-run-result">
@@ -2003,6 +2000,15 @@ function FeedbackOpsSection({
   const [feedbackPage, setFeedbackPage] = useState(1);
   const [feedbackPages, setFeedbackPages] = useState(1);
   const [feedbackTotal, setFeedbackTotal] = useState(evaluation?.recentFeedback.length ?? 0);
+  const [applied, setApplied] = useState({ keyword: "", stage: "all", status: "all", priority: "all", usability: "all" });
+  const [mobileDetail, setMobileDetail] = useState(false);
+  const [detailView, setDetailView] = useState<"handling" | "evidence">("handling");
+  const [savedMessage, setSavedMessage] = useState("");
+  const [feedbackRevision, setFeedbackRevision] = useState(0);
+  const feedbackListRef = useRef<HTMLDivElement>(null);
+  const feedbackDetailRef = useRef<HTMLElement>(null);
+  const feedbackRequest = useRef(0);
+  const feedbackWritePending = useRef(false);
   const [selectedId, setSelectedId] = useState("");
   const [handlingId, setHandlingId] = useState("");
   const [resolutionEvidence, setResolutionEvidence] = useState<{ resolutionAttemptId?: string; resolutionReviewId?: string }>({});
@@ -2020,23 +2026,31 @@ function FeedbackOpsSection({
 
   useEffect(() => {
     void loadFeedback(false, 1);
+    return () => { feedbackRequest.current++; };
   }, []);
 
-  async function loadFeedback(refreshParent = true, targetPage = feedbackPage) {
+  async function loadFeedback(refreshParent = true, targetPage = feedbackPage, applyFilters = false) {
+    if (feedbackWritePending.current) return;
+    const request = ++feedbackRequest.current;
+    const query = applyFilters ? { keyword, stage, status, priority, usability } : applied;
     setLoading(true);
-    setError("");
+    setError(""); setSavedMessage("");
     try {
-      const result = await api.adminFeedbackPage(targetPage, 50, keyword, stage, status);
+      const result = await api.adminFeedbackPage(targetPage, 50, query.keyword, query.stage as typeof stage, query.status as typeof status);
+      if (request !== feedbackRequest.current) return;
       setFeedbacks(result.items);
+      setApplied(query);
+      setFeedbackRevision(value => value + 1);
+      setMobileDetail(false);
       setFeedbackPage(result.page);
       setFeedbackPages(result.totalPages);
       setFeedbackTotal(result.total);
       setLoadedFullFeedback(true);
       if (refreshParent) onRefresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "反馈读取失败");
+      if (request === feedbackRequest.current) setError(err instanceof Error ? err.message : "反馈读取失败");
     } finally {
-      setLoading(false);
+      if (request === feedbackRequest.current) setLoading(false);
     }
   }
 
@@ -2044,16 +2058,16 @@ function FeedbackOpsSection({
   const rows = feedbacks.filter((item) => {
     const project = item.projectId ? projectById.get(item.projectId) : undefined;
     const haystack = `${item.content} ${item.tags.join(" ")} ${item.rootCause ?? ""} ${item.resolution ?? ""} ${project?.project.name ?? ""} ${project?.userName ?? ""} ${project?.userEmail ?? ""}`.toLowerCase();
-    return (stage === "all" || item.stage === stage) &&
-      (usability === "all" || item.usability === usability) &&
-      (status === "all" || item.status === status) &&
-      (priority === "all" || item.priority === priority) &&
-      haystack.includes(keyword.toLowerCase());
+    return (applied.stage === "all" || item.stage === applied.stage) &&
+      (applied.usability === "all" || item.usability === applied.usability) &&
+      (applied.status === "all" || item.status === applied.status) &&
+      (applied.priority === "all" || item.priority === applied.priority) &&
+      haystack.includes(applied.keyword.toLowerCase());
   });
   const selectedFeedback = rows.find((item) => item.id === selectedId) ?? rows[0];
   const unusable = feedbacks.filter((item) => item.usability === "unusable").length;
   const pending = feedbacks.filter((item) => ["open", "triaged", "processing"].includes(item.status)).length;
-  const urgent = feedbacks.filter((item) => item.priority === "p0" || item.priority === "p1").length;
+  const urgent = feedbacks.filter((item) => ["p0", "p1"].includes(item.priority) && !["resolved", "ignored"].includes(item.status)).length;
   const settledSamples = feedbacks.filter((item) => item.status === "converted" || item.convertedDatasetId).length;
   const topTags = topFeedbackTags(feedbacks);
   const selectedProject = selectedFeedback?.projectId ? projectById.get(selectedFeedback.projectId) : undefined;
@@ -2062,10 +2076,11 @@ function FeedbackOpsSection({
   const hasResolution = draft.resolution.trim().length >= 8;
   const hasLinkedProject = Boolean(selectedFeedback?.projectId);
   const canSettleSample = Boolean(selectedFeedback && hasLinkedProject);
-  const handlingSelected = selectedFeedback ? handlingId === selectedFeedback.id : false;
+  const handlingSelected = loading || !!handlingId;
 
   useEffect(() => {
     if (!selectedFeedback) return;
+    setDetailView("handling");
     setSelectedId(selectedFeedback.id);
     setResolutionEvidence({ resolutionAttemptId: selectedFeedback.resolutionAttemptId, resolutionReviewId: selectedFeedback.resolutionReviewId });
     setDraft({
@@ -2075,15 +2090,16 @@ function FeedbackOpsSection({
       assignee: selectedFeedback.assignee ?? "",
       resolution: selectedFeedback.resolution ?? ""
     });
-  }, [selectedFeedback?.id]);
+  }, [selectedFeedback?.id, feedbackRevision]);
 
   async function persistFeedbackUpdate(
     input: Partial<Pick<UserFeedback, "status" | "priority" | "rootCause" | "assignee" | "resolution" | "convertedDatasetId">>,
     fallbackMessage = "反馈处理保存失败"
   ) {
-    if (!selectedFeedback) return;
+    if (!selectedFeedback || feedbackWritePending.current) return;
+    feedbackWritePending.current = true;
     setHandlingId(selectedFeedback.id);
-    setError("");
+    setError(""); setSavedMessage("");
     try {
       const updated = await api.updateAdminFeedback(selectedFeedback.id, { ...input, ...resolutionEvidence, expectedVersion: selectedFeedback.version ?? 0 });
       setFeedbacks((current) => current.map((item) => item.id === updated.id ? updated : item));
@@ -2094,12 +2110,14 @@ function FeedbackOpsSection({
         assignee: updated.assignee ?? "",
         resolution: updated.resolution ?? ""
       });
+      setSavedMessage(updated.status === "resolved" ? "反馈已解决，复测证据已保留。" : "处理记录已保存。");
       onRefresh();
       return updated;
     } catch (err) {
       setError(err instanceof Error ? err.message : fallbackMessage);
     } finally {
       setHandlingId("");
+      feedbackWritePending.current = false;
     }
   }
 
@@ -2114,27 +2132,30 @@ function FeedbackOpsSection({
       priority: draft.priority,
       rootCause: selectedRootCause,
       assignee: draft.assignee,
-      resolution: draft.resolution.trim() || "已创建人工复核任务，待复现后补充影响范围、修复方案和验证结果。"
-    }, "复核任务创建失败");
+      resolution: draft.resolution.trim() || "已开始优化复测，待补充影响范围、修复方案和验证结果。"
+    }, "处理状态保存失败");
   }
 
   async function settleFeedbackSample() {
-    if (!selectedFeedback) return;
+    if (!selectedFeedback || feedbackWritePending.current) return;
     if (!selectedFeedback.projectId) {
       setError("该反馈未关联作品，无法沉淀为评测样本。");
       return;
     }
+    feedbackWritePending.current = true;
     setHandlingId(selectedFeedback.id);
     setError("");
     try {
       const { feedback: updated } = await api.convertFeedbackDataset(selectedFeedback.id);
       setFeedbacks((current) => current.map((item) => item.id === updated.id ? updated : item));
       setDraft(current => ({ ...current, status: updated.status }));
+      setSavedMessage("已保存问题发生时的固定样本。修订作品后，请捕获新样本复测。");
       onRefresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "评测样本沉淀失败");
     } finally {
       setHandlingId("");
+      feedbackWritePending.current = false;
     }
   }
 
@@ -2142,14 +2163,14 @@ function FeedbackOpsSection({
     <section className="admin-v2-section feedback-ops-section">
       <div className="admin-product-metrics">
         <AdminMetric icon={<MessageSquareText size={22} />} label="反馈池" value={feedbackTotal} hint={`数据库分页 · 第 ${feedbackPage}/${feedbackPages} 页`} tone="blue" />
-        <AdminMetric icon={<Activity size={22} />} label="待归因" value={pending} hint={`${urgent} 条 P0/P1`} tone="amber" />
-        <AdminMetric icon={<CheckCircle2 size={22} />} label="平均评分" value={average(feedbacks.map((item) => item.rating)) || "-"} hint={`${unusable} 条不可用`} tone="green" />
-        <AdminMetric icon={<DatabaseZap size={22} />} label="已沉淀" value={settledSamples} hint="可用于回归评测" tone="violet" />
+        <AdminMetric icon={<Activity size={22} />} label="本页待处理" value={pending} hint={`${urgent} 条高优先级待处理`} tone="amber" />
+        <AdminMetric icon={<CheckCircle2 size={22} />} label="本页效果评分" value={feedbacks.length ? `${average(feedbacks.map((item) => item.rating))} / 5` : "—"} hint={`${unusable} 条不可用反馈`} tone="green" />
+        <AdminMetric icon={<DatabaseZap size={22} />} label="本页已建样本" value={settledSamples} hint="保存样本后仍需复测" tone="violet" />
       </div>
 
       <p className="admin-filter-scope">关键词、阶段、状态查询全部反馈；可用性和优先级进一步筛选当前页，切换页可继续查看。</p>
       <AdminToolbar
-        right={<button className="admin-primary-btn" onClick={() => { if (canLeaveAdminEditor()) void loadFeedback(true, 1); }} disabled={loading}>{loading ? <Loader2 className="spin-icon" size={16} /> : <Search size={16} />}查询反馈</button>}
+        right={<button className="admin-primary-btn" onClick={() => { if (canLeaveAdminEditor()) void loadFeedback(true, 1, true); }} disabled={loading || !!handlingId}>{loading ? <Loader2 className="spin-icon" size={16} /> : <Search size={16} />}查询反馈</button>}
       >
         <SearchField value={keyword} onChange={setKeyword} placeholder="搜索反馈内容、标签、作品或用户..." />
         <SelectFilter value={stage} onChange={(value) => setStage(value as typeof stage)} options={["all", "script", "character", "storyboard", "image", "video"]} labels={{ all: "全部阶段", script: "剧本", character: "角色", storyboard: "分镜", image: "图片", video: "视频" }} />
@@ -2159,20 +2180,22 @@ function FeedbackOpsSection({
       </AdminToolbar>
 
       <div className="feedback-tag-summary">
-        {topTags.length ? topTags.map((item) => <button key={item.tag} type="button" onClick={() => { if (canLeaveAdminEditor()) setKeyword(item.tag); }}>{item.tag}<span>{item.count}</span></button>) : <span>暂无高频标签</span>}
+        {topTags.length ? topTags.map((item) => <button key={item.tag} type="button" onClick={() => setKeyword(item.tag)}>{item.tag}<span>{item.count}</span></button>) : <span>暂无高频标签</span>}
       </div>
-      {error ? <p className="admin-toast danger">{error}</p> : null}
+      {error ? <p className="admin-toast danger" role="alert">{error}</p> : null}
+      {loading ? <p role="status" className="quality-empty">正在查询反馈，已显示的记录保留至查询完成。</p> : null}
+      {savedMessage ? <p role="status" className="quality-saved-message">{savedMessage}</p> : null}
 
-      <div className="feedback-workbench-grid">
-        <div className="feedback-ops-list">
+      <div className="feedback-workbench-grid" data-mobile-detail={mobileDetail}>
+        <div className="feedback-queue" ref={feedbackListRef} tabIndex={-1} role="region" aria-label="反馈列表"><header className="feedback-queue-heading"><strong>反馈队列</strong><span>本页 {rows.length} 条</span></header><div className="feedback-ops-list">
           {rows.map((feedback) => {
             const project = feedback.projectId ? projectById.get(feedback.projectId) : undefined;
             return (
-              <button className={feedback.id === selectedFeedback?.id ? "feedback-ops-card active" : "feedback-ops-card"} key={feedback.id} onClick={() => { if (feedback.id === selectedFeedback?.id || canLeaveAdminEditor()) setSelectedId(feedback.id); }} type="button">
+              <button aria-pressed={feedback.id === selectedFeedback?.id} disabled={!!handlingId || loading} className={feedback.id === selectedFeedback?.id ? "feedback-ops-card active" : "feedback-ops-card"} key={feedback.id} onClick={() => { if (feedback.id === selectedFeedback?.id || canLeaveAdminEditor()) { setSelectedId(feedback.id); setSavedMessage(""); setMobileDetail(true); if (window.matchMedia("(max-width: 900px)").matches) requestAnimationFrame(() => feedbackDetailRef.current?.focus()); } }} type="button">
                 <div className="feedback-ops-head">
                   <span className={`feedback-priority ${feedback.priority}`}>{feedbackPriorityLabel(feedback.priority)}</span>
                   <strong>{project?.project.name ?? "未关联作品"}</strong>
-                  <small>{stageLabel(feedback.stage)} · {feedback.rating} 分 · {formatDate(feedback.createdAt)}</small>
+                  <small>{stageLabel(feedback.stage)} · {feedback.rating} / 5 · {formatDate(feedback.createdAt)}</small>
                 </div>
                 <p>{feedback.content || "用户未填写补充说明。"}</p>
                 <div className="feedback-ops-tags">
@@ -2188,60 +2211,63 @@ function FeedbackOpsSection({
               </button>
             );
           })}
-          {!rows.length ? <EmptyHint text="暂无匹配反馈。刷新后仍为空，说明最近还没有用户提交该类问题。" /> : null}
-        </div>
+          {!rows.length && !loading && !error ? <EmptyHint text="当前查询没有匹配反馈。可调整筛选条件后重新查询。" /> : null}
+        </div></div>
 
-        <aside className="feedback-detail-panel" data-admin-dirty={hasFeedbackDraftChanges(selectedFeedback, draft, selectedFeedback ? inferRootCause(selectedFeedback) : "") || resolutionEvidence.resolutionReviewId !== selectedFeedback?.resolutionReviewId || undefined}>
+        <aside className="feedback-detail-panel" ref={feedbackDetailRef} tabIndex={-1} aria-label="反馈处理详情" data-admin-dirty={hasFeedbackDraftChanges(selectedFeedback, draft, selectedFeedback ? inferRootCause(selectedFeedback) : "") || resolutionEvidence.resolutionReviewId !== selectedFeedback?.resolutionReviewId || undefined}>
           {selectedFeedback ? (
             <>
+              <button className="admin-secondary-btn feedback-back" type="button" onClick={() => { setMobileDetail(false); requestAnimationFrame(() => feedbackListRef.current?.focus()); }}>返回反馈列表</button>
               <div className="feedback-detail-head">
                 <div>
                   <span className={`feedback-priority ${draft.priority}`}>{feedbackPriorityLabel(draft.priority)}</span>
                   <h2>{selectedProject?.project.name ?? "未关联作品"}</h2>
-                  <p>{stageLabel(selectedFeedback.stage)} · {feedbackUsabilityLabel(selectedFeedback.usability)} · 来源 {selectedFeedback.source}</p>
+                  <p>{stageLabel(selectedFeedback.stage)} · {feedbackUsabilityLabel(selectedFeedback.usability)} · {feedbackStatusLabel(selectedFeedback.status)}</p>
                 </div>
                 <button className="admin-secondary-btn compact" type="button" onClick={() => navigateAdminHash("评测闭环")}>查看评测闭环</button>
               </div>
               <div className="feedback-flow-strip" aria-label="反馈处理流程">
-                <span className="done">收集 badcase</span>
-                <span className={draft.rootCause ? "done" : ""}>归因分析</span>
-                <span className={selectedFeedback.convertedDatasetId || draft.status === "converted" ? "done" : ""}>样本沉淀</span>
-                <span className={draft.status === "processing" || draft.status === "resolved" ? "done" : ""}>优化复测</span>
-                <span className={selectedFeedback.status === "resolved" && selectedFeedback.resolutionReviewId ? "done" : ""}>证据闭环</span>
+                <span className="done">已收到</span>
+                <span className={selectedFeedback.rootCause ? "done" : ""}>已归因</span>
+                <span className={selectedFeedback.convertedDatasetId ? "done" : ""}>已建样本</span>
+                <span className={selectedFeedback.status === "resolved" && selectedFeedback.resolutionReviewId ? "done" : ""}>复测解决</span>
               </div>
               <blockquote>{selectedFeedback.content || "用户未填写补充说明。"}</blockquote>
-              <div className="feedback-detail-meta">
+              <details className="quality-advanced"><summary>来源与处理时间</summary><div className="feedback-detail-meta">
                 <span>ID：{selectedFeedback.id}</span>
                 <span>用户：{selectedProject?.userName ?? selectedFeedback.userId}</span>
                 <span>创建：{formatDate(selectedFeedback.createdAt)}</span>
                 {selectedFeedback.processedAt ? <span>处理：{formatDate(selectedFeedback.processedAt)}</span> : null}
                 {selectedFeedback.convertedDatasetId ? <span>样本：{selectedFeedback.convertedDatasetId}</span> : null}
-              </div>
+              </div></details>
               <div className="feedback-section-title">
                 <ShieldCheck size={17} />
                 <div>
-                  <strong>归因处理</strong>
-                  <span>记录根因、优化动作和复测结果，形成你自己的迭代闭环。</span>
+                  <strong>处理与复测</strong>
+                  <span>记录问题与修复动作，关联复核通过的证据后再标记解决。</span>
                 </div>
               </div>
-              <div className="feedback-edit-grid">
+              <div className="feedback-detail-tabs" role="group" aria-label="反馈处理视图"><button type="button" aria-pressed={detailView === "handling"} onClick={() => setDetailView("handling")}>处理记录</button><button type="button" aria-pressed={detailView === "evidence"} onClick={() => setDetailView("evidence")}>样本与复测{resolutionEvidence.resolutionReviewId ? " · 已关联" : ""}</button></div>
+              <fieldset className="feedback-editor-fields" disabled={handlingSelected}><div className="feedback-handling-fields" hidden={detailView !== "handling"}><div className="feedback-edit-grid">
                 <label><span>处理状态</span><select value={draft.status} onChange={(event) => setDraft({ ...draft, status: event.target.value as UserFeedback["status"] })}>{feedbackStatusOptions.map((item) => <option key={item} value={item}>{feedbackStatusLabel(item)}</option>)}</select></label>
                 <label><span>优先级</span><select value={draft.priority} onChange={(event) => setDraft({ ...draft, priority: event.target.value as UserFeedback["priority"] })}>{feedbackPriorityOptions.map((item) => <option key={item} value={item}>{feedbackPriorityLabel(item)}</option>)}</select></label>
                 <label><span>根因归类</span><select value={draft.rootCause} onChange={(event) => setDraft({ ...draft, rootCause: event.target.value })}><option value="">未归因</option>{feedbackRootCauseOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
+                <label><span>负责人</span><input value={draft.assignee} maxLength={100} onChange={(event) => setDraft({ ...draft, assignee: event.target.value })} placeholder="姓名或团队，可选" /></label>
               </div>
               <label className="feedback-resolution-field">
                 <span>处理结论</span>
                 <textarea value={draft.resolution} onChange={(event) => setDraft({ ...draft, resolution: event.target.value })} placeholder="记录复现情况、影响范围、修复方案、补偿结论或回归验证结果。" />
               </label>
-              <FeedbackEvidencePicker key={selectedFeedback.id} feedback={selectedFeedback} onSelect={(resolutionAttemptId, resolutionReviewId) => setResolutionEvidence({ resolutionAttemptId, resolutionReviewId })} />
-              {resolutionEvidence.resolutionReviewId ? <p className="eval-evidence-note">已关联复核：{resolutionEvidence.resolutionReviewId}</p> : null}
+              </div><div className="feedback-evidence-fields" hidden={detailView !== "evidence"}>
+              <FeedbackEvidencePicker key={selectedFeedback.id} feedback={selectedFeedback} onSelect={(resolutionAttemptId, resolutionReviewId) => { setResolutionEvidence({ resolutionAttemptId, resolutionReviewId }); setDetailView("handling"); }} />
+              {resolutionEvidence.resolutionReviewId ? <p className="eval-evidence-note">已关联可用复核，保存处理后生效。<small>复核编号：{resolutionEvidence.resolutionReviewId}</small></p> : <p className="quality-closure-hint">尚未关联可用复核，暂不能标记已解决。可先保存处理记录。</p>}
               <div className="feedback-closure-grid">
                 <section>
                   <div className="feedback-section-title compact">
                     <FilePenLine size={16} />
                     <div>
                       <strong>复测记录</strong>
-                      <span>将当前 badcase 标记为优化中，完成后补充复测结论。</span>
+                      <span>将问题标记为处理中，修订后捕获新样本复测。</span>
                     </div>
                   </div>
                   <button className="admin-secondary-btn compact" disabled={handlingSelected} onClick={() => void createReviewTask()} type="button">开始优化复测</button>
@@ -2262,16 +2288,19 @@ function FeedbackOpsSection({
                   <button className="admin-secondary-btn compact" disabled={handlingSelected || !canSettleSample || !!selectedFeedback.convertedDatasetId} title={canSettleSample ? "沉淀为评测样本" : "需先关联作品"} onClick={() => void settleFeedbackSample()} type="button">{selectedFeedback.convertedDatasetId ? "已保存固定样本" : "沉淀为评测样本"}</button>
                 </section>
               </div>
+              </div>
+              <p className="quality-closure-hint">{resolutionEvidence.resolutionReviewId ? "已关联复核证据，补充处理结论后可标记解决。" : "保存处理不代表问题已解决；解决前请在「样本与复测」关联可用复核。"}</p>
               <div className="feedback-ops-actions sticky">
                 <button className="admin-secondary-btn compact" disabled={handlingSelected || !draft.resolution.trim() || !resolutionEvidence.resolutionReviewId} onClick={() => void saveFeedback({ status: "resolved", priority: draft.priority, rootCause: selectedRootCause, assignee: draft.assignee, resolution: draft.resolution })} type="button">标记已解决</button>
                 <button className="admin-secondary-btn compact" disabled={handlingSelected || !draft.resolution.trim()} onClick={() => void saveFeedback({ status: "ignored", priority: draft.priority, rootCause: draft.rootCause, assignee: draft.assignee, resolution: draft.resolution })} type="button">关闭反馈</button>
                 <button className="admin-primary-btn compact" disabled={handlingSelected} onClick={() => void saveFeedback({ status: draft.status, priority: draft.priority, rootCause: draft.rootCause, assignee: draft.assignee, resolution: draft.resolution })} type="button">{handlingSelected ? <Loader2 className="spin-icon" size={15} /> : <FilePenLine size={15} />}保存处理</button>
               </div>
+              </fieldset>
             </>
           ) : <EmptyHint text="请选择一条反馈进行处理。" />}
         </aside>
       </div>
-      <div className="admin-pagination"><button type="button" aria-label="上一页反馈" disabled={feedbackPage <= 1 || loading} onClick={() => { if (canLeaveAdminEditor()) void loadFeedback(false, feedbackPage - 1); }}>‹</button><span>{feedbackPage} / {feedbackPages}</span><button type="button" aria-label="下一页反馈" disabled={feedbackPage >= feedbackPages || loading} onClick={() => { if (canLeaveAdminEditor()) void loadFeedback(false, feedbackPage + 1); }}>›</button></div>
+      <div className="admin-pagination"><button type="button" aria-label="上一页反馈" disabled={feedbackPage <= 1 || loading || !!handlingId} onClick={() => { if (canLeaveAdminEditor()) void loadFeedback(false, feedbackPage - 1); }}>‹</button><span>{feedbackPage} / {feedbackPages}</span><button type="button" aria-label="下一页反馈" disabled={feedbackPage >= feedbackPages || loading || !!handlingId} onClick={() => { if (canLeaveAdminEditor()) void loadFeedback(false, feedbackPage + 1); }}>›</button></div>
     </section>
   );
 }
