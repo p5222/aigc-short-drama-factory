@@ -29,6 +29,7 @@ test("saved administrator configuration drives creation, references, shots, spee
   const repository = await import("../db/repository.js");
   const settings = await import("../config/platformSettings.js");
   const creator = await import("../content/creatorAgent.js");
+  const { handleCreateContentProject } = await import("../content/routes.js");
   const { syncContentToProduction } = await import("../content/service.js");
   const shots = await import("../db/storyboardActions.js");
   const { probeFfmpeg } = await import("../export/videoComposer.js");
@@ -116,6 +117,26 @@ test("saved administrator configuration drives creation, references, shots, spee
       } }, userId);
       const providers = await repository.listProviders();
       for (const id of Object.values(ids)) assert.equal(providers.find(provider => provider.id === id)?.platformDefault, true);
+    });
+    await t.test("content creation handler saves platform defaults and preserves explicit author selections", async () => {
+      const content = await handleCreateContentProject(userId, { title: "Default route", mode: "original" });
+      const stored = await db.contentProject.findUniqueOrThrow({ where: { id: content.id } });
+      assert.equal(content.textProvider, ids.text); assert.equal(content.textModel, "text-model");
+      assert.equal(stored.textProvider, ids.text); assert.equal(stored.textModel, "text-model");
+
+      await db.modelProvider.update({ where: { id: ids.text }, data: { models: ["text-model", "text-author-model"] } });
+      const explicit = await handleCreateContentProject(userId, {
+        title: "Author route", mode: "adaptation", textProvider: ids.text, textModel: "text-author-model"
+      });
+      const authored = await db.contentProject.findUniqueOrThrow({ where: { id: explicit.id } });
+      assert.equal(authored.textProvider, ids.text); assert.equal(authored.textModel, "text-author-model");
+      assert.equal(calls.length, 0, "creating a project must not contact a paid provider");
+
+      const count = await db.contentProject.count({ where: { userId } });
+      for (const partial of [{ textProvider: ids.text }, { textModel: "text-model" }]) {
+        await assert.rejects(handleCreateContentProject(userId, { title: "Incomplete route", mode: "original", ...partial }), /同时选择文本渠道和模型/);
+      }
+      assert.equal(await db.contentProject.count({ where: { userId } }), count);
     });
     const script = { title: "旧书店的信", synopsis: "修表师读到父亲留下的线索",
       script: "场景一：旧书店，日。阿青轻轻推门，门铃响起。他抚平信纸，凝视纸上的钟楼图案。\n阿青：原来你一直在等我。\n场景二：钟楼前，日。阿青握着怀表，钟声响起。他停下脚步，将信贴近胸口，然后坚定地走向钟楼。画面渐暗，钟声延续。\n旁白：回家的路就在眼前。",
