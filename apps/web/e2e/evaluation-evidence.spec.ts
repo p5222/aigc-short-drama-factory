@@ -153,7 +153,9 @@ test("experiment score improvement remains pending without production evidence",
 test("feedback captures atomically and requires a review to mark fixed", async ({ page }) => {
   const state = await fixtures(page);
   await page.goto("/admin#用户反馈");
+  await page.locator(".feedback-ops-card").first().click();
   await expect(page.getByRole("button", { name: "标记已解决", exact: true })).toBeDisabled();
+  await page.getByRole("button", { name: "样本与复测", exact: true }).click();
   await page.getByRole("button", { name: "沉淀为评测样本", exact: true }).click();
   await expect(page.getByRole("button", { name: "已保存固定样本" })).toBeDisabled();
   expect(state.writes.map(w => w.path)).toEqual(["/admin/feedback/feedback/dataset"]);
@@ -169,4 +171,95 @@ test("feedback captures atomically and requires a review to mark fixed", async (
   await expect.poll(() => state.writes.filter(w => w.path === "/admin/feedback/feedback").length).toBe(1);
   const write = state.writes.find(w => w.path === "/admin/feedback/feedback")!;
   expect(write.body).toMatchObject({ expectedVersion: 1, resolutionAttemptId: "attempt-text", resolutionReviewId: "review-1", status: "resolved" });
+  await expect(page.getByRole("status").filter({ hasText: "反馈已解决" })).toBeVisible();
+  await expect(page.locator(".feedback-detail-head p")).toContainText("已解决");
+  if (test.info().project.name === "mobile") await page.getByRole("button", { name: "返回反馈列表" }).click();
+  await expect(page.locator(".feedback-ops-card").first()).toContainText("已解决");
+});
+
+for (const dark of [false, true]) test(`evaluation and feedback workspace presentation ${dark ? "dark" : "light"}`, async ({ page }, info) => {
+  await fixtures(page, { dark });
+  await page.goto("/admin#评测闭环");
+  await expect(page.locator(".evaluation-runner-card")).toBeVisible();
+  await page.screenshot({ path: `${process.env.PLAYWRIGHT_SCREENSHOT_DIR ?? info.outputDir}/evaluation-runner-${dark ? "dark" : "light"}-${info.project.name}.png`, fullPage: true });
+  await page.goto("/admin#用户反馈");
+  await page.locator(".feedback-ops-card").first().click();
+  await expect(page.locator(".feedback-detail-panel h2")).toHaveText("雨夜归人");
+  await page.screenshot({ path: `${process.env.PLAYWRIGHT_SCREENSHOT_DIR ?? info.outputDir}/feedback-workspace-${dark ? "dark" : "light"}-${info.project.name}.png`, fullPage: true });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBeTruthy();
+  const surface = await page.locator(".feedback-detail-panel").evaluate(node => ({
+    actual: getComputedStyle(node).backgroundColor,
+    expected: getComputedStyle(node.closest(".admin-product")!).getPropertyValue("--adm-surface").trim(),
+  }));
+  expect(surface.actual).toBe(dark ? "rgb(32, 34, 36)" : "rgb(255, 255, 255)");
+  if (info.project.name === "mobile") {
+    await page.getByRole("button", { name: "返回反馈列表" }).click();
+    await expect(page.getByRole("region", { name: "反馈列表" })).toBeFocused();
+    await expect(page.locator(".feedback-detail-panel")).toBeHidden();
+  }
+});
+
+test("independent review draft survives refresh cancellation and closing cancellation", async ({ page }) => {
+  const state = await fixtures(page);
+  const dialog = await openEvidence(page);
+  await dialog.getByLabel("复核理由").fill("保留尚未保存的独立判断");
+  page.once("dialog", confirmation => confirmation.dismiss());
+  await dialog.getByRole("button", { name: "刷新证据" }).click();
+  await expect(dialog.getByLabel("复核理由")).toHaveValue("保留尚未保存的独立判断");
+  await dialog.getByRole("button", { name: "返回", exact: true }).click();
+  const confirmation = page.getByRole("alertdialog", { name: "放弃未保存的修改？" });
+  await expect(confirmation).toBeVisible();
+  await confirmation.getByRole("button", { name: "取消", exact: true }).click();
+  await expect(dialog.getByLabel("复核理由")).toHaveValue("保留尚未保存的独立判断");
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  await page.route("**/api/admin/evaluation/runs/eval-run", async route => {
+    await held;
+    await route.fulfill({ json: state.detail });
+  });
+  page.once("dialog", notice => notice.accept());
+  await dialog.getByRole("button", { name: "刷新证据" }).click();
+  await expect(dialog.getByLabel("复核理由")).toBeDisabled();
+  release();
+  await expect(dialog.getByLabel("复核理由")).toBeEnabled();
+  await expect(dialog.getByLabel("复核理由")).toHaveValue("");
+});
+
+test("feedback query applies explicitly, keeps a draft on cancel and clears it after confirmed reload", async ({ page }) => {
+  await fixtures(page);
+  await page.goto("/admin#用户反馈");
+  await page.locator(".feedback-ops-card").first().click();
+  await page.getByLabel("处理结论").fill("尚未保存的处理记录");
+  await page.getByPlaceholder("搜索反馈内容、标签、作品或用户...").fill("不存在");
+  await expect(page.getByLabel("处理结论")).toHaveValue("尚未保存的处理记录");
+  page.once("dialog", confirmation => confirmation.dismiss());
+  await page.getByRole("button", { name: "查询反馈", exact: true }).click();
+  await expect(page.locator(".feedback-ops-card")).toHaveCount(1);
+  await page.getByPlaceholder("搜索反馈内容、标签、作品或用户...").fill("");
+  page.once("dialog", confirmation => confirmation.accept());
+  await page.getByRole("button", { name: "查询反馈", exact: true }).click();
+  await expect(page.getByRole("button", { name: "查询反馈", exact: true })).toBeEnabled();
+  await page.locator(".feedback-ops-card").first().click();
+  await expect(page.getByLabel("处理结论")).toHaveValue("");
+  await expect(page.getByRole("button", { name: "标记已解决", exact: true })).toBeDisabled();
+});
+
+test("feedback pagination keeps applied filters until an explicit query", async ({ page }) => {
+  await fixtures(page);
+  const queries: string[] = [];
+  await page.route("**/api/admin/feedback/page?**", async route => {
+    const url = new URL(route.request().url());
+    queries.push(url.searchParams.get("keyword") ?? "");
+    await route.fulfill({ json: { items: [], total: 60, page: Number(url.searchParams.get("page") ?? 1), pageSize: 50, totalPages: 2 } });
+  });
+  await page.goto("/admin#用户反馈");
+  await expect(page.getByRole("button", { name: "下一页反馈" })).toBeEnabled();
+  await page.getByPlaceholder("搜索反馈内容、标签、作品或用户...").fill("待应用条件");
+  await page.getByRole("button", { name: "下一页反馈" }).click();
+  await expect(page.getByRole("button", { name: "上一页反馈" })).toBeEnabled();
+  await page.getByRole("button", { name: "上一页反馈" }).click();
+  await expect(page.getByRole("button", { name: "下一页反馈" })).toBeEnabled();
+  expect(queries).toEqual(["", "", ""]);
+  await page.getByRole("button", { name: "查询反馈", exact: true }).click();
+  await expect.poll(() => queries.at(-1)).toBe("待应用条件");
 });
