@@ -14559,9 +14559,9 @@ select option,
   display: grid;
   gap: 12px;
   padding: 14px;
-  border: 1px solid rgba(148, 163, 184, 0.14);
-  border-radius: 14px;
-  background: rgba(15, 23, 42, 0.34);
+  border: 1px solid var(--adm-border);
+  border-radius: 10px;
+  background: var(--adm-surface-2);
 }
 
 .admin-provider-routing-head {
@@ -14577,12 +14577,12 @@ select option,
 }
 
 .admin-provider-routing-head strong {
-  color: #f8fafc;
+  color: var(--adm-text);
 }
 
 .admin-provider-routing-head span,
 .admin-provider-routing-head small {
-  color: #94a3b8;
+  color: var(--adm-muted);
   font-size: 12px;
 }
 
@@ -14595,10 +14595,10 @@ select option,
 
 .admin-provider-routing-summary span {
   padding: 7px 10px;
-  border: 1px solid rgba(148, 163, 184, 0.12);
-  border-radius: 999px;
-  background: rgba(15, 23, 42, 0.56);
-  color: #e2e8f0;
+  border: 1px solid var(--adm-border);
+  border-radius: 6px;
+  background: var(--adm-surface);
+  color: var(--adm-text);
 }
 
 .admin-provider-routing-mode {
@@ -14610,17 +14610,17 @@ select option,
 .admin-provider-routing-mode button {
   height: 38px;
   padding: 0 14px;
-  border: 1px solid rgba(148, 163, 184, 0.16);
-  border-radius: 999px;
-  background: rgba(15, 23, 42, 0.56);
-  color: #cbd5e1;
+  border: 1px solid var(--adm-border);
+  border-radius: 7px;
+  background: var(--adm-surface);
+  color: var(--adm-muted);
   cursor: pointer;
 }
 
 .admin-provider-routing-mode button.active {
-  border-color: rgba(96, 165, 250, 0.44);
-  background: rgba(59, 130, 246, 0.18);
-  color: #eff6ff;
+  border-color: var(--adm-accent);
+  background: var(--adm-accent-soft);
+  color: var(--adm-accent);
 }
 
 .admin-provider-routing-select {
@@ -14638,9 +14638,9 @@ select option,
   display: grid;
   gap: 8px;
   padding: 12px;
-  border: 1px solid rgba(148, 163, 184, 0.12);
-  border-radius: 12px;
-  background: rgba(2, 6, 23, 0.34);
+  border: 1px solid var(--adm-border);
+  border-radius: 8px;
+  background: var(--adm-surface);
 }
 
 .admin-provider-quota-card > div {
@@ -14651,13 +14651,14 @@ select option,
 }
 
 .admin-provider-quota-card strong {
-  color: #f8fafc;
+  color: var(--adm-text);
+  overflow-wrap: anywhere;
 }
 
 .admin-provider-quota-card small,
 .admin-provider-quota-card p,
 .admin-provider-quota-card > span {
-  color: #94a3b8;
+  color: var(--adm-muted);
 }
 
 .admin-provider-quota-card > span {
@@ -14671,15 +14672,15 @@ select option,
 }
 
 .admin-provider-quota-card.ready {
-  border-color: rgba(45, 212, 191, 0.24);
+  border-left: 3px solid var(--adm-accent);
 }
 
 .admin-provider-quota-card.cooling {
-  border-color: rgba(250, 204, 21, 0.24);
+  border-left: 3px solid var(--ds-status-warning, #b78031);
 }
 
 .admin-provider-quota-card.limited {
-  border-color: rgba(248, 113, 113, 0.24);
+  border-left: 3px solid var(--adm-danger);
 }
 
 .admin-icon-upload-field {

@@ -15,6 +15,8 @@ import {
 export const DEMO_USER_ID = "user_demo";
 export const ADMIN_USER_ID = "user_admin";
 const deprecatedProviderIds = [
+  "comfyui",
+  "google-gemini-image",
   "relay-image",
   "openai-compatible",
   "openai-upstream",

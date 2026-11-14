@@ -40,7 +40,10 @@ async function adminFixtures(page: Page) {
       "/providers": providers, "/model-prices": providers.map(item => ({ id: `price-${item.id}`, providerId: item.id, providerName: item.name, modality: item.modality, model: item.models[0], unit: "次", unitCredits: 20, vendorCostCny: 0.2, enabled: true })),
       "/templates": [{ id: "eval_script", name: "剧本质量评分", type: "script", version: "v1", enabled: true, summary: "从冲突、节奏和可拍摄性评估剧本。", content: "请评估剧本中的人物动机、情节推进与镜头表现，返回评分与修改建议。" }],
       "/admin/users": accounts,
-      "/admin/summary": { users: 32, projects: 86, tasksToday: 28, totalTasks: 240, completedTasks: 230, successRate: 0.965, creditsConsumed: 32800, providerCost: null, paidRechargeCny: 580, refundCredits: 600 },
+      "/admin/summary": { users: 32, projects: 86, tasksToday: 28, totalTasks: 240, completedTasks: 230, failedTasks: 8, successRate: 96.5, creditsConsumed: 32800, providerCost: null, paidRechargeCny: 580, refundCredits: 600, unreconciledCredits: 0,
+        operations: { openTickets: 4, pendingWorks: 2, pendingOrders: 1, activeTasks: 10, updatedAt: stamp },
+        activity: Array.from({ length: 30 }, (_, i) => ({ date: `2026-10-${String(i + 1).padStart(2, "0")}`, tasks: 3 + i % 7, newUsers: i % 3, creditsConsumed: 100 + i * 13, redemptions: i % 2, redeemedCredits: (i % 2) * 300 })),
+        costByStage: [{ stage: "text", tasks: 180, credits: 18000, failed: 3, successRate: 98, providerCost: null }, { stage: "image", tasks: 60, credits: 14800, failed: 5, successRate: 92, providerCost: null }] },
       "/admin/creator-insights": { since: stamp, until: stamp, stages: [{ event: "creator_brief_saved", users: 6, events: 9 }], runs: [{ status: "unknown", count: 2 }], firstAccepted: { projects: 3, medianSeconds: 180 }, feedback: { acceptedEdits: 2, acceptedUnchanged: 1 } },
       "/admin/announcements": [announcement, { ...announcement, id: "second", title: "新用户创作指南", type: "guide", pinned: false }],
       "/admin/help-articles": [{ id: "help", title: "完成你的第一部漫剧", summary: "从导入原稿开始，了解每一步的准备内容。", content: "导入原稿后选择画面比例和风格，确认文本报价后开始创建。", category: "getting_started", tags: ["新手"], enabled: true, pinned: true, sortOrder: 1, createdAt: stamp, updatedAt: stamp }],
@@ -65,6 +68,80 @@ async function capture(page: Page, label: string) {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBeTruthy();
   await page.screenshot({ path: `${process.env.PLAYWRIGHT_SCREENSHOT_DIR ?? "../../outputs/ui-redesign-20261025/screenshots"}/admin-${label}-${test.info().project.name}.png`, fullPage: true, animations: "disabled" });
 }
+
+test("overview keeps charts and backlog compact, switches metrics and distinguishes unknown costs", async ({ page }, info) => {
+  await adminFixtures(page);
+  await page.goto("/admin");
+  const trend = page.getByRole("region", { name: "运营趋势" });
+  await expect(trend.locator(".ops-bars button")).toHaveCount(7);
+  await expect(page.getByRole("img", { name: "已结束任务成功率：96.5%" })).toBeVisible();
+  if (info.project.name === "desktop") {
+    const bounds = (await page.getByRole("region", { name: "创作能力准备情况" }).boundingBox())!;
+    expect(bounds.y + bounds.height).toBeLessThan(940);
+  }
+  await trend.getByRole("button", { name: "近 30 天" }).click();
+  await expect(trend.locator(".ops-bars button")).toHaveCount(30);
+  await trend.getByLabel("趋势指标").selectOption("redemptions");
+  await trend.getByRole("button", { name: "2026-10-02 兑换次数 1 次" }).focus();
+  await expect(trend).toContainText("10/02 · 1 次");
+  await capture(page, "overview-trend");
+  await page.getByRole("button", { name: "切换主题", exact: true }).click();
+  await capture(page, "overview-dark");
+  await page.getByRole("button", { name: "收款积分", exact: true }).click();
+  await expect(page.locator(".ops-kpi").filter({ hasText: "供应商实际成本" })).toContainText("待对账");
+  await expect(page.getByRole("region", { name: "运营数据" })).toContainText("兑换次数和积分不等同现金实收");
+  await capture(page, "finance-dark");
+  await page.getByRole("button", { name: "管理小店兑换码" }).click();
+  await expect(page.locator(".ui-page-heading h1")).toHaveText("兑换码");
+});
+
+test("channel routing controls have readable theme contrast and preserve unsaved routing edits", async ({ page }) => {
+  await adminFixtures(page);
+  await page.goto("/admin#模型路由");
+  for (const theme of ["light", "dark"]) {
+    await page.getByRole("button", { name: "展开文字创作渠道", exact: true }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByText("路由与提交额度", { exact: true })).toBeVisible();
+    const contrast = await dialog.locator(".admin-provider-routing-head strong").evaluate(node => {
+      const text = getComputedStyle(node).color, bg = getComputedStyle(node.closest(".admin-provider-routing-panel")!).backgroundColor;
+      const luminance = (color: string) => {
+        const [r, g, b] = color.match(/[\d.]+/g)!.slice(0, 3).map(Number).map(v => { const x = v / 255; return x <= .04045 ? x / 12.92 : ((x + .055) / 1.055) ** 2.4; });
+        return .2126 * r! + .7152 * g! + .0722 * b!;
+      };
+      const a = luminance(text), b = luminance(bg);
+      return (Math.max(a, b) + .05) / (Math.min(a, b) + .05);
+    });
+    expect(contrast).toBeGreaterThanOrEqual(4.5);
+    await dialog.getByRole("button", { name: "手动固定", exact: true }).click();
+    await expect(dialog.getByRole("button", { name: "手动固定", exact: true })).toHaveAttribute("aria-pressed", "true");
+    await capture(page, `routing-${theme}`);
+    await page.keyboard.press("Escape");
+    const confirm = page.getByRole("alertdialog", { name: "放弃未保存的修改？" });
+    await expect(confirm).toBeVisible();
+    await confirm.getByRole("button", { name: "取消", exact: true }).click();
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole("button", { name: "自动轮换", exact: true }).click();
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+    if (theme === "light") await page.getByRole("button", { name: "切换主题", exact: true }).click();
+  }
+});
+
+test("overview separates an unread trend from a verified empty period", async ({ page }) => {
+  await adminFixtures(page);
+  const summary = { users: 0, projects: 0, tasksToday: 0, totalTasks: 0, completedTasks: 0, failedTasks: 0, successRate: 0, creditsConsumed: 0, providerCost: null,
+    operations: { openTickets: 0, pendingWorks: 0, pendingOrders: 0, activeTasks: 0, updatedAt: stamp } };
+  await page.route("**/api/admin/summary", route => route.fulfill({ json: summary }));
+  await page.goto("/admin");
+  await expect(page.getByText("趋势数据尚未读取", { exact: true })).toBeVisible();
+  await expect(page.getByRole("img", { name: "已结束任务成功率：暂无已结束任务" })).toBeVisible();
+  await page.route("**/api/admin/summary", route => route.fulfill({ json: { ...summary,
+    activity: Array.from({ length: 30 }, (_, i) => ({ date: `2026-10-${String(i + 1).padStart(2, "0")}`, tasks: 0, newUsers: 0, creditsConsumed: 0, redemptions: 0, redeemedCredits: 0 })) } }));
+  await page.reload();
+  await expect(page.getByText("这段时间暂无记录", { exact: true })).toBeVisible();
+  await expect(page.getByText("趋势数据尚未读取", { exact: true })).toHaveCount(0);
+  await capture(page, "overview-empty");
+});
 
 test("populated user table exposes real dates, display columns, server filters and page size", async ({ page }) => {
   const queries = await adminFixtures(page);
@@ -113,10 +190,14 @@ test("all admin modules with populated operational records fit desktop and mobil
     await expect(page.locator(".ui-state--loading")).toHaveCount(0);
     await capture(page, `module-${index}`);
     if (module === "运营总览") {
+      await expect(page.getByRole("region", { name: "运营趋势" })).toBeVisible();
+      await expect(page.getByRole("region", { name: "首作路径观察" })).toHaveCount(0);
+      await page.getByRole("button", { name: "创作路径", exact: true }).click();
       const panel = page.getByRole("region", { name: "首作路径观察" });
       await expect(panel).toContainText("3 分钟（中位数）");
       await expect(panel).toContainText("结果待核对 2");
       await expect(panel).toContainText("不能直接相除作为首作转化率");
+      await capture(page, "creator-path");
     }
     if (module === "平台公告") {
       await page.getByRole("button", { name: /^编辑公告 / }).first().click();

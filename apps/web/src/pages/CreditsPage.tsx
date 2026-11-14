@@ -13,6 +13,7 @@ import "./creator-pages.css";
 import { OnlineCheckout } from "./OnlineCheckout";
 import { saveCreditCsv } from "../lib/creditCsv";
 import "./credit-ledger.css";
+import "./store-checkout.css";
 
 const modalityOrder: Record<string, number> = { text: 0, image: 1, video: 2, tts: 3, embedding: 4 };
 
@@ -94,12 +95,12 @@ export function RechargePage({ userId, account, plans, membershipPlans, modelPri
 
   return (
     <div className="page-stack recharge-page creator-page">
-      <PageHeader title="积分充值" description="选择已开放的支付方式充值，或使用店铺卡密兑换。每次生成前可查看本次费用。" />
+      <PageHeader title="积分充值" description="前往小店购买兑换码，回到这里兑换积分，即可继续创作。" />
       <section className="recharge-overview" aria-label="充值账户概览">
         <div className="recharge-wallet"><span><WalletCards size={18} />当前可用积分</span><strong>{account ? (account.balance - account.frozenBalance).toLocaleString() : "—"}</strong><small>总余额 {account?.balance.toLocaleString() ?? "—"} · 冻结中 {account?.frozenBalance.toLocaleString() ?? "—"}</small></div>
         <div className="recharge-intro"><span className="section-kicker">为下一段故事做好准备</span><h2>把灵感，继续拍下去。</h2><p>积分用于文本、画面、视频与配音。按创作节奏补充，每次生成前确认费用。</p><div><button className="primary-button" type="button" onClick={() => document.getElementById("recharge-plan-title")?.scrollIntoView({ block: "start" })}>选择积分套餐</button><button className="ghost-button" type="button" onClick={() => document.getElementById("creator-redeem-title")?.scrollIntoView({ block: "center" })}><Gift size={16} />使用兑换码</button></div></div>
       </section>
-      <nav className="recharge-section-nav" aria-label="充值页面分区">{[["recharge-plan-title", "积分套餐"], ["creator-redeem-title", "卡密兑换"], ["online-payment-title", "会员与在线支付"], ["credit-usage-title", "费用参考"]].map(([id, label]) => <button type="button" key={id} onClick={() => document.getElementById(id)?.scrollIntoView({ block: "start" })}>{label}</button>)}</nav>
+      <nav className="recharge-section-nav" aria-label="充值页面分区">{[["recharge-plan-title", "小店购买"], ["creator-redeem-title", "兑换到账"], ["online-payment-title", "订单与会员"], ["credit-usage-title", "费用参考"]].map(([id, label]) => <button type="button" key={id} onClick={() => document.getElementById(id)?.scrollIntoView({ block: "start" })}>{label}</button>)}</nav>
       <section className="panel creator-redeem-panel" aria-labelledby="creator-redeem-title">
         <div><h2 id="creator-redeem-title">已有卡密？直接兑换</h2><p>兑换成功后，积分立即计入当前账户。</p></div>
         <form className="redeem-row" onSubmit={event => { event.preventDefault(); void redeem(); }}>
@@ -115,9 +116,10 @@ export function RechargePage({ userId, account, plans, membershipPlans, modelPri
       </section>
       <section className="panel recharge-plan-panel">
         <div className="panel-head">
-          <div><span className="section-kicker">积分套餐</span><h2 id="recharge-plan-title">购买积分</h2><small>选择套餐后将在新窗口打开购买页。</small></div>
+          <div><span className="section-kicker">积分套餐</span><h2 id="recharge-plan-title">在小店购买积分</h2><small>打开小店后，请核对对应商品的积分数量与售价。</small></div>
           <span className="recharge-validity">积分永久有效 · 可用于所有 AI 生成能力</span>
         </div>
+        <ol className="recharge-flow recharge-store-flow" aria-label="小店购买步骤"><li><span>01</span><div><strong>前往小店</strong><small>选择对应积分套餐</small></div></li><li><span>02</span><div><strong>购买并获取兑换码</strong><small>按店铺说明领取卡密</small></div></li><li><span>03</span><div><strong>回到漫角兑换</strong><small>输入兑换码，积分到账</small></div></li></ol>
         <div className="plan-grid recharge-plan-grid" data-tour-id="recharge-plans">
         {availablePlans.map((plan) => {
           const featured = Boolean(plan.badge && plan.badge.includes("推荐"));
@@ -184,19 +186,6 @@ export function RechargePage({ userId, account, plans, membershipPlans, modelPri
           ))}
           {!enabledModelPrices.length ? <StatePanel compact title="暂无可用价格信息" description="请稍后刷新，或在生成前获取对应模型的报价。" /> : null}
         </div></details>
-      </section>
-      <section className="panel payment-method-panel">
-        <div className="panel-head">
-          <div><h2>购买与入账方式</h2><small>店铺卡密与在线支付各有对应的到账方式。</small></div>
-        </div>
-        <ol className="recharge-flow"><li><span>01</span><div><strong>选择套餐</strong><small>核对积分数量与价格</small></div></li><li><span>02</span><div><strong>完成支付</strong><small>使用页面已开放的购买方式</small></div></li><li><span>03</span><div><strong>确认到账</strong><small>在线订单自动入账，店铺卡密需兑换</small></div></li></ol>
-        <div className="payment-method-row">
-          <div className="payment-method-card">
-            <WalletCards size={22} />
-            <span><strong>店铺卡密</strong><small>店铺完成支付后，回到本页兑换入账</small></span>
-            <CheckCircle2 size={20} />
-          </div>
-        </div>
       </section>
     </div>
   );

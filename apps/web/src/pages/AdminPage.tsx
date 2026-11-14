@@ -77,7 +77,7 @@ import { fetchAdminUserPage } from "../admin/adminApi";
 import type { AdminColumn } from "../admin/AdminTablePage";
 import { AdminAuditLogPage } from "../admin/AdminAuditLogPage";
 import { TaskOperations } from "../admin/TaskOperations";
-import { formatAdminMoney, formatAdminTaskSuccess, qualityMetricAvailability } from "../admin/adminMetricsModel";
+import { formatAdminMoney, qualityMetricAvailability } from "../admin/adminMetricsModel";
 import { providerTestAvailability, testSavedProvider, type ProviderTestOptions } from "../admin/adminProviderTestModel";
 import { scopedAdminNotice } from "../admin/adminNoticeModel";
 import { announcementDateInput, announcementScheduleStatus, announcementStatusLabels, buildAnnouncementSchedule, selectAnnouncementRows } from "../admin/announcementScheduleModel";
@@ -91,15 +91,16 @@ import { hasFeedbackDraftChanges, hasShowcaseDraftChanges } from "../admin/admin
 import { ModelRoutePicker } from "../components/ModelRoutePicker";
 import { ModelIdentity, ModelIcon, ProviderIcon } from "../components/ModelIdentity";
 import { providerModelFamily } from "../components/modelCatalog";
-import { ProviderHealth } from "../admin/ProviderHealth";
-import { CreatorInsightsPanel } from "../admin/CreatorInsightsPanel";
+import { OperationsOverview } from "../admin/OperationsOverview";
 import { groupAdminPrices, inspectAdminPrice, providerHealth } from "../admin/providerHealthModel";
 import { ModelLibrary } from "../components/ModelLibrary";
 import { CreditCenter } from "../admin/CreditCenter";
 import { PromptStudio } from "../admin/PromptStudio";
 import { AdminCommercialIdentity, membershipLabels } from "../admin/AdminCommercialIdentity";
 import { RedeemWorkspace } from "../admin/RedeemWorkspace";
+import { rechargeCheckoutUrl } from "./creditCheckoutModel";
 import "../admin/quality-workspace.css";
+import "../admin/provider-channels.css";
 
 const AdminActionContext = createContext({ pending: false, message: "", error: "", version: 0 });
 type ProviderTestResult = ModelTestResult | ImageModelTestResult | VideoModelTestResult;
@@ -119,14 +120,14 @@ const moduleCopy: Record<string, { title: string; subtitle: string }> = {
   平台配置: { title: "平台配置", subtitle: "设置创作默认渠道、注册邮件和支付，让服务按已保存配置运行。" },
   积分中心: { title: "积分中心", subtitle: "维护成本与计价政策，核对账户资金、任务结算和真实账单。" },
   操作记录: { title: "操作记录", subtitle: "查看管理员配置和运营操作的执行记录，用于核对变更、排查失败。" },
-  运营总览: { title: "运营总览", subtitle: "查看用户、积分、模型成本和任务健康度。" },
+  运营总览: { title: "运营总览", subtitle: "用户与创作趋势、待办事项和服务健康。" },
   用户管理: { title: "用户管理", subtitle: "管理账号状态、身份权限、积分余额、密码重置和运营入账。" },
   平台公告: { title: "平台公告", subtitle: "维护前台工作台公告，并在子模块管理帮助中心教程与 FAQ。" },
   支持工单: { title: "支持工单", subtitle: "查看创作者的问题、补充记录与处理回复。回复会保存在站内工单中。" },
   创作现场管理: { title: "创作现场管理", subtitle: "审核创作者提交的真实作品，维护封面、视频、精选和前台展示顺序。" },
   创作质量中心: { title: "创作质量中心", subtitle: "根据真实创作内容定位阶段瓶颈，对比模型与提示词版本，持续验证优化效果。" },
-  兑换码: { title: "兑换码", subtitle: "按活动发放积分，管理批次与单码，核对每次实际到账。" },
-  套餐会员: { title: "充值套餐", subtitle: "管理一次性积分充值包、售价与购买链接。" },
+  兑换码: { title: "兑换码", subtitle: "为小店发货或活动生成兑换码，按批次核对积分到账。" },
+  套餐会员: { title: "充值套餐", subtitle: "配置小店购买链接与积分套餐，购买后凭兑换码入账。" },
   订阅会员: { title: "订阅会员", subtitle: "配置按月手动购买与同档续费。实际购买入口以支付开关为准，不自动扣款。" },
   模型路由: { title: "模型路由", subtitle: "管理文本、生图、视频供应商，测试模型连接。" },
   提示词评分: { title: "提示词工作室", subtitle: "管理实际生成提示词、发布版本与质量评分标准。" },
@@ -468,61 +469,7 @@ export function AdminPage({
 }
 
 function DashboardSection({ summary, providers, modelPrices, onConfigure }: { summary?: AdminSummary; providers: ModelProvider[]; modelPrices: ModelPrice[]; onConfigure: (id: string) => void }) {
-  const enabledProviders = providers.filter((item) => item.enabled).length;
-  const health = providers.map(provider => providerHealth(provider, modelPrices));
-  const readyModels = health.reduce((sum, item) => sum + item.ready, 0);
-  const totalModels = health.reduce((sum, item) => sum + item.models.length, 0);
-  return (
-    <section className="admin-v2-section">
-      <div className="adm-metric-heading"><h2>运营待办</h2><span>{summary?.operations?.updatedAt ? `更新于 ${new Date(summary.operations.updatedAt).toLocaleString("zh-CN")}` : "等待读取全量待办"}</span></div>
-      <div className="admin-product-metrics">
-        <AdminMetric icon={<MessageSquareText size={22} />} label="待处理工单" value={summary?.operations?.openTickets ?? "未读取"} hint="用户等待平台回复" tone="blue" />
-        <AdminMetric icon={<ShieldCheck size={22} />} label="待审核作品" value={summary?.operations?.pendingWorks ?? "未读取"} hint="审核通过后才公开展示" tone="amber" />
-        <AdminMetric icon={<ReceiptText size={22} />} label="待确认订单" value={summary?.operations?.pendingOrders ?? "未读取"} hint="非模拟订单；尚未确认收款" tone="violet" />
-        <AdminMetric icon={<Activity size={22} />} label="活动任务" value={summary?.operations?.activeTasks ?? "未读取"} hint="排队与运行，不含内部操作锁" tone="green" />
-      </div>
-      <div className="admin-setup-links" aria-label="待办处理入口">
-        <button className="ghost-button" type="button" onClick={() => navigateAdminHash("支持工单")}><MessageSquareText size={16} />回复待处理工单</button>
-        <button className="ghost-button" type="button" onClick={() => navigateAdminHash("创作现场管理")}><ShieldCheck size={16} />审核待发布作品</button>
-        <button className="ghost-button" type="button" onClick={() => navigateAdminHash("用户管理")}><UserRound size={16} />查看用户与账单</button>
-      </div>
-      <p className="admin-list-note">待确认订单不是已收款；支付由签名回调或主动查单核对。失败任务请结合用户账单、模型配置和工单排查，不手动重复提交上游生成。</p>
-      <div className="adm-inline-overview" aria-label="创作与服务统计"><span>注册用户 <strong>{summary?.users ?? "未读取"}</strong></span><span>创作项目 <strong>{summary?.projects ?? "未读取"}</strong></span><span>今日任务 <strong>{summary?.tasksToday ?? "未读取"}</strong></span><span title={`仅统计 ${summary?.completedTasks ?? "—"} 个成功或失败任务`}>已结束任务成功率 <strong>{formatAdminTaskSuccess(summary?.successRate, summary?.completedTasks)}</strong></span></div>
-      <ProviderHealth providers={providers} prices={modelPrices} onConfigure={onConfigure} onPrices={() => navigateAdminHash("价格策略")} />
-      <CreatorInsightsPanel />
-
-      <div className="adm-metric-heading"><h2>积分与收款</h2><span>实扣积分、现金实收和供应商成本分别核算</span></div>
-      <div className="admin-product-metrics compact">
-        <AdminMetric icon={<WalletCards size={20} />} label="实扣积分" value={summary?.creditsConsumed.toLocaleString() ?? "未读取"} hint="以消耗流水为准" tone="blue" />
-        <AdminMetric icon={<CircleDollarSign size={20} />} label="充值实收" value={formatAdminMoney(summary?.paidRechargeCny, "未读取")} hint="已支付的真实订单金额" tone="green" />
-        <AdminMetric icon={<ChartNoAxesCombined size={20} />} label="供应商成本" value={formatAdminMoney(summary?.providerCost)} hint={summary?.providerCostStatus === "recorded" ? "已记录供应商实际成本" : "尚未接入实际用量账单"} tone="amber" />
-        <AdminMetric icon={<ShieldCheck size={20} />} label="解冻积分" value={summary?.refundCredits?.toLocaleString() ?? "未读取"} hint="释放冻结额度，不代表现金退款" tone="violet" />
-      </div>
-
-      <div className="admin-v2-card admin-dashboard-grid">
-        <div className="admin-v2-card-head">
-          <div>
-            <h2>运营健康度</h2>
-            <p>核对任务记录、模型准备情况与账务证据。</p>
-          </div>
-        </div>
-        <div className="admin-policy-strip">
-          <PolicyItem title="任务统计" body={`累计 ${summary?.totalTasks ?? "—"} 个生成任务；今日 ${summary?.tasksToday ?? "—"} 个（北京时间），不含内部操作锁。`} />
-          <PolicyItem title="渠道覆盖" body={`${enabledProviders}/${providers.length} 个渠道启用，${readyModels}/${totalModels} 个模型配置齐全；${health.filter(item => item.needsAttention).length} 个渠道需要处理。`} />
-          <PolicyItem title="收款与成本" body={`充值实收 ${formatAdminMoney(summary?.paidRechargeCny, "未读取")}；尚未按消耗确认收入。${summary?.grossMarginEstimate == null ? "供应商账单未完成核对，毛利暂不可计算。" : `已记录毛利 ${formatAdminMoney(summary.grossMarginEstimate)}。`}`} />
-        </div>
-        <div className="admin-setup-links" aria-label="运营处理入口">
-          <button className="ghost-button" type="button" onClick={() => navigateAdminHash("模型路由")}><SlidersHorizontal size={16} />检查模型渠道</button>
-          <button className="ghost-button" type="button" onClick={() => navigateAdminHash("价格策略")}><CircleDollarSign size={16} />核对计费价格</button>
-          <button className="ghost-button" type="button" onClick={() => navigateAdminHash("支持工单")}><MessageSquareText size={16} />处理支持工单</button>
-          <button className="ghost-button" type="button" onClick={() => navigateAdminHash("操作记录")}><ReceiptText size={16} />追溯操作记录</button>
-        </div>
-        {summary?.metricsNote ? <p className="admin-list-note">{summary.metricsNote}</p> : null}
-        {(summary?.unreconciledCredits ?? 0) > 0 ? <p className="admin-toast danger" role="status">积分账户累计值与消耗流水相差 {summary!.unreconciledCredits!.toLocaleString()} 积分，需核对历史数据。</p> : null}
-      </div>
-
-    </section>
-  );
+  return <OperationsOverview summary={summary} providers={providers} modelPrices={modelPrices} onConfigure={onConfigure} />;
 }
 
 function ContentOperationsSection() {
@@ -3329,10 +3276,11 @@ function PlansSection({
       >
         <div className="admin-product-metrics compact">
           <AdminMetric icon={<ReceiptText size={20} />} label="套餐数量" value={plans.length} hint={`${enabledRows.length} 个启用`} tone="blue" />
-          <AdminMetric icon={<CircleDollarSign size={20} />} label="平均售价" value={`¥${avgPrice}`} hint="一次性充值包" tone="green" />
-          <AdminMetric icon={<WalletCards size={20} />} label="积分总额" value={plans.reduce((sum, plan) => sum + plan.credits + plan.bonusCredits, 0).toLocaleString()} hint="全部套餐到账额度" tone="amber" />
-          <AdminMetric icon={<Gift size={20} />} label="有赠送" value={plans.filter((plan) => plan.bonusCredits > 0).length} hint="带营销权益" tone="violet" />
+          <AdminMetric icon={<CircleDollarSign size={20} />} label="可跳转购买" value={enabledRows.filter(plan => rechargeCheckoutUrl(plan)).length} hint="已启用且购买链接有效" tone="green" />
+          <AdminMetric icon={<WalletCards size={20} />} label="待配置链接" value={enabledRows.filter(plan => !rechargeCheckoutUrl(plan)).length} hint="启用套餐中不可跳转购买" tone="amber" />
+          <AdminMetric icon={<Gift size={20} />} label="平均售价" value={`¥${avgPrice}`} hint="一次性积分套餐" tone="violet" />
         </div>
+        <div className="admin-shop-handoff"><Gift size={18} /><div><strong>小店购买 → 获取兑换码 → 漫角兑换到账</strong><span>生成对应积分的单次兑换码，导出后配置到小店商品发货。售价与发货积分需保持一致。</span></div><button type="button" className="admin-secondary-btn compact" onClick={() => navigateAdminHash("兑换码")}>管理发货兑换码</button></div>
         <AdminToolbar right={<button className="admin-primary-btn" type="button" onClick={() => setCreateOpen(true)}><Plus size={18} />新增套餐</button>}>
           <SearchField value={keyword} onChange={setKeyword} placeholder="搜索套餐、标签、卖点..." />
         </AdminToolbar>
@@ -3584,6 +3532,7 @@ function ProvidersSection({
         </AdminToolbar>
         {testResult || imageTestResult || videoTestResult ? <details className="admin-advanced-panel"><summary>最近一次测试详情<ChevronDown size={16} /></summary><ModelTestPanel text={testResult} image={imageTestResult} video={videoTestResult} /></details> : null}
         {relayPolicy ? <RelayGatewayPreview policy={relayPolicy} /> : null}
+        <p className="provider-list-help">检查配置状态后再测试连接。测试使用已保存配置，文本、图片和配音测试可能产生供应商费用。</p>
         <div className="admin-provider-card-list">
           {pagination.items.map((provider) => (
             <ProviderRow key={provider.id} provider={provider} modelPrices={modelPrices} autoOpen={editingProvider === provider.id} onEditorClose={() => setEditingProvider("")} testStates={providerTests} onSave={onSave} onDelete={onDelete} onTest={onTest} />
@@ -4586,23 +4535,19 @@ function ProviderRow({
   const activeModel = draft.routingMode === "manual"
     ? (draft.preferredModel || models[0] || "")
     : (provider.routing?.activeModel || quotaStatus.find((item) => item.available)?.model || models[0] || "");
+  const savedHealth = providerHealth(provider, modelPrices);
 
   return (
-    <article data-admin-dirty={dirty || undefined} className="admin-provider-card">
+    <article data-admin-dirty={dirty || undefined} className="admin-provider-card provider-channel-row">
       <fieldset className="admin-provider-fields" disabled={providerTesting} aria-label={`${provider.name}渠道配置`}>
-      <div className="admin-provider-card-head">
+      <div className="provider-channel-head">
         <AdminProviderIcon provider={provider} />
         <div className="admin-provider-title">
           <strong>{provider.name}</strong>
           <span>{provider.id} · {provider.apiKeyConfigured === true ? "密钥已配置" : provider.apiKeyConfigured === false ? "密钥未配置" : "密钥状态待确认"}</span>
         </div>
-        <span className="admin-chip">{modalityLabel(draft.modality)}</span>
-        <StatusChip active={provider.enabled} /><DraftIndicator dirty={dirty} />
-        <div className="admin-provider-model-chips">
-          {models.slice(0, 4).map((model) => <span key={model}><ModelIdentity model={model} modality={provider.modality} compact /></span>)}
-          {models.length > 4 ? <span>+{models.length - 4}</span> : null}
-        </div>
-        <div className="admin-row-actions">
+        <div className="provider-channel-state"><span className="provider-modality">{modalityLabel(provider.modality)}</span><span className="adm-status" data-status={!provider.enabled ? "disabled" : savedHealth.needsAttention ? "started" : "active"}>{savedHealth.status}</span><DraftIndicator dirty={dirty} /></div>
+        <div className="admin-row-actions provider-channel-actions">
           <button className="admin-text-btn primary" type="button" aria-label={`展开${provider.name}渠道`} onClick={() => setExpanded(true)}>编辑渠道</button>
           <button className="admin-secondary-btn compact admin-provider-test-button" type="button" title={testReadiness.reason} aria-label={`测试${provider.name}已保存配置`} aria-describedby={testHintId} disabled={!testReadiness.available} onClick={() => onTest(provider, selectedModel, dirty)}>
             {providerTesting ? <Loader2 className="spin-icon" size={16} /> : <PlayCircle size={16} />}<span>{providerTesting ? "测试中" : provider.modality === "embedding" ? "暂不支持测试" : provider.modality === "video" ? "检查视频配置" : "测试已保存配置"}</span>
@@ -4613,13 +4558,13 @@ function ProviderRow({
         </div>
       </div>
 
-      <div className="admin-provider-compact">
-        <span>{draft.baseUrl || "使用环境变量 Base URL"}</span>
-        <span>{capability.join(" / ") || "基础能力"}</span>
-        <span>{draft.routingMode === "manual" ? `手动固定：${draft.preferredModel || "未选模型"}` : quotaStatus.length ? `自动额度池：${availableCount}/${quotaStatus.length} 可用` : "自动路由 · 额度状态待确认"}</span>
-        <span>{draft.costHint}</span>
+      <div className="provider-channel-meta">
+        <div className="provider-channel-models" title={provider.models.join("、")}>{provider.models.slice(0, 2).map(model => <span key={model}>{model}</span>)}{provider.models.length > 2 ? <small>+{provider.models.length - 2}</small> : null}</div>
+        <span>{savedHealth.ready}/{savedHealth.models.length} 个模型配置齐全</span>
+        <span>{provider.routing?.mode === "manual" ? "手动固定" : "自动轮换"}</span>
+        <span title={capability.join(" / ")}>{quotaStatus.length ? `${availableCount}/${quotaStatus.length} 额度可用` : "额度状态待确认"}</span>
       </div>
-      <p id={testHintId} className={`admin-provider-test-hint${dirty ? " unsaved" : ""}`}>{testReadiness.reason}</p>
+      <p id={testHintId} className={testReadiness.available && !dirty ? "ops-sr-only" : "provider-channel-notice"}>{testReadiness.reason}</p>
       <ProviderInlineTestResult state={dirty ? undefined : testState} />
 
       <AdminModal open={expanded} title={`编辑${provider.name}渠道`} description="修改模型连接、路由和状态，保存后生效。" onClose={() => { if (providerTesting) return; resetDraft(); setExpanded(false); onEditorClose?.(); }} wide>
@@ -4677,8 +4622,8 @@ function ProviderRow({
           <div className="admin-provider-routing-panel wide">
             <div className="admin-provider-routing-head">
               <div>
-                <strong>免费额度池与路由</strong>
-                <span>展示今日提交次数、冷却状态，并决定当前渠道是自动轮换还是固定单模型。</span>
+                <strong>路由与提交额度</strong>
+                <span>选择模型分配方式，查看今日提交与冷却状态。</span>
               </div>
               <div className="admin-provider-routing-summary">
                 <span>今日提交 {submissionTotal}</span>
@@ -4687,8 +4632,8 @@ function ProviderRow({
               </div>
             </div>
             <div className="admin-provider-routing-mode">
-              <button type="button" className={draft.routingMode === "auto" ? "active" : ""} onClick={() => setDraft({ ...draft, routingMode: "auto" })}>自动轮换</button>
-              <button type="button" className={draft.routingMode === "manual" ? "active" : ""} onClick={() => setDraft({ ...draft, routingMode: "manual" })}>手动固定</button>
+              <button type="button" aria-pressed={draft.routingMode === "auto"} className={draft.routingMode === "auto" ? "active" : ""} onClick={() => setDraft({ ...draft, routingMode: "auto" })}>自动轮换</button>
+              <button type="button" aria-pressed={draft.routingMode === "manual"} className={draft.routingMode === "manual" ? "active" : ""} onClick={() => setDraft({ ...draft, routingMode: "manual" })}>手动固定</button>
             </div>
             <div className="admin-provider-routing-select admin-model-field">
               <span>固定模型</span>
@@ -4702,7 +4647,7 @@ function ProviderRow({
                     <small>{item.available ? "可提交" : item.coolingDown ? "冷却中" : "额度已满"}</small>
                   </div>
                   <span>{item.submissions}{item.dailyLimit ? ` / ${item.dailyLimit}` : ""}</span>
-                  <p>{item.reason || "今天还可以继续提交到这个模型。"}</p>
+                  <p>{item.reason || "提交额度可用；实际费用以供应商计费为准。"}</p>
                 </article>
               )) : <p className="admin-muted">该渠道还没有提交记录，首次调用后会开始累计今日次数和冷却状态。</p>}
             </div>

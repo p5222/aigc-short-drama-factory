@@ -34,12 +34,13 @@ export function AdminConfiguration({ providers, onRefresh }: { providers: ModelP
         : !error ? <p role="status">正在读取配置状态…</p> : null}
       <div className="configuration-shortcuts"><button onClick={() => navigateAdminHash("模型路由")}>配置模型渠道<ArrowUpRight size={15} /></button><button onClick={() => navigateAdminHash("价格策略")}>核对模型价格<ArrowUpRight size={15} /></button></div>
     </section>
+    <section className="admin-shop-handoff" aria-label="小店支付设置"><CircleDashed size={18} /><div><strong>小店购买 · 兑换码入账</strong><span>在充值套餐设置购买链接，在兑换码管理准备发货。微信接口保留，后续可单独开放。</span></div><button type="button" className="admin-secondary-btn compact" onClick={() => navigateAdminHash("套餐会员")}>设置小店套餐<ArrowUpRight size={14} /></button></section>
     <div className="configuration-workspace">
       <nav aria-label="配置分组">{platformSettingGroups.map(spec => <button key={spec.id} disabled={formBusy} aria-current={group === spec.id ? "page" : undefined} className={group === spec.id ? "active" : ""} onClick={async () => {
         if (group === spec.id) return;
         if (document.querySelector('.configuration-form[data-admin-dirty="true"]') && !await confirmAdminAction("当前配置有未保存修改，切换将放弃这些修改。", { title: "切换配置分组", confirmLabel: "放弃并切换" })) return;
         setGroup(spec.id);
-      }}><strong>{spec.title}</strong><span>{spec.id === "routing" ? "新作品的初始模型" : spec.id === "email" ? "QQ 邮箱注册与验证码" : "商户配置与收款开关"}</span></button>)}</nav>
+      }}><strong>{spec.title}</strong><span>{spec.id === "routing" ? "新作品的初始模型" : spec.id === "email" ? "QQ 邮箱注册与验证码" : "预留接口 · 可后续配置"}</span></button>)}</nav>
       <ConfigurationForm key={group} group={group} providers={providers} onBusy={setFormBusy} onSaved={async () => { await check(); await onRefresh(); }} />
     </div>
   </div>;
