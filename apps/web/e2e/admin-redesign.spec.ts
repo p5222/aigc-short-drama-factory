@@ -112,6 +112,22 @@ test("channel routing controls have readable theme contrast and preserve unsaved
       return (Math.max(a, b) + .05) / (Math.min(a, b) + .05);
     });
     expect(contrast).toBeGreaterThanOrEqual(4.5);
+    const labelContrast = await dialog.locator(".admin-provider-expanded > label > span").evaluateAll(nodes => {
+      const luminance = (color: string) => {
+        const rgb = color.match(/[\d.]+/g)!.slice(0, 3).map(Number).map(v => {
+          const x = v / 255; return x <= .04045 ? x / 12.92 : ((x + .055) / 1.055) ** 2.4;
+        });
+        return .2126 * rgb[0]! + .7152 * rgb[1]! + .0722 * rgb[2]!;
+      };
+      return nodes.map(node => {
+        let surface: Element | null = node;
+        while (surface && getComputedStyle(surface).backgroundColor === "rgba(0, 0, 0, 0)") surface = surface.parentElement;
+        const a = luminance(getComputedStyle(node).color), b = luminance(getComputedStyle(surface!).backgroundColor);
+        return (Math.max(a, b) + .05) / (Math.min(a, b) + .05);
+      });
+    });
+    expect(labelContrast.length).toBeGreaterThan(0);
+    expect(Math.min(...labelContrast)).toBeGreaterThanOrEqual(4.5);
     await dialog.getByRole("button", { name: "手动固定", exact: true }).click();
     await expect(dialog.getByRole("button", { name: "手动固定", exact: true })).toHaveAttribute("aria-pressed", "true");
     await capture(page, `routing-${theme}`);
