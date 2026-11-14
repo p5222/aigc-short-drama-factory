@@ -68,6 +68,34 @@ test("creator recharge shows spendable balance and jumps to redeem without chang
   await page.getByRole("button", { name: "切换主题", exact: true }).click();
   await capture(page, "recharge-dark");
 });
+test("store purchase opens a separate shop and redemption updates the original account without online checkout", async ({ page, context }) => {
+  await fixture(page);
+  let onlineCheckouts = 0, redemptions = 0;
+  await context.route("https://example.test/checkout", route => route.fulfill({ contentType: "text/html", body: "<main>Fixture store: no actual payment</main>" }));
+  await page.route("**/api/billing/checkout", route => { onlineCheckouts++; return route.fulfill({ status: 503, json: { message: "Unexpected checkout" } }); });
+  await page.route("**/api/credits/redeem", route => {
+    redemptions++;
+    expect(route.request().postDataJSON().code).toBe("STORE-TEST");
+    return route.fulfill({ json: { balance: 17400, frozenBalance: 320, totalRecharge: 25000, totalConsume: 7600 } });
+  });
+  await page.route("**/api/credits/account", route => route.fulfill({ json: { balance: redemptions ? 17400 : 12400, frozenBalance: 320, totalRecharge: 20000, totalConsume: 7600 } }));
+  await page.route("**/api/credits/redemptions?*", route => route.fulfill({ json: { items: [], total: 0, page: 1, pageSize: 20 } }));
+  await page.goto("/#/recharge");
+  await expect(page.getByLabel("小店购买步骤")).toContainText("购买并获取兑换码");
+  const link = page.getByRole("link", { name: "前往店铺购买", exact: true }).first();
+  await expect(link).toHaveAttribute("rel", "noopener noreferrer");
+  const popup = page.waitForEvent("popup");
+  await link.click();
+  const shop = await popup;
+  await expect(shop).toHaveURL("https://example.test/checkout");
+  await shop.close();
+  await expect(page).toHaveURL(/#\/recharge$/);
+  await page.getByRole("textbox", { name: "兑换码", exact: true }).fill("STORE-TEST");
+  await page.getByRole("button", { name: "兑换积分", exact: true }).click();
+  await expect(page.getByText("兑换成功，当前积分余额 17,400。", { exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "充值账户概览" })).toContainText("17,080");
+  expect(redemptions).toBe(1); expect(onlineCheckouts).toBe(0);
+});
 test("shared creator pages retain readable geometry across themes", async ({ page }) => {
   await fixture(page);
   const errors: string[] = [];

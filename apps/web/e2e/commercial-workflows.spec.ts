@@ -71,8 +71,8 @@ test("admin overview shows real operational backlog and enters open support tick
     operations: { openTickets: 4, pendingWorks: 2, pendingOrders: 1, activeTasks: 3, updatedAt: "2026-10-26T00:00:00Z" }
   } }));
   await page.goto("/admin");
-  await expect(page.getByRole("heading", { name: "运营待办", exact: true })).toBeVisible();
-  const metrics = page.locator(".admin-product-metrics").first();
+  const metrics = page.getByLabel("运营待办");
+  await expect(metrics).toBeVisible();
   await expect(metrics).toContainText("待处理工单");
   await expect(metrics).toContainText("4");
   await expect(metrics).toContainText("待确认订单");

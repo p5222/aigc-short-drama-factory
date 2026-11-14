@@ -1,6 +1,12 @@
 /* Visual reference: Wei-Shaw/sub2api — sidebar, card, filter and table proportions.
  * Implemented with Manjiao components; deliberately scoped away from the creator UI.
  * This is the final admin presentation layer after the legacy compatibility styles. */
+.admin-shop-handoff { display: flex; align-items: center; gap: 14px; padding: 16px 18px; border: 1px solid var(--adm-border); border-radius: 10px; background: var(--adm-surface); color: var(--adm-accent); }
+.admin-shop-handoff > svg { flex: none; }
+.admin-shop-handoff > div { display: grid; gap: 4px; flex: 1; }
+.admin-shop-handoff strong { color: var(--adm-text); font-size: 13px; }
+.admin-shop-handoff span { color: var(--adm-muted); font-size: 12px; }
+@media (max-width: 640px) { .admin-shop-handoff { flex-wrap: wrap; gap: 12px; }.admin-shop-handoff > div { flex-basis: calc(100% - 34px); } }
 .adm-shell.admin-product {
   --adm-bg: #f9fafb;
   --adm-surface: #fff;
