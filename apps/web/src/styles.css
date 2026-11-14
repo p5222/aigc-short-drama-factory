@@ -6949,7 +6949,7 @@ body.auth-surface {
 .admin-pipeline-row small,
 .admin-muted {
   margin: 0;
-  color: #64748b;
+  color: var(--adm-muted, #64748b);
   font-size: 12px;
   line-height: 1.45;
 }

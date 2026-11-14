@@ -112,7 +112,7 @@ test("channel routing controls have readable theme contrast and preserve unsaved
       return (Math.max(a, b) + .05) / (Math.min(a, b) + .05);
     });
     expect(contrast).toBeGreaterThanOrEqual(4.5);
-    const labelContrast = await dialog.locator(".admin-provider-expanded > label > span").evaluateAll(nodes => {
+    const labelContrast = await dialog.locator(".admin-provider-expanded > label > span, .admin-provider-routing-panel p, .admin-provider-routing-panel small").evaluateAll(nodes => {
       const luminance = (color: string) => {
         const rgb = color.match(/[\d.]+/g)!.slice(0, 3).map(Number).map(v => {
           const x = v / 255; return x <= .04045 ? x / 12.92 : ((x + .055) / 1.055) ** 2.4;
