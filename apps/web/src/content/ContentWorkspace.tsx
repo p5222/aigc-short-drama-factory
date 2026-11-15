@@ -245,10 +245,36 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
 
   async function refresh() {
     if (busy) return;
-    setBusy("refresh"); setError("");
+    setBusy("refresh"); setError(""); setMessage("");
+    const failures: string[] = [];
+    const projectId = selectedId;
+    try {
+      await Promise.all([
+        onReload().then(setProjects).catch(() => { failures.push("作品列表"); }),
+        projectId ? contentApi.productionPackage(projectId).then(result => {
+          // A read-only recovery must not discard an author's unsaved outline.
+          setOutlineDraft(current => current?.key === outlineKey && contentEditorDirty(current)
+            ? { ...current, key: `${projectId}:${result.outline?.id ?? ""}` } : current);
+          setPackages(current => ({ ...current, [projectId]: result }));
+          setDetailError("");
+          const source = { title: result.source?.title ?? "", content: result.source?.content ?? "" };
+          setSavedSources(current => ({ ...current, [projectId]: source }));
+          if (!navigation.current.dirty) { setSourceTitle(source.title); setSourceContent(source.content); }
+        }).catch(() => { failures.push("当前内容"); }) : Promise.resolve(),
+        projectId ? contentApi.versions(projectId).then(result => {
+          setVersions(current => ({ ...current, [projectId]: result }));
+        }).catch(() => { failures.push("版本记录"); }) : Promise.resolve()
+      ]);
+      const preserved = navigation.current.dirty ? "未保存的编辑仍保留，请核对后再提交。" : "";
+      if (failures.length) setError(`${failures.join("、")}刷新失败；已读取的内容已同步，请再次刷新核对。${preserved}`);
+      else setMessage(`已核对最新内容与状态。${preserved}`);
+    } finally { setBusy(""); }
+  }
+
+  async function syncCompletedResult(success: string) {
+    setMessage(success);
     try { setProjects(await onReload()); }
-    catch (reason) { setError(reason instanceof Error ? reason.message : "刷新失败"); }
-    finally { setBusy(""); }
+    catch { setMessage(`${success}。作品列表暂未刷新，请点击刷新核对，无需重复提交。`); }
   }
 
   async function createProject() {
@@ -343,10 +369,9 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
     try {
       const result = await contentApi.generatePackage(selected.id);
       setPackages((current) => ({ ...current, [selected.id]: result }));
-      setProjects(await onReload());
       setSourceOpen(false); setFocusStage("handoff");
-      setMessage("剧本与实体已生成，可以进入漫剧创作");
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "内容生成失败"); }
+      await syncCompletedResult("剧本与实体已生成，可以进入漫剧创作");
+    } catch (reason) { setMessage(""); setError(reason instanceof Error ? reason.message : "内容生成失败"); }
     finally { setBusy(""); }
   }
 
@@ -361,10 +386,9 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
       setSourceTitle(selected.title); setSourceContent(content);
       const result = await contentApi.generatePackage(selected.id, scope);
       setPackages((current) => ({ ...current, [selected.id]: result }));
-      setProjects(await onReload());
       setFocusStage("handoff");
-      setMessage("剧本与实体已生成，可以进入漫剧创作");
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "剧本生成失败"); }
+      await syncCompletedResult("剧本与实体已生成，可以进入漫剧创作");
+    } catch (reason) { setMessage(""); setError(reason instanceof Error ? reason.message : "剧本生成失败"); }
     finally { setBusy(""); }
   }
 
@@ -376,8 +400,10 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
     try {
       const result = await contentApi.generateChapters(selected.id, { startChapter: plan.nextChapter, batchSize: Math.max(2, plan.nextBatchSize) });
       setPackages((current) => ({ ...current, [selected.id]: result }));
-      setProjects(await onReload()); setMessage("新一批章节正文已生成");
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "章节生成失败"); }
+      const remaining = chapterGenerationPlan(outline.map((item, index) => ({ chapterNo: Number(item.chapterNo ?? index + 1) })), result.chapters ?? [], batchSize).remainingCount;
+      if (remaining >= plan.remainingCount) throw new Error("本批未新增章节，已停止生成。请刷新核对大纲、章节和任务状态后再继续。");
+      await syncCompletedResult("新一批章节正文已生成");
+    } catch (reason) { setMessage(""); setError(reason instanceof Error ? reason.message : "章节生成失败"); }
     finally { setBusy(""); }
   }
 
@@ -388,8 +414,8 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
     try {
       const result = await contentApi.generateChapters(selected.id, { startChapter: chapterNo, batchSize: 2, regenerate: true });
       setPackages((current) => ({ ...current, [selected.id]: result }));
-      setProjects(await onReload()); setMessage(`第 ${chapterNo} 章已重新生成`);
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "重新生成失败"); }
+      await syncCompletedResult(`第 ${chapterNo} 章已重新生成`);
+    } catch (reason) { setMessage(""); setError(reason instanceof Error ? reason.message : "重新生成失败"); }
     finally { setBusy(""); }
   }
 
@@ -406,10 +432,12 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
         setMessage(`正在生成全部正文 · ${completed}/${outlineNumbers.length} 章已保存`);
         current = await contentApi.generateChapters(selected.id, { startChapter: plan.nextChapter, batchSize: Math.max(2, plan.nextBatchSize) });
         setPackages((packagesState) => ({ ...packagesState, [selected.id]: current }));
-        plan = chapterGenerationPlan(outlineNumbers, current.chapters ?? [], batchSize);
+        const nextPlan = chapterGenerationPlan(outlineNumbers, current.chapters ?? [], batchSize);
+        if (nextPlan.remainingCount >= plan.remainingCount) throw new Error("本批未新增章节，已停止自动生成。请刷新核对大纲、章节和任务状态。");
+        plan = nextPlan;
       }
-      setProjects(await onReload()); setMessage(`全部 ${outlineNumbers.length} 章正文已生成`);
-    } catch (reason) { setError(reason instanceof Error ? `${reason.message}；已完成章节已保存，可继续重试剩余章节。` : "全部章节生成中断"); }
+      await syncCompletedResult(`全部 ${outlineNumbers.length} 章正文已生成`);
+    } catch (reason) { setMessage(""); setError(`${reason instanceof Error ? reason.message : "全部章节生成中断"} 已完成章节仍保留；请先刷新核对结果，避免重复提交。`); }
     finally { setBusy(""); }
   }
 
@@ -419,8 +447,8 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
     try {
       const result = await contentApi.analyze(selected.id, { intentType: "title", intent: selected.title, targetWords, chapterCount, batchSize });
       setPackages((current) => ({ ...current, [selected.id]: result }));
-      setProjects(await onReload()); setFocusStage(""); setMessage("结构拆解已完成，请继续生成大纲");
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "结构拆解失败"); }
+      setFocusStage(""); await syncCompletedResult("结构拆解已完成，请继续生成大纲");
+    } catch (reason) { setMessage(""); setError(reason instanceof Error ? reason.message : "结构拆解失败"); }
     finally { setBusy(""); }
   }
 
@@ -430,8 +458,8 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
     try {
       const result = await contentApi.generateOutline(selected.id);
       setPackages((current) => ({ ...current, [selected.id]: result }));
-      setProjects(await onReload()); setFocusStage(""); setMessage("大纲已生成，可以编辑后确认");
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "大纲生成失败"); }
+      setFocusStage(""); await syncCompletedResult("大纲已生成，可以编辑后确认");
+    } catch (reason) { setMessage(""); setError(reason instanceof Error ? reason.message : "大纲生成失败"); }
     finally { setBusy(""); }
   }
 
@@ -444,8 +472,8 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
       setOutlineDraft(null);
       const generated = await contentApi.generateChapters(selected.id, { startChapter: 1, batchSize });
       setPackages((current) => ({ ...current, [selected.id]: generated }));
-      setProjects(await onReload()); setFocusStage(""); setMessage("大纲已确认，首批正文已生成");
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "大纲确认或正文生成失败"); }
+      setFocusStage(""); await syncCompletedResult("大纲已确认，首批正文已生成");
+    } catch (reason) { setMessage(""); setError(reason instanceof Error ? reason.message : "大纲确认或正文生成失败"); }
     finally { setBusy(""); }
   }
 
@@ -454,7 +482,8 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
     setBusy("save"); setError("");
     try {
       await contentApi.updateModelRoute(selected.id, { textProvider, textModel });
-      setProjects(await onReload()); setMessage(`模型已切换为 ${modelIdentity(textModel).name}`);
+      setProjects(current => current.map(project => project.id === selected.id ? { ...project, textProvider, textModel } : project));
+      await syncCompletedResult(`模型已切换为 ${modelIdentity(textModel).name}`);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "模型切换失败"); }
     finally { setBusy(""); }
   }
@@ -514,7 +543,7 @@ export function ContentWorkspace({ initialProjects, initialSelectedId, startBlan
     <div className="cw2-top-actions">
       {selected && !creating ? <ModelRoutePicker modality="text" compact providers={providers} modelPrices={modelPrices} value={{ providerId: selected.textProvider, model: selected.textModel }} onChange={(providerId, model) => { void changeModelRoute(providerId, model); }} disabled={working} /> : null}
       <button type="button" className="cw2-icon-button cw2-labelled-action" disabled={working} onClick={startNewContent} aria-label="新建内容创作"><Plus size={16} /><span>新建</span></button>
-      <button type="button" className="cw2-icon-button cw2-labelled-action" disabled={working} onClick={() => void refresh()} aria-label="刷新"><RefreshCw size={15} /><span>刷新</span></button>
+      <button type="button" className="cw2-icon-button cw2-labelled-action" disabled={Boolean(busy)} onClick={() => void refresh()} aria-label="刷新"><RefreshCw size={15} /><span>{busy === "refresh" ? "核对中" : "刷新"}</span></button>
       {selected && !creating ? <button type="button" className="cw2-icon-button cw2-labelled-action danger" disabled={working} onClick={() => { if (canChangeView()) void removeContentProject(selected.id); }} aria-label="删除作品"><Trash2 size={15} /><span>删除</span></button> : null}
     </div>
   </header>;

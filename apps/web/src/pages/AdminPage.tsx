@@ -180,6 +180,8 @@ export function AdminPage({
   const [videoTestResult, setVideoTestResult] = useState<VideoModelTestResult | null>(null);
   const [providerTests, setProviderTests] = useState<Record<string, ProviderTestState>>({});
   const [openSourceAdapters, setOpenSourceAdapters] = useState<OpenSourceAdapterInfo[]>([]);
+  const pluginReadPending = useRef(false);
+  const [pluginReadState, setPluginReadState] = useState({ loading: true, adapterError: false, pipelineError: false });
   const [visualPipelines, setVisualPipelines] = useState<VisualPipelineDescriptor[]>([]);
   const [pipelineTests, setPipelineTests] = useState<Record<string, PipelineTestState>>({});
   const [requestedProvider, setRequestedProvider] = useState("");
@@ -305,11 +307,14 @@ export function AdminPage({
   }
 
   async function loadPluginStatus() {
+    if (pluginReadPending.current) return;
+    pluginReadPending.current = true;
+    setPluginReadState({ loading: true, adapterError: false, pipelineError: false });
     const [adapterRes, pipelineRes] = await Promise.allSettled([api.openSourceAdapters(), api.visualPipelines()]);
     if (adapterRes.status === "fulfilled") setOpenSourceAdapters(adapterRes.value);
     if (pipelineRes.status === "fulfilled") setVisualPipelines(pipelineRes.value);
-    const failures = [adapterRes, pipelineRes].filter((result) => result.status === "rejected");
-    if (failures.length) setError("部分模型接入状态读取失败，请刷新重试；空列表不代表尚未配置。");
+    setPluginReadState({ loading: false, adapterError: adapterRes.status === "rejected", pipelineError: pipelineRes.status === "rejected" });
+    pluginReadPending.current = false;
   }
 
   async function runPipelineTest(pipelineId: string) {
@@ -435,6 +440,7 @@ export function AdminPage({
           videoTestResult={videoTestResult}
           providerTests={providerTests}
           openSourceAdapters={openSourceAdapters}
+          pluginReadState={pluginReadState}
           visualPipelines={visualPipelines}
           pipelineTests={pipelineTests}
           onLoadRelayPolicy={() => void loadRelayPolicy()}
@@ -3414,6 +3420,7 @@ function ProvidersSection({
   videoTestResult,
   providerTests,
   openSourceAdapters,
+  pluginReadState,
   visualPipelines,
   pipelineTests,
   onLoadRelayPolicy,
@@ -3434,6 +3441,7 @@ function ProvidersSection({
   videoTestResult: VideoModelTestResult | null;
   providerTests: Record<string, ProviderTestState>;
   openSourceAdapters: OpenSourceAdapterInfo[];
+  pluginReadState: { loading: boolean; adapterError: boolean; pipelineError: boolean };
   visualPipelines: VisualPipelineDescriptor[];
   pipelineTests: Record<string, PipelineTestState>;
   onLoadRelayPolicy: () => void;
@@ -3513,6 +3521,7 @@ function ProvidersSection({
         </div>
         <details className="admin-advanced-panel"><summary>高级接入与插件状态<ChevronDown size={16} /></summary><OpenSourcePipelinePanel
           adapters={openSourceAdapters}
+          readState={pluginReadState}
           pipelines={visualPipelines}
           tests={pipelineTests}
           onRefresh={onLoadPluginStatus}
@@ -3595,12 +3604,14 @@ function PromptScoringSection({
 
 function OpenSourcePipelinePanel({
   adapters,
+  readState,
   pipelines,
   tests,
   onRefresh,
   onTest
 }: {
   adapters: OpenSourceAdapterInfo[];
+  readState: { loading: boolean; adapterError: boolean; pipelineError: boolean };
   pipelines: VisualPipelineDescriptor[];
   tests: Record<string, PipelineTestState>;
   onRefresh: () => void;
@@ -3613,11 +3624,12 @@ function OpenSourcePipelinePanel({
           <h3>开源 Agent 与视觉插件</h3>
           <p>Toonflow 负责编剧/分镜拆解，LingGuo 负责配音、字幕、合成和外部视觉插件编排；缺 Key 的插件只显示待配置，不会假装成功。</p>
         </div>
-        <button className="admin-icon-btn" onClick={onRefresh} title="刷新插件状态"><RefreshCw size={16} /><span>刷新状态</span></button>
+        <button type="button" className="admin-icon-btn" disabled={readState.loading} onClick={onRefresh} aria-label="刷新插件状态"><RefreshCw size={16} /><span>{readState.loading ? "读取中" : "刷新状态"}</span></button>
       </div>
       <div className="admin-plugin-grid">
         <div className="admin-plugin-column">
           <strong>已内嵌能力</strong>
+          {readState.adapterError ? <p role="alert">适配器状态读取失败，请刷新核对；已有记录仍保留。</p> : null}
           {adapters.length ? adapters.map((adapter) => (
             <article className="admin-adapter-card" key={adapter.id}>
               <div>
@@ -3626,10 +3638,12 @@ function OpenSourcePipelinePanel({
               </div>
               <p>{adapter.capabilities.slice(0, 5).join(" / ")}</p>
             </article>
-          )) : <p className="admin-muted">正在读取适配器状态...</p>}
+          )) : !readState.adapterError ? <p className="admin-muted" role="status">{readState.loading ? "正在读取适配器状态…" : "暂无内嵌能力记录"}</p> : null}
         </div>
         <div className="admin-plugin-column wide">
           <strong>可插拔模型/后期能力</strong>
+          {readState.pipelineError ? <p role="alert">插件状态读取失败，请刷新核对；已有记录仍保留。</p> : null}
+          {!pipelines.length && !readState.pipelineError ? <p className="admin-muted" role="status">{readState.loading ? "正在读取插件状态…" : "暂无可插拔能力记录"}</p> : null}
           <div className="admin-pipeline-list">
             {pipelines.map((pipeline) => {
               const test = tests[pipeline.id];

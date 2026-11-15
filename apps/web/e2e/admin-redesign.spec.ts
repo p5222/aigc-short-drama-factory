@@ -69,6 +69,32 @@ async function capture(page: Page, label: string) {
   await page.screenshot({ path: `${process.env.PLAYWRIGHT_SCREENSHOT_DIR ?? "../../outputs/ui-redesign-20261025/screenshots"}/admin-${label}-${test.info().project.name}.png`, fullPage: true, animations: "disabled" });
 }
 
+test("plugin status distinguishes empty records, pending reads and independent failures", async ({ page }) => {
+  await adminFixtures(page);
+  await page.goto("/admin#模型路由");
+  await page.locator("summary").filter({ hasText: "高级接入与插件状态" }).click();
+  const panel = page.locator(".admin-plugin-panel");
+  await expect(panel).toContainText("暂无内嵌能力记录");
+  await expect(panel).toContainText("暂无可插拔能力记录");
+  let releaseRead!: () => void;
+  const pending = new Promise<void>(resolve => { releaseRead = resolve; });
+  await page.route("**/api/agents/open-source-adapters", async route => {
+    await pending;
+    await route.fulfill({ status: 503, json: { message: "读取失败" } });
+  });
+  await panel.getByRole("button", { name: "刷新插件状态" }).click();
+  await expect(panel.getByRole("button", { name: "刷新插件状态" })).toBeDisabled();
+  await expect(panel).toContainText("正在读取适配器状态");
+  releaseRead();
+  await expect(panel.getByRole("alert")).toContainText("适配器状态读取失败");
+  await expect(panel).toContainText("暂无可插拔能力记录");
+  await expect(panel).not.toContainText("暂无内嵌能力记录");
+  await page.unroute("**/api/agents/open-source-adapters");
+  await panel.getByRole("button", { name: "刷新插件状态" }).click();
+  await expect(panel).toContainText("暂无内嵌能力记录");
+  await expect(panel.getByRole("alert")).toHaveCount(0);
+});
+
 test("overview keeps charts and backlog compact, switches metrics and distinguishes unknown costs", async ({ page }, info) => {
   await adminFixtures(page);
   await page.goto("/admin");
