@@ -876,15 +876,15 @@
   min-width: 1180px;
   border-collapse: separate;
   border-spacing: 0;
-  color: #172033;
-  background: #ffffff;
+  color: var(--adm-text, #172033);
+  background: var(--adm-surface, #ffffff);
 }
 
 .admin-v2-table th,
 .admin-v2-table td {
   height: 76px;
   padding: 14px 24px;
-  border-bottom: 1px solid #edf1f5;
+  border-bottom: 1px solid var(--adm-border, #edf1f5);
   text-align: left;
   vertical-align: middle;
   white-space: nowrap;
@@ -892,18 +892,18 @@
 
 .admin-v2-table th {
   height: 58px;
-  color: #334155;
-  background: #fbfdff;
+  color: var(--adm-muted, #334155);
+  background: var(--adm-surface-2, #fbfdff);
   font-size: 16px;
   font-weight: 700;
 }
 
 .admin-v2-table tbody tr:hover td {
-  background: #fbfefe;
+  background: var(--adm-accent-soft, #fbfefe);
 }
 
 .admin-v2-table strong {
-  color: #101828;
+  color: var(--adm-text, #101828);
 }
 
 .muted-cell {
@@ -6919,10 +6919,10 @@ body.auth-surface {
   display: grid;
   gap: 14px;
   padding: 18px;
-  border: 1px solid #dbe7f3;
+  border: 1px solid var(--adm-border, #dbe7f3);
   border-radius: 14px;
-  background: #f8fbff;
-  box-shadow: 0 14px 38px rgba(30, 64, 175, 0.06);
+  background: var(--adm-surface-2, #f8fbff);
+  box-shadow: none;
 }
 
 .admin-plugin-head,
@@ -6940,7 +6940,7 @@ body.auth-surface {
 
 .admin-plugin-head h3 {
   margin: 0 0 4px;
-  color: #0f172a;
+  color: var(--adm-text, #0f172a);
   font-size: 18px;
 }
 
@@ -6949,7 +6949,7 @@ body.auth-surface {
 .admin-pipeline-row small,
 .admin-muted {
   margin: 0;
-  color: #64748b;
+  color: var(--adm-muted, #64748b);
   font-size: 12px;
   line-height: 1.45;
 }
@@ -6972,15 +6972,15 @@ body.auth-surface {
 }
 
 .admin-plugin-column > strong {
-  color: #334155;
+  color: var(--adm-text, #334155);
   font-size: 13px;
 }
 
 .admin-adapter-card,
 .admin-pipeline-row {
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--adm-border, #e2e8f0);
   border-radius: 12px;
-  background: #ffffff;
+  background: var(--adm-surface, #ffffff);
 }
 
 .admin-adapter-card {
@@ -6997,13 +6997,13 @@ body.auth-surface {
 
 .admin-adapter-card b,
 .admin-pipeline-row b {
-  color: #0f172a;
+  color: var(--adm-text, #0f172a);
   font-size: 14px;
 }
 
 .admin-adapter-card span,
 .admin-pipeline-row span {
-  color: #64748b;
+  color: var(--adm-muted, #64748b);
   font-size: 12px;
 }
 
@@ -9610,15 +9610,15 @@ body.auth-surface {
   min-width: 1180px !important;
   border-collapse: separate !important;
   border-spacing: 0 !important;
-  color: #172033 !important;
-  background: #ffffff !important;
+  color: var(--adm-text, #172033) !important;
+  background: var(--adm-surface, #ffffff) !important;
 }
 
 .admin-v2-table th,
 .admin-v2-table td {
   height: 76px !important;
   padding: 14px 24px !important;
-  border-bottom: 1px solid #edf1f5 !important;
+  border-bottom: 1px solid var(--adm-border, #edf1f5) !important;
   text-align: left !important;
   vertical-align: middle !important;
   white-space: nowrap !important;
@@ -9626,8 +9626,8 @@ body.auth-surface {
 
 .admin-v2-table th {
   height: 58px !important;
-  color: #334155 !important;
-  background: #fbfdff !important;
+  color: var(--adm-muted, #334155) !important;
+  background: var(--adm-surface-2, #fbfdff) !important;
   font-size: 16px !important;
 }
 
@@ -10267,16 +10267,6 @@ body.auth-surface {
   border-radius: 10px !important;
   background: #f6faff !important;
   font-size: 12px !important;
-}
-
-.admin-provider-expanded {
-  display: grid !important;
-  grid-template-columns: minmax(220px, 0.8fr) minmax(220px, 0.9fr) minmax(180px, 0.6fr) !important;
-  gap: 12px !important;
-  padding: 14px !important;
-  border: 1px solid #e4eef7 !important;
-  border-radius: 14px !important;
-  background: #f8fbfe !important;
 }
 
 .admin-provider-expanded .wide {
@@ -14559,9 +14549,9 @@ select option,
   display: grid;
   gap: 12px;
   padding: 14px;
-  border: 1px solid rgba(148, 163, 184, 0.14);
-  border-radius: 14px;
-  background: rgba(15, 23, 42, 0.34);
+  border: 1px solid var(--adm-border);
+  border-radius: 10px;
+  background: var(--adm-surface-2);
 }
 
 .admin-provider-routing-head {
@@ -14577,12 +14567,12 @@ select option,
 }
 
 .admin-provider-routing-head strong {
-  color: #f8fafc;
+  color: var(--adm-text);
 }
 
 .admin-provider-routing-head span,
 .admin-provider-routing-head small {
-  color: #94a3b8;
+  color: var(--adm-muted);
   font-size: 12px;
 }
 
@@ -14595,10 +14585,10 @@ select option,
 
 .admin-provider-routing-summary span {
   padding: 7px 10px;
-  border: 1px solid rgba(148, 163, 184, 0.12);
-  border-radius: 999px;
-  background: rgba(15, 23, 42, 0.56);
-  color: #e2e8f0;
+  border: 1px solid var(--adm-border);
+  border-radius: 6px;
+  background: var(--adm-surface);
+  color: var(--adm-text);
 }
 
 .admin-provider-routing-mode {
@@ -14610,17 +14600,17 @@ select option,
 .admin-provider-routing-mode button {
   height: 38px;
   padding: 0 14px;
-  border: 1px solid rgba(148, 163, 184, 0.16);
-  border-radius: 999px;
-  background: rgba(15, 23, 42, 0.56);
-  color: #cbd5e1;
+  border: 1px solid var(--adm-border);
+  border-radius: 7px;
+  background: var(--adm-surface);
+  color: var(--adm-muted);
   cursor: pointer;
 }
 
 .admin-provider-routing-mode button.active {
-  border-color: rgba(96, 165, 250, 0.44);
-  background: rgba(59, 130, 246, 0.18);
-  color: #eff6ff;
+  border-color: var(--adm-accent);
+  background: var(--adm-accent-soft);
+  color: var(--adm-accent);
 }
 
 .admin-provider-routing-select {
@@ -14638,9 +14628,9 @@ select option,
   display: grid;
   gap: 8px;
   padding: 12px;
-  border: 1px solid rgba(148, 163, 184, 0.12);
-  border-radius: 12px;
-  background: rgba(2, 6, 23, 0.34);
+  border: 1px solid var(--adm-border);
+  border-radius: 8px;
+  background: var(--adm-surface);
 }
 
 .admin-provider-quota-card > div {
@@ -14651,13 +14641,14 @@ select option,
 }
 
 .admin-provider-quota-card strong {
-  color: #f8fafc;
+  color: var(--adm-text);
+  overflow-wrap: anywhere;
 }
 
 .admin-provider-quota-card small,
 .admin-provider-quota-card p,
 .admin-provider-quota-card > span {
-  color: #94a3b8;
+  color: var(--adm-muted);
 }
 
 .admin-provider-quota-card > span {
@@ -14671,15 +14662,15 @@ select option,
 }
 
 .admin-provider-quota-card.ready {
-  border-color: rgba(45, 212, 191, 0.24);
+  border-left: 3px solid var(--adm-accent);
 }
 
 .admin-provider-quota-card.cooling {
-  border-color: rgba(250, 204, 21, 0.24);
+  border-left: 3px solid var(--ds-status-warning, #b78031);
 }
 
 .admin-provider-quota-card.limited {
-  border-color: rgba(248, 113, 113, 0.24);
+  border-left: 3px solid var(--adm-danger);
 }
 
 .admin-icon-upload-field {
@@ -16986,7 +16977,7 @@ select option,
 }
 
 .model-price-row:nth-child(even):not(.header) {
-  background: #f7fbfc !important;
+  background: var(--ds-bg-subtle) !important;
 }
 
 .model-price-row.header {
@@ -16999,12 +16990,12 @@ select option,
 }
 
 .model-price-row span {
-  color: #334155 !important;
+  color: var(--ds-text-secondary) !important;
 }
 
 .model-price-row b {
-  color: #065f46 !important;
-  background: #dcfce7 !important;
+  color: var(--ds-action-primary) !important;
+  background: var(--ds-action-soft) !important;
 }
 
 .model-price-chip.modality-text { color: #1d4ed8 !important; background: #dbeafe !important; }
@@ -17014,8 +17005,8 @@ select option,
 .model-price-chip.modality-embedding { color: #475569 !important; background: #e2e8f0 !important; }
 
 .model-price-unit {
-  color: #334155 !important;
-  background: #eaf1f7 !important;
+  color: var(--ds-text-secondary) !important;
+  background: var(--ds-bg-muted) !important;
 }
 
 .studio-page {
@@ -17918,28 +17909,27 @@ select option,
 .model-price-panel,
 .model-price-table,
 .admin-price-provider-card {
-  color: #eaf4ff !important;
-  border-color: rgba(125, 211, 252, 0.18) !important;
-  background: #101b2d !important;
+  color: var(--ds-text-primary) !important;
+  border-color: var(--ds-border-default) !important;
+  background: var(--ds-bg-surface) !important;
 }
 
 .model-price-row,
 .admin-price-row {
-  color: #dbeafe !important;
-  border-color: rgba(148, 163, 184, 0.18) !important;
-  background: rgba(15, 23, 42, 0.72) !important;
+  color: var(--ds-text-primary) !important;
+  border-color: var(--ds-border-default) !important;
+  background: var(--ds-bg-surface) !important;
 }
 
 .model-price-row.header,
 .admin-price-provider-head {
-  color: #f8fafc !important;
-  background: linear-gradient(90deg, rgba(14, 116, 144, 0.34), rgba(30, 41, 59, 0.88)) !important;
+  color: var(--ds-text-secondary) !important;
+  background: var(--ds-bg-subtle) !important;
 }
 
-.model-price-row b,
 .model-price-row strong,
 .admin-price-row strong {
-  color: #bfdbfe !important;
+  color: var(--ds-text-primary) !important;
 }
 
 :root[data-theme="light"] body,

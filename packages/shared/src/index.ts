@@ -1380,6 +1380,15 @@ export interface CloseSupportTicketInput {
   expectedVersion: number;
 }
 
+export interface AdminActivityDay {
+  date: string;
+  tasks: number;
+  newUsers: number;
+  creditsConsumed: number;
+  redemptions: number;
+  redeemedCredits: number;
+}
+
 export interface AdminSummary {
   users: number;
   projects: number;
@@ -1398,6 +1407,8 @@ export interface AdminSummary {
   metricTimezone?: "Asia/Shanghai";
   refundCredits?: number;
   failedTasks?: number;
+  /** Last 30 calendar days including today, in Asia/Shanghai; zero-filled after querying. */
+  activity?: AdminActivityDay[];
   operations?: { openTickets: number; pendingWorks: number; pendingOrders: number; activeTasks: number; updatedAt: string };
   grossMarginEstimate?: number | null;
   grossMarginRate?: number | null;

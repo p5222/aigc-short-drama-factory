@@ -38,25 +38,20 @@ async function noOverflow(page: Page) {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBeTruthy();
 }
 
-test("paused membership stays visible and uses current configured prices in light and dark", async ({ page }, info) => {
+test("store checkout keeps paused membership compact without hiding order access in light and dark", async ({ page }, info) => {
   await fixture(page);
   await page.goto("/#/recharge");
-  await expect(page.getByRole("heading", { name: "会员中心与在线支付" })).toBeVisible();
-  await expect(page.getByText(/会员购买暂未开放/)).toBeVisible();
-  await expect(page.locator(".membership-card").first()).toContainText("48.50");
-  await expect(page.locator(".membership-card").first()).toContainText("4,567");
-  await expect(page.getByRole("button", { name: "暂未开放购买" })).toHaveCount(2);
-  if (info.project.name === "mobile") {
-    const first = (await page.locator(".membership-card").first().boundingBox())!;
-    const second = (await page.locator(".membership-card").last().boundingBox())!;
-    expect(second.y).toBeGreaterThanOrEqual(first.y + first.height);
-  }
+  await expect(page.getByRole("heading", { name: "历史订单与会员" })).toBeVisible();
+  await expect(page.locator(".membership-card")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "查看历史订单与会员", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "查看历史订单与会员", exact: true }).click();
+  await expect(page.getByText("暂无站内在线订单或已购会员。积分可通过小店购买兑换码后入账。")).toBeVisible();
   await noOverflow(page);
   await page.locator(".online-checkout").screenshot({ path: `../../outputs/membership-commercialization-20261027/member-paused-${info.project.name}.png` });
   await page.evaluate(() => localStorage.setItem("manjiao-theme", "dark"));
   await page.reload();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
-  await expect(page.getByText(/会员购买暂未开放/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "查看历史订单与会员", exact: true })).toBeVisible();
   await noOverflow(page);
   await page.locator(".online-checkout").screenshot({ path: `../../outputs/membership-commercialization-20261027/member-dark-${info.project.name}.png` });
 });
@@ -122,7 +117,7 @@ test("lost checkout response survives reload and recovers while new sales are pa
   await expect(page.getByRole("dialog")).toContainText("下单结果待核对");
   await page.route("**/api/billing/availability", route => route.fulfill({ json: { wechat: false, membership: false, autoRenew: false } }));
   await page.reload();
-  await expect(page.getByRole("button", { name: "暂未开放购买" })).toHaveCount(2);
+  await expect(page.locator(".membership-card")).toHaveCount(0);
   await page.getByRole("button", { name: "恢复上次购买 · 当前配置会员" }).click();
   await expect(page.getByRole("region", { name: "当前支付订单" })).toContainText("已到账");
   await expect(page.getByLabel("待恢复购买请求")).toHaveCount(0);
@@ -271,11 +266,11 @@ test("membership read failure offers recovery without claiming normal membership
     : route.fulfill({ json: { active: null, paidThrough: null, autoRenew: false } }));
   await page.goto("/#/recharge");
   await expect(page.getByText(/在线支付信息暂时加载失败/)).toBeVisible();
-  await expect(page.locator(".membership-state")).not.toContainText("普通创作者");
-  await expect(page.getByRole("button", { name: "正在读取…" })).toHaveCount(2);
+  await expect(page.getByText("普通创作者", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "购买一个月", exact: true })).toHaveCount(0);
   failing = false;
   await page.getByRole("button", { name: "刷新支付信息" }).click();
-  await expect(page.locator(".membership-state")).toContainText("普通创作者");
+  await expect(page.getByRole("button", { name: "查看历史订单与会员", exact: true })).toBeVisible();
   await noOverflow(page);
 });
 

@@ -270,7 +270,7 @@
 .work-status.is-ok { color: #0b8f7b; background: rgba(11,143,123,.12); }
 .work-status.is-busy { color: #b57a08; background: rgba(240,160,32,.14); }
 .work-status.is-bad { color: #c0392b; background: rgba(226,84,74,.13); }
-.work-status.is-muted { color: var(--text-tertiary, #737780); background: rgba(127,127,127,.1); }
+.work-status.is-muted { color: var(--ds-text-secondary); background: rgba(127,127,127,.1); }
 .project-card { position: relative; }
 .project-card.is-opening { pointer-events: none; }
 .card-opening-mask { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 8px; border-radius: inherit; background: color-mix(in srgb, var(--surface-base, #fff) 72%, transparent); font-size: 13px; font-weight: 600; }

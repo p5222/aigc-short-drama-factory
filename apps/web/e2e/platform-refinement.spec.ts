@@ -44,6 +44,7 @@ async function capture(page: Page, name: string) {
 test("model coverage counts declared models, exposes missing prices and opens the exact channel", async ({ page }) => {
   await fixtures(page);
   await page.goto("/admin#运营总览");
+  await page.getByRole("navigation", { name: "运营数据分区" }).getByRole("button", { name: /^渠道健康/ }).click();
   const channel = page.locator(".adm-health-row").filter({ hasText: "千问主渠道" });
   await expect(channel.locator("meter")).toHaveAttribute("value", "1");
   await expect(channel.locator("meter")).toHaveAttribute("max", "2");
@@ -56,6 +57,7 @@ test("model coverage counts declared models, exposes missing prices and opens th
   await page.keyboard.press("Escape");
   await page.goto("/admin#运营总览");
   await expect(page.getByRole("dialog")).toHaveCount(0);
+  await page.getByRole("navigation", { name: "运营数据分区" }).getByRole("button", { name: /^渠道健康/ }).click();
   await page.getByRole("button", { name: "切换主题", exact: true }).click();
   await capture(page, "overview-dark");
 });
@@ -84,6 +86,7 @@ test("prices compare models by route; grouped pages never split a channel; editi
 test("real colored marks render across repeated Gemini instances without duplicate gradient IDs", async ({ page }) => {
   await fixtures(page);
   await page.goto("/admin#运营总览");
+  await page.getByRole("navigation", { name: "运营数据分区" }).getByRole("button", { name: /^渠道健康/ }).click();
   await expect(page.locator('[data-brand="seed"] path[fill="#37E1BE"]')).toHaveCount(1);
   await expect(page.locator('[data-brand="qwen"] path[fill="#082dff"]')).toHaveCount(1);
   const gradients = page.locator('[data-brand="gemini"] linearGradient');

@@ -823,39 +823,21 @@ test("uses image pricing only for the exact enabled provider-model pair", () => 
   assert.equal(resolveImageUnitCredits(prices, "zml-image", "disabled-model"), 28);
 });
 
-test("normalizes every Google image provider alias to the catalog provider", () => {
-  const googleProvider = providers.find((provider) => provider.id === "google-gemini-image");
-  assert.ok(googleProvider);
-  const defaultModelPrice = modelPrices.find((price) => (
-    price.enabled
-    && price.modality === "image"
-    && price.providerId === googleProvider.id
-    && price.model === googleProvider.models[0]
-  ));
-  assert.ok(defaultModelPrice);
-
+test("normalizes legacy Google image aliases after retiring the default channel", () => {
   for (const alias of ["google", "google-ai-studio", "google-gemini-image"]) {
-    assert.equal(normalizeImageProviderId(alias), googleProvider.id);
-    assert.equal(defaultImageUnitCredits(alias), defaultModelPrice.unitCredits);
+    assert.equal(normalizeImageProviderId(alias), "google-gemini-image");
+    assert.equal(defaultImageUnitCredits(alias), 24);
   }
 });
 
-test("keeps every Google image catalog price exact across the shared contract", () => {
-  const googleProvider = providers.find((provider) => provider.id === "google-gemini-image");
-  assert.ok(googleProvider);
-  const googlePrices = modelPrices.filter((price) => (
-    price.enabled
-    && price.modality === "image"
-    && price.providerId === googleProvider.id
-  ));
-  assert.equal(googlePrices.length, googleProvider.models.length);
-
-  for (const model of googleProvider.models) {
-    const catalogPrice = googlePrices.find((price) => price.model === model);
-    assert.ok(catalogPrice, `missing enabled catalog price for ${model}`);
-    assert.equal(resolveImageUnitCredits(modelPrices, "google", model), catalogPrice.unitCredits);
-    assert.equal(resolveImageUnitCredits(modelPrices, "google-ai-studio", model), catalogPrice.unitCredits);
+test("retired image channels and prices are absent while Google text remains", () => {
+  for (const id of ["google-gemini-image", "comfyui"]) {
+    assert.equal(providers.some(provider => provider.id === id), false);
+    assert.equal(modelPrices.some(price => price.providerId === id), false);
   }
+  assert.ok(providers.some(provider => provider.modality === "text" && provider.id.includes("google")));
+  const legacy = [imagePrice("google-gemini-image", "legacy-image", 16)];
+  assert.equal(resolveImageUnitCredits(legacy, "google", "legacy-image"), 16);
 });
 
 test("summarizes only real task type and status counts", () => {

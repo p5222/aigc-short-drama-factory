@@ -1,0 +1,12 @@
+.recharge-page .recharge-store-flow { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin: 0 0 24px; padding: 17px 20px; list-style: none; border: 1px solid var(--ds-border-default); border-radius: 12px; background: var(--ds-bg-subtle); }
+.recharge-page .recharge-store-flow li { display: flex; align-items: center; gap: 12px; padding: 0; border: 0; background: transparent; min-width: 0; }
+.recharge-page .recharge-store-flow li > span { display: grid; place-items: center; height: 30px; width: 30px; border-radius: 50%; background: var(--ds-action-soft); color: var(--ds-action-primary); font-size: 11px; flex: none; }
+.recharge-page .recharge-store-flow li > div { display: grid; gap: 3px; }
+.recharge-page .recharge-store-flow strong { font-size: 12px; color: var(--ds-text-primary); }
+.recharge-page .recharge-store-flow small { font-size: 11px; color: var(--ds-text-secondary); }
+.recharge-page .online-checkout-compact .panel-head { margin-bottom: 0; }
+.recharge-page .online-checkout-compact h2 { font-size: 16px; }
+@media (max-width: 600px) {
+  .recharge-page .recharge-store-flow { grid-template-columns: 1fr; padding: 16px; gap: 16px; }
+  .recharge-page .online-checkout .panel-head { flex-wrap: wrap; gap: 12px; }
+}

@@ -18,6 +18,7 @@ export function OnlineCheckout({ userId, plans, memberships, onRefresh }: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [loaded, setLoaded] = useState(false);
+  const [historyExpanded, setHistoryExpanded] = useState(false);
   const request = useRef<CheckoutRequest | undefined>(undefined);
   const requestOrderId = useRef<string | undefined>(undefined);
   const loadSequence = useRef(0);
@@ -154,18 +155,23 @@ export function OnlineCheckout({ userId, plans, memberships, onRefresh }: {
     finally { actionLock.current = false; setBusy(false); }
   }
   const qrAvailable = selected?.status === "pending" && selected.codeUrl && selected.expiresAt && Date.parse(selected.expiresAt) > now.current;
-  return <section className="panel online-checkout" aria-labelledby="online-payment-title">
-    <div className="panel-head"><div><h2 id="online-payment-title">会员中心与在线支付</h2><small>查看创作权益，核对购买与续费订单。</small></div>
-      <button className="ghost-button" type="button" disabled={busy} onClick={() => void load()}>刷新会员与订单</button></div>
+  const hasMembership = Boolean(membership?.active || membership?.scheduled?.length || membership?.lastExpired);
+  const needsAttention = Boolean(!loaded || error || storageError || savedRequests.length || selected || orders.some(order => order.status === "pending"));
+  const showBody = available.wechat || available.membership || hasMembership || needsAttention || historyExpanded;
+  return <section className={`panel online-checkout${showBody ? "" : " online-checkout-compact"}`} aria-labelledby="online-payment-title">
+    <div className="panel-head"><div><h2 id="online-payment-title">{available.wechat || available.membership ? "会员中心与在线支付" : "历史订单与会员"}</h2><small>{available.wechat || available.membership ? "查看创作权益，核对购买与续费订单。" : "已有订单可继续核对，已购权益按原有效期保留。"}</small></div>
+      {showBody ? <button className="ghost-button" type="button" disabled={busy} onClick={() => void load()}>刷新会员与订单</button>
+        : <button className="ghost-button" type="button" aria-expanded={false} onClick={() => setHistoryExpanded(true)}>查看历史订单与会员{orders.length ? ` · ${orders.length} 笔` : ""}</button>}</div>
+    {showBody ? <>
     {error && <InlineNotice tone="error">{error}<button className="ghost-button" type="button" onClick={() => void load()}>刷新支付信息</button></InlineNotice>}
     {storageError && <InlineNotice tone="error">{storageError}</InlineNotice>}
     {savedRequests.length > 0 && <div aria-label="待恢复购买请求"><p>上次购买尚待核对，可恢复原请求查看结果。</p>
       {savedRequests.map(item => <button className="ghost-button" key={item.requestId} disabled={busy || !loaded || Boolean(storageError)}
         onClick={() => void buy(item.planId, item.kind, item.expected)}>恢复上次购买 · {item.expected.planName}</button>)}</div>}
     {!loaded && !error && <p role="status">正在读取支付状态…</p>}
-    <MembershipCenter plans={memberships} status={membership} available={available.membership} loaded={loaded} busy={busy} blocked={Boolean(storageError)}
+    {available.membership || hasMembership ? <MembershipCenter plans={memberships} status={membership} available={available.membership} loaded={loaded} busy={busy} blocked={Boolean(storageError)}
       orders={orders} error={error || storageError} onBuy={plan => buy(plan.id, "membership", { planName: plan.name, amountFen: Math.round(plan.monthlyPrice * 100),
-        credits: plan.monthlyCredits, bonusCredits: 0, discountPercent: plan.discountPercent, priorityLevel: plan.priorityLevel })} />
+        credits: plan.monthlyCredits, bonusCredits: 0, discountPercent: plan.discountPercent, priorityLevel: plan.priorityLevel })} /> : null}
     {available.wechat && <div className="online-plan-list" aria-label="微信充值套餐">
       {plans.filter(plan => plan.enabled).map(plan => <button type="button" className="ghost-button" disabled={busy || !loaded || Boolean(storageError)} key={plan.id}
         onClick={() => void buy(plan.id, "recharge", { planName: plan.name, amountFen: Math.round(plan.price * 100), credits: plan.credits,
@@ -193,5 +199,8 @@ export function OnlineCheckout({ userId, plans, memberships, onRefresh }: {
         <span>{order.planName}</span><span>¥{order.amountCny.toFixed(2)}</span><span>{label(order)}</span><small>{new Date(order.createdAt).toLocaleString("zh-CN")}</small>
       </button>)}</div>
     </details>}
+    {loaded && !available.wechat && !available.membership && !hasMembership && !orders.length && !savedRequests.length ? <p>暂无站内在线订单或已购会员。积分可通过小店购买兑换码后入账。</p> : null}
+    {historyExpanded && !needsAttention && !hasMembership && !available.wechat && !available.membership ? <button className="ghost-button" type="button" aria-expanded={true} onClick={() => setHistoryExpanded(false)}>收起历史记录</button> : null}
+    </> : null}
   </section>;
 }

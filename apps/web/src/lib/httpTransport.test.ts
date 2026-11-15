@@ -68,3 +68,15 @@ test("explicit cancellation is preserved and malformed JSON has a recoverable me
   await assert.rejects(request("/", { signal: abort.signal }, response => response.json()), { name: "AbortError" });
   await assert.rejects(request("/", {}, response => response.json()), { status: 502 });
 });
+
+test("malformed successful mutation response preserves unknown acceptance and request identity without retry", async () => {
+  let calls = 0;
+  const request = createHttpTransport({
+    baseUrl: "/api", readToken: () => "", expireSession: () => {},
+    fetch: async () => { calls++; return new Response("invalid", { headers: { "x-request-id": "accepted-write" } }); }
+  });
+  await assert.rejects(request("/generate", { method: "POST" }, response => response.json()),
+    error => error instanceof HttpError && error.code === "operation_result_unknown"
+      && error.requestId === "accepted-write" && error.message.includes("先刷新状态核对"));
+  assert.equal(calls, 1);
+});

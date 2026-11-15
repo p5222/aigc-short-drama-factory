@@ -41,12 +41,14 @@ export function createHttpTransport(options: TransportOptions) {
     const isRead = !init.method || /^(GET|HEAD)$/i.test(init.method);
     const timeoutMs = isRead ? options.readTimeoutMs ?? 30_000 : options.writeTimeoutMs ?? 180_000;
     let timedOut = false;
+    let responseRequestId: string | undefined;
     const abort = () => controller.abort(init.signal?.reason);
     if (init.signal?.aborted) abort();
     else init.signal?.addEventListener("abort", abort, { once: true });
     const timer = setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
     try {
       const response = await (options.fetch ?? fetch)(`${options.baseUrl}${path}`, { ...init, headers, signal: controller.signal });
+      responseRequestId = response.headers.get("x-request-id") ?? undefined;
       // A response from the previous login must never sign out the new session.
       if (response.status === 401 && requestToken && authorizedToken === `Bearer ${requestToken}` && options.readToken() === requestToken) {
         options.expireSession(path);
@@ -68,9 +70,10 @@ export function createHttpTransport(options: TransportOptions) {
     } catch (error) {
       if (error instanceof HttpError) throw error;
       if (init.signal?.aborted) throw error;
-      if (timedOut) throw new HttpError(isRead ? "读取超时，请重试。" : "等待响应超时，操作可能已受理。请先刷新状态核对，避免重复提交。", 408);
-      if (error instanceof SyntaxError) throw new HttpError("服务返回的数据格式异常，请刷新重试。", 502);
-      throw new HttpError(isRead ? "网络连接中断，请检查网络后重试。" : "连接中断，暂时无法确认操作结果。请恢复网络并刷新状态核对，避免重复提交。", 0);
+      const code = isRead ? undefined : "operation_result_unknown";
+      if (timedOut) throw new HttpError(isRead ? "读取超时，请重试。" : "等待响应超时，操作可能已受理。请先刷新状态核对，避免重复提交。", 408, responseRequestId, code);
+      if (error instanceof SyntaxError) throw new HttpError(isRead ? "服务返回的数据格式异常，请刷新重试。" : "响应数据异常，暂时无法确认操作结果。操作可能已受理，请先刷新状态核对，避免重复提交。", 502, responseRequestId, code);
+      throw new HttpError(isRead ? "网络连接中断，请检查网络后重试。" : "连接中断，暂时无法确认操作结果。请恢复网络并刷新状态核对，避免重复提交。", 0, responseRequestId, code);
     } finally {
       clearTimeout(timer);
       init.signal?.removeEventListener("abort", abort);

@@ -9,6 +9,7 @@ import { normalizeRedeemCode, redeemCodeStatus, type RedeemBatchInput, type Rede
 import type { ExportJob as ExportJobRow, Prisma, PrismaClient } from "@prisma/client";
 import { adminUserQuery, type AdminUserPageOptions } from "./adminUserQuery.js";
 import { adminCommercialSummary } from "./adminCommercial.js";
+import { getAdminActivity } from "./adminActivity.js";
 import { lockCreditAccount } from "../billing/accountCredits.js";
 import { ensureFunding, grantFunding, spendFunding } from "../billing/funding.js";
 import { creditPolicy, quotePrice, readCostRule } from "../billing/pricing.js";
@@ -1067,7 +1068,7 @@ export async function getAdminSummary(_userId = DEMO_USER_ID): Promise<AdminSumm
   const chinaOffsetMs = 8 * 60 * 60 * 1000;
   const dayStart = new Date(Math.floor((Date.now() + chinaOffsetMs) / dayMs) * dayMs - chinaOffsetMs);
   const taskWhere = { NOT: { id: { startsWith: "content_operation_" } } };
-  const [users, projects, tasksToday, groups, accountTotals, consumed, refunds, paidOrders, openTickets, pendingWorks, pendingOrders] = await Promise.all([
+  const [users, projects, tasksToday, groups, accountTotals, consumed, refunds, paidOrders, openTickets, pendingWorks, pendingOrders, activity] = await Promise.all([
     prisma.user.count(),
     prisma.project.count(),
     prisma.generationTask.count({ where: { ...taskWhere, createdAt: { gte: dayStart, lt: new Date(dayStart.getTime() + dayMs) } } }),
@@ -1078,7 +1079,8 @@ export async function getAdminSummary(_userId = DEMO_USER_ID): Promise<AdminSumm
     prisma.rechargeOrder.aggregate({ where: { status: "paid", channel: { not: "mock" } }, _sum: { amountCny: true } }),
     prisma.supportTicket.count({ where: { status: "open" } }),
     prisma.showcaseWork.count({ where: { status: "pending" } }),
-    prisma.rechargeOrder.count({ where: { status: "pending", channel: { not: "mock" } } })
+    prisma.rechargeOrder.count({ where: { status: "pending", channel: { not: "mock" } } }),
+    getAdminActivity(prisma)
   ]);
   const totalTasks = groups.reduce((sum, group) => sum + group._count._all, 0);
   const done = groups.filter(group => group.status === "succeeded").reduce((sum, group) => sum + group._count._all, 0);
@@ -1107,7 +1109,7 @@ export async function getAdminSummary(_userId = DEMO_USER_ID): Promise<AdminSumm
       .sort((a, b) => b.credits - a.credits || b.tasks - a.tasks).slice(0, 12);
   };
   return {
-    users, projects, tasksToday, totalTasks, completedTasks,
+    users, projects, tasksToday, totalTasks, completedTasks, activity,
     operations: {
       openTickets, pendingWorks, pendingOrders,
       activeTasks: groups.filter(group => ["pending", "running"].includes(group.status)).reduce((sum, group) => sum + group._count._all, 0),

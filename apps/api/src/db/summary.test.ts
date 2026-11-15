@@ -20,6 +20,44 @@ test("PostgreSQL summaries use complete records and distinguish receipts from pr
     return db.project.create({ data: { id: `summary_project_${crypto.randomUUID()}`, userId, name: `Summary project ${index}`, type: "test", sourceType: "idea", artStyle: "test", videoRatio: "9:16", status: "planning", storyboards: 999 } });
   }
   try {
+    await t.test("daily activity uses China midnight, fills empty dates and excludes locks and non-consumption credits", async () => {
+      const { getAdminActivity } = await import("./adminActivity.js");
+      const now = new Date("2035-05-01T12:00:00Z");
+      const before = await getAdminActivity(db, now);
+      const userId = await user();
+      await db.user.update({ where: { id: userId }, data: { createdAt: new Date("2035-04-30T16:00:00Z") } });
+      const base = { userId, type: "text", title: "Daily activity test", provider: "fixture", model: "fixture", status: "succeeded" };
+      await db.generationTask.createMany({ data: [
+        { ...base, id: `daily_${crypto.randomUUID()}`, createdAt: new Date("2035-04-01T15:59:59.999Z") },
+        { ...base, id: `daily_${crypto.randomUUID()}`, createdAt: new Date("2035-04-01T16:00:00Z") },
+        { ...base, id: `daily_${crypto.randomUUID()}`, createdAt: new Date("2035-04-30T15:59:59.999Z") },
+        { ...base, id: `daily_${crypto.randomUUID()}`, createdAt: new Date("2035-04-30T16:00:00Z") },
+        { ...base, id: `daily_${crypto.randomUUID()}`, createdAt: new Date("2035-05-01T16:00:00Z") },
+        { ...base, id: `content_operation_${crypto.randomUUID()}`, createdAt: now }
+      ] });
+      await db.creditTransaction.createMany({ data: [
+        { id: `daily_${crypto.randomUUID()}`, userId, type: "consume", amount: -12, balanceAfter: 88, description: "Debit", createdAt: now },
+        { id: `daily_${crypto.randomUUID()}`, userId, type: "refund", amount: 90, balanceAfter: 88, description: "Release", createdAt: now },
+        { id: `daily_${crypto.randomUUID()}`, userId, type: "consume", amount: 3, balanceAfter: 88, description: "Not a debit", createdAt: now }
+      ] });
+      const codeId = `daily_code_${crypto.randomUUID()}`;
+      await db.redeemCode.create({ data: { id: codeId, code: codeId, name: "Store code", credits: 30,
+        redemptions: { create: { id: `daily_${crypto.randomUUID()}`, userId, credits: 30, createdAt: now } } } });
+      try {
+        const after = await getAdminActivity(db, now);
+        assert.equal(after.length, 30);
+        assert.equal(after[0]!.date, "2035-04-02"); assert.equal(after[29]!.date, "2035-05-01");
+        assert.equal(after.reduce((sum, day, index) => sum + day.tasks - before[index]!.tasks, 0), 3);
+        assert.equal(after[0]!.tasks - before[0]!.tasks, 1);
+        assert.equal(after[28]!.tasks - before[28]!.tasks, 1);
+        assert.equal(after[29]!.tasks - before[29]!.tasks, 1);
+        assert.equal(after[29]!.newUsers - before[29]!.newUsers, 1);
+        assert.equal(after[29]!.creditsConsumed - before[29]!.creditsConsumed, 12);
+        assert.equal(after[29]!.redemptions - before[29]!.redemptions, 1);
+        assert.equal(after[29]!.redeemedCredits - before[29]!.redeemedCredits, 30);
+        assert.deepEqual(after[12], before[12], "An empty date remains an explicit zero-filled bucket");
+      } finally { await db.redeemCode.delete({ where: { id: codeId } }); }
+    });
     await t.test("workbench totals include older projects, actual storyboards and tasks outside recent cards", async () => {
       const userId = await user(); const outsider = await user(); await project(outsider, 100);
       const projects = await Promise.all(Array.from({ length: 9 }, (_, index) => project(userId, index)));
