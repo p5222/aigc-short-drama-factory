@@ -56,7 +56,7 @@ async function newFromSidebar(page: Page) {
   await page.locator(".side-create").click();
 }
 async function enterText(page: Page) {
-  await page.getByRole("button", { name: /开始小说改编/ }).click();
+  await page.getByRole("button", { name: "导入小说", exact: true }).click();
   await expect(page.getByLabel("小说正文", { exact: true })).toHaveValue("");
   await expect(page.getByLabel("作品名称", { exact: true })).toHaveValue("");
   await page.getByLabel("作品名称", { exact: true }).fill(project.name);
@@ -67,7 +67,7 @@ test("all new-drama entry paths are blank; draft recovery is explicit, including
   await fixtures(page);
   await page.goto("/#/workbench");
   await newFromSidebar(page);
-  await expect(page.getByRole("button", { name: /开始小说改编/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: "导入小说", exact: true })).toBeVisible();
   await screenshot(page, "creation-entry");
   await enterText(page);
   await newFromSidebar(page);
@@ -75,7 +75,7 @@ test("all new-drama entry paths are blank; draft recovery is explicit, including
   await page.getByRole("button", { name: "恢复草稿", exact: true }).click();
   await expect(page.getByLabel("小说正文", { exact: true })).toHaveValue(source);
   await newFromSidebar(page);
-  await page.getByRole("button", { name: /开始小说改编/ }).click();
+  await page.getByRole("button", { name: "导入小说", exact: true }).click();
   await expect(page.getByLabel("小说正文", { exact: true })).toHaveValue("");
   await expect(page.getByLabel("作品名称", { exact: true })).toHaveValue("");
 });
@@ -124,7 +124,7 @@ test("new remains guarded while the creation result is pending", async ({ page }
   finish();
   await expect(page.getByText("界面验证：稍后重试", { exact: true })).toBeVisible();
   await newFromSidebar(page);
-  await expect(page.getByRole("button", { name: /开始小说改编/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: "导入小说", exact: true })).toBeVisible();
 });
 
 test("populated production stages, compact drawers and content fresh entry", async ({ page }, info) => {
@@ -177,14 +177,22 @@ test("populated production stages, compact drawers and content fresh entry", asy
   expect(errors).toEqual([]);
 });
 
-test("public hero has transparent navigation and original video colors", async ({ page }) => {
+test("public home keeps one controlled example and keyboard-accessible creation", async ({ page }) => {
   await page.route("**/api/**", route => route.fulfill({ json: [] }));
   await page.goto("/");
-  await expect(page.locator(".cine-bg-buffer").first()).toBeAttached();
-  await expect(page.locator(".cine-top-nav")).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
-  await expect(page.locator(".cine-top-nav")).toHaveCSS("backdrop-filter", "none");
-  await expect(page.locator(".cine-bg-buffer").first()).toHaveCSS("filter", "none");
-  await expect(page.locator(".cine-bottom-gradient,.cine-left-gradient,.cine-radial-glow")).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "漫剧创作", exact: true })).toBeVisible();
+  await expect(page.locator("video")).toHaveCount(1);
+  expect(await page.locator("video").evaluate(video => video.controls && !video.autoplay && video.paused)).toBe(true);
+  const example = page.getByRole("button", { name: "角色设定", exact: true });
+  await example.focus();
+  await page.keyboard.press("Enter");
+  await expect(example).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("video")).toHaveAttribute("src", /photo-w/);
+  await expect(page.locator("video")).toHaveCount(1);
+  await page.getByRole("button", { name: "开始创作", exact: true }).click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("button", { name: "开始创作", exact: true })).toBeFocused();
   await screenshot(page, "public-home");
 });
 

@@ -3,7 +3,7 @@ import { test, expect, type Page } from "@playwright/test";
 async function openRecovery(page: Page) {
   await page.route("**/api/**", route => route.fulfill({ json: [] }));
   await page.goto("/");
-  await page.getByRole("button", { name: "开始制作我的故事", exact: true }).click();
+  await page.getByRole("button", { name: "开始创作", exact: true }).click();
   await page.getByRole("button", { name: "忘记密码?", exact: true }).click();
   await expect(page.getByRole("heading", { name: "找回密码", exact: true })).toBeVisible();
 }

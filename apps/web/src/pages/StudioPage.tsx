@@ -296,7 +296,7 @@ export function StudioPage({ projects, tasks, onOpenProject, onRefresh }: Studio
           <Film size={34} />
           <div>
             <h1>剪辑中心</h1>
-            <p>这里是跨作品的合成与导出中心。先在「内容创作」完成一部漫剧的剧本与分镜，生成镜头视频后，回到这里连播预览、合成 MP4、生成配音和字幕。</p>
+            <p>还没有可剪辑的作品。</p>
           </div>
         </section>
       </div>
@@ -307,9 +307,7 @@ export function StudioPage({ projects, tasks, onOpenProject, onRefresh }: Studio
     <div className="page-stack studio-page">
       <section className="studio-hero">
         <div>
-          <span className="section-kicker">COMPOSE & EXPORT</span>
           <h1>剪辑中心</h1>
-          <p>选择作品后预览视频片段，查看费用并导出全部剧集。按集导出或调整镜头顺序，请进入生产台的成片阶段。</p>
         </div>
         <div className="studio-hero-stats">
           <StudioStat label="可连播片段" value={`${shotClips.length}/${storyboards.length || 0}`} ready={shotClips.length > 0} />
@@ -323,7 +321,6 @@ export function StudioPage({ projects, tasks, onOpenProject, onRefresh }: Studio
           <div className="studio-panel-head">
             <div>
               <h2>作品队列</h2>
-              <small>选择要合成与导出的作品</small>
             </div>
             <button className="studio-icon-button" onClick={() => void refreshStudio()} disabled={Boolean(busyAction)} aria-label="刷新剪辑中心">
               {busyAction === "refresh" ? <Loader2 size={16} className="spin-icon" /> : <RefreshCw size={16} />}

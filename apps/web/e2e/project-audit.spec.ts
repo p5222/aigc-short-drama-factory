@@ -72,7 +72,7 @@ test("same-user session recovery survives storage method failures and returns to
   await signIn(page);
   await expect(page.getByRole("heading", { name: "我的账户", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "退出登录", exact: true }).last().click();
-  await expect(page.getByRole("button", { name: "开始制作我的故事", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "开始创作", exact: true })).toBeVisible();
 });
 
 test("chapter conflict retains the draft; an accepted new version survives failed history refresh", async ({ page }, info) => {
@@ -125,9 +125,8 @@ test("English showcase uses translated controls and unchanged category keys acro
     return route.fulfill({ json: [] });
   });
   await page.goto("/");
-  await page.getByRole("button", { name: "选择语言", exact: true }).click();
-  await page.getByRole("button", { name: "English", exact: true }).click();
-  await page.getByRole("button", { name: "Live Studio", exact: true }).click();
+  await page.getByRole("combobox", { name: "选择语言", exact: true }).selectOption("en");
+  await page.getByRole("button", { name: "Showcase", exact: true }).click();
   const request = page.waitForRequest(req => {
     const url = new URL(req.url());
     return url.pathname.endsWith("/showcase/works") && url.searchParams.get("category") === "科幻风";

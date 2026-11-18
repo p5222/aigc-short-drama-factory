@@ -159,7 +159,7 @@ export function OnlineCheckout({ userId, plans, memberships, onRefresh }: {
   const needsAttention = Boolean(!loaded || error || storageError || savedRequests.length || selected || orders.some(order => order.status === "pending"));
   const showBody = available.wechat || available.membership || hasMembership || needsAttention || historyExpanded;
   return <section className={`panel online-checkout${showBody ? "" : " online-checkout-compact"}`} aria-labelledby="online-payment-title">
-    <div className="panel-head"><div><h2 id="online-payment-title">{available.wechat || available.membership ? "会员中心与在线支付" : "历史订单与会员"}</h2><small>{available.wechat || available.membership ? "查看创作权益，核对购买与续费订单。" : "已有订单可继续核对，已购权益按原有效期保留。"}</small></div>
+    <div className="panel-head"><h2 id="online-payment-title">{available.wechat || available.membership ? "会员中心与在线支付" : "历史订单与会员"}</h2>
       {showBody ? <button className="ghost-button" type="button" disabled={busy} onClick={() => void load()}>刷新会员与订单</button>
         : <button className="ghost-button" type="button" aria-expanded={false} onClick={() => setHistoryExpanded(true)}>查看历史订单与会员{orders.length ? ` · ${orders.length} 笔` : ""}</button>}</div>
     {showBody ? <>

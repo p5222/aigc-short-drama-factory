@@ -360,7 +360,7 @@ export function AdminPage({
   return (
     <AdminActionContext.Provider value={{ pending: actionPending, message, error, version: noticeVersion }}>
     <div className="admin-v2-page" aria-busy={actionPending}>
-      <PageHeader eyebrow="运营控制台" title={current.title} description={current.subtitle} actions={
+      <PageHeader title={current.title} actions={
         <div className="admin-v2-title-actions">
           {!["支持工单", "兑换码"].includes(activeModule) ? <button className="admin-icon-btn" disabled={actionPending} onClick={() => void actionRunner.current(async () => { await onRefresh(); }, "后台数据已刷新。") } title="刷新" aria-label="刷新后台数据">
             <RefreshCw size={16} /><span>刷新数据</span>
@@ -2435,7 +2435,6 @@ function UsersSection({
         {selectedVisibleCount ? <div className="adm-selection-bar" role="region" aria-label="用户批量操作"><strong>本页已选 {selectedVisibleCount} 位</strong><span>不修改当前管理员和已删除账号</span><button className="admin-secondary-btn compact" disabled={action.pending || loading || Boolean(loadError) || status === "deleted"} type="button" onClick={() => void batchSetStatus("active")}>启用当前已选</button><button className="admin-secondary-btn compact" disabled={action.pending || loading || Boolean(loadError) || status === "deleted"} type="button" onClick={() => void batchSetStatus("disabled")}>停用当前已选</button><button className="admin-text-btn" type="button" onClick={() => setSelectedUserIds([])}>取消选择</button></div> : null}
         <AdminTablePage
           title="账号列表"
-          summary="查看账号与使用概况，点击管理展开完整资料。"
           actions={<div className="adm-table-tools"><label className="admin-row-checkbox"><input type="checkbox" checked={allVisibleSelected} disabled={loading || Boolean(loadError) || !rows.length} ref={node => { if (node) node.indeterminate = Boolean(selectedVisibleCount && !allVisibleSelected); }} onChange={toggleVisibleUsers} />选择本页</label><details className="adm-column-picker"><summary><SlidersHorizontal size={15} />显示列</summary><div>{optionalColumns.map(column => <label key={column.key}><input type="checkbox" checked={visibleColumns.includes(column.key)} onChange={() => setVisibleColumns(current => current.includes(column.key) ? current.filter(key => key !== column.key) : [...current, column.key])} />{column.label}</label>)}</div></details></div>}
           columns={columns}
           rows={rows}

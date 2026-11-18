@@ -54,7 +54,6 @@ export function ScriptsPage({
   const currentContentPage = Math.min(contentPage, Math.max(1, Math.ceil(visibleContent.length / pageSize)));
   const currentProductionPage = Math.min(productionPage, Math.max(1, Math.ceil(visibleProjects.length / pageSize)));
   useEffect(() => { setContentPage(currentContentPage); setProductionPage(currentProductionPage); }, [currentContentPage, currentProductionPage]);
-  const totalCount = contentProjects.length + projects.length;
   const sectionOrder = !visibleContent.length && visibleProjects.length ? ["production", "content"] : ["content", "production"];
 
   async function deleteWork(project: NonNullable<typeof deleteTarget>) {
@@ -69,7 +68,7 @@ export function ScriptsPage({
 
   return (
     <div className="page-stack scripts-page creator-page">
-      <PageHeader title="我的作品" description={`共 ${totalCount} 部作品 · 从故事到成片，继续上次创作。`} actions={<>
+      <PageHeader title="我的作品" actions={<>
           <button className="ghost-button" type="button" onClick={onNewContent}>
             <StudioIcon stage="content" size={18} /> 写新故事
           </button>

@@ -2,19 +2,14 @@
 :root .product-shell .cw2-paper-editor { display: grid; gap: 18px; }
 :root .product-shell .cw2-paper-editor textarea { min-height: clamp(280px,48vh,560px); width: 100%; padding: 18px; line-height: 2; font-size: 14px; resize: vertical; }
 :root .product-shell .cw2-paper-editor input { font-size: 16px; font-weight: 550; }
-:root .app-shell.product-shell .creation-entry-page { max-width: 1360px; margin: 0 auto; padding-top: 48px; }
-:root .app-shell.product-shell .creation-entry-grid { gap: 24px; }
+:root .app-shell.product-shell .creation-entry-page { max-width: 920px; width: 100%; margin: 0 auto; padding-top: 40px; }
 :root .app-shell.product-shell .creation-entry-grid > button {
-  display: flex; flex-direction: column; align-items: flex-start; gap: 16px; min-height: 300px;
-  padding: 32px; text-align: left; background: var(--ds-bg-surface); border: 1px solid var(--ds-border-default);
-  color: var(--ds-text-primary); box-shadow: none; transition: border-color .16s, box-shadow .16s;
+  display: flex; align-items: center; text-align: left; background: var(--ds-bg-surface); border: 1px solid var(--ds-border-default);
+  color: var(--ds-text-primary); box-shadow: none; transition: border-color .16s;
 }
-:root .app-shell.product-shell .creation-entry-grid > button:hover { border-color: var(--ds-action-primary); box-shadow: 0 8px 28px color-mix(in srgb,var(--ds-action-primary) 8%,transparent); }
-.creation-entry-grid .creation-entry-icon { display: grid; place-items: center; width: 56px; height: 56px; background: var(--ds-action-soft); color: var(--ds-action-primary); border-radius: 16px; }
-.creation-entry-grid > button > small { color: var(--ds-text-muted); font-size: 12px; }
-:root .app-shell.product-shell .creation-entry-grid > button > strong { font-size: 24px; font-weight: 600; }
-.creation-entry-grid > button > span:not(.creation-entry-icon) { max-width: 390px; line-height: 1.9; color: var(--ds-text-secondary); font-size: 14px; }
-.creation-entry-grid > button > b { display: flex; width: 100%; justify-content: space-between; margin-top: auto; padding-top: 16px; border-top: 1px solid var(--ds-border-divider); color: var(--ds-action-primary); font-size: 13px; font-weight: 550; }
+:root .app-shell.product-shell .creation-entry-grid > button:hover { border-color: var(--ds-action-primary); }
+.creation-entry-grid .creation-entry-icon { display: grid; place-items: center; width: 44px; height: 44px; background: var(--ds-action-soft); color: var(--ds-action-primary); border-radius: 8px; flex-shrink: 0; }
+.creation-entry-grid > button > strong { flex: 1; font-weight: 550; }
 .creation-draft-recovery { display: flex; align-items: center; gap: 16px; padding: 20px 24px; border: 1px solid var(--ds-border-default); border-radius: 14px; background: var(--ds-bg-surface); }
 .creation-draft-recovery > svg { flex-shrink: 0; color: var(--ds-action-primary); }
 .creation-draft-recovery > div { display: grid; gap: 5px; flex: 1; min-width: 0; overflow-wrap: anywhere; }
@@ -152,7 +147,6 @@
 @media (max-width: 640px) {
   :root .app-shell.product-shell .creation-entry-page { padding-top: 28px; }
   :root .app-shell.product-shell .creation-entry-grid { grid-template-columns: minmax(0,1fr); gap: 16px; }
-  :root .app-shell.product-shell .creation-entry-grid > button { min-height: 260px; padding: 24px; gap: 12px; }
   .creation-draft-recovery { flex-wrap: wrap; padding: 18px; }
   .creation-draft-recovery > button { width: 100%; }
   .creation-journey ol { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 20px; }

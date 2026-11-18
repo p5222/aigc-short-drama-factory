@@ -27,10 +27,10 @@ export function OperationsOverview({ summary, providers, modelPrices, onConfigur
     </div>
     {view === "总览" ? <>
       <div className="ops-kpis">
-        <Metric label="注册用户" value={number(summary?.users)} hint="累计注册账号" icon={<UserRound size={18} />} />
-        <Metric label="创作项目" value={number(summary?.projects)} hint="累计创作项目" icon={<ReceiptText size={18} />} />
-        <Metric label="今日任务" value={number(summary?.tasksToday)} hint="北京时间 00:00 起" icon={<Activity size={18} />} />
-        <Metric label="实扣积分" value={number(summary?.creditsConsumed)} hint="累计消耗流水" icon={<WalletCards size={18} />} />
+        <Metric label="注册用户" value={number(summary?.users)} icon={<UserRound size={18} />} />
+        <Metric label="创作项目" value={number(summary?.projects)} icon={<ReceiptText size={18} />} />
+        <Metric label="今日任务" value={number(summary?.tasksToday)} icon={<Activity size={18} />} />
+        <Metric label="实扣积分" value={number(summary?.creditsConsumed)} icon={<WalletCards size={18} />} />
       </div>
       <div className="ops-actions" aria-label="运营待办">
         <strong>待办</strong>
@@ -44,7 +44,7 @@ export function OperationsOverview({ summary, providers, modelPrices, onConfigur
         <TaskHealth summary={summary} />
       </div>
       <section className="ops-card ops-capabilities" aria-label="创作能力准备情况">
-        <header><div><h2>创作能力</h2><p>按模型检查密钥、协议、价格与额度</p></div><button className="admin-text-btn" type="button" onClick={() => setView("渠道健康")}>渠道详情<ArrowUpRight size={15} /></button></header>
+        <header><h2>创作能力</h2><button className="admin-text-btn" type="button" onClick={() => setView("渠道健康")}>渠道详情<ArrowUpRight size={15} /></button></header>
         <div className="ops-capability-grid">{(["text", "image", "video", "tts"] as const).map(type => {
           const pool = health.filter(item => item.provider.modality === type && item.provider.enabled);
           const total = pool.reduce((sum, item) => sum + item.models.length, 0), ready = pool.reduce((sum, item) => sum + item.ready, 0);
@@ -63,8 +63,8 @@ export function OperationsOverview({ summary, providers, modelPrices, onConfigur
   </section>;
 }
 
-function Metric({ label, value, hint, icon }: { label: string; value: ReactNode; hint: string; icon: ReactNode }) {
-  return <article className="ops-kpi"><div><span>{label}</span>{icon}</div><strong>{value}</strong><small>{hint}</small></article>;
+function Metric({ label, value, hint, icon }: { label: string; value: ReactNode; hint?: string; icon: ReactNode }) {
+  return <article className="ops-kpi"><div><span>{label}</span>{icon}</div><strong>{value}</strong>{hint ? <small>{hint}</small> : null}</article>;
 }
 
 function Action({ label, value, action, target, icon }: { label: string; value?: number; action: string; target: string; icon: ReactNode }) {
@@ -85,14 +85,14 @@ function ActivityChart({ data }: { data?: AdminActivityDay[] }) {
   const maximum = Math.max(1, ...rows.map(row => row[metric]));
   const active = rows.find(row => row.date === selected) ?? rows.at(-1);
   return <section className="ops-card ops-trend" aria-label="运营趋势">
-    <header><div><h2>运营趋势</h2><p>按日期查看实际发生量</p></div><div className="ops-range" role="group" aria-label="趋势时间范围">{[7, 30].map(value => <button key={value} type="button" aria-pressed={days === value} onClick={() => { setDays(value); setSelected(undefined); }}>近 {value} 天</button>)}</div></header>
+    <header><h2>运营趋势</h2><div className="ops-range" role="group" aria-label="趋势时间范围">{[7, 30].map(value => <button key={value} type="button" aria-pressed={days === value} onClick={() => { setDays(value); setSelected(undefined); }}>近 {value} 天</button>)}</div></header>
     <div className="ops-chart-heading"><label><span className="ops-sr-only">趋势指标</span><select value={metric} onChange={event => setMetric(event.target.value as keyof typeof activityMetrics)}>{Object.entries(activityMetrics).map(([key, value]) => <option key={key} value={key}>{value.label}</option>)}</select></label><strong>{data ? number(total) : "未读取"} <small>{spec.unit}</small></strong><span>{active ? `${active.date.slice(5).replace("-", "/")} · ${number(active[metric])} ${spec.unit}` : "暂无趋势数据"}</span></div>
     {rows.length ? <div className="ops-chart" aria-label={`近 ${days} 天${spec.label}，共 ${total} ${spec.unit}`}>
       <span className="ops-chart-max">{number(maximum)}</span>
       <div className="ops-bars">{rows.map(row => <button key={row.date} type="button" onFocus={() => setSelected(row.date)} onMouseEnter={() => setSelected(row.date)} onClick={() => setSelected(row.date)} aria-label={`${row.date} ${spec.label} ${row[metric]} ${spec.unit}`} aria-pressed={active?.date === row.date}>
         <span style={{ height: `${row[metric] / maximum * 100}%` }} />
       </button>)}</div>
-      <div className="ops-chart-axis"><span>{rows[0]!.date.slice(5).replace("-", "/")}</span><span>{total === 0 ? "这段时间暂无记录" : "悬停或选择柱条查看当天数据"}</span><span>{rows.at(-1)!.date.slice(5).replace("-", "/")}</span></div>
+      <div className="ops-chart-axis"><span>{rows[0]!.date.slice(5).replace("-", "/")}</span>{total === 0 ? <span>这段时间暂无记录</span> : null}<span>{rows.at(-1)!.date.slice(5).replace("-", "/")}</span></div>
     </div> : <div className="ops-chart-empty" role="status">趋势数据尚未读取</div>}
   </section>;
 }

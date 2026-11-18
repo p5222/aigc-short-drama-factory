@@ -54,15 +54,15 @@ test("account overview exposes admin entry only to active administrators", async
   await page.getByRole("button", { name: "切换主题", exact: true }).click();
   await capture(page, "profile-dark");
 });
-test("creator recharge shows spendable balance and jumps to redeem without changing route", async ({ page }) => {
+test("creator recharge shows spendable balance and directly available redemption", async ({ page }) => {
   await fixture(page);
   await page.goto("/#/profile");
   await expect(page.getByRole("link", { name: /进入管理后台/ })).toHaveCount(0);
   await page.goto("/#/recharge");
   await expect(page.getByRole("region", { name: "充值账户概览" })).toContainText("12,080");
-  await page.getByRole("button", { name: "使用兑换码", exact: true }).click();
+  await expect(page.getByRole("textbox", { name: "兑换码", exact: true })).toBeVisible();
   await expect(page).toHaveURL(/#\/recharge$/);
-  await expect(page.getByRole("heading", { name: "已有卡密？直接兑换" })).toBeInViewport();
+  await expect(page.getByRole("heading", { name: "兑换积分", exact: true })).toBeInViewport();
   await page.evaluate(() => scrollTo(0, 0));
   await capture(page, "recharge-light");
   await page.getByRole("button", { name: "切换主题", exact: true }).click();
@@ -81,7 +81,7 @@ test("store purchase opens a separate shop and redemption updates the original a
   await page.route("**/api/credits/account", route => route.fulfill({ json: { balance: redemptions ? 17400 : 12400, frozenBalance: 320, totalRecharge: 20000, totalConsume: 7600 } }));
   await page.route("**/api/credits/redemptions?*", route => route.fulfill({ json: { items: [], total: 0, page: 1, pageSize: 20 } }));
   await page.goto("/#/recharge");
-  await expect(page.getByLabel("小店购买步骤")).toContainText("购买并获取兑换码");
+  await expect(page.getByText("在小店购买兑换码，回到本页兑换。", { exact: true })).toBeVisible();
   const link = page.getByRole("link", { name: "前往店铺购买", exact: true }).first();
   await expect(link).toHaveAttribute("rel", "noopener noreferrer");
   const popup = page.waitForEvent("popup");

@@ -119,7 +119,7 @@ export function TaskCenterPage({
 
   return (
     <div className="page-stack generation-queue-page creator-page" data-tour-id="task-center">
-      <PageHeader title="生成队列" description="查看创作进度，处理失败或待核对任务。正常提交的任务会在后台继续运行。" actions={
+      <PageHeader title="生成队列" actions={
           <button className="ghost-button" onClick={() => void runAction("__refresh__", "refresh")} disabled={Boolean(pendingActions.__refresh__)}>
             <RefreshCw size={18} />
             {pendingActions.__refresh__ ? "刷新中…" : "刷新队列"}

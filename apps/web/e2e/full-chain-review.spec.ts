@@ -203,7 +203,7 @@ test("failed-shot retry is scoped to the visible episode; a successful generatio
 test("new drama defaults to a configured text route and an actual configured video model", async ({ page }) => {
   await fixtures(page);
   await page.goto("/#/wizard");
-  await page.getByRole("button", { name: /开始小说改编/ }).click();
+  await page.getByRole("button", { name: "导入小说", exact: true }).click();
   await page.getByLabel("小说正文", { exact: true }).fill("第一章 雨后的旧书店\n她推开店门，发现了一封旧信。".repeat(4));
   await page.getByRole("button", { name: "下一步：全局设定", exact: true }).click();
   await page.getByRole("button", { name: "下一步：确认创建", exact: true }).click();

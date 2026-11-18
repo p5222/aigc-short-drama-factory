@@ -1,6 +1,6 @@
 .public-studio-page {
   min-height: 100vh;
-  padding: 112px max(24px, calc((100vw - 1280px) / 2)) 72px;
+  padding: 48px max(24px, calc((100vw - 1280px) / 2)) 64px;
   color: #fff;
   background: #050606;
 }
@@ -168,7 +168,7 @@
 }
 
 @media (max-width: 760px) {
-  .public-studio-page { padding: 126px 18px 56px; }
+  .public-studio-page { padding: 40px 20px 48px; }
   .public-studio-banner { min-height: 480px; padding: 28px; }
   .public-studio-toolbar { align-items: stretch; flex-direction: column; }
   .public-studio-toolbar label { width: 100%; }
@@ -194,10 +194,10 @@
 }
 
 /* Public discovery uses the same hierarchy as the signed-in library. */
-:root .public-studio-page { padding-top: 118px; padding-bottom: 64px; color: var(--ds-text-primary); background: var(--ds-bg-canvas); }
+:root .public-studio-page { color: var(--ds-text-primary); background: var(--ds-bg-canvas); }
 .public-studio-page .ui-page-heading { padding-bottom: 24px; margin-bottom: 24px; border-bottom: 1px solid var(--ds-border-default); }
 .public-studio-page :is(.primary-button, .ghost-button) { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; border: 1px solid var(--ds-border-default); border-radius: var(--ds-radius-control); padding: 10px 16px; font: 600 13px/1.5 var(--ds-font-body); color: var(--ds-text-primary); background: var(--ds-bg-surface); cursor: pointer; }
-.public-studio-page .primary-button { color: var(--ds-text-on-accent); background: var(--ds-action-primary); border-color: var(--ds-action-primary); }
+.public-studio-page .primary-button { color: var(--ds-text-on-accent); background: var(--ds-action-primary); border-color: var(--ds-action-primary); box-shadow: none; }
 .public-studio-page .primary-button:hover { background: var(--ds-action-primary-hover); border-color: var(--ds-action-primary-hover); }
 .public-studio-page .ghost-button:hover { background: var(--ds-bg-subtle); }
 .public-studio-page .public-studio-toolbar { margin: 0 0 18px; gap: 16px; align-items: center; }
@@ -234,7 +234,7 @@
 .public-preview-modal .public-media-error button { min-height: 44px; padding: 8px 12px; border-radius: 7px; font-size: 12px; color: #f4f8f6; border-color: #68766f; background: #24322b; }
 .public-preview-modal .public-preview-information { flex: 0 0 auto; }
 @media (max-width: 760px) {
-  :root .public-studio-page { padding-top: 108px; padding-inline: 16px; }
+  :root .public-studio-page { padding-inline: 20px; }
   .public-studio-page .ui-page-heading { gap: 16px; }
   .public-studio-page .public-studio-toolbar { align-items: stretch; gap: 14px; }
   .public-studio-page .public-studio-filters { flex-wrap: nowrap; overflow-x: auto; padding: 2px 2px 8px; }
