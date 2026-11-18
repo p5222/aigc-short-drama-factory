@@ -235,7 +235,7 @@ test("creator workflow, content entry and both themes fit viewport", async ({ pa
   page.on("pageerror", error => errors.push(error.message));
   await fixtureApi(page);
   await page.goto("/#/workbench");
-  await expect(page.getByRole("heading", { name: "把第一个故事变成作品" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "工作台", exact: true })).toBeVisible();
   await noOverflow(page);
   await page.getByRole("button", { name: "切换主题", exact: true }).click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
@@ -296,7 +296,7 @@ test("creator route inventory renders without crashes or document overflow", asy
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
   await fixtureApi(page);
-  for (const [route, title] of [["scripts", "我的作品"], ["tasks", "生成队列"], ["profile", "我的账户"], ["recharge", "积分充值"], ["ledger", "积分明细"], ["settings", "设置"], ["help", "帮助中心"], ["studio", "剪辑中心"], ["wizard", "让一个新故事，从这里开始"], ["content/__new__", "新建内容创作"]]) {
+  for (const [route, title] of [["scripts", "我的作品"], ["tasks", "生成队列"], ["profile", "我的账户"], ["recharge", "积分充值"], ["ledger", "积分明细"], ["settings", "设置"], ["help", "帮助中心"], ["studio", "剪辑中心"], ["wizard", "新建漫剧"], ["content/__new__", "新建内容创作"]]) {
     await page.goto(`/#/${route}`);
     await expect(page.getByRole("heading", { name: title, exact: true }).first()).toBeVisible();
     await expect(page.locator('[aria-busy="true"]')).toHaveCount(0);
@@ -359,10 +359,10 @@ test("all admin modules render with empty or recoverable unavailable data", asyn
 test("offline notice preserves the current workspace and clears on reconnection", async ({ page, context }) => {
   await fixtureApi(page);
   await page.goto("/#/workbench");
-  await expect(page.getByRole("heading", { name: "把第一个故事变成作品" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "工作台", exact: true })).toBeVisible();
   await context.setOffline(true);
   await expect(page.getByText(/网络已断开。请保留当前页面/)).toBeVisible();
-  await expect(page.getByRole("heading", { name: "把第一个故事变成作品" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "工作台", exact: true })).toBeVisible();
   await context.setOffline(false);
   await expect(page.getByText(/网络已断开。请保留当前页面/)).toHaveCount(0);
 });
@@ -393,14 +393,14 @@ test("populated creator workbench resumes the selected project in both themes", 
   await fixtureApi(page, { populated: true, tasks: 3 });
   await page.goto("/#/workbench");
   await expect(page.getByRole("region", { name: "界面验收项目" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "把第一个故事变成作品" })).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "界面验收项目" }).getByRole("button")).toHaveCount(1);
   await noOverflow(page);
   await page.screenshot({ path: `${process.env.PLAYWRIGHT_OUTPUT_DIR ?? "test-results"}/creator-populated-light-${testInfo.project.name}.png`, fullPage: true });
   await page.getByRole("button", { name: "切换主题", exact: true }).click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   await noOverflow(page);
   await page.screenshot({ path: `${process.env.PLAYWRIGHT_OUTPUT_DIR ?? "test-results"}/creator-populated-dark-${testInfo.project.name}.png`, fullPage: true });
-  await page.getByRole("button", { name: "进入创作", exact: true }).click();
+  await page.getByRole("region", { name: "界面验收项目" }).getByRole("button").click();
   await expect(page).toHaveURL(/#\/project\/production$/);
   await expect(page.getByRole("navigation", { name: "项目生产阶段" })).toBeVisible();
 });
@@ -408,7 +408,7 @@ test("populated creator workbench resumes the selected project in both themes", 
 test("public login form supports password reveal and restores keyboard focus", async ({ page }, testInfo) => {
   await page.addInitScript(() => localStorage.setItem("manjiao-theme", "light"));
   await page.goto("/");
-  const trigger = page.getByRole("button", { name: "开始制作我的故事", exact: true });
+  const trigger = page.getByRole("button", { name: "开始创作", exact: true });
   await trigger.click();
   const dialog = page.getByRole("dialog");
   const password = dialog.getByLabel("密码", { exact: true });

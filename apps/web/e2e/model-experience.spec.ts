@@ -35,7 +35,7 @@ async function capture(page: Page, name: string) {
 test("catalog shows exact prices and configuration issues; favorites and compare persist", async ({ page }) => {
   await fixtures(page);
   await page.goto("/#/models");
-  await expect(page.getByRole("heading", { name: "为每一步创作，找到合适的模型" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "模型中心", exact: true })).toBeVisible();
   const primary = page.locator(".model-library-card").filter({ hasText: "创作主渠道 · deepseek-v4-pro" });
   const backup = page.locator(".model-library-card").filter({ hasText: "备用渠道 · deepseek-v4-pro" });
   await expect(primary).toContainText("12 积分/次");

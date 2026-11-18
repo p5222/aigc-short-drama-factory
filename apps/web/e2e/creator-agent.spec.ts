@@ -71,13 +71,13 @@ async function screenshot(page: Page, name: string, device: string) {
 test("first visit offers explicit paths and skip can be resumed", async ({ page }, info) => {
   const server = await fixture(page);
   await page.goto("/#/workbench");
-  await expect(page.getByRole("heading", { name: "先讲一个小故事。" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "新建短片", exact: true })).toBeVisible();
   await screenshot(page, "creator-welcome", info.project.name);
   await page.getByRole("button", { name: "暂时跳过首作引导" }).click();
   await page.reload();
-  await expect(page.getByRole("heading", { name: "先讲一个小故事。" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "新建短片", exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: /打开首作引导/ }).click();
-  await page.getByRole("button", { name: /先试一个示例/ }).click();
+  await page.getByRole("button", { name: "使用示例", exact: true }).click();
   await expect(page).toHaveURL(/__short_sample__/);
   await expect(page.getByLabel("故事与创作意图")).toHaveValue(/便利店/);
   expect(server.writes.some(write => write.path.endsWith("/execute"))).toBe(false);
@@ -86,7 +86,7 @@ test("failed preference read never auto-opens a first-visit guide", async ({ pag
   await fixture(page, { preferenceFails: true });
   await page.goto("/#/workbench");
   await expect(page.getByText(/首作引导状态暂未读取成功/)).toBeVisible();
-  await expect(page.getByRole("heading", { name: "先讲一个小故事。" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "新建短片", exact: true })).toHaveCount(0);
 });
 for (const theme of ["light", "dark"]) test(`saved brief, bounded quote, editable review and handoff (${theme})`, async ({ page }, info) => {
   const server = await fixture(page, { theme });

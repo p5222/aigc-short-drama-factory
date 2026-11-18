@@ -13,7 +13,7 @@ import { buildEstimateInput, buildGenerationInput, creationBillingSignature, cre
 import { CREATION_ATTEMPT_KEY, getCreationRequestId } from "./creationAttemptStorage";
 import { BEFORE_CREATOR_NAVIGATION } from "../lib/creatorNavigation";
 import { InlineNotice, PageHeader } from "../design-system/ui";
-import { StudioIcon, studioStages } from "../design-system/StudioIcon";
+import { StudioIcon } from "../design-system/StudioIcon";
 import "./creator-pages.css";
 
 interface WizardPageProps {
@@ -365,28 +365,23 @@ export function WizardPage({ providers, modelPrices, canManageModels = false, on
 
   if (!entrySelected) {
     return <div className="page-stack creation-entry-page creator-page" data-tour-id="creation-entry">
-      <PageHeader title="让一个新故事，从这里开始" description="选择你的创作起点，逐步完成从文字到画面的制作。" />
+      <PageHeader title="新建漫剧" />
       <div className="creation-entry-grid">
-        <button type="button" onClick={onCreateContent}><span className="creation-entry-icon"><StudioIcon stage="content" size={24} /></span><small>01 / 从灵感出发</small><strong>先写一个故事</strong><span>把一句灵感发展为大纲、章节和剧本，再进入漫剧制作。</span><b>开始内容创作 <ChevronRight size={18} /></b></button>
-        <button type="button" onClick={() => openBlankEditor("novel")}><span className="creation-entry-icon"><BookOpenCheck size={24} /></span><small>02 / 已有小说或故事</small><strong>导入小说</strong><span>保留故事原稿，按选定集数改编剧本，提取角色与场景。</span><b>开始小说改编 <ChevronRight size={18} /></b></button>
-        <button type="button" onClick={() => openBlankEditor("script")}><span className="creation-entry-icon"><FileUp size={24} /></span><small>03 / 已有分集剧本</small><strong>导入已有剧本</strong><span>保留原剧本，识别分集与场次，直接准备制作资产。</span><b>开始剧本拆解 <ChevronRight size={18} /></b></button>
+        <button type="button" onClick={onCreateContent}><span className="creation-entry-icon"><StudioIcon stage="content" size={24} /></span><strong>先写一个故事</strong><ChevronRight size={18} /></button>
+        <button type="button" onClick={() => openBlankEditor("novel")}><span className="creation-entry-icon"><BookOpenCheck size={24} /></span><strong>导入小说</strong><ChevronRight size={18} /></button>
+        <button type="button" onClick={() => openBlankEditor("script")}><span className="creation-entry-icon"><FileUp size={24} /></span><strong>导入已有剧本</strong><ChevronRight size={18} /></button>
       </div>
       {recoverableDraft?.content.trim() ? <section className="creation-draft-recovery" aria-label="可恢复的草稿">
         <FileText size={22} /><div><strong>{recoverableDraft.title || "未命名草稿"}</strong><span>此浏览器有一份未完成草稿 · {recoverableDraft.content.trim().length.toLocaleString()} 字</span></div>
         <button type="button" className="ghost-button" onClick={() => { setForm(normalizeDraft(recoverableDraft)); setEntrySelected(true); }}>恢复草稿</button>
       </section> : null}
-      <section className="creation-journey" aria-label="漫剧制作流程">
-        <div><span className="section-kicker">你的制作路线</span><h2>每一步，都有自己的工作空间</h2></div>
-        <ol>{studioStages.map(stage => <li key={stage.id}><span><StudioIcon stage={stage.id} size={20} /></span><strong>{stage.label}</strong><small>{stage.detail}</small></li>)}</ol>
-      </section>
       <ProductionReadiness providers={providers} prices={modelPrices} />
-      <p className="creator-page-footnote">新项目从空白开始。已有作品可在“我的作品”继续编辑；每次生成前都会单独确认费用。</p>
     </div>;
   }
 
   return (
     <div className="page-stack creation-workbench u-wizard creator-page" data-tour-id="creation-entry">
-      <PageHeader title="新建漫剧" description="把故事、画面和制作范围准备好，开启你的新作品。" actions={<button className="ghost-button" disabled={isGenerating} onClick={saveDraft}>
+      <PageHeader title="新建漫剧" actions={<button className="ghost-button" disabled={isGenerating} onClick={saveDraft}>
           <Save size={18} />保存草稿
         </button>} />
 
@@ -402,7 +397,6 @@ export function WizardPage({ providers, modelPrices, canManageModels = false, on
           >
             <span>{index < activeStepIndex ? "✓" : index + 1}</span>
             <i>{stepLabel(item)}</i>
-            <small>{stepHint(item, form.sourceType)}</small>
           </button>
         ))}
       </nav>
@@ -510,7 +504,6 @@ function StoryStep({
       <section className="u-card story-input-card" data-tour-id="story-input">
         <div className="u-card-head">
           <div>
-            <span className="section-kicker">STEP 1</span>
             <h2>先把故事放进来</h2>
             <p>支持小说、大纲和已有剧本。原稿会保留在项目中，方便随时对照。</p>
           </div>
@@ -610,7 +603,6 @@ function SettingsStep({
     <section className="u-card settings-card settings-step-redesign">
       <div className="u-card-head">
         <div>
-          <span className="section-kicker">STEP 2</span>
           <h2>定下作品的视觉方向</h2>
           <p>统一画幅与风格，让角色、场景和镜头保持一致。</p>
         </div>
@@ -747,7 +739,6 @@ function ScriptStep({
       <section className="u-card script-plan-card wizard-script-card shot-plan-main">
         <div className="u-card-head wizard-script-title">
           <div>
-            <span className="section-kicker">STEP 3</span>
             <h2>核对设置，开始制作</h2>
             <p>本次创建只解析文本。图片、视频与配音在后续步骤单独报价。</p>
           </div>
@@ -936,15 +927,6 @@ function stepLabel(step: WizardStep) {
     story: "导入原稿",
     settings: "全局设定",
     script: "确认创建"
-  };
-  return map[step];
-}
-
-function stepHint(step: WizardStep, sourceType: CreateProjectInput["sourceType"]) {
-  const map: Record<WizardStep, string> = {
-    story: sourceType === "script" ? "导入已有剧本" : "导入小说原文",
-    settings: "选择画幅与视觉风格",
-    script: "核对内容与本次费用"
   };
   return map[step];
 }

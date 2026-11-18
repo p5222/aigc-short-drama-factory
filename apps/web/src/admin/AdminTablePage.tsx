@@ -56,7 +56,6 @@ export function AdminTablePage<T>({
       </header>
       {filters ? <div className="adm-filterbar">{filters}</div> : null}
       {error ? <InlineNotice tone="error">{error}</InlineNotice> : null}
-      <p className="adm-table-mobile-hint">左右滑动表格，查看完整字段</p>
       <div className="adm-table-scroll" aria-busy={loading} role="region" aria-label={`${title}，表格可横向滚动`} tabIndex={0}>
         <table>
           <caption>{title}</caption>
@@ -82,7 +81,7 @@ export function AdminTablePage<T>({
             ))}
           </tbody>
         </table>
-        {loading ? <StatePanel kind="loading" title="正在读取数据" description="列表同步后即可继续操作。" compact /> : !rows.length && !error ? <StatePanel title={emptyText} compact /> : null}
+        {loading ? <StatePanel kind="loading" title="正在读取数据" compact /> : !rows.length && !error ? <StatePanel title={emptyText} compact /> : null}
       </div>
       {page != null && totalPages != null ? (
         <footer className="adm-pagination">

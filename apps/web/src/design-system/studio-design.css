@@ -101,10 +101,6 @@
 .workbench-resume-action > span { color: var(--ds-text-secondary); font-size: 12px; }
 .workbench-resume-action > button { display: inline-flex; align-items: center; gap: 16px; min-height: 44px; padding: 11px 18px; border: 1px solid var(--ds-action-primary); border-radius: 10px; color: var(--ds-text-on-accent); background: var(--ds-action-primary); font: 550 13px/1.4 var(--ds-font-body); cursor: pointer; }
 .workbench-resume-action > button:hover { background: var(--ds-action-primary-hover); }
-:root .app-shell.product-shell .workbench-journey { padding: 28px; border-radius: 18px; border: 1px solid var(--ds-border-default); background: var(--ds-action-soft); gap: 24px 32px; }
-.workbench-journey-heading h2 { font-weight: 600; font-size: 20px; }
-.workbench-journey li > span { font-size: 18px; font-weight: 400; padding-bottom: 16px; border-color: color-mix(in srgb,var(--ds-action-primary) 20%,transparent); }
-.workbench-journey li strong { font-size: 13px; font-weight: 600; }
 :root .app-shell.product-shell .dashboard-focus-grid { gap: 16px; }
 :root .app-shell.product-shell .dashboard-focus-card { padding: 20px; border-radius: 14px; min-height: 114px; }
 :root .app-shell.product-shell .dashboard-focus-card > span { gap: 8px; font-size: 12px; }
@@ -114,7 +110,7 @@
 :root .app-shell.product-shell .dashboard-focus-card.danger > span svg { color: var(--ds-status-danger); }
 :root .app-shell.product-shell .dashboard-work-grid { grid-template-columns: minmax(0,1fr) 304px; gap: 24px; }
 :root .app-shell.product-shell .dashboard-side-stack { gap: 24px; }
-:root .app-shell.product-shell .dashboard-project-list > button { display: grid; grid-template-columns: 40px minmax(0,1fr) auto; min-height: 100px; padding: 20px 0; gap: 16px; }
+:root .app-shell.product-shell .dashboard-project-list > button { display: grid; grid-template-columns: minmax(0,1fr) auto; min-height: 88px; padding: 18px 0; gap: 16px; }
 :root .app-shell.product-shell .dashboard-project-list > button:hover { background: var(--ds-bg-subtle); }
 .dashboard-project-index { display: grid; place-items: center; width: 40px; height: 46px; border-radius: 10px; color: var(--ds-text-muted); background: var(--ds-bg-subtle); font: 400 15px/1 var(--ds-font-code); }
 :root .app-shell.product-shell .dashboard-project-main > strong { font-size: 15px; font-weight: 550; }
@@ -153,7 +149,6 @@
 .creator-table-scroll { border-radius: 12px; }
 .creator-data-table th, .creator-data-table td { padding: 16px 20px; }
 .creator-data-table th { font-weight: 500; }
-:root .app-shell.product-shell .creator-page .creation-entry-grid button { padding: 32px; border-radius: 18px; }
 :root .app-shell.product-shell .creator-page .source-type-switch button { padding: 18px; border-radius: 12px; }
 :root .app-shell.product-shell .creator-page .story-input-field textarea { min-height: 350px; line-height: 1.95; }
 :root .app-shell.product-shell .creator-page .help-action-grid > * { border-radius: 14px; padding: 22px; }
@@ -208,23 +203,16 @@
 :root .product-shell .creator-page .profile-shortcut > div { color: var(--ds-action-primary) !important; background: var(--ds-action-soft) !important; }
 .creator-auth-wordmark { display: flex; align-items: center; gap: 9px; }
 /* Recharge: a readable wallet and purchasing journey, with real configured amounts. */
-.recharge-overview { display: grid; grid-template-columns: minmax(240px,.8fr) minmax(0,1.6fr); border: 1px solid var(--ds-border-default); border-radius: 18px; background: var(--ds-bg-surface); overflow: hidden; }
-.recharge-wallet { display: grid; align-content: center; gap: 14px; padding: 32px; background: var(--ds-action-soft); border-right: 1px solid var(--ds-border-default); }
+.recharge-overview { display: grid; grid-template-columns: minmax(220px,.7fr) minmax(0,1.6fr); gap: 24px; align-items: start; }
+.recharge-wallet { display: grid; align-content: center; gap: 14px; padding: 28px 0; }
 .recharge-wallet > span { display: flex; gap: 10px; align-items: center; color: var(--ds-action-primary); font-size: 12px; }
 .recharge-wallet > strong { font-size: clamp(32px,3.4vw,46px); font-weight: 500; line-height: 1.2; letter-spacing: -.05em; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .recharge-wallet > small { font-size: 11px; color: var(--ds-text-secondary); }
-.recharge-intro { padding: 30px 36px; }
-.recharge-intro > h2 { font-size: 25px; font-weight: 600; margin: 10px 0; letter-spacing: -.04em; }
-.recharge-intro > p { font-size: 12px; line-height: 1.9; color: var(--ds-text-secondary); max-width: 46em; margin-bottom: 20px; }
-.recharge-intro > div { display: flex; gap: 10px; flex-wrap: wrap; }
 .recharge-unit-price { font-size: 11px; margin: -4px 0 2px; color: var(--ds-text-muted); line-height: 1.7; }
 :root .product-shell .creator-page .recharge-card.featured { border-color: var(--ds-action-primary) !important; background: color-mix(in srgb,var(--ds-action-soft) 30%,var(--ds-bg-surface)) !important; }
 :root .product-shell .creator-page .recharge-card-name { font-size: 15px; font-weight: 600; }
 :root .product-shell .creator-page .recharge-card-features { padding-block: 10px; }
 :root .product-shell .creator-page .recharge-plan-grid .recharge-card { display: flex; flex-direction: column; }
-.recharge-section-nav { display: flex; flex-wrap: wrap; gap: 12px 24px; padding-bottom: 18px; margin-top: -6px; border-bottom: 1px solid var(--ds-border-default); }
-.recharge-section-nav button { padding: 5px 0; min-height: 36px; background: none; border: 0; color: var(--ds-text-secondary); font: 500 12px var(--ds-font-body); cursor: pointer; }
-.recharge-section-nav button:hover { color: var(--ds-action-primary); }
 .recharge-flow { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); padding: 0; margin: 8px 0 24px; list-style: none; gap: 24px; }
 .recharge-flow li { display: flex; gap: 14px; padding-top: 18px; border-top: 1px solid var(--ds-border-default); }
 .recharge-flow li > span { color: var(--ds-action-primary); font: 500 17px/1.5 var(--ds-font-code); }
@@ -240,7 +228,7 @@
   :root .app-shell.product-shell .topbar { padding-inline: 24px; }
   :root .app-shell.product-shell .page-stack { padding: 28px; }
   :root .app-shell.product-shell .dashboard-work-grid { grid-template-columns: minmax(0,1fr) 270px; gap: 20px; }
-  :root .app-shell.product-shell .dashboard-project-list > button { grid-template-columns: 36px minmax(0,1fr); gap: 12px; }
+  :root .app-shell.product-shell .dashboard-project-list > button { grid-template-columns: minmax(0,1fr); gap: 12px; }
   :root .app-shell.product-shell .dashboard-project-next { grid-column: 2; display: flex; flex-direction: row; justify-content: space-between; align-items: center; }
 }
 @media (max-width: 900px) {
@@ -260,8 +248,6 @@
   .profile-admin-entry { padding: 18px 20px; }
   .recharge-overview { grid-template-columns: minmax(0,1fr); }
   .recharge-wallet { padding: 24px; border-right: 0; border-bottom: 1px solid var(--ds-border-default); gap: 12px; }
-  .recharge-intro { padding: 24px; }
-  .recharge-intro > h2 { font-size: 23px; }
   .recharge-flow { grid-template-columns: minmax(0,1fr); gap: 18px; }
   :root .app-shell.product-shell .page-stack { padding: 28px 16px; gap: 24px; }
   :root .app-shell.product-shell .topbar { height: auto; min-height: 62px; }
@@ -274,10 +260,9 @@
   .workbench-resume h2 { font-size: 23px; }
   .workbench-resume-action { justify-items: start; gap: 10px; }
   .workbench-resume-action > button { width: 100%; justify-content: space-between; }
-  :root .app-shell.product-shell .workbench-journey { padding: 22px; }
   :root .app-shell.product-shell .dashboard-work-grid { grid-template-columns: minmax(0,1fr); }
   :root .app-shell.product-shell .dashboard-focus-card { padding: 16px 18px; min-height: 88px; }
-  :root .app-shell.product-shell .dashboard-project-list > button { grid-template-columns: 34px minmax(0,1fr); gap: 12px; min-height: 110px; padding: 18px 0; }
+  :root .app-shell.product-shell .dashboard-project-list > button { grid-template-columns: minmax(0,1fr); gap: 12px; min-height: 88px; padding: 18px 0; }
   .dashboard-project-index { width: 34px; height: 42px; font-size: 13px; }
   :root .app-shell.product-shell .dashboard-project-next { grid-column: 2; }
   :root .app-shell.product-shell .creator-page :is(.profile-v2-card, .queue-detail-card, .u-card) { padding: 20px; }

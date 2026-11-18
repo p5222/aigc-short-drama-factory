@@ -785,7 +785,7 @@ function ContentCreationIntent({ intent, intentType, targetWords, chapterCount, 
   ];
   const placeholder = intentType === "title" ? "例如：替嫁后我成了首辅白月光" : intentType === "genre" ? "例如：都市重生、女频复仇、强爽点短篇" : "例如：《作品A》《作品B》《作品C》";
   return <section className="content-intent-workspace">
-    <header><span className="content-eyebrow">STEP 1 · 创作意图</span><h2>一个想法，就是故事的起点</h2><p>写下标题、题材或参考作品，先梳理故事结构，再逐章完善正文。</p></header>
+    <header><h2>创作意图</h2></header>
     <div className="content-intent-layout"><div className="content-intent-editor">
     <div className="content-intent-modes">{options.map((option) => <button type="button" key={option.id} disabled={busy || locked} aria-pressed={intentType === option.id} className={intentType === option.id ? "is-active" : ""} onClick={() => onIntentTypeChange(option.id)}><strong>{option.label}</strong><span>{option.hint}</span></button>)}</div>
     <label className="content-intent-input"><span>{options.find((item) => item.id === intentType)?.label}</span><textarea aria-label={options.find((item) => item.id === intentType)?.label} disabled={busy || locked} value={intent} onChange={(event) => onIntentChange(event.target.value)} maxLength={2000} placeholder={placeholder} autoFocus /><small>{intent.length}/2000</small></label>

@@ -13,7 +13,6 @@ import {
   Sparkles,
   Sun,
   UserRound,
-  WandSparkles,
   X
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -62,7 +61,6 @@ const sections: Array<{ label: string; items: Array<{ key: PageKey; label: strin
     label: "创作",
     items: [
       { key: "workbench", label: "工作台", icon: <Grid2X2 size={20} /> },
-      { key: "wizard", label: "新建漫剧", icon: <WandSparkles size={20} /> },
       { key: "scripts", label: "我的作品", icon: <StudioIcon stage="content" /> }
     ]
   },
@@ -144,7 +142,6 @@ export function Shell({ active, onNavigate, children, credits, theme, onToggleTh
         <div className="brand">
           <div className="studio-brand-copy">
             <StudioWordmark height={36} />
-            <span>创作工作空间</span>
           </div>
           <button type="button" className="ui-icon-button creator-menu-close" aria-label="关闭导航" onClick={() => setMobileOpen(false)}><X size={20} /></button>
         </div>
@@ -155,9 +152,9 @@ export function Shell({ active, onNavigate, children, credits, theme, onToggleTh
         </button>
 
         <nav className="nav" aria-label="创作与账户">
-          {sections.map((section, index) => (
+          {sections.map((section) => (
             <div key={section.label} className="nav-section">
-              <p><span aria-hidden="true">{String(index + 1).padStart(2, "0")}</span>{section.label}</p>
+              <p>{section.label}</p>
               {section.items.map((item) => (
                 <button
                   key={item.key}
@@ -186,7 +183,7 @@ export function Shell({ active, onNavigate, children, credits, theme, onToggleTh
         <header className="topbar">
           <button ref={menuTrigger} type="button" className="ui-icon-button creator-menu-trigger" aria-label="打开导航" aria-controls="creator-sidebar" aria-expanded={mobileOpen} onClick={() => setMobileOpen(true)}><Menu size={21} /></button>
           <div className="creator-location">
-            <div className="crumb"><span>工作空间</span><i aria-hidden="true">/</i><strong>{pageTitle(active)}</strong></div>
+            <div className="crumb"><strong>{pageTitle(active)}</strong></div>
           </div>
           <div className="top-actions">
             <form className="creator-search" role="search" ref={searchRef} onSubmit={(event) => { event.preventDefault(); if (results[0]) openResult(results[0]); }} onKeyDown={(event) => { if (event.key === "Escape") { setSearchOpen(false); searchRef.current?.querySelector("input")?.focus(); } }}>

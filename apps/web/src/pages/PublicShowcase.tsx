@@ -112,7 +112,7 @@ function StudioPage({ locale, scenes, onStart }: Omit<PublicShowcaseProps, "view
 
   return (
     <section className="public-studio-page">
-      <PageHeader title={cn ? "创作现场" : "Creator showcase"} description={cn ? "探索创作者制作的短片。这里展示的作品均已通过审核。" : "Explore films created with Manjiao. Every published work is reviewed."} actions={<button className="primary-button" type="button" onClick={onStart}>{cn ? "开始创作" : "Start creating"}<ChevronRight size={18} /></button>} />
+      <PageHeader title={cn ? "创作现场" : "Creator showcase"} actions={<button className="primary-button" type="button" onClick={onStart}>{cn ? "开始创作" : "Start creating"}<ChevronRight size={18} /></button>} />
 
       <div className="public-studio-toolbar">
         <div>

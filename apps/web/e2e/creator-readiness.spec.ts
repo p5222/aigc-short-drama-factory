@@ -47,7 +47,7 @@ test("existing script opens the correct path and text quotes remain available wi
   await expect(ready.locator("li").filter({ hasText: "图像" })).toContainText("暂未配置");
   expect(await ready.locator("header strong").evaluate(el => getComputedStyle(el).color)).not.toBe("rgb(248, 250, 252)");
   await capture(page, "creator-entry-final");
-  await page.getByRole("button", { name: /开始剧本拆解/ }).click();
+  await page.getByRole("button", { name: "导入已有剧本", exact: true }).click();
   await expect(page.getByRole("radio", { name: /已有剧本/ })).toHaveAttribute("aria-checked", "true");
   await page.getByLabel("剧本文本", { exact: true }).fill("第1集\n场1 小站\n林初：你回来了吗？\n林初打开旧信，等候列车。");
   await page.getByRole("button", { name: "下一步：全局设定", exact: true }).click();

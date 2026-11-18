@@ -95,14 +95,11 @@ export function RechargePage({ userId, account, plans, membershipPlans, modelPri
 
   return (
     <div className="page-stack recharge-page creator-page">
-      <PageHeader title="积分充值" description="前往小店购买兑换码，回到这里兑换积分，即可继续创作。" />
-      <section className="recharge-overview" aria-label="充值账户概览">
-        <div className="recharge-wallet"><span><WalletCards size={18} />当前可用积分</span><strong>{account ? (account.balance - account.frozenBalance).toLocaleString() : "—"}</strong><small>总余额 {account?.balance.toLocaleString() ?? "—"} · 冻结中 {account?.frozenBalance.toLocaleString() ?? "—"}</small></div>
-        <div className="recharge-intro"><span className="section-kicker">为下一段故事做好准备</span><h2>把灵感，继续拍下去。</h2><p>积分用于文本、画面、视频与配音。按创作节奏补充，每次生成前确认费用。</p><div><button className="primary-button" type="button" onClick={() => document.getElementById("recharge-plan-title")?.scrollIntoView({ block: "start" })}>选择积分套餐</button><button className="ghost-button" type="button" onClick={() => document.getElementById("creator-redeem-title")?.scrollIntoView({ block: "center" })}><Gift size={16} />使用兑换码</button></div></div>
-      </section>
-      <nav className="recharge-section-nav" aria-label="充值页面分区">{[["recharge-plan-title", "小店购买"], ["creator-redeem-title", "兑换到账"], ["online-payment-title", "订单与会员"], ["credit-usage-title", "费用参考"]].map(([id, label]) => <button type="button" key={id} onClick={() => document.getElementById(id)?.scrollIntoView({ block: "start" })}>{label}</button>)}</nav>
+      <PageHeader title="积分充值" />
+      <div className="recharge-overview">
+        <section className="recharge-wallet" aria-label="充值账户概览"><span><WalletCards size={18} />当前可用积分</span><strong>{account ? (account.balance - account.frozenBalance).toLocaleString() : "—"}</strong><small>总余额 {account?.balance.toLocaleString() ?? "—"} · 冻结中 {account?.frozenBalance.toLocaleString() ?? "—"}</small></section>
       <section className="panel creator-redeem-panel" aria-labelledby="creator-redeem-title">
-        <div><h2 id="creator-redeem-title">已有卡密？直接兑换</h2><p>兑换成功后，积分立即计入当前账户。</p></div>
+        <h2 id="creator-redeem-title">兑换积分</h2>
         <form className="redeem-row" onSubmit={event => { event.preventDefault(); void redeem(); }}>
           <label className="creator-redeem-input"><span className="creator-sr-only">兑换码</span><input value={redeemCode} disabled={redeeming} onChange={event => { setRedeemCode(event.target.value.toUpperCase()); setNeedsReceipt(false); setError(""); setMessage(""); }} placeholder="输入店铺提供的兑换码" autoComplete="off" /></label>
           <button type="submit" className="primary-button" disabled={redeeming || needsReceipt || !redeemCode.trim()}>{redeeming ? "处理中…" : "兑换积分"}</button>
@@ -114,12 +111,11 @@ export function RechargePage({ userId, account, plans, membershipPlans, modelPri
         <button className="ghost-button" type="button" aria-expanded={historyOpen} onClick={() => setHistoryOpen(!historyOpen)}>{historyOpen ? "收起兑换记录" : "查看我的兑换记录"}</button>
         {historyOpen ? <RedeemHistory refreshKey={historyVersion} /> : null}
       </section>
+      </div>
       <section className="panel recharge-plan-panel">
         <div className="panel-head">
-          <div><span className="section-kicker">积分套餐</span><h2 id="recharge-plan-title">在小店购买积分</h2><small>打开小店后，请核对对应商品的积分数量与售价。</small></div>
-          <span className="recharge-validity">积分永久有效 · 可用于所有 AI 生成能力</span>
+          <div><h2 id="recharge-plan-title">购买积分</h2><small>在小店购买兑换码，回到本页兑换。</small></div>
         </div>
-        <ol className="recharge-flow recharge-store-flow" aria-label="小店购买步骤"><li><span>01</span><div><strong>前往小店</strong><small>选择对应积分套餐</small></div></li><li><span>02</span><div><strong>购买并获取兑换码</strong><small>按店铺说明领取卡密</small></div></li><li><span>03</span><div><strong>回到漫角兑换</strong><small>输入兑换码，积分到账</small></div></li></ol>
         <div className="plan-grid recharge-plan-grid" data-tour-id="recharge-plans">
         {availablePlans.map((plan) => {
           const featured = Boolean(plan.badge && plan.badge.includes("推荐"));
@@ -156,7 +152,8 @@ export function RechargePage({ userId, account, plans, membershipPlans, modelPri
         {!availablePlans.length ? <StatePanel compact title="暂未开放新套餐" description="已有卡密仍可在上方兑换。套餐开放后会显示在这里。" /> : null}
       </section>
       <OnlineCheckout key={userId} userId={userId} plans={plans} memberships={membershipPlans} onRefresh={onRefresh} />
-      <section className="panel credit-usage-panel">
+      <details className="panel credit-usage-panel creator-price-details">
+        <summary>生成费用参考</summary>
         <div className="panel-head">
           <div><h2 id="credit-usage-title">生成费用参考</h2><small>以下为已开放模型的价格范围；实际消耗以每次生成前的报价为准。</small></div>
           <span className="recharge-validity"><ClipboardList size={16} /> 共 {enabledModelPrices.length} 条启用价格</span>
@@ -186,7 +183,7 @@ export function RechargePage({ userId, account, plans, membershipPlans, modelPri
           ))}
           {!enabledModelPrices.length ? <StatePanel compact title="暂无可用价格信息" description="请稍后刷新，或在生成前获取对应模型的报价。" /> : null}
         </div></details>
-      </section>
+      </details>
     </div>
   );
 }

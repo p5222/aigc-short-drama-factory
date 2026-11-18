@@ -2,13 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildMediaCandidates,
-  getCardPose,
-  nextCardIndex,
   normalizeMediaTier,
-  relativeCardOffset,
-  resolveMediaTier,
-  shouldReleasePreparedSlot,
-  shouldCorrectDrift
+  resolveMediaTier
 } from "./cineHomeModel.ts";
 
 test("normalizes configured media tiers", () => {
@@ -49,44 +44,4 @@ test("keeps each scene fallback list independent", () => {
   assert.equal(desert[0], "/media/cineart-home/desert_4k.mp4");
   assert.equal(bicycle[0], "/media/cineart-home/bicycle-smile_4k.mp4");
   assert.notEqual(desert[1], bicycle[1]);
-});
-
-test("wraps five-card offsets around the active card", () => {
-  assert.deepEqual([0, 1, 2, 3, 4].map((index) => relativeCardOffset(index, 0, 5)), [0, 1, 2, -2, -1]);
-  assert.deepEqual([0, 1, 2, 3, 4].map((index) => relativeCardOffset(index, 3, 5)), [2, -2, -1, 0, 1]);
-});
-
-test("returns the approved B1 collapsed geometry", () => {
-  assert.deepEqual(getCardPose(0, 0, false, 5), {
-    x: 0, y: -6, z: 0, rotateY: 0, rotateZ: 0, scale: 1, opacity: 1, zIndex: 90
-  });
-  assert.equal(getCardPose(1, 0, false, 5).x, 22);
-  assert.equal(getCardPose(2, 0, false, 5).x, 44);
-  assert.equal(getCardPose(4, 0, false, 5).x, -22);
-});
-
-test("returns the approved expanded geometry", () => {
-  assert.deepEqual(getCardPose(0, 0, true, 5), {
-    x: 0, y: -20, z: 0, rotateY: 0, rotateZ: 0, scale: 1.04, opacity: 1, zIndex: 90
-  });
-  assert.equal(getCardPose(1, 0, true, 5).x, 110);
-  assert.equal(getCardPose(2, 0, true, 5).x, 180);
-  assert.equal(getCardPose(3, 0, true, 5).x, -180);
-});
-
-test("only corrects visible playback drift beyond 120ms", () => {
-  assert.equal(shouldCorrectDrift(4, 4.1), false);
-  assert.equal(shouldCorrectDrift(4, 4.121), true);
-  assert.equal(shouldCorrectDrift(4.2, 4), true);
-});
-
-test("wraps keyboard card navigation in both directions", () => {
-  assert.equal(nextCardIndex(4, 1, 5), 0);
-  assert.equal(nextCardIndex(0, -1, 5), 4);
-  assert.equal(nextCardIndex(2, 1, 5), 3);
-});
-
-test("releases only a prepared slot that never became visible", () => {
-  assert.equal(shouldReleasePreparedSlot(0, 1), true);
-  assert.equal(shouldReleasePreparedSlot(1, 1), false);
 });

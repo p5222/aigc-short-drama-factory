@@ -285,7 +285,7 @@ export function ProfilePage({
 
   return (
     <div className="page-stack profile-page profile-v2-page creator-page">
-      <PageHeader title="我的账户" description="管理资料、安全设置和积分。" actions={
+      <PageHeader title="我的账户" actions={
           <button className="ghost-button" type="button" onClick={onLogout}><LogOut size={17} />退出登录</button>
         } />
       {pending || dirty ? <InlineNotice tone="info">{pending ? "正在保存，请等待操作完成。" : avatarReading ? "正在处理头像。处理完成后可以保存，也可以取消本次修改。" : "有未保存的修改。请在对应分组保存，或取消修改。"}</InlineNotice> : null}
@@ -293,7 +293,7 @@ export function ProfilePage({
       <section className="profile-overview" aria-label="账户概览">
         <div className="profile-overview-identity">
           <ProfileAvatar name={user.name} avatarUrl={user.avatarUrl} size="large" />
-          <div><span className="section-kicker">你的创作空间</span><h2>{user.name}</h2><p>{maskContact(contact)}</p>
+          <div><h2>{user.name}</h2><p>{maskContact(contact)}</p>
             <div className="profile-badges"><span><BadgeCheck size={14} />{roleLabel(user.role)}</span><span><ShieldCheck size={14} />{user.status === "active" ? "账号正常" : "账号停用"}</span></div>
           </div>
         </div>
@@ -510,7 +510,7 @@ export function ProfilePage({
 
       <section className="panel profile-v2-card profile-v2-shortcuts">
         <div className="panel-head">
-          <div><h2>快捷入口</h2><small>常用功能直达。</small></div>
+          <h2>快捷入口</h2>
         </div>
         <div className="profile-v2-shortcut-list">
           <ProfileShortcut icon={<BookOpen size={19} />} title="我的作品" desc={`${summary?.projects ?? 0} 部漫剧 · 继续创作`} onClick={() => onNavigate("scripts")} />
@@ -531,7 +531,7 @@ export function SettingsPage({ theme, onThemeChange, onNavigate }: {
 }) {
   return (
     <div className="page-stack creator-page creator-settings-page">
-      <PageHeader title="设置" description="调整显示偏好，管理账号和使用记录。" />
+      <PageHeader title="设置" />
       <section className="panel creator-settings-panel">
         <div className="panel-head"><div><h2>显示主题</h2><small>切换后立即应用；浏览器允许保存时，下次访问会沿用当前选择。</small></div></div>
         <div className="creator-theme-options" role="group" aria-label="显示主题">
@@ -644,7 +644,7 @@ export function HelpPage({ articles = [], userId, initialSupportIntent, onSuppor
 
   return (
     <div className="page-stack help-center-page creator-page">
-      <PageHeader title="帮助中心" description="查操作文档，或把问题提交给支持人员。" actions={<button className="primary-button" type="button" onClick={() => { setHelpView("tickets"); setSupportIntent(current => ({ view: "new", key: (current?.key ?? 0) + 1 })); }}><Send size={18} />提交问题</button>} />
+      <PageHeader title="帮助中心" actions={<button className="primary-button" type="button" onClick={() => { setHelpView("tickets"); setSupportIntent(current => ({ view: "new", key: (current?.key ?? 0) + 1 })); }}><Send size={18} />提交问题</button>} />
       <nav className="tabs creator-help-tabs" aria-label="帮助中心视图"><button type="button" aria-pressed={helpView === "articles"} className={helpView === "articles" ? "active" : ""} onClick={() => setHelpView("articles")}><FileText size={16} />操作文档</button><button type="button" aria-pressed={helpView === "tickets"} className={helpView === "tickets" ? "active" : ""} onClick={() => { setHelpView("tickets"); setSupportIntent(current => ({ view: "list", key: (current?.key ?? 0) + 1 })); }}><Headphones size={16} />我的工单</button></nav>
       <div className="creator-help-docs" hidden={helpView !== "articles"}>
       <div className="help-grid help-action-grid">

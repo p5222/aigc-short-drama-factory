@@ -51,7 +51,7 @@ test("workbench resumes the newer story and failed-task shortcut survives reload
   await page.goto("/#/workbench");
   await expect(page.getByRole("heading", { name: "时光邮局 1", exact: true })).toBeVisible();
   await capture(page, "workbench-stories", info.project.name);
-  await page.getByRole("button", { name: "继续写作", exact: true }).click();
+  await page.getByRole("region", { name: "时光邮局 1", exact: true }).getByRole("button").click();
   await expect(page).toHaveURL(/#\/content\/story-0$/);
   await page.goto("/#/workbench");
   await page.getByRole("button", { name: "查看原因", exact: true }).click();
@@ -92,10 +92,10 @@ test("story read failure remains visible and recovery restores the saved manuscr
   const state = await setup(page, { storyError: true, projectCount: 0 });
   await page.goto("/#/workbench");
   await expect(page.getByText("故事列表暂未读取成功", { exact: true })).toBeVisible();
-  await expect(page.getByText("把第一个故事变成作品", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "时光邮局 1", exact: true })).toHaveCount(0);
   state.recoverStories();
   await page.getByRole("button", { name: "重新读取故事", exact: true }).click();
-  await expect(page.getByRole("button", { name: "继续写作", exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "时光邮局 1", exact: true }).getByRole("button")).toBeVisible();
 });
 
 test("library pages independently, resets for search and recovers after last-page deletion", async ({ page }, info) => {

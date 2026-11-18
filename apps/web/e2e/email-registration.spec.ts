@@ -7,7 +7,7 @@ async function openSignup(page: Page, available = true) {
     return route.fulfill({ json: path.endsWith("/registration-policy") ? { ...policy, mailAvailable: available } : [] });
   });
   await page.goto("/");
-  await page.getByRole("button", { name: "开始制作我的故事", exact: true }).click();
+  await page.getByRole("button", { name: "开始创作", exact: true }).click();
   await page.getByRole("button", { name: "注册", exact: true }).click();
 }
 async function credentials(page: Page) {
@@ -81,9 +81,8 @@ test("unavailable mail service and English mobile signup clearly explain the req
   await expect(page.locator('[name="register_phone"]')).toHaveAttribute("required", "");
   await page.screenshot({ path: `${process.env.PLAYWRIGHT_SCREENSHOT_DIR ?? "../../outputs/qq-registration"}/unavailable-${info.project.name}.png`, fullPage: true });
   await page.keyboard.press("Escape");
-  await page.getByRole("button", { name: "选择语言", exact: true }).click();
-  await page.getByRole("button", { name: "English", exact: true }).click();
-  await page.getByRole("button", { name: "Create my story", exact: true }).click();
+  await page.getByRole("combobox", { name: "选择语言", exact: true }).selectOption("en");
+  await page.getByRole("button", { name: "Start creating", exact: true }).click();
   await page.getByRole("button", { name: "Sign up", exact: true }).click();
   await expect(page.getByText(/Email verification is not available yet/)).toBeVisible();
   await expect(page.getByRole("button", { name: "Create account", exact: true })).toBeDisabled();
